@@ -1,0 +1,67 @@
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
+DEFAULT_BASE_URL: str = "https://atc.cwaviato.com"
+DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
+DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
+DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0
+DEFAULT_POLL_BACKOFF_FACTOR: float = 1.5
+
+# Default timeout for HTTP requests and API operations (seconds)
+# This controls how long to wait for API responses, not sandbox lifetime.
+DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 300.0
+
+# If not set, the backend controls the default lifetime of the sandboxes
+DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
+
+# Default temp directory used within Sandboxes
+DEFAULT_TEMP_DIR: str = "/tmp"
+
+
+@dataclass(frozen=True)
+class SandboxDefaults:
+    """Immutable configuration defaults for sandbox creation.
+
+    All fields have sensible defaults. Override only what you need.
+
+    There are two separate timeout concepts:
+    - request_timeout_seconds: How long to wait for API responses (client-side)
+    - max_lifetime_seconds: How long the sandbox runs before auto-termination (server-side)
+      If not set, the backend controls the default lifetime.
+
+    Tags enable filtering and organizing sandboxes. They are propagated to
+    the backend and can be used to query sandboxes by tag.
+
+    Example:
+        defaults = SandboxDefaults(
+            container_image="python:3.12",
+            request_timeout_seconds=60,
+            max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
+            tags=("my-workload", "experiment-42"),
+        )
+    """
+
+    container_image: str = DEFAULT_CONTAINER_IMAGE
+    base_url: str = DEFAULT_BASE_URL
+    request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
+    max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
+    temp_dir: str = DEFAULT_TEMP_DIR
+    tags: tuple[str, ...] = field(default_factory=tuple)
+    runway_ids: tuple[str, ...] | None = None
+    tower_ids: tuple[str, ...] | None = None
+
+    def merge_tags(self, additional: list[str] | None) -> list[str]:
+        """Combine default tags with additional tags.
+
+        Tags from both sources are included. Order is: defaults first,
+        then additional tags appended.
+        """
+        base = list(self.tags)
+        if additional:
+            base.extend(additional)
+        return base
+
+    def with_overrides(self, **kwargs: Any) -> "SandboxDefaults":
+        """Create new defaults with some values overridden."""
+        return replace(self, **kwargs)
