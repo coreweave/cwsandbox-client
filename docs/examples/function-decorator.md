@@ -17,8 +17,7 @@ async def main():
             return x + y
 
         result = await add(2, 3)
-        print(f"Result: {result.value}")  # 5
-        print(f"Return code: {result.exec_result.returncode}")  # 0
+        print(f"Result: {result}")  # 5
 
 asyncio.run(main())
 ```
@@ -159,7 +158,7 @@ async with Sandbox.session(defaults) as session:
         return x * MULTIPLIER + offset  # Both captured automatically
 
     result = await compute(3)
-    print(result.value)  # 35
+    print(result)  # 35
 ```
 
 ### Serialization Validation
@@ -202,19 +201,11 @@ def process(data: dict) -> dict:
 
 ## FunctionResult
 
-The decorator returns a `FunctionResult` containing:
-
-- `value`: The function's return value
-- `exec_result`: An `ExecResult` with stdout, stderr, and returncode
+The decorator returns the function's return value directly:
 
 ```python
 result = await my_function(args)
-
-print(result.value)  # Function return value
-print(result.exec_result.stdout)  # Captured stdout (decoded string)
-print(result.exec_result.stderr)  # Captured stderr (decoded string)
-print(result.exec_result.stdout_bytes)  # Raw bytes (if needed)
-print(result.exec_result.returncode)  # Exit code (0 = success)
+print(result)  # Function return value
 ```
 
 ## Error Handling

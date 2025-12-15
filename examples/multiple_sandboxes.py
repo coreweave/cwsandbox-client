@@ -48,8 +48,8 @@ async def main() -> None:
                 sb2.exec(["sh", "-c", "echo sandbox2 && sleep 0.1 && uname -s"]),
             )
 
-            sb1_text = r1.stdout.decode("utf-8", errors="replace").strip().replace("\n", " | ")
-            sb2_text = r2.stdout.decode("utf-8", errors="replace").strip().replace("\n", " | ")
+            sb1_text = r1.stdout.strip().replace("\n", " | ")
+            sb2_text = r2.stdout.strip().replace("\n", " | ")
 
             print(f"sb1: {sb1_text}")
             print(f"sb2: {sb2_text}")

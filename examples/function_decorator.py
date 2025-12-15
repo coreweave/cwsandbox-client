@@ -34,9 +34,7 @@ async def main() -> None:
             return x + y
 
         result = await add(2, 3)
-        print(f"add(2, 3) = {result.value}")
-        print(f"stdout: {result.exec_result.stdout.rstrip()}")
-        print(f"returncode: {result.exec_result.returncode}")
+        print(f"add(2, 3) = {result}")
         print()
 
         # Function returning a dict (JSON-serializable)
@@ -45,7 +43,7 @@ async def main() -> None:
             return {"name": name, "value": value, "computed": value * 2}
 
         result = await create_config("test", 42)
-        print(f"create_config result: {result.value}")
+        print(f"create_config result: {result}")
         print()
 
         # Function with closure variable AND global variable
@@ -57,8 +55,8 @@ async def main() -> None:
             return x * GLOBAL_MULTIPLIER + local_offset
 
         result = await compute_with_context(5)
-        print(f"compute_with_context(5) = {result.value}")
-        print(f"  (5 * {GLOBAL_MULTIPLIER} + {local_offset} = {result.value})")
+        print(f"compute_with_context(5) = {result}")
+        print(f"  (5 * {GLOBAL_MULTIPLIER} + {local_offset} = {result})")
         print()
 
         # Function with PICKLE serialization (for complex types)
@@ -72,7 +70,7 @@ async def main() -> None:
 
         complex_data = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
         result = await process_complex(complex_data)
-        print(f"process_complex result: {result.value}")
+        print(f"process_complex result: {result}")
 
 
 if __name__ == "__main__":

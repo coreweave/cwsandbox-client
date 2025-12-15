@@ -37,8 +37,8 @@ async def main():
                 sb2.exec(["echo", "from sandbox 2"]),
             )
 
-            print(f"sb1: {r1.stdout.decode().strip()}")
-            print(f"sb2: {r2.stdout.decode().strip()}")
+            print(f"sb1: {r1.stdout.strip()}")
+            print(f"sb2: {r2.stdout.strip()}")
 
 asyncio.run(main())
 ```
@@ -98,6 +98,5 @@ async with Sandbox.session(defaults) as session:
         compute(3),
     )
 
-    values = [r.value for r in results]
-    print(values)  # [1, 4, 9]
+    print(results)  # (1, 4, 9)
 ```

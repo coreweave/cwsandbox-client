@@ -40,7 +40,7 @@ async def main() -> None:
 
         # Execute a simple command
         result = await sandbox.exec(["echo", "Hello from Aviato sandbox"])
-        print(result.stdout.decode("utf-8", errors="replace").rstrip())
+        print(result.stdout.rstrip())
 
         # Write a file
         content = b"Hello, World!\n"
@@ -54,7 +54,7 @@ async def main() -> None:
 
         # Verify with cat
         result = await sandbox.exec(["cat", "/tmp/data.txt"])
-        print(f"cat /tmp/data.txt -> {result.stdout.decode('utf-8', errors='replace').rstrip()}")
+        print(f"cat /tmp/data.txt -> {result.stdout.rstrip()}")
 
 
 if __name__ == "__main__":

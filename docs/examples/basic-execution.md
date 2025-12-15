@@ -42,11 +42,11 @@ async def main():
     ) as sandbox:
         # Execute commands
         result = await sandbox.exec(["echo", "Hello from sandbox"])
-        print(result.stdout.decode())
+        print(result.stdout)
 
         # Check Python version
         result = await sandbox.exec(["python", "--version"])
-        print(result.stdout.decode())
+        print(result.stdout)
 
 asyncio.run(main())
 ```
@@ -76,7 +76,7 @@ async def main():
 
         # Verify with cat
         result = await sandbox.exec(["cat", "/tmp/data.txt"])
-        print(f"cat output: {result.stdout.decode()}")
+        print(f"cat output: {result.stdout}")
 
 asyncio.run(main())
 ```

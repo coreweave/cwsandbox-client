@@ -30,7 +30,7 @@ async def main():
         container_image="python:3.11",
     ) as sandbox:
         result = await sandbox.exec(["python", "-c", "print(2 + 2)"])
-        print(result.stdout.decode())  # 4
+        print(result.stdout)  # 4
 
 asyncio.run(main())
 ```
