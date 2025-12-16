@@ -13,11 +13,13 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pydantic import TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from aviato._defaults import DEFAULT_TEMP_DIR
 from aviato._types import Serialization
 from aviato.exceptions import (
     AsyncFunctionError,
+    FunctionSerializationError,
     SandboxExecutionError,
 )
 
@@ -301,7 +303,14 @@ def _create_function_payload(
         "args": args,
         "kwargs": kwargs,
     }
-    return pickle.dumps(payload)
+    try:
+        return pickle.dumps(payload)
+    except (pickle.PickleError, TypeError) as e:
+        raise FunctionSerializationError(
+            f"Cannot serialize function '{func_name}' using PICKLE mode: {e}\n\n"
+            f"Avoid lambdas, thread locks, file handles, and other non-picklable objects "
+            f"in arguments, referenced globals, or closures"
+        ) from e
 
 
 def _parse_sandbox_result(result_content: bytes) -> Any:
@@ -325,7 +334,14 @@ def _create_json_payload(
         "kwargs": kwargs,
     }
     adapter = TypeAdapter(dict[str, Any])
-    return adapter.dump_json(payload)
+    try:
+        return adapter.dump_json(payload)
+    except PydanticSerializationError as e:
+        raise FunctionSerializationError(
+            f"Cannot serialize function '{func_name}' using JSON mode: {e}\n\n"
+            f"Try serialization=Serialization.PICKLE or use only JSON-compatible types "
+            f"(str, int, float, dict, list, etc.) in arguments, referenced globals, and closures"
+        ) from e
 
 
 def _parse_json_result(result_content: bytes) -> Any:

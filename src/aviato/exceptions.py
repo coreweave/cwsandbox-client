@@ -66,3 +66,7 @@ class AsyncFunctionError(TypeError):
     Async functions are not supported because the sandbox executes Python
     synchronously. The decorated function must be a regular (sync) function.
     """
+
+
+class FunctionSerializationError(SandboxError):
+    """Raised when arguments, referenced globals, or closures cannot be serialized."""
