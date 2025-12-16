@@ -228,5 +228,5 @@ except SandboxExecutionError as e:
     print(f"Exception type: {e.exception_type}")  # "ValueError"
     print(f"Exception message: {e.exception_message}")  # "x must be non-negative"
     print(f"Return code: {e.exec_result.returncode}")  # 1
-    print(f"Stderr: {e.exec_result.stderr_text}")  # Full traceback (decoded)
+    print(f"Stderr: {e.exec_result.stderr}")  # Full traceback (decoded)
 ```
