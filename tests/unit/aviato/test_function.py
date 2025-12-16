@@ -167,6 +167,36 @@ class TestIsSessionFunctionDecorator:
         decorator = func_def.decorator_list[0]
         assert _is_session_function_decorator(decorator)
 
+    def test_recognizes_alternative_session_names(self) -> None:
+        """Test recognition of @*.function() with different session variable names."""
+        for session_name in ["session", "my_session", "sess", "s"]:
+            source = f"@{session_name}.function()\ndef f(): pass"
+            tree = ast.parse(source)
+            func_def = tree.body[0]
+            assert isinstance(func_def, ast.FunctionDef)
+            decorator = func_def.decorator_list[0]
+            assert _is_session_function_decorator(
+                decorator
+            ), f"Should match @{session_name}.function()"
+
+    def test_rejects_bare_function_decorator(self) -> None:
+        """Test that @function() alone is NOT matched (critical for avoiding false positives)."""
+        source = "@function()\ndef f(): pass"
+        tree = ast.parse(source)
+        func_def = tree.body[0]
+        assert isinstance(func_def, ast.FunctionDef)
+        decorator = func_def.decorator_list[0]
+        assert not _is_session_function_decorator(decorator), "@function() should not match"
+
+    def test_rejects_bare_function_no_parens(self) -> None:
+        """Test that @function alone is NOT matched."""
+        source = "@function\ndef f(): pass"
+        tree = ast.parse(source)
+        func_def = tree.body[0]
+        assert isinstance(func_def, ast.FunctionDef)
+        decorator = func_def.decorator_list[0]
+        assert not _is_session_function_decorator(decorator), "@function should not match"
+
     def test_rejects_other_decorators(self) -> None:
         """Test that other decorators are not recognized."""
         source = "@other_decorator\ndef f(): pass"
@@ -175,6 +205,18 @@ class TestIsSessionFunctionDecorator:
         assert isinstance(func_def, ast.FunctionDef)
         decorator = func_def.decorator_list[0]
         assert not _is_session_function_decorator(decorator)
+
+    def test_rejects_other_attribute_methods(self) -> None:
+        """Test that @obj.other_method() is not matched."""
+        for method_name in ["execute", "run", "process", "handle"]:
+            source = f"@session.{method_name}()\ndef f(): pass"
+            tree = ast.parse(source)
+            func_def = tree.body[0]
+            assert isinstance(func_def, ast.FunctionDef)
+            decorator = func_def.decorator_list[0]
+            assert not _is_session_function_decorator(
+                decorator
+            ), f"Should not match @session.{method_name}()"
 
 
 class TestExtractClosureVariables:

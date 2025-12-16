@@ -176,13 +176,15 @@ def _get_function_source_for_sandbox(func: Callable[..., Any]) -> str:
 
 
 def _is_session_function_decorator(node: ast.expr) -> bool:
-    """Check if an AST node represents @session.function() or similar."""
+    """Check if an AST node represents @<obj>.function() pattern.
+
+    Note: At AST level we can't verify the object is a Session instance,
+    so this matches any @<identifier>.function() pattern.
+    """
     if isinstance(node, ast.Call):
         return _is_session_function_decorator(node.func)
     if isinstance(node, ast.Attribute):
         return node.attr == "function"
-    if isinstance(node, ast.Name):
-        return node.id == "function"
     return False
 
 
@@ -408,6 +410,7 @@ class _SerializationMode:
         self.template = template
 
 
+# TODO: Investigate cloudpickle as an alternative to source extraction.
 _SERIALIZATION_MODES: dict[str, _SerializationMode] = {
     Serialization.PICKLE.value: _SerializationMode(
         create_payload=_create_function_payload,
