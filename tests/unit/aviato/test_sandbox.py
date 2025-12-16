@@ -106,6 +106,16 @@ class TestSandboxCreate:
             assert sandbox._command == "echo"
             assert sandbox._args == ["hello", "world"]
 
+    @pytest.mark.asyncio
+    async def test_create_passes_container_image(self) -> None:
+        """Test Sandbox.create passes container_image to constructor."""
+        with patch.object(Sandbox, "start", return_value="test-id"):
+            sandbox = await Sandbox.create(
+                "python", "-c", "print('test')", container_image="python:3.12-alpine"
+            )
+
+            assert sandbox._container_image == "python:3.12-alpine"
+
 
 class TestSandboxProperties:
     """Tests for Sandbox properties."""

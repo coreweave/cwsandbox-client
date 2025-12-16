@@ -13,7 +13,6 @@ import httpx
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2
 
 from aviato._defaults import (
-    DEFAULT_CONTAINER_IMAGE,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
@@ -183,7 +182,7 @@ class Sandbox:
         sandbox = cls(
             command=command,
             args=cmd_args,
-            container_image=container_image or DEFAULT_CONTAINER_IMAGE,
+            container_image=container_image,
             defaults=defaults,
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
