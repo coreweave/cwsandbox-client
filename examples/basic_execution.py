@@ -44,8 +44,8 @@ async def main() -> None:
 
         # Write a file
         content = b"Hello, World!\n"
-        ok = await sandbox.write_file("/tmp/data.txt", content)
-        print(f"write_file ok={ok}")
+        await sandbox.write_file("/tmp/data.txt", content)
+        print("write_file: '/tmp/data.txt'")
 
         # Read the file back
         read_back = await sandbox.read_file("/tmp/data.txt")
