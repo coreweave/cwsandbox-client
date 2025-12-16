@@ -109,7 +109,7 @@ class Session:
         if errors:
             raise SandboxError(
                 f"Failed to stop {len(errors)} sandbox(es). " "Some sandboxes may still be running."
-            )
+            ) from ExceptionGroup("Sandbox stop failures", errors)
 
     def _register_sandbox(self, sandbox: Sandbox) -> None:
         """Register a sandbox for tracking."""
