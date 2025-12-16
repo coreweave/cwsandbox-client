@@ -259,7 +259,30 @@ class TestSandboxCleanup:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
-        sandbox._returncode = 0
+        sandbox._stopped = True
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            del sandbox
+
+            resource_warnings = [x for x in w if issubclass(x.category, ResourceWarning)]
+            assert len(resource_warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_del_no_warning_after_calling_stop(self) -> None:
+        """Test __del__ does not warn after calling stop() method."""
+        import warnings
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-sandbox-id"
+        sandbox._client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.success = True
+        sandbox._client.stop = AsyncMock(return_value=mock_response)
+        sandbox._client.close = AsyncMock()
+
+        await sandbox.stop()
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")

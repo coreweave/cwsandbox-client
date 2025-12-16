@@ -123,6 +123,10 @@ class Sandbox:
         self._returncode: int | None = None
         self._tower_id: str | None = None
         self._runway_id: str | None = None
+        # TODO: Remove _stopped once backend adds proper accounting for stopped/terminated
+        # sandboxes. Currently backend stops tracking sandbox IDs after stop(), so we need
+        # this client-side flag as a workaround. Once backend properly tracks stopped
+        # sandboxes, we can remove this and query backend status directly.
         self._stopped = False
 
     @classmethod
@@ -310,7 +314,7 @@ class Sandbox:
 
     def __del__(self) -> None:
         """Warn if sandbox was not properly stopped."""
-        if self._sandbox_id is not None and self._returncode is None:
+        if self._sandbox_id is not None and not self._stopped:
             warnings.warn(
                 f"Sandbox {self._sandbox_id} was not stopped. "
                 "Use 'await sandbox.stop()' or the context manager pattern.",
