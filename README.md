@@ -47,5 +47,15 @@ See the [examples/](examples/) directory for runnable scripts, or read the guide
 
 ### Environment Variables
 
-- `AVIATO_API_KEY` - API key for authentication
+The SDK supports two authentication strategies. Aviato credentials take priority if both are configured.
+
+#### Aviato Authentication
+
+- `AVIATO_API_KEY` - API key for Aviato authentication
 - `AVIATO_BASE_URL` - Aviato API URL (default: `https://atc.cwaviato.com`)
+
+#### Weights & Biases Authentication
+
+- `WANDB_API_KEY` - W&B API key (or use `~/.netrc` with `api.wandb.ai`)
+- `WANDB_ENTITY_NAME` - W&B entity/team name (required for W&B auth)
+- `WANDB_PROJECT_NAME` - W&B project name (default: `uncategorized`)

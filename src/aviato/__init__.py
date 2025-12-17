@@ -1,5 +1,6 @@
 """A Python client library for Aviato sandboxes."""
 
+from aviato._auth import WandbAuthError
 from aviato._defaults import SandboxDefaults
 from aviato._sandbox import Sandbox
 from aviato._session import Session
@@ -31,4 +32,5 @@ __all__ = [
     "SandboxTimeoutError",
     "Serialization",
     "Session",
+    "WandbAuthError",
 ]
