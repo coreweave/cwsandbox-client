@@ -169,6 +169,7 @@ class Sandbox:
         ports: list[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        env_vars: dict[str, str] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -191,6 +192,8 @@ class Sandbox:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
+            env_vars: Environment variables to inject into sandbox. Merges with and
+                overrides defaults. Use for non-sensitive config only.
         """
 
         self._defaults = defaults or SandboxDefaults()
@@ -216,7 +219,12 @@ class Sandbox:
             else self._defaults.max_lifetime_seconds
         )
 
+<<<<<<< HEAD
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
+=======
+        self._tags = self._defaults.merge_tags(tags)
+        self._env_vars = self._defaults.merge_env_vars(env_vars)
+>>>>>>> cadfbb2 (feat: add environment variable support)
 
         self._runway_ids = runway_ids or (
             list(self._defaults.runway_ids) if self._defaults.runway_ids else None

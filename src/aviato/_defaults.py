@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -51,6 +53,7 @@ class SandboxDefaults:
             request_timeout_seconds=60,
             max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
             tags=("my-workload", "experiment-42"),
+            env_vars={"LOG_LEVEL": "info", "REGION": "us-west"},
         )
         ```
     """
@@ -66,6 +69,7 @@ class SandboxDefaults:
     runway_ids: tuple[str, ...] | None = None
     tower_ids: tuple[str, ...] | None = None
     resources: dict[str, Any] | None = None
+    env_vars: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:
         """Combine default tags with additional tags.
@@ -78,6 +82,16 @@ class SandboxDefaults:
             base.extend(additional)
         return base
 
-    def with_overrides(self, **kwargs: Any) -> "SandboxDefaults":
+    def merge_env_vars(self, additional: dict[str, str] | None) -> dict[str, str]:
+        """Combine default env vars with additional ones.
+
+        Additional env vars override defaults with the same key.
+        """
+        merged = dict(self.env_vars)
+        if additional:
+            merged.update(additional)
+        return merged
+
+    def with_overrides(self, **kwargs: Any) -> SandboxDefaults:
         """Create new defaults with some values overridden."""
         return replace(self, **kwargs)

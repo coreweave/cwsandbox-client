@@ -33,6 +33,7 @@ dependencies = [
     { name = "coreweave-aviato-connectrpc-python" },
     { name = "h2" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
 ]
 
 [package.optional-dependencies]
@@ -69,6 +70,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "pytest-dotenv", marker = "extra == 'dev'", specifier = ">=0.5.2" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
 ]
 provides-extras = ["dev", "docs"]
