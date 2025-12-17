@@ -96,7 +96,7 @@ class Session:
         )
 
         errors: list[Exception] = []
-        for sandbox, result in zip(sandboxes, results, strict=False):
+        for sandbox, result in zip(sandboxes, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning(
                     "Failed to stop sandbox %s: %s",
