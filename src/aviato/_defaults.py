@@ -15,6 +15,9 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 300.0
 # If not set, the backend controls the default lifetime of the sandboxes
 DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
 
+# Buffer to add to client-side timeout in addition to the supplied exec command's timeout
+DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS: float = 5.0
+
 # Default temp directory used within Sandboxes
 DEFAULT_TEMP_DIR: str = "/tmp"
 

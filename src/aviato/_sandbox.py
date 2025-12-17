@@ -10,9 +10,12 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2
 
 from aviato._defaults import (
+    DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
@@ -648,7 +651,8 @@ class Sandbox:
         Raises:
             SandboxNotRunningError: If sandbox is not running
             SandboxExecutionError: If check=True and command returns non-zero
-            asyncio.TimeoutError: If command exceeds timeout_seconds
+            SandboxTimeoutError: If command exceeds timeout_seconds
+            ConnectError: If an unexpected error occurs
         """
         timeout = timeout_seconds or self._request_timeout_seconds
 
@@ -671,10 +675,19 @@ class Sandbox:
             max_timeout_seconds=int(timeout),
         )
 
-        response = await asyncio.wait_for(
-            self._client.exec(request),
-            timeout=timeout,
-        )
+        try:
+            response = await asyncio.wait_for(
+                self._client.exec(request),
+                timeout=timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+            )
+        except ConnectError as e:
+            # Many different errors throw `ConnectError` (auth, server, etc.), only catch a timeout
+            if e.code == Code.DEADLINE_EXCEEDED:
+                raise SandboxTimeoutError(
+                    f"Command {shlex.join(command)} timed out after {timeout}s"
+                ) from e
+            raise
+
         logger.debug("Command completed with exit code %d", response.result.exit_code)
 
         stdout_raw = response.result.stdout
