@@ -151,7 +151,7 @@ def _read_api_key_from_netrc() -> str | None:
     return password
 
 
-# Auth modes in priority order - first successful one wins
+# Auth modes in priority order - first successful returns
 _AUTH_MODES = [
     _AuthMode(try_auth=_try_aviato_auth),
     _AuthMode(try_auth=_try_wandb_auth),
