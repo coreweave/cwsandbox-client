@@ -1,0 +1,36 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Unit test / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# Environments
+.env
+.envrc
+.venv
+
+# Type checkers
+.mypy_cache/
+
+# Linting
+.ruff_cache/
+
+# mkdocs
+/site
+
+# IDE
+.idea/
+.vscode/
