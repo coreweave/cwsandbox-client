@@ -2,6 +2,8 @@
 
 This example demonstrates how to use environment variables in sandboxes.
 
+> **Security Note:** Environment variables should **not** be used for sensitive information like API keys, passwords, or other secrets.
+
 ## Basic Usage
 
 ```python
@@ -54,11 +56,14 @@ async with Sandbox.session(defaults) as session:
     result = await process(42)
 ```
 
-## Loading envrionment variables from .env file
+## Loading environment variables from .env file
+
+You can use the `python-dotenv` package to load environment variables from a `.env` file:
 
 ```python
-from aviato import load_dotenv
+from dotenv import dotenv_values
+from aviato import SandboxDefaults
 
-env_vars = load_dotenv(".env")
+env_vars = dict(dotenv_values(".env"))
 defaults = SandboxDefaults(env_vars=env_vars)
 ```

@@ -443,8 +443,8 @@ class Session:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
-            env_vars: Environment variables to inject into the sandbox.
-                These will override the session defaults.
+            env_vars: Environment variables to inject into the sandbox. Merges with and
+                overrides matching keys from the session defaults. Use for non-sensitive config only.
 
         Returns:
             A decorator that wraps a function as a RemoteFunction

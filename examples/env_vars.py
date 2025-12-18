@@ -3,14 +3,15 @@
 This example demonstrates:
 - Session-level env vars (shared across sandboxes)
 - Sandbox-level env vars (task-specific overrides)
-- Loading env vars from a .env file
 - Using env vars with @session.function() decorator
+- Loading env vars from a .env file
 """
 
 import asyncio
 import os
+import tempfile
 
-from aviato import Sandbox, SandboxDefaults, load_dotenv
+from aviato import Sandbox, SandboxDefaults
 
 
 async def main() -> None:
@@ -88,24 +89,25 @@ async def main() -> None:
         result = await process_request(42)
         print(f"Function result: {result}")
 
-    # Load env vars from .env file
-    print("\nLoading from .env file:")
-    # Create example .env file
-    with open(".env.example", "w") as f:
-        f.write("DB_HOST=localhost\nDB_PORT=5432\n")
-
-    env_vars = load_dotenv(".env.example")
-    print(f"Loaded: {env_vars}")
-
-    # Use with SandboxDefaults
-    defaults_from_file = SandboxDefaults(
-        env_vars=env_vars,
-        container_image="python:3.11",
-    )
-    print(f"Defaults env_vars: {defaults_from_file.env_vars}")
-
-    # Clean up
-    os.remove(".env.example")
+    
+    """
+    Here we demonstrate how to load environment variable defaults from a .env file and pass them to SandboxDefaults.
+    
+    Note: This requires installing python-dotenv separately:
+        pip install python-dotenv
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env") as env_file:
+        env_file.write("DB_HOST=localhost\nDB_PORT=5432\n")
+        env_file.flush()
+        
+        from dotenv import dotenv_values  # type: ignore[import-not-found]
+        
+        env_vars = dict(dotenv_values(env_file.name))
+        defaults_from_file = SandboxDefaults(
+            env_vars=env_vars,
+            container_image="python:3.11",
+        )
+        print(f"Defaults env_vars: {defaults_from_file.env_vars}") # Prints: {'DB_HOST': 'localhost', 'DB_PORT': '5432'}
 
 
 if __name__ == "__main__":
