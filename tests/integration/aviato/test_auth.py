@@ -14,7 +14,8 @@ from unittest.mock import patch
 import pytest
 
 from aviato import Sandbox
-from aviato._auth import WANDB_NETRC_HOST, _read_api_key_from_netrc
+from aviato._auth import _read_api_key_from_netrc
+from aviato._defaults import WANDB_NETRC_HOST
 
 
 @pytest.fixture

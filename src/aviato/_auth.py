@@ -16,17 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
 from aviato.exceptions import WandbAuthError
 
 logger = logging.getLogger(__name__)
-
-# W&B netrc machine name.
-# SaaS only. We don't expect this to change until we
-# support other W&B deployment types
-WANDB_NETRC_HOST = "api.wandb.ai"
-
-# Default project name when not specified
-DEFAULT_PROJECT_NAME = "uncategorized"
 
 
 @dataclass(frozen=True)

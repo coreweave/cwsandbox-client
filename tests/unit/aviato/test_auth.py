@@ -6,8 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from aviato._auth import (
-    DEFAULT_PROJECT_NAME,
-    WANDB_NETRC_HOST,
     AuthHeaders,
     WandbAuthError,
     _read_api_key_from_netrc,
@@ -15,6 +13,7 @@ from aviato._auth import (
     _try_wandb_auth,
     resolve_auth,
 )
+from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
 
 
 class TestAuthHeaders:
