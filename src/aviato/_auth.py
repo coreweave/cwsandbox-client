@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from aviato.exceptions import WandbAuthError
+
 logger = logging.getLogger(__name__)
 
 # W&B netrc machine name.
@@ -79,10 +81,6 @@ def _try_aviato_auth() -> dict[str, str] | None:
         return None
 
     return {"Authorization": f"Bearer {api_key}"}
-
-
-class WandbAuthError(Exception):
-    """Raised when W&B authentication is misconfigured."""
 
 
 def _try_wandb_auth() -> dict[str, str] | None:

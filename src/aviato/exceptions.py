@@ -70,3 +70,7 @@ class AsyncFunctionError(TypeError):
 
 class FunctionSerializationError(SandboxError):
     """Raised when arguments, referenced globals, or closures cannot be serialized."""
+
+
+class WandbAuthError(Exception):
+    """Raised when W&B authentication is misconfigured."""
