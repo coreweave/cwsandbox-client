@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import netrc
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -34,8 +35,18 @@ class AuthHeaders:
         return bool(self.headers)
 
 
+class _AuthMode:
+    """Configuration for an authentication mode."""
+
+    def __init__(self, try_auth: Callable[[], AuthHeaders | None]) -> None:
+        self.try_auth = try_auth
+
+
 def resolve_auth() -> AuthHeaders:
     """Resolve authentication headers from available credentials.
+
+    Tries each auth mode in priority order (defined in _AUTH_MODES) and
+    returns the first one that succeeds.
 
     Resolution order:
     1. AVIATO_API_KEY env var (Aviato auth)
@@ -46,19 +57,12 @@ def resolve_auth() -> AuthHeaders:
     Returns:
         AuthHeaders with resolved headers and strategy name
     """
-    # 1. Try Aviato auth first (takes priority)
-    aviato_auth = _try_aviato_auth()
-    if aviato_auth is not None:
-        logger.debug("Using Aviato authentication")
-        return aviato_auth
+    for mode in _AUTH_MODES:
+        auth = mode.try_auth()
+        if auth is not None:
+            logger.debug("Using %s authentication", auth.strategy)
+            return auth
 
-    # 2. Try W&B auth (env vars, then netrc)
-    wandb_auth = _try_wandb_auth()
-    if wandb_auth is not None:
-        logger.debug("Using W&B authentication")
-        return wandb_auth
-
-    # 3. No auth available
     logger.debug("No authentication credentials found")
     return AuthHeaders(headers={}, strategy="none")
 
@@ -145,3 +149,10 @@ def _read_api_key_from_netrc() -> str | None:
     # auth is (login, account, password)
     _login, _account, password = auth
     return password
+
+
+# Auth modes in priority order - first successful one wins
+_AUTH_MODES = [
+    _AuthMode(try_auth=_try_aviato_auth),
+    _AuthMode(try_auth=_try_wandb_auth),
+]
