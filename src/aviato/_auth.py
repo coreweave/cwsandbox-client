@@ -47,43 +47,46 @@ def resolve_auth() -> AuthHeaders:
         AuthHeaders with resolved headers and strategy name
     """
     # 1. Try Aviato auth first (takes priority)
-    aviato_headers = _try_aviato_auth()
-    if aviato_headers is not None:
+    aviato_auth = _try_aviato_auth()
+    if aviato_auth is not None:
         logger.debug("Using Aviato authentication")
-        return AuthHeaders(headers=aviato_headers, strategy="aviato")
+        return aviato_auth
 
     # 2. Try W&B auth (env vars, then netrc)
-    wandb_headers = _try_wandb_auth()
-    if wandb_headers is not None:
+    wandb_auth = _try_wandb_auth()
+    if wandb_auth is not None:
         logger.debug("Using W&B authentication")
-        return AuthHeaders(headers=wandb_headers, strategy="wandb")
+        return wandb_auth
 
     # 3. No auth available
     logger.debug("No authentication credentials found")
     return AuthHeaders(headers={}, strategy="none")
 
 
-def _try_aviato_auth() -> dict[str, str] | None:
+def _try_aviato_auth() -> AuthHeaders | None:
     """Try to resolve Aviato authentication from env var.
 
     Returns:
-        Headers dict if AVIATO_API_KEY is set, None otherwise
+        AuthHeaders if AVIATO_API_KEY is set, None otherwise
     """
     api_key = os.environ.get("AVIATO_API_KEY")
     if not api_key:
         return None
 
-    return {"Authorization": f"Bearer {api_key}"}
+    return AuthHeaders(
+        headers={"Authorization": f"Bearer {api_key}"},
+        strategy="aviato",
+    )
 
 
-def _try_wandb_auth() -> dict[str, str] | None:
+def _try_wandb_auth() -> AuthHeaders | None:
     """Try to resolve W&B authentication from env vars or netrc.
 
     API key can come from WANDB_API_KEY env var or ~/.netrc.
     Entity must be set via WANDB_ENTITY_NAME env var.
 
     Returns:
-        Headers dict if valid W&B credentials found, None otherwise
+        AuthHeaders if valid W&B credentials found, None otherwise
 
     Raises:
         WandbAuthError: If API key is found but entity is missing
@@ -105,11 +108,14 @@ def _try_wandb_auth() -> dict[str, str] | None:
 
     project = os.environ.get("WANDB_PROJECT_NAME", DEFAULT_PROJECT_NAME)
 
-    return {
-        "x-api-key": api_key,
-        "x-entity-id": entity,
-        "x-project-name": project,
-    }
+    return AuthHeaders(
+        headers={
+            "x-api-key": api_key,
+            "x-entity-id": entity,
+            "x-project-name": project,
+        },
+        strategy="wandb",
+    )
 
 
 def _read_api_key_from_netrc() -> str | None:

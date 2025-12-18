@@ -106,13 +106,15 @@ class TestResolveAuth:
 class TestTryAviatoAuth:
     """Tests for _try_aviato_auth function."""
 
-    def test_returns_headers_when_key_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test returns Authorization header when AVIATO_API_KEY is set."""
+    def test_returns_auth_headers_when_key_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test returns AuthHeaders when AVIATO_API_KEY is set."""
         monkeypatch.setenv("AVIATO_API_KEY", "test-key")
 
         result = _try_aviato_auth()
 
-        assert result == {"Authorization": "Bearer test-key"}
+        assert result is not None
+        assert result.strategy == "aviato"
+        assert result.headers == {"Authorization": "Bearer test-key"}
 
     def test_returns_none_when_key_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test returns None when AVIATO_API_KEY is not set."""
@@ -126,8 +128,8 @@ class TestTryAviatoAuth:
 class TestTryWandbAuth:
     """Tests for _try_wandb_auth function."""
 
-    def test_returns_headers_with_all_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test returns headers when all W&B env vars are set."""
+    def test_returns_auth_headers_with_all_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test returns AuthHeaders when all W&B env vars are set."""
         monkeypatch.delenv("AVIATO_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
         monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
@@ -135,7 +137,9 @@ class TestTryWandbAuth:
 
         result = _try_wandb_auth()
 
-        assert result == {
+        assert result is not None
+        assert result.strategy == "wandb"
+        assert result.headers == {
             "x-api-key": "wandb-key",
             "x-entity-id": "my-entity",
             "x-project-name": "my-project",
@@ -186,7 +190,7 @@ class TestTryWandbAuth:
         result = _try_wandb_auth()
 
         assert result is not None
-        assert result["x-project-name"] == "uncategorized"
+        assert result.headers["x-project-name"] == "uncategorized"
 
     def test_falls_back_to_netrc(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Test falls back to netrc when WANDB_API_KEY is not set."""
@@ -201,7 +205,7 @@ class TestTryWandbAuth:
             result = _try_wandb_auth()
 
         assert result is not None
-        assert result["x-api-key"] == "netrc-key"
+        assert result.headers["x-api-key"] == "netrc-key"
 
     def test_returns_none_when_no_api_key_anywhere(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
