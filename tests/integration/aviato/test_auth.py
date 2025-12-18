@@ -2,7 +2,7 @@
 
 These tests require:
 1. A running Aviato backend that accepts W&B auth
-2. Valid W&B credentials via WANDB_API_KEY and WANDB_ENTITY_NAME env vars
+2. Valid W&B credentials (see individual test docstrings for requirements)
 
 Set AVIATO_BASE_URL if not using the default endpoint.
 """
@@ -14,18 +14,25 @@ from unittest.mock import patch
 import pytest
 
 from aviato import Sandbox
-from aviato._auth import WANDB_NETRC_HOST
-
-# Skip all tests in this module if W&B credentials are not configured
-pytestmark = pytest.mark.skipif(
-    not (os.environ.get("WANDB_API_KEY") and os.environ.get("WANDB_ENTITY_NAME")),
-    reason="WANDB_API_KEY and WANDB_ENTITY_NAME required for W&B auth integration tests",
-)
+from aviato._auth import WANDB_NETRC_HOST, _read_api_key_from_netrc
 
 
 @pytest.fixture
 def wandb_env_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set up W&B auth via environment variables."""
+    """Set up W&B auth via environment variables.
+
+    Requires WANDB_API_KEY and WANDB_ENTITY_NAME env vars to be set.
+    Skips if credentials are not available.
+    """
+    api_key = os.environ.get("WANDB_API_KEY")
+    entity = os.environ.get("WANDB_ENTITY_NAME")
+
+    if not api_key:
+        pytest.skip("WANDB_API_KEY env var required for env var auth test")
+    if not entity:
+        pytest.skip("WANDB_ENTITY_NAME env var required for env var auth test")
+
+    # Ensure we're not using Aviato auth
     monkeypatch.delenv("AVIATO_API_KEY", raising=False)
 
 
@@ -33,14 +40,23 @@ def wandb_env_auth(monkeypatch: pytest.MonkeyPatch) -> None:
 def wandb_netrc_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Set up W&B auth via netrc file.
 
-    Uses the real WANDB_API_KEY value to create a temporary netrc file,
-    then removes the env var so the SDK falls back to netrc.
-    """
-    api_key = os.environ.get("WANDB_API_KEY")
-    if not api_key:
-        pytest.skip("WANDB_API_KEY required for netrc tests")
+    Uses WANDB_API_KEY env var OR existing ~/.netrc credentials to create
+    a temporary netrc file, then unsets the env var so the SDK falls back
+    to reading from netrc.
 
-    # Create temp netrc file with the real credentials
+    Requires WANDB_ENTITY_NAME env var to be set.
+    Skips if no API key source is available.
+    """
+    # Get API key from env var or existing netrc
+    api_key = os.environ.get("WANDB_API_KEY") or _read_api_key_from_netrc()
+    entity = os.environ.get("WANDB_ENTITY_NAME")
+
+    if not api_key:
+        pytest.skip("WANDB_API_KEY env var or ~/.netrc credentials required for netrc auth test")
+    if not entity:
+        pytest.skip("WANDB_ENTITY_NAME env var required for netrc auth test")
+
+    # Create temp netrc file with the credentials
     netrc_path = tmp_path / ".netrc"
     netrc_path.write_text(f"machine {WANDB_NETRC_HOST}\n  login user\n  password {api_key}\n")
 
@@ -55,7 +71,10 @@ def wandb_netrc_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
-    """Test W&B authentication via environment variables."""
+    """Test W&B authentication via environment variables.
+
+    Requires: WANDB_API_KEY and WANDB_ENTITY_NAME env vars.
+    """
     async with Sandbox(
         command="sleep",
         args=["infinity"],
@@ -70,7 +89,11 @@ async def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
 
 @pytest.mark.asyncio
 async def test_wandb_auth_via_netrc(wandb_netrc_auth: None) -> None:
-    """Test W&B authentication via netrc file."""
+    """Test W&B authentication via netrc file.
+
+    Requires: WANDB_ENTITY_NAME env var, plus either WANDB_API_KEY env var
+    or existing ~/.netrc credentials for api.wandb.ai.
+    """
     async with Sandbox(
         command="sleep",
         args=["infinity"],
