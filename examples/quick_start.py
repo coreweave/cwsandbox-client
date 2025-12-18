@@ -7,17 +7,11 @@ This example demonstrates:
 """
 
 import asyncio
-import os
 
 from aviato import Sandbox
 
 
 async def main() -> None:
-    if not os.environ.get("AVIATO_API_KEY"):
-        raise RuntimeError(
-            "Missing AVIATO_API_KEY. Set it in your environment before running this example."
-        )
-
     # Create a sandbox that runs a job to completion
     # The command does some work and then exits
     sandbox = await Sandbox.create(

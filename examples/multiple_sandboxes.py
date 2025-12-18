@@ -7,17 +7,11 @@ This example demonstrates:
 """
 
 import asyncio
-import os
 
 from aviato import Sandbox, SandboxDefaults
 
 
 async def main() -> None:
-    if not os.environ.get("AVIATO_API_KEY"):
-        raise RuntimeError(
-            "Missing AVIATO_API_KEY. Set it in your environment before running this example."
-        )
-
     # Define session defaults
     defaults = SandboxDefaults(
         container_image="ubuntu:22.04",
