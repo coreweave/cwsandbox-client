@@ -14,6 +14,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2
 
+from aviato._auth import resolve_auth
 from aviato._defaults import (
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
@@ -330,12 +331,12 @@ class Sandbox:
         if self._client is not None:
             return
 
-        token = os.environ.get("AVIATO_API_KEY", "")
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        auth = resolve_auth()
+        logger.debug("Using %s auth strategy", auth.strategy)
 
         session = httpx.AsyncClient(
             timeout=httpx.Timeout(self._request_timeout_seconds),
-            headers=headers,
+            headers=auth.headers,
         )
         self._client = atc_connect.ATCServiceClient(
             address=self._base_url,

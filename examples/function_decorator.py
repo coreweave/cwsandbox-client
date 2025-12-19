@@ -8,7 +8,6 @@ This example demonstrates:
 """
 
 import asyncio
-import os
 
 from aviato import Sandbox, SandboxDefaults, Serialization
 
@@ -17,11 +16,6 @@ GLOBAL_MULTIPLIER = 100
 
 
 async def main() -> None:
-    if not os.environ.get("AVIATO_API_KEY"):
-        raise RuntimeError(
-            "Missing AVIATO_API_KEY. Set it in your environment before running this example."
-        )
-
     defaults = SandboxDefaults(
         container_image="python:3.11",
         tags=("example", "function-decorator"),
