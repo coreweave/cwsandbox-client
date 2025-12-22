@@ -37,6 +37,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Valid kwargs that can be passed to StartSandboxRequest
+# These are in addition to the explicitly handled parameters
+_VALID_START_KWARGS = frozenset(
+    (
+        "resources",
+        "mounted_files",
+        "s3_mount",
+        "ports",
+        "service",
+        "max_timeout_seconds",
+    )
+)
+
 
 class Sandbox:
     """Aviato sandbox client.
@@ -62,7 +75,7 @@ class Sandbox:
     def __init__(
         self,
         *,
-        command: str,
+        command: str | None = None,
         args: list[str] | None = None,
         defaults: SandboxDefaults | None = None,
         container_image: str | None = None,
@@ -78,7 +91,7 @@ class Sandbox:
         """Initialize a sandbox (does not start it).
 
         Args:
-            command: The command to run in the sandbox
+            command: Optional command to run in the sandbox
             args: Optional arguments for the command
             defaults: Optional SandboxDefaults to apply
             container_image: Container image to use (default: python:3.11)
@@ -91,11 +104,19 @@ class Sandbox:
             tower_ids: Optional list of tower IDs
             **kwargs: Additional configuration options
         """
+        # Validate kwargs early before setting any attributes
+        invalid_kwargs = set(kwargs.keys()) - _VALID_START_KWARGS
+        if invalid_kwargs:
+            raise ValueError(
+                f"Invalid sandbox parameters: {', '.join(sorted(invalid_kwargs))}. "
+                f"Valid parameters are: {', '.join(sorted(_VALID_START_KWARGS))}"
+            )
+
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
 
-        self._command = command
-        self._args = args
+        self._command = command or self._defaults.command
+        self._args = args if args is not None else list(self._defaults.args)
 
         # Apply defaults with explicit values taking precedence
         self._container_image = container_image or self._defaults.container_image
@@ -317,7 +338,7 @@ class Sandbox:
 
     def __del__(self) -> None:
         """Warn if sandbox was not properly stopped."""
-        if self._sandbox_id is not None and not self._stopped:
+        if hasattr(self, "_sandbox_id") and self._sandbox_id is not None and not self._stopped:
             warnings.warn(
                 f"Sandbox {self._sandbox_id} was not stopped. "
                 "Use 'await sandbox.stop()' or the context manager pattern.",
@@ -381,6 +402,11 @@ class Sandbox:
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
 
         while True:
+            if self._stopped or self._client is None:
+                raise SandboxNotRunningError(
+                    f"Sandbox {self._sandbox_id} was stopped while polling"
+                )
+
             elapsed = time.monotonic() - start_time
             if elapsed > timeout_seconds:
                 raise SandboxTimeoutError(timeout_message)

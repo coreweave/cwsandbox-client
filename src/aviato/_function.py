@@ -74,6 +74,16 @@ def create_function_wrapper(
             "using asyncio.run()."
         )
 
+    from aviato._sandbox import _VALID_START_KWARGS
+
+    invalid_kwargs = set(sandbox_kwargs.keys()) - _VALID_START_KWARGS
+    if invalid_kwargs:
+        raise ValueError(
+            f"Invalid sandbox parameters for function '{func.__name__}': "
+            f"{', '.join(sorted(invalid_kwargs))}. "
+            f"Valid parameters are: {', '.join(sorted(_VALID_START_KWARGS))}"
+        )
+
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> R:
         logger.debug("Executing function %s in sandbox", func.__name__)
