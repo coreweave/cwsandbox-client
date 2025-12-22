@@ -42,6 +42,7 @@ class TestSandboxExec:
         """Test exec with empty command raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
 
         with pytest.raises(ValueError, match="Command cannot be empty"):
             await sandbox.exec([])

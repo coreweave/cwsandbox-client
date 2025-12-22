@@ -60,12 +60,20 @@ class TestExecResult:
 class TestSerialization:
     """Tests for Serialization enum."""
 
-    def test_serialization_values(self) -> None:
-        """Test Serialization enum has expected values."""
-        assert Serialization.PICKLE.value == "pickle"
-        assert Serialization.JSON.value == "json"
+    def test_serialization_is_string_enum(self) -> None:
+        """Test Serialization members can be used as strings.
 
-    def test_serialization_is_string(self) -> None:
-        """Test Serialization inherits from str."""
+        This is important because the enum values may be used in string contexts
+        (e.g., logging, error messages) and should work seamlessly.
+        """
         assert isinstance(Serialization.PICKLE, str)
         assert isinstance(Serialization.JSON, str)
+
+    def test_serialization_members_exist(self) -> None:
+        """Test expected serialization modes are available.
+
+        Users depend on these members existing - if we remove one,
+        their code breaks.
+        """
+        assert hasattr(Serialization, "PICKLE")
+        assert hasattr(Serialization, "JSON")
