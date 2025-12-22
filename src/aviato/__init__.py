@@ -7,6 +7,9 @@ from aviato._session import Session
 from aviato._types import ExecResult, Serialization
 from aviato.exceptions import (
     AsyncFunctionError,
+    AviatoAuthenticationError,
+    AviatoError,
+    FunctionError,
     FunctionSerializationError,
     SandboxError,
     SandboxExecutionError,
@@ -19,7 +22,10 @@ from aviato.exceptions import (
 
 __all__ = [
     "AsyncFunctionError",
+    "AviatoAuthenticationError",
+    "AviatoError",
     "ExecResult",
+    "FunctionError",
     "FunctionSerializationError",
     "Sandbox",
     "SandboxDefaults",
