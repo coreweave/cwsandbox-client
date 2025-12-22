@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import os
 import shlex
@@ -657,6 +656,9 @@ class Sandbox:
         """
         timeout = timeout_seconds or self._request_timeout_seconds
 
+        if not command:
+            raise ValueError("Command cannot be empty")
+
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -664,9 +666,6 @@ class Sandbox:
 
         await self._ensure_client()
         assert self._client is not None
-
-        if not command:
-            raise ValueError("Command cannot be empty")
 
         logger.debug("Executing command in sandbox %s: %s", self._sandbox_id, shlex.join(command))
 
@@ -694,10 +693,9 @@ class Sandbox:
         stdout_raw = response.result.stdout
         stderr_raw = response.result.stderr
 
-        # TODO: Update handling stdout/stderr datatypes when it changes in aviato-core
         result = ExecResult(
-            stdout_bytes=base64.b64decode(stdout_raw) if stdout_raw else b"",
-            stderr_bytes=stderr_raw.encode() if stderr_raw else b"",
+            stdout_bytes=stdout_raw if stdout_raw else b"",
+            stderr_bytes=stderr_raw if stderr_raw else b"",
             returncode=response.result.exit_code,
             command=command,
         )
