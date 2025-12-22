@@ -224,7 +224,7 @@ class TestSessionKwargsValidation:
     def test_create_with_invalid_kwargs(self) -> None:
         """Test Session.create rejects invalid kwargs."""
         session = Session()
-        with pytest.raises(ValueError, match="Invalid sandbox parameters"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             session.create(
                 command="echo",
                 args=["hello"],
@@ -249,10 +249,273 @@ class TestSessionKwargsValidation:
         """Test session.function() rejects invalid sandbox_kwargs."""
         session = Session()
 
-        with pytest.raises(ValueError, match="Invalid sandbox parameters"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
 
             @session.function(
                 invalid_param="value",
             )
             def add(x: int, y: int) -> int:
                 return x + y
+
+
+class TestSessionList:
+    """Tests for Session.list method."""
+
+    @pytest.mark.asyncio
+    async def test_list_returns_sandbox_instances(self, mock_aviato_api_key: str) -> None:
+        """Test session.list() returns Sandbox instances."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        from aviato import SandboxDefaults
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        defaults = SandboxDefaults(tags=("session-tag",))
+        session = Session(defaults)
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                sandboxes = await session.list()
+
+                assert len(sandboxes) == 1
+                assert isinstance(sandboxes[0], Sandbox)
+
+    @pytest.mark.asyncio
+    async def test_list_uses_default_tags(self, mock_aviato_api_key: str) -> None:
+        """Test session.list() automatically filters by session's default tags."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        from aviato import SandboxDefaults
+
+        defaults = SandboxDefaults(tags=("session-tag",))
+        session = Session(defaults)
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
+                )
+
+                await session.list()
+
+                call_args = mock_atc_instance.list.call_args[0][0]
+                assert "session-tag" in call_args.tags
+
+    @pytest.mark.asyncio
+    async def test_list_with_adopt_registers_sandboxes(self, mock_aviato_api_key: str) -> None:
+        """Test session.list(adopt=True) registers sandboxes with session."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                sandboxes = await session.list(adopt=True)
+
+                assert session.sandbox_count == 1
+                assert sandboxes[0]._session is session
+
+    @pytest.mark.asyncio
+    async def test_list_without_adopt_does_not_register(self, mock_aviato_api_key: str) -> None:
+        """Test session.list(adopt=False) does not register sandboxes."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                await session.list(adopt=False)
+
+                assert session.sandbox_count == 0
+
+
+class TestSessionFromId:
+    """Tests for Session.from_id method."""
+
+    @pytest.mark.asyncio
+    async def test_from_id_returns_sandbox_instance(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id() returns a Sandbox instance."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await session.from_id("test-123")
+
+                assert isinstance(sandbox, Sandbox)
+                assert sandbox.sandbox_id == "test-123"
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopts_by_default(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id() adopts sandbox by default."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await session.from_id("test-123")
+
+                assert session.sandbox_count == 1
+                assert sandbox._session is session
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopt_false_does_not_register(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id(adopt=False) does not register sandbox."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                await session.from_id("test-123", adopt=False)
+
+                assert session.sandbox_count == 0
+
+
+class TestSessionAdopt:
+    """Tests for Session.adopt method."""
+
+    def test_adopt_registers_sandbox(self) -> None:
+        """Test session.adopt() registers sandbox for cleanup."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-123"
+
+        session.adopt(sandbox)
+
+        assert session.sandbox_count == 1
+        assert sandbox._session is session
+
+    def test_adopt_raises_on_closed_session(self) -> None:
+        """Test session.adopt() raises SandboxError if session is closed."""
+        from aviato.exceptions import SandboxError
+
+        session = Session()
+        session._closed = True
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-123"
+
+        with pytest.raises(SandboxError, match="session is closed"):
+            session.adopt(sandbox)
+
+    def test_adopt_raises_on_sandbox_without_id(self) -> None:
+        """Test session.adopt() raises ValueError if sandbox has no ID."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with pytest.raises(ValueError, match="without sandbox_id"):
+            session.adopt(sandbox)

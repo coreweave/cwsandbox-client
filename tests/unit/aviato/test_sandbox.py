@@ -420,7 +420,7 @@ class TestSandboxKwargsValidation:
 
     def test_init_with_invalid_kwargs(self) -> None:
         """Test Sandbox.__init__ rejects invalid kwargs."""
-        with pytest.raises(ValueError, match="Invalid sandbox parameters"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             Sandbox(
                 command="echo",
                 args=["hello"],
@@ -430,7 +430,7 @@ class TestSandboxKwargsValidation:
 
     def test_init_with_mixed_valid_invalid_kwargs(self) -> None:
         """Test Sandbox.__init__ rejects if any kwargs are invalid."""
-        with pytest.raises(ValueError, match="Invalid sandbox parameters"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             Sandbox(
                 command="echo",
                 args=["hello"],
@@ -455,9 +455,215 @@ class TestSandboxKwargsValidation:
     @pytest.mark.asyncio
     async def test_create_with_invalid_kwargs(self) -> None:
         """Test Sandbox.create rejects invalid kwargs."""
-        with pytest.raises(ValueError, match="Invalid sandbox parameters"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             await Sandbox.create(
                 "echo",
                 "hello",
                 invalid_param="value",
             )
+
+
+class TestSandboxList:
+    """Tests for Sandbox.list class method."""
+
+    @pytest.mark.asyncio
+    async def test_list_returns_sandbox_instances(self, mock_aviato_api_key: str) -> None:
+        """Test list() returns list of Sandbox instances."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                sandboxes = await Sandbox.list(tags=["test-tag"])
+
+                assert len(sandboxes) == 1
+                assert isinstance(sandboxes[0], Sandbox)
+                assert sandboxes[0].sandbox_id == "test-123"
+                assert sandboxes[0].status == "running"
+
+    @pytest.mark.asyncio
+    async def test_list_with_status_filter(self, mock_aviato_api_key: str) -> None:
+        """Test list() passes status filter to request."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
+                )
+
+                await Sandbox.list(status="running")
+
+                call_args = mock_atc_instance.list.call_args[0][0]
+                assert call_args.status == atc_pb2.SANDBOX_STATUS_RUNNING
+
+    @pytest.mark.asyncio
+    async def test_list_with_invalid_status_raises(self, mock_aviato_api_key: str) -> None:
+        """Test list() raises ValueError for invalid status."""
+        with pytest.raises(ValueError, match="not a valid SandboxStatus"):
+            await Sandbox.list(status="invalid_status")
+
+    @pytest.mark.asyncio
+    async def test_list_empty_result(self, mock_aviato_api_key: str) -> None:
+        """Test list() returns empty list when no sandboxes match."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
+                )
+
+                sandboxes = await Sandbox.list(tags=["nonexistent"])
+                assert sandboxes == []
+
+
+class TestSandboxFromId:
+    """Tests for Sandbox.from_id class method."""
+
+    @pytest.mark.asyncio
+    async def test_from_id_returns_sandbox_instance(self, mock_aviato_api_key: str) -> None:
+        """Test from_id() returns a Sandbox instance."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await Sandbox.from_id("test-123")
+
+                assert isinstance(sandbox, Sandbox)
+                assert sandbox.sandbox_id == "test-123"
+                assert sandbox.status == "running"
+                assert sandbox.tower_id == "tower-1"
+
+    @pytest.mark.asyncio
+    async def test_from_id_raises_not_found(self, mock_aviato_api_key: str) -> None:
+        """Test from_id() raises SandboxNotFoundError for non-existent sandbox."""
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+
+        from aviato.exceptions import SandboxNotFoundError
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(
+                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
+                )
+
+                with pytest.raises(SandboxNotFoundError, match="not found"):
+                    await Sandbox.from_id("nonexistent-id")
+
+
+class TestSandboxDeleteClassMethod:
+    """Tests for Sandbox.delete class method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_true_on_success(self, mock_aviato_api_key: str) -> None:
+        """Test delete() returns True when deletion succeeds."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        mock_response = atc_pb2.DeleteSandboxResponse(success=True, error_message="")
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.delete = AsyncMock(return_value=mock_response)
+
+                result = await Sandbox.delete("test-123")
+
+                assert result is True
+
+    @pytest.mark.asyncio
+    async def test_delete_raises_not_found_by_default(self, mock_aviato_api_key: str) -> None:
+        """Test delete() raises SandboxNotFoundError when sandbox doesn't exist."""
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+
+        from aviato.exceptions import SandboxNotFoundError
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.delete = AsyncMock(
+                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
+                )
+
+                with pytest.raises(SandboxNotFoundError):
+                    await Sandbox.delete("nonexistent-id")
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_ok_suppresses_not_found(self, mock_aviato_api_key: str) -> None:
+        """Test delete(missing_ok=True) returns False instead of raising."""
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.delete = AsyncMock(
+                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
+                )
+
+                result = await Sandbox.delete("nonexistent-id", missing_ok=True)
+                assert result is False

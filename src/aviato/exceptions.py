@@ -36,6 +36,14 @@ class SandboxFailedError(SandboxError):
     """Raised when a sandbox fails to start or encounters a fatal error."""
 
 
+class SandboxNotFoundError(SandboxError):
+    """Raised when a sandbox is not found (e.g., already deleted)."""
+
+    def __init__(self, message: str, *, sandbox_id: str | None = None) -> None:
+        super().__init__(message)
+        self.sandbox_id = sandbox_id
+
+
 class SandboxExecutionError(SandboxError):
     """Raised when command execution fails inside a sandbox.
 

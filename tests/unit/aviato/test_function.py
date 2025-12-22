@@ -738,7 +738,7 @@ class TestCreateFunctionWrapperKwargsValidation:
         def compute(x: int) -> int:
             return x * 2
 
-        with pytest.raises(ValueError, match="Invalid sandbox parameters for function 'compute'"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             create_function_wrapper(
                 compute,
                 session=session,
@@ -754,7 +754,7 @@ class TestCreateFunctionWrapperKwargsValidation:
         def compute(x: int) -> int:
             return x * 2
 
-        with pytest.raises(ValueError, match="Invalid sandbox parameters for function 'compute'"):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
             create_function_wrapper(
                 compute,
                 session=session,

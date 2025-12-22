@@ -58,6 +58,7 @@ addopts = [
     "--strict-config",
     "--showlocals",
 ]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["src"]

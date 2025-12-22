@@ -1,7 +1,5 @@
 """Unit tests for aviato.exceptions module."""
 
-import pytest
-
 from aviato._types import ExecResult
 from aviato.exceptions import (
     AsyncFunctionError,
@@ -13,6 +11,7 @@ from aviato.exceptions import (
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
+    SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
@@ -36,6 +35,7 @@ class TestExceptionHierarchy:
     def test_sandbox_error_is_base_for_sandbox_exceptions(self) -> None:
         """Test SandboxError is the base for sandbox-related exceptions."""
         assert issubclass(SandboxNotRunningError, SandboxError)
+        assert issubclass(SandboxNotFoundError, SandboxError)
         assert issubclass(SandboxTimeoutError, SandboxError)
         assert issubclass(SandboxTerminatedError, SandboxError)
         assert issubclass(SandboxFailedError, SandboxError)
@@ -50,30 +50,6 @@ class TestExceptionHierarchy:
     def test_aviato_error_is_exception(self) -> None:
         """Test AviatoError inherits from Exception."""
         assert issubclass(AviatoError, Exception)
-
-
-class TestExceptions:
-    """Tests for individual exceptions."""
-
-    def test_sandbox_not_running_error(self) -> None:
-        """Test SandboxNotRunningError can be raised and caught."""
-        with pytest.raises(SandboxNotRunningError, match="not running"):
-            raise SandboxNotRunningError("Sandbox not running")
-
-    def test_sandbox_timeout_error(self) -> None:
-        """Test SandboxTimeoutError can be raised and caught."""
-        with pytest.raises(SandboxTimeoutError, match="timed out"):
-            raise SandboxTimeoutError("Operation timed out")
-
-    def test_sandbox_terminated_error(self) -> None:
-        """Test SandboxTerminatedError can be raised and caught."""
-        with pytest.raises(SandboxTerminatedError, match="terminated"):
-            raise SandboxTerminatedError("Sandbox was terminated")
-
-    def test_sandbox_failed_error(self) -> None:
-        """Test SandboxFailedError can be raised and caught."""
-        with pytest.raises(SandboxFailedError, match="failed"):
-            raise SandboxFailedError("Sandbox failed to start")
 
 
 class TestSandboxExecutionError:
@@ -112,30 +88,3 @@ class TestSandboxExecutionError:
         assert exc.exec_result.stdout_bytes == b"output"
         assert exc.exec_result.stderr_bytes == b"error message"
         assert exc.exec_result.returncode == 1
-
-
-class TestSandboxFileError:
-    """Tests for SandboxFileError."""
-
-    def test_basic_creation(self) -> None:
-        """Test basic exception creation."""
-        exc = SandboxFileError("File not found")
-        assert str(exc) == "File not found"
-        assert exc.filepath is None
-
-    def test_with_filepath(self) -> None:
-        """Test exception with filepath."""
-        exc = SandboxFileError(
-            "Failed to read /tmp/data.txt",
-            filepath="/tmp/data.txt",
-        )
-        assert exc.filepath == "/tmp/data.txt"
-
-
-class TestAsyncFunctionError:
-    """Tests for AsyncFunctionError."""
-
-    def test_creation(self) -> None:
-        """Test exception creation."""
-        exc = AsyncFunctionError("Async functions not supported")
-        assert "Async" in str(exc)

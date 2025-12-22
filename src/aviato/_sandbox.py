@@ -6,27 +6,34 @@ import os
 import shlex
 import time
 import warnings
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2
+from google.protobuf import timestamp_pb2
 
 from aviato._auth import resolve_auth
 from aviato._defaults import (
+    DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
     SandboxDefaults,
 )
 from aviato._types import ExecResult
 from aviato.exceptions import (
+    SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
+    SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
@@ -37,18 +44,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Valid kwargs that can be passed to StartSandboxRequest
-# These are in addition to the explicitly handled parameters
-_VALID_START_KWARGS = frozenset(
-    (
-        "resources",
-        "mounted_files",
-        "s3_mount",
-        "ports",
-        "service",
-        "max_timeout_seconds",
-    )
-)
+
+class SandboxStatus(StrEnum):
+    """Sandbox status values."""
+
+    RUNNING = "running"
+    CREATING = "creating"
+    PENDING = "pending"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TERMINATED = "terminated"
+    UNSPECIFIED = "unspecified"
+
+    @classmethod
+    def from_proto(cls, proto_status: int) -> SandboxStatus:
+        """Convert protobuf status enum to SandboxStatus"""
+        proto_name = atc_pb2.SandboxStatus.Name(proto_status)
+        enum_name = proto_name.replace("SANDBOX_STATUS_", "")
+        return cls[enum_name]
+
+    def to_proto(self) -> int:
+        """Convert SandboxStatus to protobuf enum"""
+        proto_name = f"SANDBOX_STATUS_{self.name}"
+        return atc_pb2.SandboxStatus.Value(proto_name)
 
 
 class Sandbox:
@@ -85,8 +104,13 @@ class Sandbox:
         max_lifetime_seconds: float | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
+        resources: dict[str, Any] | None = None,
+        mounted_files: list[dict[str, Any]] | None = None,
+        s3_mount: dict[str, Any] | None = None,
+        ports: list[dict[str, Any]] | None = None,
+        service: dict[str, Any] | None = None,
+        max_timeout_seconds: int | None = None,
         _session: Session | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a sandbox (does not start it).
 
@@ -102,15 +126,13 @@ class Sandbox:
                 the backend controls the default.
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            **kwargs: Additional configuration options
+            resources: Resource requests (CPU, memory, GPU)
+            mounted_files: Files to mount into the sandbox
+            s3_mount: S3 bucket mount configuration
+            ports: Port mappings for the sandbox
+            service: Service configuration for network access
+            max_timeout_seconds: Maximum timeout for sandbox operations
         """
-        # Validate kwargs early before setting any attributes
-        invalid_kwargs = set(kwargs.keys()) - _VALID_START_KWARGS
-        if invalid_kwargs:
-            raise ValueError(
-                f"Invalid sandbox parameters: {', '.join(sorted(invalid_kwargs))}. "
-                f"Valid parameters are: {', '.join(sorted(_VALID_START_KWARGS))}"
-            )
 
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
@@ -141,7 +163,19 @@ class Sandbox:
             list(self._defaults.tower_ids) if self._defaults.tower_ids else None
         )
 
-        self._start_kwargs = kwargs
+        self._start_kwargs: dict[str, Any] = {}
+        if resources is not None:
+            self._start_kwargs["resources"] = resources
+        if mounted_files is not None:
+            self._start_kwargs["mounted_files"] = mounted_files
+        if s3_mount is not None:
+            self._start_kwargs["s3_mount"] = s3_mount
+        if ports is not None:
+            self._start_kwargs["ports"] = ports
+        if service is not None:
+            self._start_kwargs["service"] = service
+        if max_timeout_seconds is not None:
+            self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
         self._client: atc_connect.ATCServiceClient | None = None
         self._sandbox_id: str | None = None
         self._returncode: int | None = None
@@ -153,6 +187,11 @@ class Sandbox:
         # sandboxes, we can remove this and query backend status directly.
         self._stopped = False
 
+        self._status: SandboxStatus | None = None
+        self._status_updated_at: datetime | None = None
+        self._started_at: datetime | None = None
+        self._tower_group_id: str | None = None
+
     @classmethod
     async def create(
         cls,
@@ -161,7 +200,13 @@ class Sandbox:
         defaults: SandboxDefaults | None = None,
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
-        **kwargs: Any,
+        tags: list[str] | None = None,
+        resources: dict[str, Any] | None = None,
+        mounted_files: list[dict[str, Any]] | None = None,
+        s3_mount: dict[str, Any] | None = None,
+        ports: list[dict[str, Any]] | None = None,
+        service: dict[str, Any] | None = None,
+        max_timeout_seconds: int | None = None,
     ) -> Sandbox:
         """Factory method for quick sandbox creation with auto-start.
 
@@ -174,7 +219,13 @@ class Sandbox:
             defaults: Optional SandboxDefaults to apply
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
-            **kwargs: Additional sandbox configuration
+            tags: Optional tags for the sandbox
+            resources: Resource requests (CPU, memory, GPU)
+            mounted_files: Files to mount into the sandbox
+            s3_mount: S3 bucket mount configuration
+            ports: Port mappings for the sandbox
+            service: Service configuration for network access
+            max_timeout_seconds: Maximum timeout for sandbox operations
 
         Returns:
             A started Sandbox instance
@@ -192,6 +243,7 @@ class Sandbox:
             sandbox = await Sandbox.create(
                 "python", "train.py",
                 container_image="pytorch/pytorch:latest",
+                resources={"cpu": "2", "memory": "4Gi"},
             )
 
             # Remember to stop when done
@@ -214,7 +266,13 @@ class Sandbox:
             defaults=defaults,
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
-            **kwargs,
+            tags=tags,
+            resources=resources,
+            mounted_files=mounted_files,
+            s3_mount=s3_mount,
+            ports=ports,
+            service=service,
+            max_timeout_seconds=max_timeout_seconds,
         )
         logger.debug("Creating sandbox with command: %s", command)
         await sandbox.start()
@@ -252,6 +310,267 @@ class Sandbox:
 
         return Session(defaults)
 
+    @classmethod
+    def _from_sandbox_info(
+        cls,
+        sandbox_id: str,
+        sandbox_status: int,
+        started_at_time: timestamp_pb2.Timestamp | None,
+        tower_id: str,
+        tower_group_id: str,
+        runway_id: str,
+        base_url: str,
+        timeout_seconds: float,
+    ) -> Sandbox:
+        """Create a Sandbox instance from sandbox info fields"""
+        sandbox = cls.__new__(cls)
+        # Initialize state for a discovered sandbox
+        sandbox._sandbox_id = sandbox_id
+        sandbox._status = SandboxStatus.from_proto(sandbox_status)
+        sandbox._status_updated_at = datetime.now(UTC)
+        sandbox._started_at = started_at_time.ToDatetime() if started_at_time else None
+        sandbox._tower_id = tower_id or None
+        sandbox._tower_group_id = tower_group_id or None
+        sandbox._runway_id = runway_id or None
+        sandbox._base_url = base_url
+        sandbox._request_timeout_seconds = timeout_seconds
+        # These are not applicable for discovered sandboxes
+        sandbox._command = None
+        sandbox._args = None
+        sandbox._container_image = None
+        sandbox._tags = None
+        sandbox._max_lifetime_seconds = None
+        sandbox._runway_ids = None
+        sandbox._tower_ids = None
+        sandbox._client = None
+        sandbox._stopped = False
+        sandbox._returncode = None
+        sandbox._session = None
+        sandbox._defaults = SandboxDefaults()
+        sandbox._start_kwargs = {}
+        return sandbox
+
+    @classmethod
+    async def list(
+        cls,
+        *,
+        tags: list[str] | None = None,
+        status: str | None = None,
+        runway_ids: list[str] | None = None,
+        tower_ids: list[str] | None = None,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> list[Sandbox]:
+        """List existing sandboxes with optional filters.
+
+        Returns Sandbox instances that can be used for operations like
+        exec(), stop(), get_status(), read_file(), write_file(), etc.
+
+        Args:
+            tags: Filter by tags (sandboxes must have ALL specified tags)
+            status: Filter by status ("running", "completed", "failed", etc.)
+            runway_ids: Filter by runway IDs
+            tower_ids: Filter by tower IDs
+            base_url: Override API URL (default: AVIATO_BASE_URL env or default)
+            timeout_seconds: Request timeout (default: 300s)
+
+        Returns:
+            List of Sandbox instances for matching sandboxes
+
+        Example:
+            # Find and stop all sandboxes with a tag
+            sandboxes = await Sandbox.list(tags=["my-batch-job"])
+            for sb in sandboxes:
+                print(f"{sb.sandbox_id}: {sb.status}")
+                await sb.stop()
+
+            # Execute commands on discovered sandboxes
+            running = await Sandbox.list(status="running")
+            for sb in running:
+                result = await sb.exec(["echo", "hello"])
+        """
+        auth = resolve_auth()
+        effective_base_url = (
+            base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+        status_enum = None
+        if status is not None:
+            status_enum = SandboxStatus(status)
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
+            headers=auth.headers,
+        ) as http_client:
+            client = atc_connect.ATCServiceClient(
+                address=effective_base_url,
+                session=http_client,
+                proto_json=True,
+            )
+
+            request_kwargs: dict[str, Any] = {}
+            if tags:
+                request_kwargs["tags"] = tags
+            if status_enum:
+                request_kwargs["status"] = status_enum.to_proto()
+            if runway_ids:
+                request_kwargs["runway_ids"] = runway_ids
+            if tower_ids:
+                request_kwargs["tower_ids"] = tower_ids
+
+            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+            response = await client.list(request)
+
+            return [
+                cls._from_sandbox_info(
+                    sandbox_id=sb.sandbox_id,
+                    sandbox_status=sb.sandbox_status,
+                    started_at_time=sb.started_at_time,
+                    tower_id=sb.tower_id,
+                    tower_group_id=sb.tower_group_id,
+                    runway_id=sb.runway_id,
+                    base_url=effective_base_url,
+                    timeout_seconds=timeout,
+                )
+                for sb in response.sandboxes
+            ]
+
+    @classmethod
+    async def from_id(
+        cls,
+        sandbox_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> Sandbox:
+        """Attach to an existing sandbox by ID.
+
+        Creates a Sandbox instance connected to an existing sandbox,
+        allowing operations like exec(), stop(), get_status(), etc.
+
+        Args:
+            sandbox_id: The ID of the existing sandbox
+            base_url: Override API URL (default: AVIATO_BASE_URL env or default)
+            timeout_seconds: Request timeout (default: 300s)
+
+        Returns:
+            A Sandbox instance attached to the existing sandbox
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+
+        Example:
+            # Reconnect to a sandbox from a previous session
+            sb = await Sandbox.from_id("sandbox-abc123")
+            result = await sb.exec(["python", "-c", "print('hello')"])
+            await sb.stop()
+        """
+        auth = resolve_auth()
+        effective_base_url = (
+            base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
+            headers=auth.headers,
+        ) as http_client:
+            client = atc_connect.ATCServiceClient(
+                address=effective_base_url,
+                session=http_client,
+                proto_json=True,
+            )
+
+            try:
+                request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+                response = await client.get(request)
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
+                    raise SandboxNotFoundError(
+                        f"Sandbox '{sandbox_id}' not found",
+                        sandbox_id=sandbox_id,
+                    ) from e
+                raise
+
+            return cls._from_sandbox_info(
+                sandbox_id=response.sandbox_id,
+                sandbox_status=response.sandbox_status,
+                started_at_time=response.started_at_time,
+                tower_id=response.tower_id,
+                tower_group_id=response.tower_group_id,
+                runway_id=response.runway_id,
+                base_url=effective_base_url,
+                timeout_seconds=timeout,
+            )
+
+    @classmethod
+    async def delete(
+        cls,
+        sandbox_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        missing_ok: bool = False,
+    ) -> bool:
+        """Delete a sandbox by ID without creating a Sandbox instance.
+
+        This is a convenience method for cleanup scenarios where you
+        don't need to perform other operations on the sandbox.
+
+        Args:
+            sandbox_id: The sandbox ID to delete
+            base_url: Override API URL (default: AVIATO_BASE_URL env or default)
+            timeout_seconds: Request timeout (default: 300s)
+            missing_ok: If True, return False instead of raising when sandbox doesn't exist
+
+        Returns:
+            True if sandbox was deleted successfully, False if missing_ok=True and not found
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist and missing_ok=False
+            SandboxError: If deletion failed for other reasons
+
+        Example:
+            # Quick cleanup without creating Sandbox instances
+            await Sandbox.delete("sandbox-abc123")
+
+            # Ignore if already deleted
+            await Sandbox.delete("sandbox-abc123", missing_ok=True)
+        """
+        auth = resolve_auth()
+        effective_base_url = (
+            base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
+            headers=auth.headers,
+        ) as http_client:
+            client = atc_connect.ATCServiceClient(
+                address=effective_base_url,
+                session=http_client,
+                proto_json=True,
+            )
+
+            try:
+                request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+                response = await client.delete(request)
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
+                    if missing_ok:
+                        return False
+                    raise SandboxNotFoundError(
+                        f"Sandbox '{sandbox_id}' not found",
+                        sandbox_id=sandbox_id,
+                    ) from e
+                raise
+
+            if not response.success:
+                raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
+            return True
+
     @property
     def sandbox_id(self) -> str | None:
         """The unique sandbox ID, or None if not yet started."""
@@ -275,23 +594,56 @@ class Sandbox:
         """Runway where sandbox is running, or None if not started."""
         return self._runway_id
 
-    def __repr__(self) -> str:
-        if self._sandbox_id is None:
-            status = "not_started"
-        elif self._stopped:
-            status = "stopped"
-        elif self._returncode is not None:
-            status = f"completed(rc={self._returncode})"
-        else:
-            status = "running"
-        return f"<Sandbox id={self._sandbox_id} status={status}>"
+    @property
+    def status(self) -> SandboxStatus | None:
+        """Last known status of the sandbox.
 
-    async def get_status(self) -> str:
+        This is the cached status from the most recent API interaction.
+
+        Returns None only for sandboxes that haven't been started yet.
+
+        Note: This value may be stale. Check status_updated_at for when it
+        was last fetched. For guaranteed fresh status, use
+        `await sandbox.get_status()` which always hits the API.
+        """
+        return self._status
+
+    @property
+    def status_updated_at(self) -> datetime | None:
+        """Timestamp when status was last fetched from the API.
+
+        Returns None only for sandboxes that haven't been started yet.
+        """
+        return self._status_updated_at
+
+    @property
+    def started_at(self) -> datetime | None:
+        """Timestamp when the sandbox was started.
+
+        Populated after start() completes or when obtained via list()/from_id().
+        None only for sandboxes that haven't been started yet.
+        """
+        return self._started_at
+
+    @property
+    def tower_group_id(self) -> str | None:
+        """Tower group ID where the sandbox is running."""
+        return self._tower_group_id
+
+    def __repr__(self) -> str:
+        if self._status:
+            status_str = self._status.value
+        elif self._sandbox_id is None:
+            status_str = "not_started"
+        else:
+            status_str = "unknown"
+        return f"<Sandbox id={self._sandbox_id} status={status_str}>"
+
+    async def get_status(self) -> SandboxStatus:
         """Get the current status of the sandbox from the backend.
 
         Returns:
-            Status string: "running", "completed", "failed", "terminated",
-            "creating", "pending", "paused", or "unspecified"
+            SandboxStatus enum value
 
         Raises:
             SandboxNotRunningError: If sandbox has not been started
@@ -299,11 +651,11 @@ class Sandbox:
         Example:
             sandbox = await Sandbox.create("sleep", "10")
             status = await sandbox.get_status()
-            print(f"Sandbox is {status}")  # "running"
+            print(f"Sandbox is {status}")  # SandboxStatus.RUNNING
 
             await sandbox.wait()
             status = await sandbox.get_status()
-            print(f"Sandbox is {status}")  # "completed"
+            print(f"Sandbox is {status}")  # SandboxStatus.COMPLETED
         """
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
@@ -316,9 +668,11 @@ class Sandbox:
         request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         response = await self._client.get(request)
 
-        # "SANDBOX_STATUS_RUNNING" -> "running"
-        name = atc_pb2.SandboxStatus.Name(response.sandbox_status)
-        return name.replace("SANDBOX_STATUS_", "").lower()
+        status = SandboxStatus.from_proto(response.sandbox_status)
+        self._status = status
+        self._status_updated_at = datetime.now(UTC)
+
+        return status
 
     # Context manager
 
@@ -447,18 +801,34 @@ class Sandbox:
         match response.sandbox_status:
             case atc_pb2.SANDBOX_STATUS_RUNNING:
                 self._tower_id = response.tower_id or None
+                self._tower_group_id = response.tower_group_id or None
                 self._runway_id = response.runway_id or None
+                self._status = SandboxStatus.RUNNING
+                self._status_updated_at = datetime.now(UTC)
+                self._started_at = (
+                    response.started_at_time.ToDatetime() if response.started_at_time else None
+                )
                 logger.info("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
+                self._status = SandboxStatus.FAILED
+                self._status_updated_at = datetime.now(UTC)
                 raise SandboxFailedError(f"Sandbox {self._sandbox_id} failed to start")
             case atc_pb2.SANDBOX_STATUS_TERMINATED:
+                self._status = SandboxStatus.TERMINATED
+                self._status_updated_at = datetime.now(UTC)
                 raise SandboxTerminatedError(f"Sandbox {self._sandbox_id} was terminated")
             case atc_pb2.SANDBOX_STATUS_COMPLETED | atc_pb2.SANDBOX_STATUS_UNSPECIFIED:
                 # COMPLETED: finished successfully
                 # UNSPECIFIED: sandbox already cleaned up (fast command)
                 # TODO: Adjust UNSPECIFIED behavior once backend has proper accounting
                 self._tower_id = response.tower_id or None
+                self._tower_group_id = response.tower_group_id or None
                 self._runway_id = response.runway_id or None
+                self._status = SandboxStatus.COMPLETED
+                self._status_updated_at = datetime.now(UTC)
+                self._started_at = (
+                    response.started_at_time.ToDatetime() if response.started_at_time else None
+                )
                 self._returncode = 0
                 logger.info("Sandbox %s completed during startup", self._sandbox_id)
 
