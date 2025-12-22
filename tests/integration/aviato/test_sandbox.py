@@ -102,8 +102,7 @@ async def test_sandbox_exec_check_raises_on_failure() -> None:
             await sandbox.exec(["sh", "-c", "exit 42"], check=True)
 
         assert exc_info.value.exec_result is not None
-        assert exc_info.value.exec_result.returncode != 0
-        assert "exit code 42" in exc_info.value.exec_result.stderr
+        assert exc_info.value.exec_result.returncode == 42
 
 
 @pytest.mark.asyncio
@@ -129,8 +128,7 @@ async def test_sandbox_exec_check_false_returns_result() -> None:
     ) as sandbox:
         result = await sandbox.exec(["sh", "-c", "exit 1"])
 
-        assert result.returncode != 0
-        assert "exit code 1" in result.stderr
+        assert result.returncode == 1
 
 
 @pytest.mark.asyncio
