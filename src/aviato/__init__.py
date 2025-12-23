@@ -4,7 +4,10 @@ from aviato._auth import WandbAuthError
 from aviato._defaults import SandboxDefaults
 from aviato._sandbox import Sandbox, SandboxStatus
 from aviato._session import Session
-from aviato._types import ExecResult, Serialization
+from aviato._types import (
+    ExecResult,
+    Serialization,
+)
 from aviato.exceptions import (
     AsyncFunctionError,
     AviatoAuthenticationError,

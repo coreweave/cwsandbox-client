@@ -32,6 +32,9 @@ async def main():
         result = await sandbox.exec(["python", "-c", "print(2 + 2)"])
         print(result.stdout)  # 4
 
+        # Stream output in real-time to console
+        await sandbox.exec(["python", "train.py"], stream_output=True)
+
 asyncio.run(main())
 ```
 
@@ -40,6 +43,7 @@ asyncio.run(main())
 See the [examples/](examples/) directory for runnable scripts, or read the guides:
 
 - **[Basic Execution](docs/examples/basic-execution.md)** - `SandboxDefaults`, `exec()`, and file operations
+- **[Streaming Output](docs/examples/streaming-output.md)** - Real-time stdout/stderr streaming with callbacks
 - **[Function Decorator](docs/examples/function-decorator.md)** - Execute Python functions with `@session.function()`
 - **[Parallel Sandboxes](docs/examples/parallel-sandboxes.md)** - Manage multiple sandboxes concurrently
 

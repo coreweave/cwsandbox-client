@@ -188,6 +188,19 @@ Demonstrates:
 - Client-side filtering after `Sandbox.list()`
 - Dry run mode for safe testing
 
+### Streaming Output (`streaming_output.py`)
+
+Real-time streaming of command output:
+
+```bash
+python examples/streaming_output.py
+```
+
+Demonstrates:
+- Simple streaming with `exec(stream_output=True)` to print to console
+- Streaming stdout/stderr with callbacks via `exec(on_stdout=..., on_stderr=...)`
+- Progress tracking for long-running commands
+
 ## API Patterns
 
 ### Quick Usage (Factory Method)
@@ -244,4 +257,16 @@ async with Sandbox.session(defaults) as session:
     
     result = await compute(2, 3)
     print(result.value)  # 5
+```
+
+### Streaming Output
+
+```python
+# Stream output in real-time with callbacks
+result = await sandbox.exec(
+    ["python", "train.py"],
+    on_stdout=lambda data: print(data.decode(), end=""),
+    on_stderr=lambda data: print(data.decode(), end="", file=sys.stderr),
+)
+print(f"Exit code: {result.returncode}")
 ```

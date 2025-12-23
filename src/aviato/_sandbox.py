@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
+import sys
 import time
 import warnings
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -13,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-from coreweave.aviato.v1beta1 import atc_connect, atc_pb2
+from coreweave.aviato.v1beta1 import atc_connect, atc_pb2, streaming_connect, streaming_pb2
 from google.protobuf import timestamp_pb2
 
 from aviato._auth import resolve_auth
@@ -43,6 +46,18 @@ if TYPE_CHECKING:
     from aviato._session import Session
 
 logger = logging.getLogger(__name__)
+
+
+def _default_stdout_callback(data: bytes) -> None:
+    """Default callback that writes to stdout."""
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+
+def _default_stderr_callback(data: bytes) -> None:
+    """Default callback that writes to stderr."""
+    sys.stderr.buffer.write(data)
+    sys.stderr.buffer.flush()
 
 
 class SandboxStatus(StrEnum):
@@ -177,6 +192,7 @@ class Sandbox:
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
         self._client: atc_connect.ATCServiceClient | None = None
+        self._streaming_client: streaming_connect.ATCStreamingServiceClient | None = None
         self._sandbox_id: str | None = None
         self._returncode: int | None = None
         self._tower_id: str | None = None
@@ -186,6 +202,8 @@ class Sandbox:
         # this client-side flag as a workaround. Once backend properly tracks stopped
         # sandboxes, we can remove this and query backend status directly.
         self._stopped = False
+        # Lock for thread-safe streaming client initialization
+        self._streaming_client_lock: asyncio.Lock | None = None
 
         self._status: SandboxStatus | None = None
         self._status_updated_at: datetime | None = None
@@ -343,6 +361,8 @@ class Sandbox:
         sandbox._runway_ids = None
         sandbox._tower_ids = None
         sandbox._client = None
+        sandbox._streaming_client = None
+        sandbox._streaming_client_lock = None
         sandbox._stopped = False
         sandbox._returncode = None
         sandbox._session = None
@@ -726,6 +746,48 @@ class Sandbox:
             self._client = None
             logger.debug("Closed client")
 
+    async def _ensure_streaming_client(self) -> None:
+        """Ensure the streaming Connect RPC client is initialized.
+
+        The streaming client uses HTTP/2 which is required for bidirectional
+        streaming with Connect RPC. Uses a lock to prevent race conditions
+        when multiple coroutines call this concurrently.
+        """
+
+        if self._streaming_client is not None:
+            return
+
+        # Lazily create the lock (can't create in __init__ before event loop exists)
+        if self._streaming_client_lock is None:
+            self._streaming_client_lock = asyncio.Lock()
+
+        async with self._streaming_client_lock:
+            if self._streaming_client is not None:
+                return
+
+            auth = resolve_auth()
+            logger.debug("Using %s auth strategy for streaming client", auth.strategy)
+
+            session = httpx.AsyncClient(
+                timeout=httpx.Timeout(self._request_timeout_seconds),
+                headers=auth.headers,
+                http2=True,
+                http1=False,
+            )
+            self._streaming_client = streaming_connect.ATCStreamingServiceClient(
+                address=self._base_url,
+                session=session,
+                proto_json=True,
+            )
+            logger.debug("Initialized streaming client for %s (HTTP/2)", self._base_url)
+
+    async def _close_streaming_client(self) -> None:
+        """Close the streaming HTTP client if open."""
+        if self._streaming_client is not None:
+            await self._streaming_client.close()
+            self._streaming_client = None
+            logger.debug("Closed streaming client")
+
     async def _poll_until_stable(
         self,
         timeout_seconds: float,
@@ -1026,6 +1088,7 @@ class Sandbox:
             return success
         finally:
             await self._close_client()
+            await self._close_streaming_client()
 
     async def exec(
         self,
@@ -1033,6 +1096,9 @@ class Sandbox:
         *,
         check: bool = False,
         timeout_seconds: float | None = None,
+        stream_output: bool = False,
+        on_stdout: Callable[[bytes], None] | None = None,
+        on_stderr: Callable[[bytes], None] | None = None,
     ) -> ExecResult:
         """Execute a command in the running sandbox.
 
@@ -1040,6 +1106,12 @@ class Sandbox:
             command: Command and arguments to execute
             check: If True, raise SandboxExecutionError on non-zero returncode
             timeout_seconds: Timeout for the command execution
+            stream_output: If True, stream output to stdout/stderr in real-time.
+                This is useful for long-running commands like training scripts.
+            on_stdout: Optional callback invoked with stdout bytes as they arrive.
+                Overrides the default stream_output=True behavior of printing to stdout.
+            on_stderr: Optional callback invoked with stderr bytes as they arrive.
+                Overrides the default stream_output=True behavior of printing to stderr.
 
         Returns:
             ExecResult with stdout, stderr, and returncode
@@ -1049,11 +1121,40 @@ class Sandbox:
             SandboxExecutionError: If check=True and command returns non-zero
             SandboxTimeoutError: If command exceeds timeout_seconds
             ConnectError: If an unexpected error occurs
-        """
-        timeout = timeout_seconds or self._request_timeout_seconds
 
+        Example:
+            # Basic execution (non-streaming)
+            result = await sandbox.exec(["echo", "hello"])
+
+            # Stream output to console in real-time
+            result = await sandbox.exec(["python", "train.py"], stream_output=True)
+
+            # Custom streaming callbacks for advanced use cases
+            result = await sandbox.exec(
+                ["python", "train.py"],
+                on_stdout=lambda data: my_logger.info(data.decode()),
+                on_stderr=lambda data: my_logger.error(data.decode()),
+            )
+        """
         if not command:
             raise ValueError("Command cannot be empty")
+
+        # If streaming is enabled or callbacks are provided, use the streaming API
+        if stream_output or on_stdout is not None or on_stderr is not None:
+            # Default to printing to stdio if stream_output=True but no callbacks
+            if stream_output:
+                on_stdout = on_stdout or _default_stdout_callback
+                on_stderr = on_stderr or _default_stderr_callback
+
+            return await self._exec_with_streaming(
+                command,
+                check=check,
+                timeout_seconds=timeout_seconds,
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+            )
+
+        timeout = timeout_seconds or self._request_timeout_seconds
 
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
@@ -1093,6 +1194,127 @@ class Sandbox:
             stdout_bytes=stdout_raw if stdout_raw else b"",
             stderr_bytes=stderr_raw if stderr_raw else b"",
             returncode=response.result.exit_code,
+            command=command,
+        )
+
+        if check and result.returncode != 0:
+            raise SandboxExecutionError(
+                f"Command {shlex.join(command)} failed with exit code {result.returncode}",
+                exec_result=result,
+            )
+
+        return result
+
+    async def _exec_with_streaming(
+        self,
+        command: list[str],
+        *,
+        check: bool = False,
+        timeout_seconds: float | None = None,
+        on_stdout: Callable[[bytes], None] | None = None,
+        on_stderr: Callable[[bytes], None] | None = None,
+    ) -> ExecResult:
+        """Execute a command using streaming API with callbacks."""
+        timeout = timeout_seconds or self._request_timeout_seconds
+
+        if self._stopped:
+            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+        if self._sandbox_id is None:
+            raise SandboxNotRunningError("No sandbox is running")
+
+        await self._ensure_streaming_client()
+        assert self._streaming_client is not None
+
+        logger.debug("Streaming exec in sandbox %s: %s", self._sandbox_id, shlex.join(command))
+
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        exit_code: int | None = None
+
+        # Queue decouples httpx iteration from our processing.
+        # Without this, processing suspends the httpx stream and breaks HTTP/2.
+        queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = asyncio.Queue()
+
+        async def request_iterator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+            yield streaming_pb2.ExecStreamRequest(
+                init=streaming_pb2.ExecStreamInit(
+                    sandbox_id=self._sandbox_id,
+                    command=command,
+                )
+            )
+
+        async def collect() -> None:
+            """Collect responses from the stream into the queue."""
+            try:
+                stream = self._streaming_client.stream_exec(
+                    request_iterator(),
+                    timeout_ms=int(timeout * 1000) if timeout else None,
+                )
+                async for resp in stream:
+                    await queue.put(resp)
+                    if resp.HasField("exit") or resp.HasField("error"):
+                        return
+            except ConnectError as e:
+                if e.code == Code.DEADLINE_EXCEEDED:
+                    await queue.put(
+                        SandboxTimeoutError(
+                            f"Streaming exec {shlex.join(command)} timed out after {timeout}s"
+                        )
+                    )
+                else:
+                    await queue.put(e)
+            except Exception as e:
+                await queue.put(e)
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(collect())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+
+                # Process the proto response directly
+                resp = item
+                if resp.HasField("output"):
+                    data = bytes(resp.output.data)
+                    is_stderr = (
+                        resp.output.stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
+                    )
+                    if is_stderr:
+                        stderr_chunks.append(data)
+                        if on_stderr is not None:
+                            on_stderr(data)
+                    else:
+                        stdout_chunks.append(data)
+                        if on_stdout is not None:
+                            on_stdout(data)
+                elif resp.HasField("exit"):
+                    exit_code = resp.exit.exit_code
+                    logger.debug("Streaming exec exit code %d", exit_code)
+                    break
+                elif resp.HasField("error"):
+                    err = resp.error
+                    raise SandboxExecutionError(
+                        f"Streaming exec error: {err.message} (code: {err.code})"
+                    )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        if exit_code is None:
+            raise SandboxExecutionError(
+                f"Stream ended without exit code for command: {shlex.join(command)}"
+            )
+
+        result = ExecResult(
+            stdout_bytes=b"".join(stdout_chunks),
+            stderr_bytes=b"".join(stderr_chunks),
+            returncode=exit_code,
             command=command,
         )
 

@@ -1,6 +1,7 @@
 """Unit tests for aviato._sandbox module."""
 
 import asyncio
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -85,6 +86,121 @@ class TestSandboxExec:
         result = await sandbox.exec(["failing-cmd"], check=False)
 
         assert result.returncode == 1
+
+    @pytest.mark.asyncio
+    async def test_exec_with_stream_output_uses_streaming(self) -> None:
+        """Test exec with stream_output=True uses streaming API."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._streaming_client = MagicMock()
+
+        output_response = MagicMock()
+        output_response.HasField = lambda f: f == "output"
+        output_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+        output_response.output.data = b"streamed output"
+        output_response.output.HasField = lambda f: False
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda f: f == "exit"
+        exit_response.exit.exit_code = 0
+        exit_response.exit.HasField = lambda f: False
+
+        async def mock_stream_exec(
+            request_iter: MagicMock, timeout_ms: int | None = None
+        ) -> AsyncIterator[MagicMock]:
+            async for _ in request_iter:
+                pass
+            yield output_response
+            yield exit_response
+
+        sandbox._streaming_client.stream_exec = mock_stream_exec
+
+        # stream_output=True should use streaming API and return result
+        result = await sandbox.exec(["echo", "test"], stream_output=True)
+
+        assert result.stdout_bytes == b"streamed output"
+        assert result.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_exec_with_callbacks_streams_and_returns_result(self) -> None:
+        """Test exec with callbacks streams output and returns complete result."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._streaming_client = MagicMock()
+
+        stdout_response = MagicMock()
+        stdout_response.HasField = lambda f: f == "output"
+        stdout_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+        stdout_response.output.data = b"stdout data"
+        stdout_response.output.HasField = lambda f: False
+
+        stderr_response = MagicMock()
+        stderr_response.HasField = lambda f: f == "output"
+        stderr_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
+        stderr_response.output.data = b"stderr data"
+        stderr_response.output.HasField = lambda f: False
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda f: f == "exit"
+        exit_response.exit.exit_code = 0
+        exit_response.exit.HasField = lambda f: False
+
+        async def mock_stream_exec(
+            request_iter: MagicMock, timeout_ms: int | None = None
+        ) -> AsyncIterator[MagicMock]:
+            async for _ in request_iter:
+                pass
+            yield stdout_response
+            yield stderr_response
+            yield exit_response
+
+        sandbox._streaming_client.stream_exec = mock_stream_exec
+
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        result = await sandbox.exec(
+            ["cmd"],
+            on_stdout=lambda data: stdout_chunks.append(data),
+            on_stderr=lambda data: stderr_chunks.append(data),
+        )
+
+        # Callbacks should have been invoked
+        assert stdout_chunks == [b"stdout data"]
+        assert stderr_chunks == [b"stderr data"]
+        # Result should contain all output
+        assert result.stdout_bytes == b"stdout data"
+        assert result.stderr_bytes == b"stderr data"
+        assert result.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_exec_streaming_with_check_raises_on_failure(self) -> None:
+        """Test exec with streaming and check=True raises on non-zero exit."""
+        from aviato.exceptions import SandboxExecutionError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._streaming_client = MagicMock()
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda f: f == "exit"
+        exit_response.exit.exit_code = 1
+        exit_response.exit.HasField = lambda f: False
+
+        async def mock_stream_exec(
+            request_iter: MagicMock, timeout_ms: int | None = None
+        ) -> AsyncIterator[MagicMock]:
+            async for _ in request_iter:
+                pass
+            yield exit_response
+
+        sandbox._streaming_client.stream_exec = mock_stream_exec
+
+        with pytest.raises(SandboxExecutionError, match="failed with exit code 1"):
+            await sandbox.exec(["cmd"], stream_output=True, check=True)
 
 
 class TestSandboxAuth:
