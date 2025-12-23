@@ -50,7 +50,12 @@ def create_function_wrapper(
     container_image: str | None = None,
     serialization: Serialization = Serialization.JSON,
     temp_dir: str = DEFAULT_TEMP_DIR,
-    **sandbox_kwargs: Any,
+    resources: dict[str, Any] | None = None,
+    mounted_files: list[dict[str, Any]] | None = None,
+    s3_mount: dict[str, Any] | None = None,
+    ports: list[dict[str, Any]] | None = None,
+    service: dict[str, Any] | None = None,
+    max_timeout_seconds: int | None = None,
 ) -> Callable[P, Awaitable[R]]:
     """Create an async wrapper that executes the function in a sandbox.
 
@@ -60,7 +65,12 @@ def create_function_wrapper(
         container_image: Override container image for this function
         serialization: Serialization mode (JSON by default for safety)
         temp_dir: Directory for temporary payload/result files in sandbox
-        **sandbox_kwargs: Additional kwargs passed to sandbox creation
+        resources: Resource requests (CPU, memory, GPU)
+        mounted_files: Files to mount into the sandbox
+        s3_mount: S3 bucket mount configuration
+        ports: Port mappings for the sandbox
+        service: Service configuration for network access
+        max_timeout_seconds: Maximum timeout for sandbox operations
     """
     unwrapped = func
     while hasattr(unwrapped, "__wrapped__"):
@@ -73,6 +83,20 @@ def create_function_wrapper(
             "If you need async behavior, run your async code inside the sync function "
             "using asyncio.run()."
         )
+
+    sandbox_kwargs: dict[str, Any] = {}
+    if resources is not None:
+        sandbox_kwargs["resources"] = resources
+    if mounted_files is not None:
+        sandbox_kwargs["mounted_files"] = mounted_files
+    if s3_mount is not None:
+        sandbox_kwargs["s3_mount"] = s3_mount
+    if ports is not None:
+        sandbox_kwargs["ports"] = ports
+    if service is not None:
+        sandbox_kwargs["service"] = service
+    if max_timeout_seconds is not None:
+        sandbox_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> R:

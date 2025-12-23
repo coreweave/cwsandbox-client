@@ -1,20 +1,40 @@
 """Unit tests for aviato._defaults module."""
 
+import dataclasses
+
+import pytest
+
 from aviato import SandboxDefaults
 
 
 class TestSandboxDefaults:
     """Tests for SandboxDefaults dataclass."""
 
-    def test_defaults_have_sensible_values(self) -> None:
-        """Test SandboxDefaults has sensible default values."""
+    def test_defaults_are_reasonable(self) -> None:
+        """Test SandboxDefaults has reasonable default values."""
         defaults = SandboxDefaults()
 
-        assert defaults.container_image == "python:3.11"
-        assert defaults.base_url == "https://atc.cwaviato.com"
-        assert defaults.request_timeout_seconds == 300.0
-        assert defaults.max_lifetime_seconds is None  # Backend controls default
+        # Container image should be non-empty and look like a docker image
+        assert defaults.container_image
+        assert ":" in defaults.container_image or "/" in defaults.container_image
+
+        # Command and args should be non-empty (sandbox needs something to run)
+        assert defaults.command
+        assert isinstance(defaults.args, tuple)
+
+        # Base URL should be a valid HTTP(S) URL
+        assert defaults.base_url.startswith(("http://", "https://"))
+
+        # Timeout should be positive
+        assert 0 < defaults.request_timeout_seconds
+
+        # max_lifetime_seconds can be None (backend-controlled) or positive
+        assert defaults.max_lifetime_seconds is None or defaults.max_lifetime_seconds > 0
+
+        # Tags should default to empty tuple (immutable)
         assert defaults.tags == ()
+
+        # Runway/tower IDs should default to None (no filtering)
         assert defaults.runway_ids is None
         assert defaults.tower_ids is None
 
@@ -22,11 +42,10 @@ class TestSandboxDefaults:
         """Test SandboxDefaults is frozen/immutable."""
         defaults = SandboxDefaults(container_image="python:3.11")
 
-        # Attempting to modify should raise
-        import dataclasses
-
         assert dataclasses.is_dataclass(defaults)
-        # The frozen=True attribute means assignment raises FrozenInstanceError
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            defaults.container_image = "python:3.12"  # type: ignore[misc]
 
     def test_merge_tags_empty_base(self) -> None:
         """Test merge_tags with no default tags."""

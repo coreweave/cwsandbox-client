@@ -2,16 +2,20 @@
 
 from aviato._auth import WandbAuthError
 from aviato._defaults import SandboxDefaults
-from aviato._sandbox import Sandbox
+from aviato._sandbox import Sandbox, SandboxStatus
 from aviato._session import Session
 from aviato._types import ExecResult, Serialization
 from aviato.exceptions import (
     AsyncFunctionError,
+    AviatoAuthenticationError,
+    AviatoError,
+    FunctionError,
     FunctionSerializationError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
+    SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
@@ -19,7 +23,10 @@ from aviato.exceptions import (
 
 __all__ = [
     "AsyncFunctionError",
+    "AviatoAuthenticationError",
+    "AviatoError",
     "ExecResult",
+    "FunctionError",
     "FunctionSerializationError",
     "Sandbox",
     "SandboxDefaults",
@@ -27,7 +34,9 @@ __all__ = [
     "SandboxExecutionError",
     "SandboxFailedError",
     "SandboxFileError",
+    "SandboxNotFoundError",
     "SandboxNotRunningError",
+    "SandboxStatus",
     "SandboxTerminatedError",
     "SandboxTimeoutError",
     "Serialization",

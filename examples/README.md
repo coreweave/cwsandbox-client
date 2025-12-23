@@ -70,6 +70,124 @@ Demonstrates:
 - Running parallel commands with `asyncio.gather()`
 - Automatic cleanup on session exit
 
+### List Sandboxes (`list_sandboxes.py`)
+
+Query and filter existing sandboxes:
+
+```bash
+python examples/list_sandboxes.py
+```
+
+Demonstrates:
+- Using `Sandbox.list()` to query existing sandboxes
+- Filtering by status, tags, tower IDs, etc.
+- Performing operations on discovered sandboxes
+
+### Delete Sandboxes (`delete_sandboxes.py`)
+
+Multiple ways to delete sandboxes:
+
+```bash
+python examples/delete_sandboxes.py
+```
+
+Demonstrates:
+- Using `Sandbox.delete(sandbox_id)` class method for deletion by ID
+- Using `sandbox.stop()` instance method
+- Using `Sandbox.from_id()` to attach and then stop
+- Handling `SandboxNotFoundError` with `missing_ok=True`
+
+### Reconnect to Sandbox (`reconnect_to_sandbox.py`)
+
+Attach to existing sandboxes by ID:
+
+```bash
+# Create a long-running sandbox
+python examples/reconnect_to_sandbox.py --create
+
+# Reconnect to it later
+python examples/reconnect_to_sandbox.py --sandbox-id <id>
+
+# Stop it after reconnecting
+python examples/reconnect_to_sandbox.py --sandbox-id <id> --stop
+```
+
+Demonstrates:
+- Using `Sandbox.from_id()` to attach to existing sandboxes
+- Executing commands on reconnected sandboxes
+- Managing long-running sandboxes across script invocations
+
+### Session Adopt Orphans (`session_adopt_orphans.py`)
+
+Use sessions to adopt and clean up orphaned sandboxes:
+
+```bash
+# Create orphaned sandboxes
+python examples/session_adopt_orphans.py --create-orphans
+
+# Adopt and clean them up
+python examples/session_adopt_orphans.py --cleanup
+
+# Demo session.adopt()
+python examples/session_adopt_orphans.py --demo-adopt
+
+# Demo session.from_id()
+python examples/session_adopt_orphans.py --demo-from-id
+```
+
+Demonstrates:
+- Using `session.list(adopt=True)` to adopt orphaned sandboxes
+- Using `session.adopt()` to manually adopt sandboxes
+- Using `session.from_id()` to attach and adopt by ID
+- Automatic cleanup of adopted sandboxes on session exit
+
+### Batch Job with Cleanup (`batch_job_with_cleanup.py`)
+
+Robust batch job pattern with cleanup:
+
+```bash
+python examples/batch_job_with_cleanup.py
+```
+
+Demonstrates:
+- Using unique tags for batch job identification
+- Cleanup in `finally` block to handle interruptions
+- Using `Sandbox.list()` to find orphaned sandboxes from the batch
+
+### Cleanup by Tag (`cleanup_by_tag.py`)
+
+Clean up sandboxes identified by tags:
+
+```bash
+# Create tagged sandboxes
+python examples/cleanup_by_tag.py --create
+
+# Clean them up
+python examples/cleanup_by_tag.py --cleanup
+```
+
+Demonstrates:
+- Tagging sandboxes for easy identification
+- Using `Sandbox.list(tags=...)` to find sandboxes
+- Parallel cleanup with `asyncio.gather()`
+
+### Cleanup Old Sandboxes (`cleanup_old_sandboxes.py`)
+
+Clean up sandboxes older than a threshold:
+
+```bash
+# Dry run
+python examples/cleanup_old_sandboxes.py --dry-run
+
+# Actually clean up sandboxes older than 2 hours
+python examples/cleanup_old_sandboxes.py --max-age-hours 2
+```
+
+Demonstrates:
+- Filtering sandboxes by age using `started_at` timestamp
+- Client-side filtering after `Sandbox.list()`
+- Dry run mode for safe testing
+
 ## API Patterns
 
 ### Quick Usage (Factory Method)

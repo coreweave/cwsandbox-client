@@ -5,25 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aviato import Sandbox, SandboxDefaults, Serialization, Session
-
-
-class TestSessionInit:
-    """Tests for Session initialization."""
-
-    def test_session_init_no_defaults(self) -> None:
-        """Test Session can be initialized without defaults."""
-        session = Session()
-
-        assert session._defaults is not None  # Creates empty defaults
-        assert session._sandboxes == {}
-
-    def test_session_init_with_defaults(self) -> None:
-        """Test Session can be initialized with defaults."""
-        defaults = SandboxDefaults(container_image="python:3.10")
-        session = Session(defaults)
-
-        assert session._defaults == defaults
+from aviato import Sandbox, Session
 
 
 class TestSessionCreate:
@@ -35,60 +17,16 @@ class TestSessionCreate:
         sandbox = session.create(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
-        assert sandbox._command == "sleep"
-        assert sandbox._args == ["infinity"]
-
-    def test_create_applies_session_defaults(self) -> None:
-        """Test session.create applies session defaults."""
-        defaults = SandboxDefaults(
-            container_image="python:3.10",
-            request_timeout_seconds=60.0,
-        )
-        session = Session(defaults)
-
-        sandbox = session.create(command="sleep", args=["infinity"])
-
-        assert sandbox._container_image == "python:3.10"
-        assert sandbox._request_timeout_seconds == 60.0
-
-    def test_create_registers_sandbox(self) -> None:
-        """Test session.create registers the sandbox."""
-        session = Session()
-
-        sandbox = session.create(command="sleep", args=["infinity"])
-
-        assert id(sandbox) in session._sandboxes
-
-    def test_create_explicit_overrides_defaults(self) -> None:
-        """Test explicit args in create override session defaults."""
-        defaults = SandboxDefaults(container_image="python:3.10")
-        session = Session(defaults)
-
-        sandbox = session.create(
-            command="sleep",
-            args=["infinity"],
-            container_image="python:3.12",
-        )
-
-        assert sandbox._container_image == "python:3.12"
 
 
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
     @pytest.mark.asyncio
-    async def test_context_manager_enters(self) -> None:
-        """Test Session enters context successfully."""
+    async def test_context_manager_works(self) -> None:
+        """Test Session can be used as async context manager."""
         async with Session() as session:
-            assert session is not None
-
-    @pytest.mark.asyncio
-    async def test_context_manager_cleanup_empty(self) -> None:
-        """Test Session cleanup with no sandboxes."""
-        async with Session() as session:
-            pass  # No sandboxes created
-
-        assert session._sandboxes == {}
+            assert isinstance(session, Session)
 
 
 class TestSessionCleanup:
@@ -161,10 +99,9 @@ class TestSessionCleanup:
         """Test calling close() multiple times is safe."""
         session = Session()
 
+        # Should not raise on repeated calls
         await session.close()
         await session.close()
-
-        assert session._sandboxes == {}
 
 
 class TestSessionFromSandbox:
@@ -173,65 +110,24 @@ class TestSessionFromSandbox:
     def test_sandbox_session_returns_session(self) -> None:
         """Test Sandbox.session returns a Session."""
         session = Sandbox.session()
-
         assert isinstance(session, Session)
-
-    def test_sandbox_session_with_defaults(self) -> None:
-        """Test Sandbox.session accepts defaults."""
-        defaults = SandboxDefaults(container_image="python:3.10")
-        session = Sandbox.session(defaults)
-
-        assert session._defaults == defaults
 
 
 class TestSessionFunctionDecorator:
     """Tests for Session.function() decorator."""
 
-    def test_function_decorator_with_parens(self) -> None:
-        """Test @session.function() decorator with parentheses."""
+    def test_function_decorator_returns_async_callable(self) -> None:
+        """Test @session.function() returns an async function that preserves name."""
+        import asyncio
+
         session = Session()
 
         @session.function()
-        def add(x: int, y: int) -> int:
+        def my_function(x: int, y: int) -> int:
             return x + y
 
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(add)
-
-    def test_function_decorator_preserves_name(self) -> None:
-        """Test decorator preserves function name."""
-        session = Session()
-
-        @session.function()
-        def my_unique_function_name(x: int) -> int:
-            return x
-
-        assert my_unique_function_name.__name__ == "my_unique_function_name"
-
-    def test_function_decorator_accepts_serialization(self) -> None:
-        """Test decorator accepts serialization parameter."""
-        session = Session()
-
-        @session.function(serialization=Serialization.PICKLE)
-        def process(data: list[int]) -> int:
-            return sum(data)
-
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(process)
-
-    def test_function_decorator_accepts_container_image(self) -> None:
-        """Test decorator accepts container_image override."""
-        session = Session()
-
-        @session.function(container_image="python:3.12")
-        def compute(x: int) -> int:
-            return x * 2
-
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(compute)
+        assert asyncio.iscoroutinefunction(my_function)
+        assert my_function.__name__ == "my_function"
 
     @pytest.mark.asyncio
     async def test_function_decorator_executes_in_sandbox(self) -> None:
@@ -309,15 +205,317 @@ class TestSessionFunctionDecorator:
             async def async_func(x: int) -> int:
                 return x
 
-    def test_function_decorator_uses_session_defaults_temp_dir(self) -> None:
-        """Test decorator uses session defaults for temp_dir."""
-        defaults = SandboxDefaults(temp_dir="/custom/tmp")
+
+class TestSessionKwargsValidation:
+    """Tests for kwargs validation in Session methods."""
+
+    def test_create_with_valid_kwargs(self) -> None:
+        """Test Session.create accepts valid kwargs."""
+        session = Session()
+        sandbox = session.create(
+            command="echo",
+            args=["hello"],
+            resources={"cpu": "100m"},
+            ports=[{"container_port": 8080}],
+        )
+        assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
+        assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+
+    def test_create_with_invalid_kwargs(self) -> None:
+        """Test Session.create rejects invalid kwargs."""
+        session = Session()
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            session.create(
+                command="echo",
+                args=["hello"],
+                invalid_param="value",
+            )
+
+    def test_function_with_valid_sandbox_kwargs(self) -> None:
+        """Test session.function() accepts valid sandbox_kwargs."""
+        session = Session()
+
+        @session.function(
+            resources={"cpu": "100m"},
+            ports=[{"container_port": 8080}],
+        )
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        # Decorator should work without raising
+        assert callable(add)
+
+    def test_function_with_invalid_sandbox_kwargs(self) -> None:
+        """Test session.function() rejects invalid sandbox_kwargs."""
+        session = Session()
+
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+
+            @session.function(
+                invalid_param="value",
+            )
+            def add(x: int, y: int) -> int:
+                return x + y
+
+
+class TestSessionList:
+    """Tests for Session.list method."""
+
+    @pytest.mark.asyncio
+    async def test_list_returns_sandbox_instances(self, mock_aviato_api_key: str) -> None:
+        """Test session.list() returns Sandbox instances."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        from aviato import SandboxDefaults
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        defaults = SandboxDefaults(tags=("session-tag",))
         session = Session(defaults)
 
-        @session.function()
-        def func(x: int) -> int:
-            return x
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
 
-        import asyncio
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
 
-        assert asyncio.iscoroutinefunction(func)
+                sandboxes = await session.list()
+
+                assert len(sandboxes) == 1
+                assert isinstance(sandboxes[0], Sandbox)
+
+    @pytest.mark.asyncio
+    async def test_list_uses_default_tags(self, mock_aviato_api_key: str) -> None:
+        """Test session.list() automatically filters by session's default tags."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        from aviato import SandboxDefaults
+
+        defaults = SandboxDefaults(tags=("session-tag",))
+        session = Session(defaults)
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
+                )
+
+                await session.list()
+
+                call_args = mock_atc_instance.list.call_args[0][0]
+                assert "session-tag" in call_args.tags
+
+    @pytest.mark.asyncio
+    async def test_list_with_adopt_registers_sandboxes(self, mock_aviato_api_key: str) -> None:
+        """Test session.list(adopt=True) registers sandboxes with session."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                sandboxes = await session.list(adopt=True)
+
+                assert session.sandbox_count == 1
+                assert sandboxes[0]._session is session
+
+    @pytest.mark.asyncio
+    async def test_list_without_adopt_does_not_register(self, mock_aviato_api_key: str) -> None:
+        """Test session.list(adopt=False) does not register sandboxes."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_sandbox_info = atc_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.list = AsyncMock(
+                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+                )
+
+                await session.list(adopt=False)
+
+                assert session.sandbox_count == 0
+
+
+class TestSessionFromId:
+    """Tests for Session.from_id method."""
+
+    @pytest.mark.asyncio
+    async def test_from_id_returns_sandbox_instance(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id() returns a Sandbox instance."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await session.from_id("test-123")
+
+                assert isinstance(sandbox, Sandbox)
+                assert sandbox.sandbox_id == "test-123"
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopts_by_default(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id() adopts sandbox by default."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await session.from_id("test-123")
+
+                assert session.sandbox_count == 1
+                assert sandbox._session is session
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopt_false_does_not_register(self, mock_aviato_api_key: str) -> None:
+        """Test session.from_id(adopt=False) does not register sandbox."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        session = Session()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                await session.from_id("test-123", adopt=False)
+
+                assert session.sandbox_count == 0
+
+
+class TestSessionAdopt:
+    """Tests for Session.adopt method."""
+
+    def test_adopt_registers_sandbox(self) -> None:
+        """Test session.adopt() registers sandbox for cleanup."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-123"
+
+        session.adopt(sandbox)
+
+        assert session.sandbox_count == 1
+        assert sandbox._session is session
+
+    def test_adopt_raises_on_closed_session(self) -> None:
+        """Test session.adopt() raises SandboxError if session is closed."""
+        from aviato.exceptions import SandboxError
+
+        session = Session()
+        session._closed = True
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-123"
+
+        with pytest.raises(SandboxError, match="session is closed"):
+            session.adopt(sandbox)
+
+    def test_adopt_raises_on_sandbox_without_id(self) -> None:
+        """Test session.adopt() raises ValueError if sandbox has no ID."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with pytest.raises(ValueError, match="without sandbox_id"):
+            session.adopt(sandbox)

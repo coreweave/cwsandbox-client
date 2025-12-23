@@ -1,4 +1,4 @@
-"""Exception hierarchy for sandbox operations."""
+"""Exception hierarchy for Aviato operations."""
 
 from __future__ import annotations
 
@@ -8,7 +8,15 @@ if TYPE_CHECKING:
     from aviato._types import ExecResult
 
 
-class SandboxError(Exception):
+class AviatoError(Exception):
+    """Base exception for all Aviato operations."""
+
+
+class AviatoAuthenticationError(AviatoError):
+    """Raised when authentication fails."""
+
+
+class SandboxError(AviatoError):
     """Base exception for sandbox operations."""
 
 
@@ -26,6 +34,14 @@ class SandboxTerminatedError(SandboxError):
 
 class SandboxFailedError(SandboxError):
     """Raised when a sandbox fails to start or encounters a fatal error."""
+
+
+class SandboxNotFoundError(SandboxError):
+    """Raised when a sandbox is not found (e.g., already deleted)."""
+
+    def __init__(self, message: str, *, sandbox_id: str | None = None) -> None:
+        super().__init__(message)
+        self.sandbox_id = sandbox_id
 
 
 class SandboxExecutionError(SandboxError):
@@ -60,7 +76,11 @@ class SandboxFileError(SandboxError):
         self.filepath = filepath
 
 
-class AsyncFunctionError(TypeError):
+class FunctionError(AviatoError):
+    """Base exception for function execution operations."""
+
+
+class AsyncFunctionError(FunctionError):
     """Raised when an async function is passed to @session.function().
 
     Async functions are not supported because the sandbox executes Python
@@ -68,9 +88,9 @@ class AsyncFunctionError(TypeError):
     """
 
 
-class FunctionSerializationError(SandboxError):
+class FunctionSerializationError(FunctionError):
     """Raised when arguments, referenced globals, or closures cannot be serialized."""
 
 
-class WandbAuthError(Exception):
+class WandbAuthError(AviatoAuthenticationError):
     """Raised when W&B authentication is misconfigured."""

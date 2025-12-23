@@ -706,3 +706,58 @@ class TestCreateFunctionWrapper:
             payload = pickle.loads(payload_bytes)
             assert "source" in payload
             assert payload["args"] == ([1, 2, 3, 4],)
+
+
+class TestCreateFunctionWrapperKwargsValidation:
+    """Tests for kwargs validation in create_function_wrapper."""
+
+    def test_valid_sandbox_kwargs(self) -> None:
+        """Test create_function_wrapper accepts valid sandbox_kwargs."""
+        from aviato import Session
+
+        session = Session()
+
+        def compute(x: int) -> int:
+            return x * 2
+
+        wrapper = create_function_wrapper(
+            compute,
+            session=session,
+            resources={"cpu": "100m"},
+            ports=[{"container_port": 8080}],
+        )
+
+        assert callable(wrapper)
+
+    def test_invalid_sandbox_kwargs(self) -> None:
+        """Test create_function_wrapper rejects invalid sandbox_kwargs."""
+        from aviato import Session
+
+        session = Session()
+
+        def compute(x: int) -> int:
+            return x * 2
+
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            create_function_wrapper(
+                compute,
+                session=session,
+                invalid_param="value",
+            )
+
+    def test_mixed_valid_invalid_sandbox_kwargs(self) -> None:
+        """Test create_function_wrapper rejects if any sandbox_kwargs are invalid."""
+        from aviato import Session
+
+        session = Session()
+
+        def compute(x: int) -> int:
+            return x * 2
+
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            create_function_wrapper(
+                compute,
+                session=session,
+                resources={"cpu": "100m"},
+                invalid_param="value",
+            )

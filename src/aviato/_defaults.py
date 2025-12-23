@@ -2,6 +2,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
+DEFAULT_COMMAND: str = "tail"
+DEFAULT_ARGS: tuple[str, ...] = ("-f", "/dev/null")
 DEFAULT_BASE_URL: str = "https://atc.cwaviato.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
@@ -47,6 +49,8 @@ class SandboxDefaults:
     Example:
         defaults = SandboxDefaults(
             container_image="python:3.12",
+            command="tail",
+            args=("-f", "/dev/null"),
             request_timeout_seconds=60,
             max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
             tags=("my-workload", "experiment-42"),
@@ -54,6 +58,8 @@ class SandboxDefaults:
     """
 
     container_image: str = DEFAULT_CONTAINER_IMAGE
+    command: str = DEFAULT_COMMAND
+    args: tuple[str, ...] = DEFAULT_ARGS
     base_url: str = DEFAULT_BASE_URL
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS

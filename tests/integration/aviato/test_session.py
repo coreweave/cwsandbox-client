@@ -12,12 +12,10 @@ GLOBAL_CONSTANT = 42
 
 
 @pytest.mark.asyncio
-async def test_session_create_sandbox() -> None:
+async def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
     """Test creating sandbox via session."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
-        sandbox = session.create(command="sleep", args=["infinity"])
+    async with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.create()
 
         async with sandbox:
             assert sandbox.sandbox_id is not None
@@ -27,13 +25,11 @@ async def test_session_create_sandbox() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_multiple_sandboxes() -> None:
+async def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
     """Test session managing multiple sandboxes."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
-        sb1 = session.create(command="sleep", args=["infinity"])
-        sb2 = session.create(command="sleep", args=["infinity"])
+    async with Sandbox.session(sandbox_defaults) as session:
+        sb1 = session.create()
+        sb2 = session.create()
 
         async with sb1, sb2:
             r1 = await sb1.exec(["echo", "sandbox-1"])
@@ -44,11 +40,9 @@ async def test_session_multiple_sandboxes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_pickle() -> None:
+async def test_session_function_pickle(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function execution with pickle serialization."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def add(x: int, y: int) -> int:
@@ -60,11 +54,9 @@ async def test_session_function_pickle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_json() -> None:
+async def test_session_function_json(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function execution with JSON serialization."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function(serialization=Serialization.JSON)
         def create_dict(key: str, value: int) -> dict[str, int]:
@@ -76,12 +68,11 @@ async def test_session_function_json() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_with_closure() -> None:
+async def test_session_function_with_closure(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function with closure variables."""
-    defaults = SandboxDefaults(container_image="python:3.11")
     multiplier = 10
 
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def multiply(x: int) -> int:
@@ -93,13 +84,11 @@ async def test_session_function_with_closure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_raises_exception() -> None:
+async def test_session_function_raises_exception(sandbox_defaults: SandboxDefaults) -> None:
     """Test that exceptions from sandbox functions are properly propagated."""
     from aviato.exceptions import SandboxExecutionError
 
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def raises_value_error() -> None:
@@ -113,11 +102,9 @@ async def test_session_function_raises_exception() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_with_global_variables() -> None:
+async def test_session_function_with_global_variables(sandbox_defaults: SandboxDefaults) -> None:
     """Test function execution with module-level global variables."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def use_global() -> int:
@@ -129,28 +116,25 @@ async def test_session_function_with_global_variables() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_create_after_close_raises() -> None:
+async def test_session_create_after_close_raises(sandbox_defaults: SandboxDefaults) -> None:
     """Test creating sandbox after session.close() raises SandboxError."""
     from aviato.exceptions import SandboxError
 
-    defaults = SandboxDefaults(container_image="python:3.11")
-    session = Sandbox.session(defaults)
+    session = Sandbox.session(sandbox_defaults)
 
     await session.close()
 
     with pytest.raises(SandboxError) as exc_info:
-        session.create(command="sleep", args=["infinity"])
+        session.create()
 
     assert "closed" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
-async def test_session_close_stops_orphaned_sandboxes() -> None:
+async def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
     """Test session.close() stops sandboxes that weren't manually stopped."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
-        sandbox = session.create(command="sleep", args=["infinity"])
+    async with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.create()
         await sandbox.start()
 
         assert sandbox.sandbox_id is not None
@@ -160,11 +144,9 @@ async def test_session_close_stops_orphaned_sandboxes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_function_pickle_complex_types() -> None:
+async def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function with complex types using pickle serialization."""
-    defaults = SandboxDefaults(container_image="python:3.11")
-
-    async with Sandbox.session(defaults) as session:
+    async with Sandbox.session(sandbox_defaults) as session:
 
         @session.function(serialization=Serialization.PICKLE)
         def process_nested(data: dict) -> dict:

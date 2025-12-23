@@ -4,19 +4,17 @@ These tests require a running Aviato backend.
 Set AVIATO_BASE_URL and AVIATO_API_KEY environment variables before running.
 """
 
+import uuid
+
 import pytest
 
 from aviato import Sandbox, SandboxDefaults
 
 
 @pytest.mark.asyncio
-async def test_sandbox_lifecycle() -> None:
+async def test_sandbox_lifecycle(sandbox_defaults: SandboxDefaults) -> None:
     """Test basic sandbox lifecycle: create, exec, stop."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         assert sandbox.sandbox_id is not None
 
         result = await sandbox.exec(["echo", "hello"])
@@ -37,15 +35,11 @@ async def test_sandbox_create_factory() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_file_operations() -> None:
+async def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
     """Test sandbox file read/write operations."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         test_content = b"Hello, World!"
-        filepath = "/tmp/test_file.txt"
+        filepath = f"/tmp/test_file_{uuid.uuid4().hex}.txt"
 
         await sandbox.write_file(filepath, test_content)
 
@@ -57,14 +51,11 @@ async def test_sandbox_file_operations() -> None:
 async def test_sandbox_with_defaults() -> None:
     """Test sandbox creation with SandboxDefaults."""
     defaults = SandboxDefaults(
-        container_image="python:3.11",
         max_lifetime_seconds=60,
         tags=("test-integration",),
     )
 
     async with Sandbox(
-        command="sleep",
-        args=["infinity"],
         defaults=defaults,
     ) as sandbox:
         assert sandbox.sandbox_id is not None
@@ -75,13 +66,9 @@ async def test_sandbox_with_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_python_exec() -> None:
+async def test_sandbox_python_exec(sandbox_defaults: SandboxDefaults) -> None:
     """Test executing Python code in sandbox."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         result = await sandbox.exec(["python", "-c", "print(2 + 2)"])
 
         assert result.returncode == 0
@@ -89,15 +76,11 @@ async def test_sandbox_python_exec() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_exec_check_raises_on_failure() -> None:
+async def test_sandbox_exec_check_raises_on_failure(sandbox_defaults: SandboxDefaults) -> None:
     """Test exec(check=True) raises SandboxExecutionError on non-zero exit."""
     from aviato.exceptions import SandboxExecutionError
 
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         with pytest.raises(SandboxExecutionError) as exc_info:
             await sandbox.exec(["sh", "-c", "exit 42"], check=True)
 
@@ -106,41 +89,29 @@ async def test_sandbox_exec_check_raises_on_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_exec_captures_stderr() -> None:
+async def test_sandbox_exec_captures_stderr(sandbox_defaults: SandboxDefaults) -> None:
     """Test stderr is properly captured from commands."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         result = await sandbox.exec(["sh", "-c", "echo error_output >&2"])
 
         assert "error_output" in result.stderr
 
 
 @pytest.mark.asyncio
-async def test_sandbox_exec_check_false_returns_result() -> None:
+async def test_sandbox_exec_check_false_returns_result(sandbox_defaults: SandboxDefaults) -> None:
     """Test exec(check=False) returns result even on non-zero exit."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         result = await sandbox.exec(["sh", "-c", "exit 1"])
 
         assert result.returncode == 1
 
 
 @pytest.mark.asyncio
-async def test_sandbox_read_nonexistent_file() -> None:
+async def test_sandbox_read_nonexistent_file(sandbox_defaults: SandboxDefaults) -> None:
     """Test read_file raises SandboxFileError for missing files."""
     from aviato.exceptions import SandboxFileError
 
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         with pytest.raises(SandboxFileError) as exc_info:
             await sandbox.read_file("/nonexistent/path/to/file.txt")
 
@@ -148,15 +119,11 @@ async def test_sandbox_read_nonexistent_file() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_file_operations_binary() -> None:
+async def test_sandbox_file_operations_binary(sandbox_defaults: SandboxDefaults) -> None:
     """Test reading/writing binary content (non-UTF8)."""
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    async with Sandbox(defaults=sandbox_defaults) as sandbox:
         binary_content = bytes(range(256))
-        filepath = "/tmp/binary_test.bin"
+        filepath = f"/tmp/binary_test_{uuid.uuid4().hex}.bin"
 
         await sandbox.write_file(filepath, binary_content)
         content = await sandbox.read_file(filepath)

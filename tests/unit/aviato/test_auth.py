@@ -181,8 +181,8 @@ class TestTryWandbAuth:
 
         assert result is None
 
-    def test_defaults_project_to_uncategorized(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test project name defaults to 'uncategorized' when not set."""
+    def test_defaults_project_name_when_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test project name uses default when not set."""
         monkeypatch.delenv("WANDB_PROJECT_NAME", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
         monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
@@ -190,7 +190,7 @@ class TestTryWandbAuth:
         result = _try_wandb_auth()
 
         assert result is not None
-        assert result.headers["x-project-name"] == "uncategorized"
+        assert result.headers["x-project-name"] == DEFAULT_PROJECT_NAME
 
     def test_falls_back_to_netrc(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Test falls back to netrc when WANDB_API_KEY is not set."""
