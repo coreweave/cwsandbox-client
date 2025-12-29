@@ -48,7 +48,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coreweave-aviato-connectrpc-python", specifier = "==0.6.0.1.20251219221930+aab82cf11674" },
+    { name = "coreweave-aviato-connectrpc-python", specifier = "==0.6.0.1.20251229201041+75728b022d6d" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -112,7 +112,7 @@ wheels = [
 
 [[package]]
 name = "coreweave-aviato-connectrpc-python"
-version = "0.6.0.1.20251219221930+aab82cf11674"
+version = "0.6.0.1.20251229201041+75728b022d6d"
 source = { registry = "https://buf.build/gen/python" }
 dependencies = [
     { name = "connect-python" },
@@ -120,12 +120,12 @@ dependencies = [
     { name = "googleapis-googleapis-connectrpc-python" },
 ]
 wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-connectrpc-python/coreweave_aviato_connectrpc_python-0.6.0.1.20251219221930+aab82cf11674-py3-none-any.whl" },
+    { url = "https://buf.build/gen/python/coreweave-aviato-connectrpc-python/coreweave_aviato_connectrpc_python-0.6.0.1.20251229201041+75728b022d6d-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "coreweave-aviato-protocolbuffers-pyi"
-version = "33.2.0.1.20251219221930+aab82cf11674"
+version = "33.2.0.1.20251229201041+75728b022d6d"
 source = { registry = "https://buf.build/gen/python" }
 dependencies = [
     { name = "googleapis-googleapis-protocolbuffers-pyi" },
@@ -133,12 +133,12 @@ dependencies = [
     { name = "types-protobuf" },
 ]
 wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-pyi/coreweave_aviato_protocolbuffers_pyi-33.2.0.1.20251219221930+aab82cf11674-py3-none-any.whl" },
+    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-pyi/coreweave_aviato_protocolbuffers_pyi-33.2.0.1.20251229201041+75728b022d6d-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "coreweave-aviato-protocolbuffers-python"
-version = "33.2.0.1.20251219221930+aab82cf11674"
+version = "33.2.0.1.20251229201041+75728b022d6d"
 source = { registry = "https://buf.build/gen/python" }
 dependencies = [
     { name = "coreweave-aviato-protocolbuffers-pyi" },
@@ -146,7 +146,7 @@ dependencies = [
     { name = "protobuf" },
 ]
 wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-python/coreweave_aviato_protocolbuffers_python-33.2.0.1.20251219221930+aab82cf11674-py3-none-any.whl" },
+    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-python/coreweave_aviato_protocolbuffers_python-33.2.0.1.20251229201041+75728b022d6d-py3-none-any.whl" },
 ]
 
 [[package]]
