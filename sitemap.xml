@@ -9,15 +9,19 @@
          <lastmod>2026-01-05</lastmod>
     </url>
     <url>
-         <loc>https://coreweave.github.io/aviato-client/examples/basic-execution/</loc>
+         <loc>https://coreweave.github.io/aviato-client/examples/advanced-lifecycle-management/</loc>
          <lastmod>2026-01-05</lastmod>
     </url>
     <url>
-         <loc>https://coreweave.github.io/aviato-client/examples/function-decorator/</loc>
+         <loc>https://coreweave.github.io/aviato-client/examples/functions/</loc>
          <lastmod>2026-01-05</lastmod>
     </url>
     <url>
-         <loc>https://coreweave.github.io/aviato-client/examples/parallel-sandboxes/</loc>
+         <loc>https://coreweave.github.io/aviato-client/examples/getting-started/</loc>
+         <lastmod>2026-01-05</lastmod>
+    </url>
+    <url>
+         <loc>https://coreweave.github.io/aviato-client/examples/sessions/</loc>
          <lastmod>2026-01-05</lastmod>
     </url>
 </urlset>
