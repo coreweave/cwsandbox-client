@@ -94,24 +94,24 @@ class TestSandboxDefaults:
         assert new_defaults.base_url == "http://example.com"
         assert new_defaults.request_timeout_seconds == 120.0
 
-    def test_merge_env_vars_empty_base(self) -> None:
-        """Test merge_env_vars with no default env vars."""
+    def test_merge_environment_variables_empty_base(self) -> None:
+        """Test merge_environment_variables with no default environment variables."""
         defaults = SandboxDefaults()
 
-        result = defaults.merge_env_vars({"LOG_LEVEL": "info"})
+        result = defaults.merge_environment_variables({"LOG_LEVEL": "info"})
 
         assert result == {"LOG_LEVEL": "info"}
 
-    def test_merge_env_vars_with_additional(self) -> None:
-        """Test merge_env_vars with additional env vars."""
+    def test_merge_environment_variables_with_additional(self) -> None:
+        """Test merge_environment_variables with additional environment variables."""
         defaults = SandboxDefaults(
-            env_vars={
+            environment_variables={
                 "LOG_LEVEL": "info",
                 "REGION": "us-west",
             },
         )
 
-        result = defaults.merge_env_vars({
+        result = defaults.merge_environment_variables({
             "LOG_LEVEL": "debug",
             "MODEL": "gpt2",
         })

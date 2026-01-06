@@ -169,7 +169,7 @@ class Sandbox:
         ports: list[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
-        env_vars: dict[str, str] | None = None,
+        environment_variables: dict[str, str] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -192,8 +192,9 @@ class Sandbox:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
-            env_vars: Environment variables to inject into the sandbox. Merges with and
-                overrides matching keys from the session defaults. Use for non-sensitive config only.
+            environment_variables: Environment variables to inject into the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive config only.
         """
 
         self._defaults = defaults or SandboxDefaults()
@@ -219,12 +220,10 @@ class Sandbox:
             else self._defaults.max_lifetime_seconds
         )
 
-<<<<<<< HEAD
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
-=======
-        self._tags = self._defaults.merge_tags(tags)
-        self._env_vars = self._defaults.merge_env_vars(env_vars)
->>>>>>> cadfbb2 (feat: add environment variable support)
+        self._environment_variables = self._defaults.merge_environment_variables(
+            environment_variables
+        )
 
         self._runway_ids = runway_ids or (
             list(self._defaults.runway_ids) if self._defaults.runway_ids else None
@@ -248,6 +247,7 @@ class Sandbox:
             self._start_kwargs["service"] = service
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
+
         self._client: atc_connect.ATCServiceClient | None = None
         self._sandbox_id: str | None = None
         self._returncode: int | None = None
@@ -283,6 +283,7 @@ class Sandbox:
         ports: list[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -304,7 +305,9 @@ class Sandbox:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
-
+            environment_variables: Environment variables to inject into the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive config only.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -343,6 +346,7 @@ class Sandbox:
             ports=ports,
             service=service,
             max_timeout_seconds=max_timeout_seconds,
+            environment_variables=environment_variables,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start()
