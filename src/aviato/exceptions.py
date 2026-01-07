@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aviato._types import ExecResult
+    from aviato._types import ProcessResult
 
 
 class AviatoError(Exception):
@@ -54,7 +54,7 @@ class SandboxExecutionError(SandboxError):
         self,
         message: str,
         *,
-        exec_result: ExecResult | None = None,
+        exec_result: ProcessResult | None = None,
         exception_type: str | None = None,
         exception_message: str | None = None,
     ) -> None:
