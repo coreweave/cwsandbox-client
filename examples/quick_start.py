@@ -1,36 +1,26 @@
-"""Quick start example - job-style sandbox that runs to completion.
+"""Quick start example - the most common sandbox usage pattern.
 
 This example demonstrates:
-- Using Sandbox.create() for one-shot job execution
-- Running a command that finishes naturally (not sleep infinity)
-- Waiting for the job to complete and checking exit status
+- Using Sandbox.run() with a context manager
+- Running commands with exec()
+- Automatic cleanup when the context exits
 """
-
-import asyncio
 
 from aviato import Sandbox
 
 
-async def main() -> None:
-    # Create a sandbox that runs a job to completion
-    # The command does some work and then exits
-    sandbox = await Sandbox.create(
-        "python",
-        "-c",
-        "print('Hello from sandbox!')",
-        container_image="python:3.11",
-    )
+def main() -> None:
+    # Create a sandbox and run commands in it
+    with Sandbox.run(container_image="python:3.11") as sandbox:
+        print(f"Sandbox ID: {sandbox.sandbox_id}")
 
-    print(f"Sandbox ID: {sandbox.sandbox_id}")
-    print(f"Tower: {sandbox.tower_id}")
+        # Execute a command and get the result
+        result = sandbox.exec(["python", "-c", "print('Hello from sandbox!')"]).result()
+        print(f"Output: {result.stdout.strip()}")
+        print(f"Exit code: {result.returncode}")
 
-    # Wait for the job to complete
-    await sandbox.wait()
-    print(f"Job completed with exit code: {sandbox.returncode}")
-
-    # Clean up the sandbox resources
-    await sandbox.stop()
+    # Sandbox is automatically stopped when exiting the context
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

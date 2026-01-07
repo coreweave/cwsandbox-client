@@ -118,32 +118,6 @@ class ProcessResult:
     command: list[str] = field(default_factory=list)
 
 
-# Original ExecResult for backward compatibility with _sandbox.py from main.
-# TODO: Remove in 03-sandbox-core branch (PR-20) when _sandbox.py is updated to use ProcessResult.
-@dataclass
-class ExecResult:
-    """Result from a completed sandbox exec operation (legacy).
-
-    This class is kept for backward compatibility with _sandbox.py.
-    New code should use ProcessResult instead.
-    """
-
-    stdout_bytes: bytes
-    stderr_bytes: bytes
-    returncode: int
-    command: list[str] = field(default_factory=list)
-
-    @property
-    def stdout(self) -> str:
-        """Decode stdout as UTF-8."""
-        return self.stdout_bytes.decode("utf-8", errors="replace")
-
-    @property
-    def stderr(self) -> str:
-        """Decode stderr as UTF-8."""
-        return self.stderr_bytes.decode("utf-8", errors="replace")
-
-
 class StreamReader:
     """Sync and async iterable for streaming output.
 
