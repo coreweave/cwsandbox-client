@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import logging
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from aviato._defaults import SandboxDefaults
-from aviato._function import create_function_wrapper
-from aviato._types import Serialization
+from aviato._function import RemoteFunction
+from aviato._loop_manager import _LoopManager
+from aviato._types import OperationRef, Serialization
 from aviato.exceptions import SandboxError
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable, Sequence
 
     from aviato._sandbox import Sandbox
 
@@ -31,29 +33,37 @@ class Session:
     Example:
         defaults = SandboxDefaults(container_image="python:3.11")
 
-        async with Session(defaults) as session:
-            # Create sandboxes with session defaults
-            sb1 = session.create(command="sleep", args=["infinity"])
-            sb2 = session.create(command="sleep", args=["infinity"])
+        # Sync context manager
+        with Session(defaults) as session:
+            # Create and start sandboxes with session defaults
+            sb1 = session.sandbox(command="sleep", args=["infinity"])
+            sb2 = session.sandbox(command="sleep", args=["infinity"])
 
-            async with sb1, sb2:
-                await sb1.exec(["echo", "hello"])
+            # Execute commands
+            result = sb1.exec(["echo", "hello"]).result()
 
             # Execute functions in sandboxes
             @session.function()
             def compute(x: int, y: int) -> int:
                 return x + y
 
-            result = await compute(2, 3)
+            result = compute.remote(2, 3).get()  # Returns OperationRef
             print(result)  # 5
 
         # Session automatically cleans up all sandboxes on exit
+
+        # Async context manager also supported
+        async with Session(defaults) as session:
+            sb = session.sandbox(command="sleep", args=["infinity"])
+            result = await sb.exec(["echo", "hello"])
     """
 
     def __init__(self, defaults: SandboxDefaults | None = None) -> None:
         self._defaults = defaults or SandboxDefaults()
         self._sandboxes: dict[int, Sandbox] = {}
         self._closed = False
+        self._loop_manager = _LoopManager.get()
+        self._loop_manager.register_session(self)
 
     def __repr__(self) -> str:
         status = "closed" if self._closed else "open"
@@ -64,21 +74,42 @@ class Session:
         """Number of sandboxes currently tracked by this session."""
         return len(self._sandboxes)
 
+    def __enter__(self) -> Session:
+        """Enter sync context manager."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Exit sync context manager, stop all sandboxes."""
+        self.close().get()
+
     async def __aenter__(self) -> Session:
-        """Initialize session resources."""
+        """Enter async context manager."""
         # TODO: Implement backend pre-warming optimizations
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        """Stop any orphaned sandboxes and close shared resources."""
+        """Exit async context manager, stop all sandboxes."""
+        # Route through close() which uses _LoopManager to ensure cleanup
+        # runs in the same event loop where the httpx client was created
         await self.close()
 
-    async def close(self) -> None:
-        """Stop all managed sandboxes concurrently.
+    def close(self) -> OperationRef[None]:
+        """Stop all managed sandboxes, return OperationRef immediately.
+
+        Returns:
+            OperationRef[None]: Use .get() to block until all sandboxes stopped.
 
         Raises:
             SandboxError: If one or more running sandboxes failed to stop.
+
+        Example:
+            session.close().get()  # Block until all sandboxes stopped
         """
+        future = self._loop_manager.run_async(self._close_async())
+        return OperationRef(future)
+
+    async def _close_async(self) -> None:
+        """Internal async: Stop all managed sandboxes concurrently."""
         if self._closed:
             return
 
@@ -91,7 +122,7 @@ class Session:
         self._sandboxes.clear()
 
         results = await asyncio.gather(
-            *[sandbox.stop() for sandbox in sandboxes],
+            *[sandbox._stop_async() for sandbox in sandboxes],
             return_exceptions=True,
         )
 
@@ -111,6 +142,19 @@ class Session:
                 f"Failed to stop {len(errors)} sandbox(es). Some sandboxes may still be running."
             ) from ExceptionGroup("Sandbox stop failures", errors)
 
+    async def _cleanup_async(self) -> None:
+        """Called by LoopManager during shutdown for graceful cleanup.
+
+        Best-effort cleanup: silently ignores errors to ensure all sandboxes
+        are attempted even if some fail.
+        """
+        for sandbox in list(self._sandboxes.values()):
+            try:
+                await sandbox._stop_async()
+            except Exception:
+                pass  # Best effort
+        self._sandboxes.clear()
+
     def _register_sandbox(self, sandbox: Sandbox) -> None:
         """Register a sandbox for tracking."""
         self._sandboxes[id(sandbox)] = sandbox
@@ -119,7 +163,7 @@ class Session:
         """Deregister a sandbox from tracking."""
         self._sandboxes.pop(id(sandbox), None)
 
-    def create(
+    def sandbox(
         self,
         *,
         command: str | None = None,
@@ -133,15 +177,40 @@ class Session:
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
     ) -> Sandbox:
-        """Create a sandbox with session defaults applied.
+        """Create and start a sandbox with session defaults, return immediately.
+
+        This is the recommended way to create sandboxes in the sync API.
+        The sandbox is created and started, returning immediately once the
+        backend accepts the start request (does NOT wait for RUNNING status).
+
+        Args:
+            command: Command to run in sandbox
+            args: Arguments for the command
+            container_image: Container image to use
+            tags: Tags for the sandbox (merged with session defaults)
+            resources: Resource requests (CPU, memory, GPU)
+            mounted_files: Files to mount into the sandbox
+            s3_mount: S3 bucket mount configuration
+            ports: Port mappings for the sandbox
+            service: Service configuration for network access
+            max_timeout_seconds: Maximum timeout for sandbox operations
+
+        Returns:
+            A started Sandbox instance. Use .wait() to block until RUNNING.
 
         Raises:
             SandboxError: If the session has been closed.
+
+        Example:
+            with Session(defaults) as session:
+                sb = session.sandbox(command="sleep", args=["infinity"])
+                sb.wait()  # Optional: block until RUNNING
+                result = sb.exec(["echo", "hello"]).result()
         """
         if self._closed:
             raise SandboxError(
                 "Cannot create sandbox: session is closed. "
-                "Create a new session or call create() before close()."
+                "Create a new session or call sandbox() before close()."
             )
 
         from aviato._sandbox import Sandbox
@@ -161,17 +230,18 @@ class Session:
             _session=self,
         )
         self._register_sandbox(sandbox)
+        sandbox.start()
         return sandbox
 
-    async def list(
+    def list(
         self,
         *,
-        tags: list[str] | None = None,
-        status: str | None = None,  # Accept str for now to avoid circular import
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
+        status: str | None = None,
+        runway_ids: builtins.list[str] | None = None,
+        tower_ids: builtins.list[str] | None = None,
         adopt: bool = False,
-    ) -> list[Sandbox]:
+    ) -> OperationRef[builtins.list[Sandbox]]:
         """List sandboxes, optionally adopting them into this session.
 
         Automatically includes the session's default tags in the filter.
@@ -187,20 +257,45 @@ class Session:
                    so they are stopped when the session closes
 
         Returns:
-            List of Sandbox instances
+            OperationRef[list[Sandbox]]: Use .get() to block for results,
+            or await directly in async contexts.
 
         Example:
             # Session defaults include a tag for this application/run
             defaults = SandboxDefaults(tags=("my-app", "run-abc123"))
 
-            async with Session(defaults) as session:
-                # Automatically filters by ["my-app", "run-abc123"]
-                # No need to pass tags explicitly!
-                orphans = await session.list(adopt=True)
+            with Session(defaults) as session:
+                # Sync usage - automatically filters by ["my-app", "run-abc123"]
+                orphans = session.list(adopt=True).get()
 
                 # Can add additional filters
-                running = await session.list(status="running")
+                running = session.list(status="running").get()
+
+            # Async usage
+            async with Session(defaults) as session:
+                orphans = await session.list(adopt=True)
         """
+        future = self._loop_manager.run_async(
+            self._list_async(
+                tags=tags,
+                status=status,
+                runway_ids=runway_ids,
+                tower_ids=tower_ids,
+                adopt=adopt,
+            )
+        )
+        return OperationRef(future)
+
+    async def _list_async(
+        self,
+        *,
+        tags: builtins.list[str] | None = None,
+        status: str | None = None,
+        runway_ids: builtins.list[str] | None = None,
+        tower_ids: builtins.list[str] | None = None,
+        adopt: bool = False,
+    ) -> builtins.list[Sandbox]:
+        """Internal async: List sandboxes, optionally adopting them into this session."""
         from aviato._sandbox import Sandbox
 
         merged_tags = self._defaults.merge_tags(tags)
@@ -213,7 +308,7 @@ class Session:
             list(self._defaults.tower_ids) if self._defaults.tower_ids else None
         )
 
-        sandboxes = await Sandbox.list(
+        sandboxes = await Sandbox._list_async(
             tags=merged_tags if merged_tags else None,
             status=status,
             runway_ids=effective_runway_ids,
@@ -229,12 +324,12 @@ class Session:
 
         return sandboxes
 
-    async def from_id(
+    def from_id(
         self,
         sandbox_id: str,
         *,
         adopt: bool = True,
-    ) -> Sandbox:
+    ) -> OperationRef[Sandbox]:
         """Attach to an existing sandbox, optionally adopting it into this session.
 
         Args:
@@ -242,18 +337,34 @@ class Session:
             adopt: If True (default), register the sandbox with this session
 
         Returns:
-            A Sandbox instance attached to the existing sandbox
+            OperationRef[Sandbox]: Use .get() to block for the Sandbox instance,
+            or await directly in async contexts.
 
         Example:
-            async with Session(defaults) as session:
-                # Reconnect to a sandbox and have it cleaned up with the session
-                sb = await session.from_id("sandbox-abc123")
-                await sb.exec(["echo", "hello"])
+            with Session(defaults) as session:
+                # Sync usage - reconnect to a sandbox
+                sb = session.from_id("sandbox-abc123").get()
+                result = sb.exec(["echo", "hello"]).result()
             # sb is stopped when session exits
+
+            # Async usage
+            async with Session(defaults) as session:
+                sb = await session.from_id("sandbox-abc123")
+                result = await sb.exec(["echo", "hello"])
         """
+        future = self._loop_manager.run_async(self._from_id_async(sandbox_id, adopt=adopt))
+        return OperationRef(future)
+
+    async def _from_id_async(
+        self,
+        sandbox_id: str,
+        *,
+        adopt: bool = True,
+    ) -> Sandbox:
+        """Internal async: Attach to an existing sandbox, optionally adopting it."""
         from aviato._sandbox import Sandbox
 
-        sandbox = await Sandbox.from_id(
+        sandbox = await Sandbox._from_id_async(
             sandbox_id,
             base_url=self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
@@ -279,9 +390,9 @@ class Session:
             ValueError: If the sandbox has no sandbox_id
 
         Example:
-            async with Session(defaults) as session:
+            with Session(defaults) as session:
                 # Get sandboxes via class method
-                sandboxes = await Sandbox.list(tags=["my-job"])
+                sandboxes = Sandbox.list(tags=["my-job"]).get()
 
                 # Adopt them into the session
                 for sb in sandboxes:
@@ -304,12 +415,12 @@ class Session:
         serialization: Serialization = Serialization.JSON,
         temp_dir: str | None = None,
         resources: dict[str, Any] | None = None,
-        mounted_files: list[dict[str, Any]] | None = None,
+        mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
+        ports: Sequence[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
-    ) -> Callable[[Callable[P, R]], Callable[P, Awaitable[R]]]:
+    ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
 
         Each function call creates an ephemeral sandbox, executes the function,
@@ -332,10 +443,10 @@ class Session:
             max_timeout_seconds: Maximum timeout for sandbox operations
 
         Returns:
-            A decorator that wraps a function for async execution in a sandbox
+            A decorator that wraps a function as a RemoteFunction
 
         Example:
-            async with Session(defaults) as session:
+            with Session(defaults) as session:
                 @session.function()
                 def compute(x: int, y: int) -> int:
                     return x + y
@@ -344,21 +455,33 @@ class Session:
                 def process_complex(data: MyClass) -> MyClass:
                     return data.transform()
 
-                result = await compute(2, 3)
+                # Call .remote() to execute in sandbox
+                ref = compute.remote(2, 3)  # Returns OperationRef immediately
+                result = ref.get()          # Block for result
                 print(result)  # 5
+
+                # Or use await in async context
+                result = await compute.remote(2, 3)
+
+                # Execute locally for testing
+                result = compute.local(2, 3)
+
+                # Map over multiple inputs in parallel
+                refs = compute.map([(1, 2), (3, 4), (5, 6)])
+                results = [ref.get() for ref in refs]
         """
 
-        def decorator(f: Callable[P, R]) -> Callable[P, Awaitable[R]]:
-            return create_function_wrapper(
+        def decorator(f: Callable[P, R]) -> RemoteFunction[P, R]:
+            return RemoteFunction(
                 f,
                 session=self,
                 container_image=container_image,
                 serialization=serialization,
                 temp_dir=temp_dir or self._defaults.temp_dir,
                 resources=resources,
-                mounted_files=mounted_files,
+                mounted_files=list(mounted_files) if mounted_files else None,
                 s3_mount=s3_mount,
-                ports=ports,
+                ports=list(ports) if ports else None,
                 service=service,
                 max_timeout_seconds=max_timeout_seconds,
             )
