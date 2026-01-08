@@ -35,7 +35,12 @@ with Sandbox.run() as sandbox:
 
 ### Key Sync Methods
 
-All methods return `OperationRef` or similar lazy objects. Block for results using `.get()` or `.result()`:
+Most methods return `OperationRef`, a lazy object that implements a `.get()` blocking function to get the value
+while also be await-able for async codebases.
+
+Sandbox `exec` calls return a `Process` object which uses `.result()` to block and return a `ProcessResult` instance
+with information about the command that was run. `Process` has additional functionality like ouput streaming, and is
+also is await-able for async codebases. 
 
 - `Sandbox.run()` - Create and start sandbox (returns immediately)
 - `Sandbox.list()` - Query existing sandboxes (returns OperationRef)
