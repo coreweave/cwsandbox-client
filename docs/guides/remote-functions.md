@@ -15,7 +15,7 @@ with aviato.Session(container_image="python:3.11") as session:
         return x + y
 
     # Execute in sandbox
-    result = compute.remote(2, 3).get()
+    result = compute.remote(2, 3).result()
     print(result)  # 5
 ```
 
@@ -43,10 +43,10 @@ Call `.remote()` on the decorated function to execute in the sandbox:
 ref = compute.remote(2, 3)
 
 # Block for result
-result = ref.get()
+result = ref.result()
 
 # One-liner
-result = compute.remote(2, 3).get()
+result = compute.remote(2, 3).result()
 ```
 
 ## Execution Methods
@@ -116,7 +116,7 @@ def compute_numpy(arr: np.ndarray) -> np.ndarray:
     return arr * 2
 
 arr = np.array([1, 2, 3])
-result = compute_numpy.remote(arr).get()  # array([2, 4, 6])
+result = compute_numpy.remote(arr).result()  # array([2, 4, 6])
 ```
 
 Use pickle when you need:
@@ -138,7 +138,7 @@ multiplier = 10
 def multiply(x: int) -> int:
     return x * multiplier  # Captures 'multiplier'
 
-result = multiply.remote(5).get()  # 50
+result = multiply.remote(5).result()  # 50
 ```
 
 ### Global Variables
@@ -152,7 +152,7 @@ CONFIG = {"threshold": 0.5}
 def check_value(x: float) -> bool:
     return x > CONFIG["threshold"]
 
-result = check_value.remote(0.7).get()  # True
+result = check_value.remote(0.7).result()  # True
 ```
 
 ## Container Image
@@ -177,7 +177,7 @@ def failing_function() -> None:
     raise ValueError("Something went wrong")
 
 try:
-    failing_function.remote().get()
+    failing_function.remote().result()
 except Exception as e:
     print(f"Function failed: {e}")
 ```
@@ -225,7 +225,7 @@ with aviato.Session(defaults=defaults) as session:
         return float(arr.mean())
 
     # Single execution
-    result = square.remote(7).get()
+    result = square.remote(7).result()
     print(f"7 squared: {result}")
 
     # Parallel execution
@@ -235,6 +235,6 @@ with aviato.Session(defaults=defaults) as session:
 
     # NumPy example
     arr = np.array([1, 2, 3, 4, 5])
-    mean = process_array.remote(arr).get()
+    mean = process_array.remote(arr).result()
     print(f"Array mean: {mean}")
 ```

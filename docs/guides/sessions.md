@@ -110,7 +110,7 @@ sandbox = session.sandbox()
 result = sandbox.exec(["echo", "hello"]).result()
 
 # Close the session (stops all sandboxes)
-session.close().get()
+session.close().result()
 ```
 
 ### What close() Does
@@ -140,7 +140,7 @@ from aviato import Sandbox
 
 with aviato.Session(defaults=defaults) as session:
     # Find existing sandboxes
-    existing = Sandbox.list(tags=["orphaned-work"]).get()
+    existing = Sandbox.list(tags=["orphaned-work"]).result()
 
     # Adopt them for cleanup
     for sandbox in existing:

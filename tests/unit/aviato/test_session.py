@@ -119,7 +119,7 @@ class TestSessionCleanup:
 
         assert isinstance(ref, OperationRef)
         # Get the result (should complete without error)
-        ref.get()
+        ref.result()
 
 
 class TestSessionSandboxMethod:
