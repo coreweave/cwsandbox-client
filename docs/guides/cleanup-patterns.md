@@ -45,11 +45,11 @@ The SDK registers cleanup handlers for process termination:
 ```python
 sandbox = Sandbox.run()
 result = sandbox.exec(["echo", "hello"]).result()
-sandbox.stop().get()
+sandbox.stop().result()
 
 # With options
-sandbox.stop(graceful_shutdown_seconds=30.0).get()
-sandbox.stop(snapshot_on_stop=True).get()
+sandbox.stop(graceful_shutdown_seconds=30.0).result()
+sandbox.stop(snapshot_on_stop=True).result()
 ```
 
 ### Session close()
@@ -58,7 +58,7 @@ sandbox.stop(snapshot_on_stop=True).get()
 session = aviato.Session(container_image="python:3.11")
 sandbox = session.sandbox()
 # ...
-session.close().get()  # Stops all sandboxes
+session.close().result()  # Stops all sandboxes
 ```
 
 ### Batch Cleanup
@@ -102,9 +102,9 @@ Query by tags to find sandboxes from previous runs:
 ```python
 from aviato import Sandbox
 
-orphans = Sandbox.list(tags=["my-project"]).get()
+orphans = Sandbox.list(tags=["my-project"]).result()
 for sandbox in orphans:
-    sandbox.stop().get()
+    sandbox.stop().result()
 ```
 
 ### Session Adoption
@@ -115,7 +115,7 @@ Bring orphans under session management for automatic cleanup:
 import aviato
 
 with aviato.Session(container_image="python:3.11") as session:
-    orphans = session.list(tags=["my-project"]).get()
+    orphans = session.list(tags=["my-project"]).result()
     for sandbox in orphans:
         session.adopt(sandbox)
 # All adopted sandboxes cleaned up with session
@@ -126,6 +126,6 @@ with aviato.Session(container_image="python:3.11") as session:
 ```python
 from aviato import Sandbox
 
-Sandbox.delete("sandbox-abc123").get()
+Sandbox.delete("sandbox-abc123").result()
 Sandbox.delete("sandbox-abc123", missing_ok=True)  # Ignore if gone
 ```
