@@ -27,11 +27,11 @@ class OperationRef(Generic[T]):
     Examples:
         Synchronous usage:
             ref = sandbox.read_file("/path/to/file")  # Returns OperationRef[bytes]
-            data = ref.get()  # Block until complete
+            data = ref.result()  # Block until complete
 
         With timeout:
             try:
-                data = ref.get(timeout=5.0)
+                data = ref.result(timeout=5.0)
             except concurrent.futures.TimeoutError:
                 print("Operation timed out")
 
@@ -47,7 +47,7 @@ class OperationRef(Generic[T]):
         """
         self._future = future
 
-    def get(self, timeout: float | None = None) -> T:
+    def result(self, timeout: float | None = None) -> T:
         """Block until the result is ready and return it.
 
         Args:
@@ -218,12 +218,12 @@ class StreamReader:
         return line
 
 
-class Process:
+class Process(OperationRef[ProcessResult]):
     """Handle for a running process with streaming stdout/stderr.
 
-    Process wraps an async operation that executes a command in a sandbox.
-    It provides access to streaming stdout/stderr and methods to wait for
-    completion or retrieve the final result.
+    Process inherits from OperationRef[ProcessResult] and adds streaming
+    capabilities and process-specific methods. It wraps an async operation
+    that executes a command in a sandbox.
 
     The process's output streams (stdout, stderr) can be iterated either
     synchronously or asynchronously. The result() method blocks until
@@ -270,7 +270,7 @@ class Process:
             stdout: StreamReader for stdout.
             stderr: StreamReader for stderr.
         """
-        self._future = future
+        super().__init__(future)
         self._command = command
         self._returncode: int | None = None
         self._result: ProcessResult | None = None
@@ -362,16 +362,3 @@ class Process:
                 raise
             except Exception as e:
                 self._exception = e
-
-    def __await__(self) -> Generator[Any, None, ProcessResult]:
-        """Make Process awaitable.
-
-        Allows using 'await process' to get the ProcessResult in async code.
-
-        Returns:
-            Generator that yields the ProcessResult when complete.
-
-        Raises:
-            Exception: Any exception from the execution.
-        """
-        return asyncio.wrap_future(self._future).__await__()

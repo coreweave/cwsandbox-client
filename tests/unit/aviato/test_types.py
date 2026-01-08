@@ -13,54 +13,54 @@ from aviato._types import OperationRef, Process, ProcessResult, Serialization, S
 class TestOperationRef:
     """Tests for OperationRef generic class."""
 
-    def test_operation_ref_get_returns_result(self) -> None:
-        """Test get() blocks and returns the result."""
+    def test_operation_ref_result_returns_result(self) -> None:
+        """Test result() blocks and returns the result."""
         future: Future[str] = Future()
         future.set_result("hello")
         ref: OperationRef[str] = OperationRef(future)
 
-        assert ref.get() == "hello"
+        assert ref.result() == "hello"
 
-    def test_operation_ref_get_with_bytes(self) -> None:
+    def test_operation_ref_result_with_bytes(self) -> None:
         """Test OperationRef[bytes] works for read_file() use case."""
         future: Future[bytes] = Future()
         future.set_result(b"file contents")
         ref: OperationRef[bytes] = OperationRef(future)
 
-        assert ref.get() == b"file contents"
+        assert ref.result() == b"file contents"
 
-    def test_operation_ref_get_with_none(self) -> None:
+    def test_operation_ref_result_with_none(self) -> None:
         """Test OperationRef[None] works for write_file() use case."""
         future: Future[None] = Future()
         future.set_result(None)
         ref: OperationRef[None] = OperationRef(future)
 
-        assert ref.get() is None
+        assert ref.result() is None
 
-    def test_operation_ref_get_with_timeout(self) -> None:
-        """Test get() with timeout raises TimeoutError when not complete."""
+    def test_operation_ref_result_with_timeout(self) -> None:
+        """Test result() with timeout raises TimeoutError when not complete."""
         future: Future[str] = Future()
         ref: OperationRef[str] = OperationRef(future)
 
         with pytest.raises(FuturesTimeoutError):
-            ref.get(timeout=0.01)
+            ref.result(timeout=0.01)
 
-    def test_operation_ref_get_timeout_success(self) -> None:
-        """Test get() with timeout succeeds when result available."""
+    def test_operation_ref_result_timeout_success(self) -> None:
+        """Test result() with timeout succeeds when result available."""
         future: Future[str] = Future()
         future.set_result("completed")
         ref: OperationRef[str] = OperationRef(future)
 
-        assert ref.get(timeout=1.0) == "completed"
+        assert ref.result(timeout=1.0) == "completed"
 
-    def test_operation_ref_get_raises_exception(self) -> None:
-        """Test get() raises the exception from the operation."""
+    def test_operation_ref_result_raises_exception(self) -> None:
+        """Test result() raises the exception from the operation."""
         future: Future[str] = Future()
         future.set_exception(ValueError("something went wrong"))
         ref: OperationRef[str] = OperationRef(future)
 
         with pytest.raises(ValueError, match="something went wrong"):
-            ref.get()
+            ref.result()
 
     @pytest.mark.asyncio
     async def test_operation_ref_await(self) -> None:
@@ -93,7 +93,7 @@ class TestOperationRef:
             future = executor.submit(lambda: 42)
             ref: OperationRef[int] = OperationRef(future)
 
-            result = ref.get(timeout=5.0)
+            result = ref.result(timeout=5.0)
             assert result == 42
 
 
