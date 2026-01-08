@@ -1,8 +1,8 @@
 """Unit tests for aviato._types module."""
 
 import asyncio
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,7 +15,7 @@ class TestOperationRef:
 
     def test_operation_ref_get_returns_result(self) -> None:
         """Test get() blocks and returns the result."""
-        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future: Future[str] = Future()
         future.set_result("hello")
         ref: OperationRef[str] = OperationRef(future)
 
@@ -23,7 +23,7 @@ class TestOperationRef:
 
     def test_operation_ref_get_with_bytes(self) -> None:
         """Test OperationRef[bytes] works for read_file() use case."""
-        future: concurrent.futures.Future[bytes] = concurrent.futures.Future()
+        future: Future[bytes] = Future()
         future.set_result(b"file contents")
         ref: OperationRef[bytes] = OperationRef(future)
 
@@ -31,7 +31,7 @@ class TestOperationRef:
 
     def test_operation_ref_get_with_none(self) -> None:
         """Test OperationRef[None] works for write_file() use case."""
-        future: concurrent.futures.Future[None] = concurrent.futures.Future()
+        future: Future[None] = Future()
         future.set_result(None)
         ref: OperationRef[None] = OperationRef(future)
 
@@ -39,15 +39,15 @@ class TestOperationRef:
 
     def test_operation_ref_get_with_timeout(self) -> None:
         """Test get() with timeout raises TimeoutError when not complete."""
-        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future: Future[str] = Future()
         ref: OperationRef[str] = OperationRef(future)
 
-        with pytest.raises(concurrent.futures.TimeoutError):
+        with pytest.raises(FuturesTimeoutError):
             ref.get(timeout=0.01)
 
     def test_operation_ref_get_timeout_success(self) -> None:
         """Test get() with timeout succeeds when result available."""
-        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future: Future[str] = Future()
         future.set_result("completed")
         ref: OperationRef[str] = OperationRef(future)
 
@@ -55,7 +55,7 @@ class TestOperationRef:
 
     def test_operation_ref_get_raises_exception(self) -> None:
         """Test get() raises the exception from the operation."""
-        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future: Future[str] = Future()
         future.set_exception(ValueError("something went wrong"))
         ref: OperationRef[str] = OperationRef(future)
 
@@ -272,7 +272,7 @@ class TestProcess:
 
     def test_process_poll_returns_none_when_running(self) -> None:
         """Test poll() returns None while process is running."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
 
@@ -282,7 +282,7 @@ class TestProcess:
 
     def test_process_poll_returns_exit_code_when_done(self) -> None:
         """Test poll() returns exit code when process is complete."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         result = ProcessResult(stdout="output", stderr="", returncode=42)
         future.set_result(result)
 
@@ -294,7 +294,7 @@ class TestProcess:
 
     def test_process_wait_returns_exit_code(self) -> None:
         """Test wait() blocks and returns exit code."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         result = ProcessResult(stdout="", stderr="", returncode=0)
         future.set_result(result)
 
@@ -306,17 +306,17 @@ class TestProcess:
 
     def test_process_wait_with_timeout(self) -> None:
         """Test wait() times out when not complete."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
         process = Process(future, ["sleep"], stdout, stderr)
 
-        with pytest.raises(concurrent.futures.TimeoutError):
+        with pytest.raises(FuturesTimeoutError):
             process.wait(timeout=0.01)
 
     def test_process_result_returns_process_result(self) -> None:
         """Test result() blocks and returns ProcessResult."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         expected = ProcessResult(stdout="hello", stderr="", returncode=0, command=["echo", "hello"])
         future.set_result(expected)
 
@@ -330,7 +330,7 @@ class TestProcess:
 
     def test_process_result_raises_stored_exception(self) -> None:
         """Test result() raises exception from the execution."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         future.set_exception(ValueError("execution failed"))
 
         stdout = self._create_mock_stream_reader()
@@ -340,9 +340,19 @@ class TestProcess:
         with pytest.raises(ValueError, match="execution failed"):
             process.result()
 
+    def test_process_result_with_timeout(self) -> None:
+        """Test result() times out when not complete."""
+        future: Future[ProcessResult] = Future()
+        stdout = self._create_mock_stream_reader()
+        stderr = self._create_mock_stream_reader()
+        process = Process(future, ["sleep"], stdout, stderr)
+
+        with pytest.raises(FuturesTimeoutError):
+            process.result(timeout=0.01)
+
     def test_process_returncode_property(self) -> None:
         """Test returncode property reflects completion status."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
         process = Process(future, ["cmd"], stdout, stderr)
@@ -357,7 +367,7 @@ class TestProcess:
 
     def test_process_command_property(self) -> None:
         """Test command property returns the command."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
         command = ["python", "-c", "print('hi')"]
@@ -367,7 +377,7 @@ class TestProcess:
 
     def test_process_cancel(self) -> None:
         """Test cancel() cancels the underlying future."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
         process = Process(future, ["long"], stdout, stderr)
@@ -377,7 +387,7 @@ class TestProcess:
 
     def test_process_cancel_completed_fails(self) -> None:
         """Test cancel() returns False for completed process."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         future.set_result(ProcessResult(stdout="", stderr="", returncode=0))
         stdout = self._create_mock_stream_reader()
         stderr = self._create_mock_stream_reader()
@@ -418,7 +428,7 @@ class TestProcess:
 
     def test_process_wait_raises_exception(self) -> None:
         """Test wait() raises stored exception."""
-        future: concurrent.futures.Future[ProcessResult] = concurrent.futures.Future()
+        future: Future[ProcessResult] = Future()
         future.set_exception(RuntimeError("process died"))
 
         stdout = self._create_mock_stream_reader()

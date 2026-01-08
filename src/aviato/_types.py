@@ -190,10 +190,7 @@ class StreamReader:
         if self._exhausted:
             raise StopIteration
 
-        async def _get() -> str | None:
-            return await self._queue.get()
-
-        line = self._loop_manager.run_sync(_get())
+        line = self._loop_manager.run_sync(self._queue.get())
         if line is None:  # Sentinel for end-of-stream
             self._exhausted = True
             raise StopIteration
@@ -307,7 +304,7 @@ class Process:
             Exception: Any exception from the execution.
         """
         self._ensure_result(timeout)
-        if self._exception:
+        if self._exception is not None:
             raise self._exception
         assert self._returncode is not None
         return self._returncode
@@ -327,7 +324,7 @@ class Process:
             Exception: Any exception from the execution.
         """
         self._ensure_result(timeout)
-        if self._exception:
+        if self._exception is not None:
             raise self._exception
         assert self._result is not None
         return self._result
@@ -360,6 +357,9 @@ class Process:
             try:
                 self._result = self._future.result(timeout)
                 self._returncode = self._result.returncode
+            except concurrent.futures.TimeoutError:
+                # Do not cache timeouts: allow callers to retry with a longer timeout.
+                raise
             except Exception as e:
                 self._exception = e
 
