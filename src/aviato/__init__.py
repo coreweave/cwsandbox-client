@@ -76,8 +76,8 @@ def get(refs: OperationRef[T] | Sequence[OperationRef[T]], /) -> T | list[T]:
             results = aviato.get([sb.read_file(f) for f in files])
     """
     if isinstance(refs, OperationRef):
-        return refs.get()
-    return [ref.get() for ref in refs]
+        return refs.result()
+    return [ref.result() for ref in refs]
 
 
 def wait(

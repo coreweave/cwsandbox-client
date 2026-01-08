@@ -4,7 +4,7 @@ This guide covers reading and writing files in sandboxes.
 
 ## Basic Operations
 
-File operations return `OperationRef` objects. Use `.get()` to block for completion.
+File operations return `OperationRef` objects. Use `.result()` to block for completion.
 
 ### Writing Files
 
@@ -13,7 +13,7 @@ from aviato import Sandbox
 
 with Sandbox.run() as sandbox:
     # Write bytes to a file
-    sandbox.write_file("/app/data.txt", b"Hello, World!").get()
+    sandbox.write_file("/app/data.txt", b"Hello, World!").result()
 
     # Write JSON
     import json
@@ -21,18 +21,18 @@ with Sandbox.run() as sandbox:
     sandbox.write_file(
         "/app/config.json",
         json.dumps(config).encode()
-    ).get()
+    ).result()
 ```
 
 ### Reading Files
 
 ```python
 # Read file contents as bytes
-content = sandbox.read_file("/app/data.txt").get()
+content = sandbox.read_file("/app/data.txt").result()
 print(content.decode())  # "Hello, World!"
 
 # Read JSON
-config_bytes = sandbox.read_file("/app/config.json").get()
+config_bytes = sandbox.read_file("/app/config.json").result()
 config = json.loads(config_bytes.decode())
 ```
 
@@ -103,7 +103,7 @@ with Sandbox.run() as sandbox:
 from aviato import SandboxFileError
 
 try:
-    content = sandbox.read_file("/nonexistent/file.txt").get()
+    content = sandbox.read_file("/nonexistent/file.txt").result()
 except SandboxFileError as e:
     print(f"File error: {e.filepath}")
 ```
@@ -112,7 +112,7 @@ except SandboxFileError as e:
 
 ```python
 try:
-    sandbox.write_file("/readonly/path.txt", b"data").get()
+    sandbox.write_file("/readonly/path.txt", b"data").result()
 except SandboxFileError as e:
     print(f"Cannot write to: {e.filepath}")
 ```
@@ -124,15 +124,15 @@ File operations work with any binary content:
 ```python
 # Images
 with open("image.png", "rb") as f:
-    sandbox.write_file("/app/image.png", f.read()).get()
+    sandbox.write_file("/app/image.png", f.read()).result()
 
 # Pickle files
 import pickle
 model_bytes = pickle.dumps(my_model)
-sandbox.write_file("/app/model.pkl", model_bytes).get()
+sandbox.write_file("/app/model.pkl", model_bytes).result()
 
 # Download and unpickle
-model_bytes = sandbox.read_file("/app/trained_model.pkl").get()
+model_bytes = sandbox.read_file("/app/trained_model.pkl").result()
 trained_model = pickle.loads(model_bytes)
 ```
 
@@ -143,10 +143,10 @@ Files are transferred as bytes. Handle encoding explicitly:
 ```python
 # Write text
 text = "Hello, Unicode! "
-sandbox.write_file("/app/text.txt", text.encode("utf-8")).get()
+sandbox.write_file("/app/text.txt", text.encode("utf-8")).result()
 
 # Read text
-content = sandbox.read_file("/app/text.txt").get()
+content = sandbox.read_file("/app/text.txt").result()
 text = content.decode("utf-8")
 ```
 

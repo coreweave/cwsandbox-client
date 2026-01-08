@@ -126,7 +126,7 @@ class Sandbox:
 
         sb = Sandbox.run("echo", "hello")  # Returns immediately
         result = sb.exec(["echo", "more"]).result()  # Block for result
-        sb.stop().get()  # Block for completion
+        sb.stop().result()  # Block for completion
 
     2. Context manager:
 
@@ -438,15 +438,15 @@ class Sandbox:
             timeout_seconds: Request timeout (default: 300s)
 
         Returns:
-            OperationRef[list[Sandbox]]: Use .get() to block for results,
+            OperationRef[list[Sandbox]]: Use .result() to block for results,
             or await directly in async contexts.
 
         Example:
             # Sync usage
-            sandboxes = Sandbox.list(tags=["my-batch-job"]).get()
+            sandboxes = Sandbox.list(tags=["my-batch-job"]).result()
             for sb in sandboxes:
                 print(f"{sb.sandbox_id}: {sb.status}")
-                sb.stop().get()
+                sb.stop().result()
 
             # Async usage
             sandboxes = await Sandbox.list(status="running")
@@ -545,7 +545,7 @@ class Sandbox:
             timeout_seconds: Request timeout (default: 300s)
 
         Returns:
-            OperationRef[Sandbox]: Use .get() to block for the Sandbox instance,
+            OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
             or await directly in async contexts.
 
         Raises:
@@ -553,9 +553,9 @@ class Sandbox:
 
         Example:
             # Sync usage
-            sb = Sandbox.from_id("sandbox-abc123").get()
+            sb = Sandbox.from_id("sandbox-abc123").result()
             result = sb.exec(["python", "-c", "print('hello')"]).result()
-            sb.stop().get()
+            sb.stop().result()
 
             # Async usage
             sb = await Sandbox.from_id("sandbox-abc123")
@@ -641,7 +641,7 @@ class Sandbox:
                 doesn't exist.
 
         Returns:
-            OperationRef[None]: Use .get() to block until complete.
+            OperationRef[None]: Use .result() to block until complete.
             Raises SandboxNotFoundError if not found (unless missing_ok=True),
             SandboxError if deletion failed.
 
@@ -651,10 +651,10 @@ class Sandbox:
 
         Example:
             # Sync usage
-            Sandbox.delete("sandbox-abc123").get()
+            Sandbox.delete("sandbox-abc123").result()
 
             # Ignore if already deleted
-            Sandbox.delete("sandbox-abc123", missing_ok=True).get()
+            Sandbox.delete("sandbox-abc123", missing_ok=True).result()
 
             # Async usage
             await Sandbox.delete("sandbox-abc123")
@@ -848,7 +848,7 @@ class Sandbox:
         if self._sandbox_id is None or self._stopped:
             return
         try:
-            self.stop().get()
+            self.stop().result()
         except Exception as stop_error:
             if exc_val is not None:
                 logger.warning(
@@ -899,7 +899,7 @@ class Sandbox:
         if hasattr(self, "_sandbox_id") and self._sandbox_id is not None and not self._stopped:
             warnings.warn(
                 f"Sandbox {self._sandbox_id} was not stopped. "
-                "Use 'sandbox.stop().get()' or the context manager pattern.",
+                "Use 'sandbox.stop().result()' or the context manager pattern.",
                 ResourceWarning,
                 stacklevel=2,
             )
@@ -1322,15 +1322,15 @@ class Sandbox:
                 doesn't exist.
 
         Returns:
-            OperationRef[None]: Use .get() to block until complete.
+            OperationRef[None]: Use .result() to block until complete.
             Raises SandboxError on failure, SandboxNotFoundError if not found
             (unless missing_ok=True).
 
         Example:
-            sb.stop().get()  # Block until stopped
+            sb.stop().result()  # Block until stopped
 
             # Ignore if already deleted
-            sb.stop(missing_ok=True).get()
+            sb.stop(missing_ok=True).result()
         """
         future = self._loop_manager.run_async(
             self._stop_async(
@@ -1640,10 +1640,10 @@ class Sandbox:
             timeout_seconds: Timeout for the operation
 
         Returns:
-            OperationRef[bytes]: Use .get() to block and retrieve contents.
+            OperationRef[bytes]: Use .result() to block and retrieve contents.
 
         Example:
-            data = sb.read_file("/output/result.txt").get()
+            data = sb.read_file("/output/result.txt").result()
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._read_file_async(filepath, timeout))
@@ -1715,10 +1715,10 @@ class Sandbox:
             timeout_seconds: Timeout for the operation
 
         Returns:
-            OperationRef[None]: Use .get() to block until complete.
+            OperationRef[None]: Use .result() to block until complete.
 
         Example:
-            sb.write_file("/input/data.txt", b"content").get()
+            sb.write_file("/input/data.txt", b"content").result()
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._write_file_async(filepath, contents, timeout))

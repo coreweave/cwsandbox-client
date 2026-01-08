@@ -722,18 +722,18 @@ class TestSandboxStop:
         sandbox._client.close = AsyncMock()
 
         with pytest.raises(SandboxError, match="Failed to stop sandbox"):
-            sandbox.stop().get()
+            sandbox.stop().result()
 
     def test_stop_is_idempotent(self) -> None:
         """Test stop() is idempotent - safe to call multiple times."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
         # Calling stop on never-started sandbox returns None (no-op)
-        result = sandbox.stop().get()
+        result = sandbox.stop().result()
         assert result is None
 
         # Calling stop again is also safe
-        result = sandbox.stop().get()
+        result = sandbox.stop().result()
         assert result is None
 
     def test_stop_missing_ok_true_suppresses_not_found(self) -> None:
@@ -750,7 +750,7 @@ class TestSandboxStop:
         sandbox._client.close = AsyncMock()
 
         # Should not raise, returns None
-        result = sandbox.stop(missing_ok=True).get()
+        result = sandbox.stop(missing_ok=True).result()
         assert result is None
 
     def test_stop_missing_ok_false_raises_not_found(self) -> None:
@@ -769,7 +769,7 @@ class TestSandboxStop:
         sandbox._client.close = AsyncMock()
 
         with pytest.raises(SandboxNotFoundError):
-            sandbox.stop().get()
+            sandbox.stop().result()
 
 
 class TestSandboxTimeouts:
