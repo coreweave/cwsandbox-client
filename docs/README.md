@@ -57,15 +57,15 @@ Operations return immediately. Blocking happens explicitly when you need results
 |-----------|---------|------------|
 | `Sandbox.run()` | `Sandbox` | `.wait()` |
 | `sandbox.exec()` | `Process` | `.result()` |
-| `sandbox.read_file()` | `OperationRef` | `.get()` |
-| `sandbox.write_file()` | `OperationRef` | `.get()` |
-| `sandbox.stop()` | `OperationRef` | `.get()` |
+| `sandbox.read_file()` | `OperationRef` | `.result()` |
+| `sandbox.write_file()` | `OperationRef` | `.result()` |
+| `sandbox.stop()` | `OperationRef` | `.result()` |
 
 This enables natural parallelism - start multiple operations, then collect results:
 
 ```python
 refs = [sandbox.read_file(f"/app/file{i}.txt") for i in range(10)]
-contents = [ref.get() for ref in refs]
+contents = [ref.result() for ref in refs]
 ```
 
 ### Sandbox Lifecycle

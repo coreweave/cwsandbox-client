@@ -238,7 +238,7 @@ Demonstrates:
 
 ## API Patterns
 
-The aviato SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.get()` (sync) or `await` (async).
+The aviato SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.result()` (sync) or `await` (async).
 
 The `exec()` method returns a `Process` object. Call `.result()` to block for the final result. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 
@@ -247,7 +247,7 @@ The `exec()` method returns a `Process` object. Call `.result()` to block for th
 ```python
 # One-liner creation - returns immediately
 sb = Sandbox.run("echo", "hello")
-sb.stop().get()  # Block for completion
+sb.stop().result()  # Block for completion
 
 # Context manager for automatic cleanup
 with Sandbox.run() as sb:
@@ -288,5 +288,5 @@ with Session(defaults) as session:
         return x + y
 
     ref = compute.remote(2, 3)  # Returns OperationRef immediately
-    result = ref.get()          # Block for result: 5
+    result = ref.result()       # Block for result: 5
 ```

@@ -19,8 +19,8 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 
 All guides follow these conventions:
 
-- **Process for exec**: `exec()` returns a `Process` - call `.result()` to block for the result
-- **OperationRef for other ops**: `read_file()`, `write_file()`, `stop()` return `OperationRef` - call `.get()` to block
+- **Process for exec**: `exec()` returns a `Process` (inherits from OperationRef) - call `.result()` to block for the result
+- **OperationRef for other ops**: `read_file()`, `write_file()`, `stop()` return `OperationRef` - call `.result()` to block
 - **Context managers**: Use `with` statements for automatic cleanup
 
 ## Writing New Guides
@@ -30,7 +30,7 @@ All guides follow these conventions:
 3. Add variations for common needs
 4. Include error handling where relevant
 5. Link to reference docs for parameter details
-6. Use `.result()` in exec examples, `.get()` for file ops
+6. Use `.result()` consistently for both Process and OperationRef
 
 ## Relationship to Other Docs
 

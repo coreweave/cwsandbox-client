@@ -53,7 +53,7 @@ Construction patterns:
 # Factory method (recommended)
 sb = Sandbox.run("echo", "hello")  # Returns immediately
 result = sb.exec(["echo", "more"]).result()  # Block for result
-sb.stop().get()  # Block for completion
+sb.stop().result()  # Block for completion
 
 # Context manager (recommended for most use cases)
 with Sandbox.run("sleep", "infinity") as sb:
@@ -98,7 +98,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.get()` to block or `await` in async contexts.
+- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 
@@ -109,7 +109,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.get()` to block or `await` in async contexts.
+- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -153,13 +153,13 @@ Key constants (from `_defaults.py`):
 **`OperationRef[T]`** (`_types.py`): Generic wrapper for async operations with lazy result retrieval. Bridges `concurrent.futures.Future` to asyncio for the sync/async hybrid API.
 
 Key methods:
-- `get(timeout=None)` - Block until complete and return result
+- `result(timeout=None)` - Block until complete and return result
 - `__await__` - Awaitable in async contexts
 
 Usage pattern:
 ```python
 ref = sandbox.read_file("/path")  # Returns immediately
-data = ref.get()                  # Block when result needed
+data = ref.result()               # Block when result needed
 # Or in async context:
 data = await ref
 ```
@@ -192,11 +192,11 @@ with Session(defaults) as session:
 
     # Call .remote() to execute in sandbox
     ref = compute.remote(2, 3)  # Returns OperationRef immediately
-    result = ref.get()          # Block for result: 5
+    result = ref.result()       # Block for result: 5
 
     # Parallel execution across inputs
     refs = compute.map([(1, 2), (3, 4), (5, 6)])
-    results = [r.get() for r in refs]  # [3, 7, 11]
+    results = [r.result() for r in refs]  # [3, 7, 11]
 
     # Local testing without sandbox
     result = compute.local(2, 3)  # Runs in current process
@@ -312,7 +312,7 @@ timeout 120 uv run pytest tests/integration/aviato/test_sandbox.py::test_sandbox
 ```
 
 **Important**: If integration tests hang beyond expected times, check:
-1. API patterns match current sync/async hybrid design (use `.get()`, not `await`)
+1. API patterns match current sync/async hybrid design (use `.result()`, not `await`)
 2. Sandbox reaches RUNNING status before file operations
 
 ### Integration Test Patterns
@@ -367,11 +367,11 @@ For comprehensive API design details, see `docs/` directory:
 
 ### Key Design Decisions
 
-**Thread Safety**: The sync API is designed for **single-threaded use**. Calling `.get()` or `.result()` from multiple threads simultaneously is not supported without external synchronization. Users wanting multi-threaded access should use one sandbox per thread or add their own locking. This is intentional to keep the implementation simple.
+**Thread Safety**: The sync API is designed for **single-threaded use**. Calling `.result()` from multiple threads simultaneously is not supported without external synchronization. Users wanting multi-threaded access should use one sandbox per thread or add their own locking. This is intentional to keep the implementation simple.
 
-**Lazy-Start Model**: `Sandbox.run()` returns immediately once the backend accepts the request - it does NOT wait for RUNNING status. Blocking happens explicitly via `.result()`, `.get()`, or `.wait()`.
+**Lazy-Start Model**: `Sandbox.run()` returns immediately once the backend accepts the request - it does NOT wait for RUNNING status. Blocking happens explicitly via `.result()` or `.wait()`.
 
-**Single Internal Implementation**: There is one async implementation internally. The sync/async flexibility comes from how users consume results (`.get()` vs `await`), not from duplicate code paths.
+**Single Internal Implementation**: There is one async implementation internally. The sync/async flexibility comes from how users consume results (`.result()` vs `await`), not from duplicate code paths.
 
 ## Temporary File Conventions
 

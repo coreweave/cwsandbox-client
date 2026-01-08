@@ -30,8 +30,8 @@ aviato/
 ### Sync/Async Hybrid
 
 All public methods return immediately. Blocking happens via:
-- `OperationRef.get()` for operations returning data
-- `Process.result()` for streaming exec
+- `OperationRef.result()` for operations returning data
+- `Process.result()` for streaming exec (Process inherits from OperationRef)
 - Context manager exit for cleanup
 
 The `_LoopManager` runs async code in a background daemon thread, enabling sync usage without user-managed event loops.

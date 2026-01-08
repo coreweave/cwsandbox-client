@@ -19,7 +19,7 @@ from aviato import Sandbox
 
 # Quick one-liner with factory method (sync/async hybrid API)
 sb = Sandbox.run("echo", "Hello, World!")
-sb.stop().get()  # Block for completion
+sb.stop().result()  # Block for completion
 
 # Context manager for automatic cleanup
 with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sb:

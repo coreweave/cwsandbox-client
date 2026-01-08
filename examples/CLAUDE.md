@@ -4,7 +4,7 @@ Runnable example scripts (13 total) demonstrating aviato SDK usage patterns.
 
 ## API Patterns
 
-**All aviato operations support sync/async hybrid usage.** Use `.get()` or `.result()` in sync code, or `await` in async code. Sync patterns are simpler for most use cases.
+**All aviato operations support sync/async hybrid usage.** Use `.result()` in sync code, or `await` in async code. Sync patterns are simpler for most use cases.
 
 | File | Pattern | Entry Point | Description |
 |------|---------|-------------|-------------|

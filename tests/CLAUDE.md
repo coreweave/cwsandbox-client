@@ -50,7 +50,7 @@ Set environment variables before running integration tests. A `.env` file in the
 
 **Auth isolation**: The `clean_auth_env` fixture (autouse=True) clears all auth env vars before each test. Use `mock_aviato_api_key` and similar fixtures to set specific values.
 
-**Sandbox tests**: Use sync patterns to block for results: `.get()` for `OperationRef` (file ops, stop), `.result()` for `Process` (from exec). The hybrid API tests use mocked `_LoopManager.run_async()` to control coroutine execution. Use `check=True` with exec to test `SandboxExecutionError` handling on non-zero returncodes.
+**Sandbox tests**: Use sync patterns to block for results: `.result()` for both `OperationRef` (file ops, stop) and `Process` (from exec). Process inherits from OperationRef. The hybrid API tests use mocked `_LoopManager.run_async()` to control coroutine execution. Use `check=True` with exec to test `SandboxExecutionError` handling on non-zero returncodes.
 
 **Session tests**: Support both sync and async patterns. Sync context manager tests use regular pytest; async context manager tests use `@pytest.mark.asyncio`. Internal async methods (like `_close_async`) require async tests.
 
