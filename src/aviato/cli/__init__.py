@@ -1,0 +1,1 @@
+"""Aviato CLI package."""

@@ -30,6 +30,7 @@ name = "aviato"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "coreweave-aviato-connectrpc-python" },
     { name = "h2" },
     { name = "pydantic" },
@@ -55,6 +56,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
     { name = "coreweave-aviato-connectrpc-python", specifier = "==0.6.0.1.20251229201041+75728b022d6d" },
     { name = "h2", specifier = ">=4.0.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
