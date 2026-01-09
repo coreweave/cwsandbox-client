@@ -38,7 +38,7 @@ def test_sandbox_run_factory_no_defaults() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().get()
+        sandbox.stop().result()
 
 
 def test_sandbox_no_defaults_max_lifetime_only() -> None:
@@ -49,7 +49,7 @@ def test_sandbox_no_defaults_max_lifetime_only() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().get()
+        sandbox.stop().result()
 
 
 def test_sandbox_no_defaults_tags_only() -> None:
@@ -60,7 +60,7 @@ def test_sandbox_no_defaults_tags_only() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().get()
+        sandbox.stop().result()
 
 
 def test_sandbox_no_defaults_sleep_command() -> None:
@@ -70,7 +70,7 @@ def test_sandbox_no_defaults_sleep_command() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().get()
+        sandbox.stop().result()
 
 
 def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
@@ -79,9 +79,9 @@ def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
         test_content = b"Hello, World!"
         filepath = f"/tmp/test_file_{uuid.uuid4().hex}.txt"
 
-        sandbox.write_file(filepath, test_content).get()
+        sandbox.write_file(filepath, test_content).result()
 
-        content = sandbox.read_file(filepath).get()
+        content = sandbox.read_file(filepath).result()
         assert content == test_content
 
 
@@ -144,7 +144,7 @@ def test_sandbox_read_nonexistent_file(sandbox_defaults: SandboxDefaults) -> Non
 
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
         with pytest.raises(SandboxFileError) as exc_info:
-            sandbox.read_file("/nonexistent/path/to/file.txt").get()
+            sandbox.read_file("/nonexistent/path/to/file.txt").result()
 
         assert exc_info.value.filepath == "/nonexistent/path/to/file.txt"
 
@@ -155,8 +155,8 @@ def test_sandbox_file_operations_binary(sandbox_defaults: SandboxDefaults) -> No
         binary_content = bytes(range(256))
         filepath = f"/tmp/binary_test_{uuid.uuid4().hex}.bin"
 
-        sandbox.write_file(filepath, binary_content).get()
-        content = sandbox.read_file(filepath).get()
+        sandbox.write_file(filepath, binary_content).result()
+        content = sandbox.read_file(filepath).result()
 
         assert content == binary_content
 
