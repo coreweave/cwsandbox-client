@@ -43,7 +43,7 @@ def test_session_function_pickle(sandbox_defaults: SandboxDefaults) -> None:
         def add(x: int, y: int) -> int:
             return x + y
 
-        result = add.remote(2, 3).get()
+        result = add.remote(2, 3).result()
 
         assert result == 5
 
@@ -56,7 +56,7 @@ def test_session_function_json(sandbox_defaults: SandboxDefaults) -> None:
         def create_dict(key: str, value: int) -> dict[str, int]:
             return {key: value}
 
-        result = create_dict.remote("test", 42).get()
+        result = create_dict.remote("test", 42).result()
 
         assert result == {"test": 42}
 
@@ -71,7 +71,7 @@ def test_session_function_with_closure(sandbox_defaults: SandboxDefaults) -> Non
         def multiply(x: int) -> int:
             return x * multiplier
 
-        result = multiply.remote(5).get()
+        result = multiply.remote(5).result()
 
         assert result == 50
 
@@ -87,7 +87,7 @@ def test_session_function_raises_exception(sandbox_defaults: SandboxDefaults) ->
             raise ValueError("test error message")
 
         with pytest.raises(SandboxExecutionError) as exc_info:
-            raises_value_error.remote().get()
+            raises_value_error.remote().result()
 
         assert exc_info.value.exec_result is not None
         assert exc_info.value.exec_result.returncode != 0
@@ -101,7 +101,7 @@ def test_session_function_with_global_variables(sandbox_defaults: SandboxDefault
         def use_global() -> int:
             return GLOBAL_CONSTANT * 2
 
-        result = use_global.remote().get()
+        result = use_global.remote().result()
 
         assert result == 84
 
@@ -112,7 +112,7 @@ def test_session_sandbox_after_close_raises(sandbox_defaults: SandboxDefaults) -
 
     session = Sandbox.session(sandbox_defaults)
 
-    session.close().get()
+    session.close().result()
 
     with pytest.raises(SandboxError) as exc_info:
         session.sandbox()
@@ -145,7 +145,7 @@ def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDefaults
                 "computed": data["value"] * 2,
             }
 
-        result = process_nested.remote({"value": 21, "nested": {"key": "val"}}).get()
+        result = process_nested.remote({"value": 21, "nested": {"key": "val"}}).result()
 
         assert result["processed"] is True
         assert result["computed"] == 42

@@ -173,7 +173,7 @@ class TestSessionSyncContextManager:
                 assert isinstance(session, Session)
 
             mock_close.assert_called_once()
-            mock_ref.get.assert_called_once()
+            mock_ref.result.assert_called_once()
 
     def test_sync_context_manager_closes_on_exception(self) -> None:
         """Test sync context manager closes session even on exception."""
@@ -188,7 +188,7 @@ class TestSessionSyncContextManager:
                     raise ValueError("test error")
 
             mock_close.assert_called_once()
-            mock_ref.get.assert_called_once()
+            mock_ref.result.assert_called_once()
 
 
 class TestSessionFromSandbox:

@@ -47,7 +47,7 @@ class Session:
             def compute(x: int, y: int) -> int:
                 return x + y
 
-            result = compute.remote(2, 3).get()  # Returns OperationRef
+            result = compute.remote(2, 3).result()  # Returns OperationRef
             print(result)  # 5
 
         # Session automatically cleans up all sandboxes on exit
@@ -80,7 +80,7 @@ class Session:
 
     def __exit__(self, *args: Any) -> None:
         """Exit sync context manager, stop all sandboxes."""
-        self.close().get()
+        self.close().result()
 
     async def __aenter__(self) -> Session:
         """Enter async context manager."""
@@ -97,13 +97,13 @@ class Session:
         """Stop all managed sandboxes, return OperationRef immediately.
 
         Returns:
-            OperationRef[None]: Use .get() to block until all sandboxes stopped.
+            OperationRef[None]: Use .result() to block until all sandboxes stopped.
 
         Raises:
             SandboxError: If one or more running sandboxes failed to stop.
 
         Example:
-            session.close().get()  # Block until all sandboxes stopped
+            session.close().result()  # Block until all sandboxes stopped
         """
         future = self._loop_manager.run_async(self._close_async())
         return OperationRef(future)
@@ -257,7 +257,7 @@ class Session:
                    so they are stopped when the session closes
 
         Returns:
-            OperationRef[list[Sandbox]]: Use .get() to block for results,
+            OperationRef[list[Sandbox]]: Use .result() to block for results,
             or await directly in async contexts.
 
         Example:
@@ -266,10 +266,10 @@ class Session:
 
             with Session(defaults) as session:
                 # Sync usage - automatically filters by ["my-app", "run-abc123"]
-                orphans = session.list(adopt=True).get()
+                orphans = session.list(adopt=True).result()
 
                 # Can add additional filters
-                running = session.list(status="running").get()
+                running = session.list(status="running").result()
 
             # Async usage
             async with Session(defaults) as session:
@@ -337,13 +337,13 @@ class Session:
             adopt: If True (default), register the sandbox with this session
 
         Returns:
-            OperationRef[Sandbox]: Use .get() to block for the Sandbox instance,
+            OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
             or await directly in async contexts.
 
         Example:
             with Session(defaults) as session:
                 # Sync usage - reconnect to a sandbox
-                sb = session.from_id("sandbox-abc123").get()
+                sb = session.from_id("sandbox-abc123").result()
                 result = sb.exec(["echo", "hello"]).result()
             # sb is stopped when session exits
 
@@ -392,7 +392,7 @@ class Session:
         Example:
             with Session(defaults) as session:
                 # Get sandboxes via class method
-                sandboxes = Sandbox.list(tags=["my-job"]).get()
+                sandboxes = Sandbox.list(tags=["my-job"]).result()
 
                 # Adopt them into the session
                 for sb in sandboxes:
@@ -457,7 +457,7 @@ class Session:
 
                 # Call .remote() to execute in sandbox
                 ref = compute.remote(2, 3)  # Returns OperationRef immediately
-                result = ref.get()          # Block for result
+                result = ref.result()       # Block for result
                 print(result)  # 5
 
                 # Or use await in async context
@@ -468,7 +468,7 @@ class Session:
 
                 # Map over multiple inputs in parallel
                 refs = compute.map([(1, 2), (3, 4), (5, 6)])
-                results = [ref.get() for ref in refs]
+                results = [ref.result() for ref in refs]
         """
 
         def decorator(f: Callable[P, R]) -> RemoteFunction[P, R]:
