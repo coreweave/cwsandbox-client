@@ -64,11 +64,11 @@ session.close().result()  # Stops all sandboxes
 ### Batch Cleanup
 
 ```python
-from aviato import get
+from aviato import results
 
 sandboxes = [Sandbox.run() for _ in range(5)]
 # ... use sandboxes ...
-get([sb.stop() for sb in sandboxes])  # Stop all in parallel
+results([sb.stop() for sb in sandboxes])  # Stop all in parallel
 ```
 
 ## Orphan Management

@@ -1,4 +1,4 @@
-"""Tests for aviato.result() and aviato.wait() utility functions."""
+"""Tests for aviato.results() and aviato.wait() utility functions."""
 
 from __future__ import annotations
 
@@ -9,34 +9,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import aviato
-from aviato import OperationRef, Process, Sandbox, result, wait
+from aviato import OperationRef, Process, Sandbox, results, wait
 from aviato._types import ProcessResult, StreamReader
 
 
-class TestResult:
-    """Tests for aviato.result() function."""
+class TestResults:
+    """Tests for aviato.results() function."""
 
-    def test_result_single_ref_returns_result(self) -> None:
-        """result() with single OperationRef returns the result."""
+    def test_results_single_ref_returns_result(self) -> None:
+        """results() with single OperationRef returns the result."""
         future: concurrent.futures.Future[str] = concurrent.futures.Future()
         future.set_result("test_value")
         ref: OperationRef[str] = OperationRef(future)
 
-        value = result(ref)
+        value = results(ref)
 
         assert value == "test_value"
 
-    def test_result_single_ref_propagates_exception(self) -> None:
-        """result() with single OperationRef propagates exceptions."""
+    def test_results_single_ref_propagates_exception(self) -> None:
+        """results() with single OperationRef propagates exceptions."""
         future: concurrent.futures.Future[str] = concurrent.futures.Future()
         future.set_exception(ValueError("test error"))
         ref: OperationRef[str] = OperationRef(future)
 
         with pytest.raises(ValueError, match="test error"):
-            result(ref)
+            results(ref)
 
-    def test_result_list_returns_all_results(self) -> None:
-        """result() with list of OperationRefs returns list of results."""
+    def test_results_list_returns_all_results(self) -> None:
+        """results() with list of OperationRefs returns list of results."""
         futures = []
         refs = []
         for i in range(3):
@@ -45,18 +45,18 @@ class TestResult:
             futures.append(future)
             refs.append(OperationRef(future))
 
-        results = result(refs)
+        all_results = results(refs)
 
-        assert results == [0, 10, 20]
+        assert all_results == [0, 10, 20]
 
-    def test_result_empty_list_returns_empty_list(self) -> None:
-        """result() with empty list returns empty list."""
-        value = result([])
+    def test_results_empty_list_returns_empty_list(self) -> None:
+        """results() with empty list returns empty list."""
+        value = results([])
 
         assert value == []
 
-    def test_result_list_propagates_first_exception(self) -> None:
-        """result() with list propagates exception from first failing ref."""
+    def test_results_list_propagates_first_exception(self) -> None:
+        """results() with list propagates exception from first failing ref."""
         future1: concurrent.futures.Future[int] = concurrent.futures.Future()
         future1.set_result(1)
         future2: concurrent.futures.Future[int] = concurrent.futures.Future()
@@ -64,7 +64,7 @@ class TestResult:
         refs = [OperationRef(future1), OperationRef(future2)]
 
         with pytest.raises(RuntimeError, match="failed"):
-            result(refs)
+            results(refs)
 
 
 class TestWait:
@@ -307,10 +307,10 @@ class TestWaitTimeout:
 class TestExports:
     """Tests for module exports."""
 
-    def test_result_exported(self) -> None:
-        """result function is exported from aviato module."""
-        assert hasattr(aviato, "result")
-        assert aviato.result is result
+    def test_results_exported(self) -> None:
+        """results function is exported from aviato module."""
+        assert hasattr(aviato, "results")
+        assert aviato.results is results
 
     def test_wait_exported(self) -> None:
         """wait function is exported from aviato module."""
@@ -321,9 +321,9 @@ class TestExports:
         """Waitable type alias is exported from aviato module."""
         assert hasattr(aviato, "Waitable")
 
-    def test_result_in_all(self) -> None:
-        """result is in __all__."""
-        assert "result" in aviato.__all__
+    def test_results_in_all(self) -> None:
+        """results is in __all__."""
+        assert "results" in aviato.__all__
 
     def test_wait_in_all(self) -> None:
         """wait is in __all__."""

@@ -43,7 +43,7 @@ File operations return immediately, enabling natural parallelism.
 ### Parallel Uploads
 
 ```python
-from aviato import get
+from aviato import results
 
 # Start all uploads simultaneously
 write_refs = [
@@ -53,7 +53,7 @@ write_refs = [
 ]
 
 # Wait for all to complete
-get(write_refs)
+results(write_refs)
 ```
 
 ### Parallel Downloads
@@ -67,7 +67,7 @@ read_refs = [
 ]
 
 # Get all results
-output, metrics, logs = get(read_refs)
+output, metrics, logs = results(read_refs)
 ```
 
 ## Upload-Process-Download Pattern
@@ -75,11 +75,11 @@ output, metrics, logs = get(read_refs)
 A common workflow: upload input files, run processing, download results.
 
 ```python
-from aviato import Sandbox, get
+from aviato import Sandbox, results
 
 with Sandbox.run() as sandbox:
     # 1. Parallel uploads
-    get([
+    results([
         sandbox.write_file("/app/config.json", config_bytes),
         sandbox.write_file("/app/input.csv", input_bytes),
     ])
@@ -89,7 +89,7 @@ with Sandbox.run() as sandbox:
     sandbox.exec(["python", "/app/process.py"]).result()
 
     # 3. Parallel downloads
-    output, metrics = get([
+    output, metrics = results([
         sandbox.read_file("/app/output.json"),
         sandbox.read_file("/app/metrics.json"),
     ])
@@ -126,7 +126,7 @@ File operations work with any binary content:
 with open("image.png", "rb") as f:
     sandbox.write_file("/app/image.png", f.read()).result()
 
-# Pickle files
+# Pickle files (only unpickle data from trusted sources)
 import pickle
 model_bytes = pickle.dumps(my_model)
 sandbox.write_file("/app/model.pkl", model_bytes).result()
