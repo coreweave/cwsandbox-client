@@ -237,7 +237,7 @@ class Process(OperationRef[ProcessResult]):
         Basic execution with result:
             process = sandbox.exec(["echo", "hello"])
             result = process.result()
-            print(result.stdout)  # "hello\\n"
+            print(result.stdout)  # hello
 
         Streaming output:
             process = sandbox.exec(["python", "-c", "print('line1'); print('line2')"])
