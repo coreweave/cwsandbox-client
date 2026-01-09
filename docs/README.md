@@ -97,4 +97,4 @@ See the [examples directory](../examples/README.md) for runnable Python scripts.
 
 ## Architecture
 
-For class internals, authentication flow, and implementation details, see [CLAUDE.md](../CLAUDE.md).
+For class internals, authentication flow, and implementation details, see [AGENTS.md](../AGENTS.md).
