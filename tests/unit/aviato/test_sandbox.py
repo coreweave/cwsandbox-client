@@ -1077,3 +1077,122 @@ class TestSandboxDeleteClassMethod:
 
                 result = await Sandbox.delete("nonexistent-id", missing_ok=True)
                 assert result is None
+
+
+class TestSandboxServiceAddressAndExposedPorts:
+    """Tests for service_address and exposed_ports properties."""
+
+    def test_service_address_none_before_start(self) -> None:
+        """Test service_address is None before sandbox is started."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.service_address is None
+
+    def test_exposed_ports_none_before_start(self) -> None:
+        """Test exposed_ports is None before sandbox is started."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.exposed_ports is None
+
+    def test_start_captures_service_address(self) -> None:
+        """Test start() captures service_address from response."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = "166.19.9.70:8080"
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.service_address == "166.19.9.70:8080"
+
+    def test_start_treats_empty_service_address_as_none(self) -> None:
+        """Test start() treats empty string service_address as None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.service_address is None
+
+    def test_start_captures_exposed_ports(self) -> None:
+        """Test start() captures exposed_ports from response."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_port1 = MagicMock()
+        mock_port1.container_port = 8080
+        mock_port1.name = "http"
+
+        mock_port2 = MagicMock()
+        mock_port2.container_port = 22
+        mock_port2.name = "ssh"
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = "166.19.9.70:8080"
+        mock_start_response.exposed_ports = [mock_port1, mock_port2]
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.exposed_ports == ((8080, "http"), (22, "ssh"))
+
+    def test_start_empty_exposed_ports_is_none(self) -> None:
+        """Test start() returns None for empty exposed_ports list."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.exposed_ports is None
+
+    @pytest.mark.asyncio
+    async def test_from_id_has_none_for_service_address(self, mock_aviato_api_key: str) -> None:
+        """Test from_id() returns sandbox with None service_address."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await Sandbox.from_id("test-123")
+
+                assert sandbox.service_address is None
+                assert sandbox.exposed_ports is None

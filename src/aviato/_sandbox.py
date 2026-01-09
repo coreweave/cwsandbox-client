@@ -256,6 +256,8 @@ class Sandbox:
         self._status_updated_at: datetime | None = None
         self._started_at: datetime | None = None
         self._tower_group_id: str | None = None
+        self._service_address: str | None = None
+        self._exposed_ports: tuple[tuple[int, str], ...] | None = None
 
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
@@ -414,6 +416,8 @@ class Sandbox:
         sandbox._start_kwargs = {}
         sandbox._start_lock = asyncio.Lock()
         sandbox._loop_manager = _LoopManager.get()
+        sandbox._service_address = None
+        sandbox._exposed_ports = None
         return sandbox
 
     @classmethod
@@ -781,6 +785,34 @@ class Sandbox:
         """Tower group ID where the sandbox is running."""
         return self._tower_group_id
 
+    @property
+    def service_address(self) -> str | None:
+        """External address for accessing sandbox services.
+
+        Returns an address like '166.19.9.70:8080' for network-accessible sandboxes
+        (SSH, web services). Availability depends on tower configuration.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - Tower uses ClusterIP instead of LoadBalancer
+        """
+        return self._service_address
+
+    @property
+    def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
+        """Exposed ports for the sandbox.
+
+        Returns a tuple of (container_port, name) tuples for ports exposed by
+        the sandbox. Useful for network-accessible sandboxes.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - No ports were exposed
+        """
+        return self._exposed_ports
+
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
@@ -1063,6 +1095,12 @@ class Sandbox:
             self._sandbox_id = sandbox_id
             self._status = SandboxStatus.PENDING
             self._status_updated_at = datetime.now(UTC)
+            self._service_address = response.service_address or None
+            self._exposed_ports = (
+                tuple((p.container_port, p.name) for p in response.exposed_ports)
+                if response.exposed_ports
+                else None
+            )
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
