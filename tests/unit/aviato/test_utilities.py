@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Coroutine
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,21 +11,6 @@ import pytest
 import aviato
 from aviato import OperationRef, Process, Sandbox, result, wait
 from aviato._types import ProcessResult, StreamReader
-
-
-def _run_coro_sync(coro: Coroutine[Any, Any, Any]) -> Any:
-    """Helper to run coroutine synchronously for test mocking."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        # Cancel any pending tasks to avoid "Task was destroyed but pending" warnings
-        pending = asyncio.all_tasks(loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.close()
 
 
 class TestResult:
@@ -106,12 +89,7 @@ class TestWait:
 
         # Mock the loop manager
         mock_manager = MagicMock()
-
-        async def run_async() -> tuple[list[aviato.Waitable], list[aviato.Waitable]]:
-            # Directly run the async implementation
-            return await aviato._wait_async(refs, None, None)
-
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(refs)
@@ -145,7 +123,7 @@ class TestWait:
 
         # Mock the loop manager
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(procs)
@@ -169,7 +147,7 @@ class TestWait:
 
         # Mock the loop manager
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(sandboxes)
@@ -194,7 +172,7 @@ class TestWait:
 
         # Mock the loop manager
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(refs, num_returns=2)
@@ -229,7 +207,7 @@ class TestWait:
 
         # Mock the loop manager
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(waitables)
@@ -274,7 +252,7 @@ class TestWaitTimeout:
         refs = [OperationRef(f) for f in futures]
 
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         import time
@@ -297,7 +275,7 @@ class TestWaitTimeout:
         ref: OperationRef[str] = OperationRef(future)
 
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait([ref], timeout=0.01)
@@ -317,7 +295,7 @@ class TestWaitTimeout:
         refs = [OperationRef(future1), OperationRef(future2)]
 
         mock_manager = MagicMock()
-        mock_manager.run_sync.side_effect = _run_coro_sync
+        mock_manager.run_sync.side_effect = asyncio.run
         mock_get_loop_manager.return_value = mock_manager
 
         done, pending = wait(refs, timeout=0.01)

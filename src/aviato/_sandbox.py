@@ -1371,140 +1371,140 @@ class Sandbox:
         await self._wait_until_running_async()
 
         auth = resolve_auth()
-        streaming_session = httpx.AsyncClient(
+        async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers=auth.headers,
             http2=True,
-        )
-        streaming_client = streaming_connect.ATCStreamingServiceClient(
-            address=self._base_url,
-            session=streaming_session,
-            proto_json=True,
-        )
+        ) as streaming_session:
+            streaming_client = streaming_connect.ATCStreamingServiceClient(
+                address=self._base_url,
+                session=streaming_session,
+                proto_json=True,
+            )
 
-        # Wrap command with cwd if provided
-        rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
+            # Wrap command with cwd if provided
+            rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
 
-        logger.debug(
-            "Executing command (streaming) in sandbox %s: %s",
-            self._sandbox_id,
-            shlex.join(command),
-        )
+            logger.debug(
+                "Executing command (streaming) in sandbox %s: %s",
+                self._sandbox_id,
+                shlex.join(command),
+            )
 
-        stdout_buffer: list[bytes] = []
-        stderr_buffer: list[bytes] = []
-        exit_code: int | None = None
+            stdout_buffer: list[bytes] = []
+            stderr_buffer: list[bytes] = []
+            exit_code: int | None = None
 
-        async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-            """Generate input stream: send init message and return immediately."""
-            yield streaming_pb2.ExecStreamRequest(
-                init=streaming_pb2.ExecStreamInit(
-                    sandbox_id=self._sandbox_id,
-                    command=rpc_command,
+            async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+                """Generate input stream: send init message and return immediately."""
+                yield streaming_pb2.ExecStreamRequest(
+                    init=streaming_pb2.ExecStreamInit(
+                        sandbox_id=self._sandbox_id,
+                        command=rpc_command,
+                    )
                 )
+                # Generator returns immediately - RPC contract does not require staying open
+
+            # Queue decouples httpx iteration from our processing.
+            # Without this, processing suspends the httpx stream and breaks HTTP/2.
+            response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
+                asyncio.Queue()
             )
-            # Generator returns immediately - RPC contract does not require staying open
 
-        # Queue decouples httpx iteration from our processing.
-        # Without this, processing suspends the httpx stream and breaks HTTP/2.
-        response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
-            asyncio.Queue()
-        )
-
-        async def collect() -> None:
-            """Collect responses from streaming RPC into queue."""
-            try:
-                async for response in streaming_client.stream_exec(
-                    input_stream(),
-                    timeout_ms=int(timeout * 1000) if timeout is not None else None,
-                ):
-                    await response_queue.put(response)
-                    if response.HasField("exit") or response.HasField("error"):
-                        return
-            except ConnectError as e:
-                if e.code == Code.DEADLINE_EXCEEDED:
-                    await response_queue.put(
-                        SandboxTimeoutError(
-                            f"Command {shlex.join(command)} timed out after {timeout}s"
+            async def collect() -> None:
+                """Collect responses from streaming RPC into queue."""
+                try:
+                    async for response in streaming_client.stream_exec(
+                        input_stream(),
+                        timeout_ms=int(timeout * 1000) if timeout is not None else None,
+                    ):
+                        await response_queue.put(response)
+                        if response.HasField("exit") or response.HasField("error"):
+                            return
+                except ConnectError as e:
+                    if e.code == Code.DEADLINE_EXCEEDED:
+                        await response_queue.put(
+                            SandboxTimeoutError(
+                                f"Command {shlex.join(command)} timed out after {timeout}s"
+                            )
                         )
-                    )
-                else:
-                    await response_queue.put(e)
-            except Exception as e:
-                await response_queue.put(e)
-            finally:
-                await response_queue.put(None)  # Sentinel
-
-        task = asyncio.create_task(collect())
-        try:
-            while True:
-                item = await response_queue.get()
-                if item is None:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-
-                response = item
-                if response.HasField("output"):
-                    data = response.output.data
-                    # Decode as UTF-8 for queue (replacing invalid chars)
-                    text = data.decode("utf-8", errors="replace")
-                    stream_type = response.output.stream_type
-
-                    if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
-                        stdout_buffer.append(data)
-                        await stdout_queue.put(text)
-                    elif stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
-                        stderr_buffer.append(data)
-                        await stderr_queue.put(text)
                     else:
-                        logger.warning(
-                            "Received output with unexpected stream_type %s, treating as stdout",
-                            stream_type,
+                        await response_queue.put(e)
+                except Exception as e:
+                    await response_queue.put(e)
+                finally:
+                    await response_queue.put(None)  # Sentinel
+
+            task = asyncio.create_task(collect())
+            try:
+                while True:
+                    item = await response_queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+
+                    response = item
+                    if response.HasField("output"):
+                        data = response.output.data
+                        # Decode as UTF-8 for queue (replacing invalid chars)
+                        text = data.decode("utf-8", errors="replace")
+                        stream_type = response.output.stream_type
+
+                        if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
+                            stdout_buffer.append(data)
+                            await stdout_queue.put(text)
+                        elif stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                            stderr_buffer.append(data)
+                            await stderr_queue.put(text)
+                        else:
+                            logger.warning(
+                                "Received output with unexpected stream_type %s, "
+                                "treating as stdout",
+                                stream_type,
+                            )
+                            stdout_buffer.append(data)
+                            await stdout_queue.put(text)
+
+                    elif response.HasField("exit"):
+                        exit_code = response.exit.exit_code
+                        break
+
+                    elif response.HasField("error"):
+                        raise SandboxExecutionError(
+                            f"Exec stream error: {response.error.message}",
                         )
-                        stdout_buffer.append(data)
-                        await stdout_queue.put(text)
+            finally:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                # Signal end-of-stream
+                await stdout_queue.put(None)
+                await stderr_queue.put(None)
 
-                elif response.HasField("exit"):
-                    exit_code = response.exit.exit_code
-                    break
+            # Combine buffers into final output
+            stdout_bytes = b"".join(stdout_buffer)
+            stderr_bytes = b"".join(stderr_buffer)
+            final_exit_code = exit_code if exit_code is not None else 0
 
-                elif response.HasField("error"):
-                    raise SandboxExecutionError(
-                        f"Exec stream error: {response.error.message}",
-                    )
-        finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            # Signal end-of-stream
-            await stdout_queue.put(None)
-            await stderr_queue.put(None)
-            await streaming_session.aclose()
+            logger.debug("Command completed with exit code %d", final_exit_code)
 
-        # Combine buffers into final output
-        stdout_bytes = b"".join(stdout_buffer)
-        stderr_bytes = b"".join(stderr_buffer)
-        final_exit_code = exit_code if exit_code is not None else 0
-
-        logger.debug("Command completed with exit code %d", final_exit_code)
-
-        result = ProcessResult(
-            stdout=stdout_bytes.decode("utf-8", errors="replace"),
-            stderr=stderr_bytes.decode("utf-8", errors="replace"),
-            returncode=final_exit_code,
-            stdout_bytes=stdout_bytes,
-            stderr_bytes=stderr_bytes,
-            command=list(command),
-        )
-
-        if check and result.returncode != 0:
-            raise SandboxExecutionError(
-                f"Command {shlex.join(command)} failed with exit code {result.returncode}",
-                exec_result=result,
+            result = ProcessResult(
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                returncode=final_exit_code,
+                stdout_bytes=stdout_bytes,
+                stderr_bytes=stderr_bytes,
+                command=list(command),
             )
 
-        return result
+            if check and result.returncode != 0:
+                raise SandboxExecutionError(
+                    f"Command {shlex.join(command)} failed with exit code {result.returncode}",
+                    exec_result=result,
+                )
+
+            return result
 
     def exec(
         self,
@@ -1523,7 +1523,7 @@ class Sandbox:
         Args:
             command: Command and arguments to execute
             cwd: Working directory for command execution. Must be an absolute path.
-                Implemented via shell wrapping (requires /bin/sh in container).
+                When specified, the command is wrapped with a shell cd.
             check: If True, raise SandboxExecutionError on non-zero returncode
             timeout_seconds: Timeout for command execution (after sandbox is RUNNING).
                 Does not include time waiting for sandbox to reach RUNNING status.
