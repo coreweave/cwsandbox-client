@@ -27,19 +27,19 @@ def main() -> None:
     # Method 1: Delete by ID using class method
     # Useful when you only have the ID, not a Sandbox instance
     print(f"Deleting sandbox {sandbox_id} using Sandbox.delete()...")
-    Sandbox.delete(sandbox_id).get()
+    Sandbox.delete(sandbox_id).result()
     print("Deletion completed\n")
 
     # Try to delete again - this will raise SandboxNotFoundError
     print("Attempting to delete the same sandbox again...")
     try:
-        Sandbox.delete(sandbox_id).get()
+        Sandbox.delete(sandbox_id).result()
     except SandboxNotFoundError as e:
         print(f"Expected error: {e}\n")
 
     # Use missing_ok=True to suppress the error
     print("Deleting with missing_ok=True...")
-    Sandbox.delete(sandbox_id, missing_ok=True).get()
+    Sandbox.delete(sandbox_id, missing_ok=True).result()
     print("Deletion completed (no error even though already deleted)\n")
 
     # Method 2: Delete using stop() on a discovered sandbox
@@ -48,11 +48,11 @@ def main() -> None:
     print(f"Created sandbox: {sandbox2.sandbox_id}")
 
     # Discover it via list() and stop it
-    sandboxes = Sandbox.list(tags=["delete-example-2"]).get()
+    sandboxes = Sandbox.list(tags=["delete-example-2"]).result()
     if sandboxes:
         discovered = sandboxes[0]
         print(f"Found sandbox via list(): {discovered.sandbox_id}")
-        discovered.stop().get()
+        discovered.stop().result()
         print("Stopped via discovered.stop()\n")
 
     # Method 3: Attach to sandbox by ID and stop
@@ -62,9 +62,9 @@ def main() -> None:
     print(f"Created sandbox: {sandbox3_id}")
 
     # Attach to it by ID and stop
-    attached = Sandbox.from_id(sandbox3_id).get()
+    attached = Sandbox.from_id(sandbox3_id).result()
     print(f"Attached to sandbox: {attached.sandbox_id}, status: {attached.status}")
-    attached.stop().get()
+    attached.stop().result()
     print("Stopped via attached.stop()\n")
 
     print("All examples completed!")

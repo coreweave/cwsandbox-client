@@ -37,7 +37,7 @@ def cleanup_with_session(tag: str) -> None:
 
     with Session() as session:
         # Find sandboxes by tag and adopt them into the session
-        orphans = session.list(tags=[tag], adopt=True).get()
+        orphans = session.list(tags=[tag], adopt=True).result()
 
         print(f"Found and adopted {len(orphans)} sandbox(es)")
         for sb in orphans:

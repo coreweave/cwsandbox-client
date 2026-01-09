@@ -76,7 +76,7 @@ def mock_wandb_entity_name(monkeypatch: pytest.MonkeyPatch) -> str:
 def make_operation_ref(value: T) -> OperationRef[T]:
     """Create an OperationRef with a pre-completed future.
 
-    Use this instead of MagicMock to exercise the real .get() method.
+    Use this instead of MagicMock to exercise the real .result() method.
     """
     future: concurrent.futures.Future[T] = concurrent.futures.Future()
     future.set_result(value)

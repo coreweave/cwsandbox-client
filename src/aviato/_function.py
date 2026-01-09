@@ -55,12 +55,12 @@ class RemoteFunction(Generic[P, R]):
 
                 # Call .remote() to execute in sandbox
                 ref = compute.remote(2, 3)
-                result = ref.get()  # Block for result
+                result = ref.result()  # Block for result
                 print(result)  # 5
 
         Using .map() for parallel execution:
             refs = compute.map([(1, 2), (3, 4), (5, 6)])
-            results = [ref.get() for ref in refs]
+            results = [ref.result() for ref in refs]
 
         Using .local() for testing:
             result = compute.local(2, 3)  # Runs locally, no sandbox
@@ -135,11 +135,11 @@ class RemoteFunction(Generic[P, R]):
             **kwargs: Keyword arguments to pass to the function.
 
         Returns:
-            OperationRef[R]: Use .get() to block until result is ready.
+            OperationRef[R]: Use .result() to block until result is ready.
 
         Example:
             ref = compute.remote(2, 3)
-            result = ref.get()  # Block for result
+            result = ref.result()  # Block for result
             # Or in async context:
             result = await ref
         """
@@ -161,7 +161,7 @@ class RemoteFunction(Generic[P, R]):
         Example:
             # Execute add(1, 2), add(3, 4), add(5, 6) in parallel
             refs = add.map([(1, 2), (3, 4), (5, 6)])
-            results = [ref.get() for ref in refs]  # [3, 7, 11]
+            results = [ref.result() for ref in refs]  # [3, 7, 11]
         """
         # Type ignore: ParamSpec doesn't support tuple unpacking validation
         return [self.remote(*item) for item in items]  # type: ignore[call-arg]

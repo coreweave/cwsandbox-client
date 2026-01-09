@@ -27,7 +27,7 @@ def main() -> None:
         def add(x: int, y: int) -> int:
             return x + y
 
-        result = add.remote(2, 3).get()
+        result = add.remote(2, 3).result()
         print(f"add(2, 3) = {result}")
         print()
 
@@ -36,7 +36,7 @@ def main() -> None:
         def create_config(name: str, value: int) -> dict[str, object]:
             return {"name": name, "value": value, "computed": value * 2}
 
-        result = create_config.remote("test", 42).get()
+        result = create_config.remote("test", 42).result()
         print(f"create_config result: {result}")
         print()
 
@@ -48,7 +48,7 @@ def main() -> None:
             # Uses both closure (local_offset) and global (GLOBAL_MULTIPLIER)
             return x * GLOBAL_MULTIPLIER + local_offset
 
-        result = compute_with_context.remote(5).get()
+        result = compute_with_context.remote(5).result()
         print(f"compute_with_context(5) = {result}")
         print(f"  (5 * {GLOBAL_MULTIPLIER} + {local_offset} = {result})")
         print()
@@ -63,7 +63,7 @@ def main() -> None:
             }
 
         complex_data = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
-        result = process_complex.remote(complex_data).get()
+        result = process_complex.remote(complex_data).result()
         print(f"process_complex result: {result}")
         print()
 
@@ -73,7 +73,7 @@ def main() -> None:
             return x * x
 
         refs = square.map([(1,), (2,), (3,), (4,), (5,)])
-        results = [ref.get() for ref in refs]
+        results = [ref.result() for ref in refs]
         print(f"square.map() results: {results}")
         print()
 

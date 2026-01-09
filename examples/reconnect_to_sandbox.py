@@ -54,7 +54,7 @@ def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
 
     try:
         # from_id() returns a Sandbox instance attached to the existing sandbox
-        sandbox = Sandbox.from_id(sandbox_id).get()
+        sandbox = Sandbox.from_id(sandbox_id).result()
     except SandboxNotFoundError:
         print(f"Error: Sandbox {sandbox_id} not found")
         print("It may have been stopped or never existed.")
@@ -80,7 +80,7 @@ def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
 
     if stop:
         print("Stopping sandbox...")
-        sandbox.stop().get()
+        sandbox.stop().result()
         print("Sandbox stopped.")
     else:
         print("Sandbox is still running. Use --stop to stop it.")

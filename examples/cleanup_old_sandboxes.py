@@ -37,8 +37,8 @@ def cleanup_old_sandboxes(
         Tuple of (stopped_count, failed_count)
     """
     # Get all running sandboxes (optionally filtered by tags)
-    # list() returns OperationRef; use .get() to block for results
-    sandboxes = Sandbox.list(status="running", tags=tags).get()
+    # list() returns OperationRef; use .result() to block for results
+    sandboxes = Sandbox.list(status="running", tags=tags).result()
 
     # Filter to old sandboxes (client-side)
     cutoff = datetime.now(UTC) - max_age
@@ -63,7 +63,7 @@ def cleanup_old_sandboxes(
         else:
             try:
                 # sb is a Sandbox instance, so we can call stop() directly
-                sb.stop().get()
+                sb.stop().result()
                 print(f"  Stopped: {sb.sandbox_id} (age: {age})")
                 stopped += 1
             except SandboxError as e:

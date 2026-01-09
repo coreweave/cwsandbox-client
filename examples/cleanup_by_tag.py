@@ -46,8 +46,8 @@ def cleanup_tagged_sandboxes(tag: str) -> None:
     """Find and delete all sandboxes with a specific tag."""
     print(f"Finding sandboxes with tag '{tag}'...")
 
-    # list() returns OperationRef; use .get() to block for results
-    sandboxes = Sandbox.list(tags=[tag]).get()
+    # list() returns OperationRef; use .result() to block for results
+    sandboxes = Sandbox.list(tags=[tag]).result()
     print(f"Found {len(sandboxes)} sandbox(es)")
 
     if not sandboxes:
@@ -68,7 +68,7 @@ def cleanup_tagged_sandboxes(tag: str) -> None:
     failed = 0
     for sb, ref in zip(sandboxes, stop_refs, strict=False):
         try:
-            ref.get()
+            ref.result()
             print(f"  Stopped: {sb.sandbox_id}")
             stopped += 1
         except SandboxError as e:
