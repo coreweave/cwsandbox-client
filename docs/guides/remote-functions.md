@@ -61,7 +61,7 @@ def square(x: int) -> int:
     return x * x
 
 # Execute for each input
-refs = square.map(range(10))
+refs = square.map((x,) for x in range(10))
 
 # Collect all results
 from aviato import get
@@ -229,7 +229,7 @@ with aviato.Session(defaults=defaults) as session:
     print(f"7 squared: {result}")
 
     # Parallel execution
-    refs = square.map(range(5))
+    refs = square.map((x,) for x in range(5))
     results = get(refs)
     print(f"Squares: {results}")
 
