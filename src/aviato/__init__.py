@@ -45,14 +45,14 @@ Waitable = Sandbox | OperationRef[Any] | Process
 
 
 @overload
-def get(ref: OperationRef[T], /) -> T: ...
+def result(ref: OperationRef[T], /) -> T: ...
 
 
 @overload
-def get(refs: Sequence[OperationRef[T]], /) -> list[T]: ...
+def result(refs: Sequence[OperationRef[T]], /) -> list[T]: ...
 
 
-def get(refs: OperationRef[T] | Sequence[OperationRef[T]], /) -> T | list[T]:
+def result(refs: OperationRef[T] | Sequence[OperationRef[T]], /) -> T | list[T]:
     """Block for one or more OperationRefs and return results.
 
     This is a convenience function for retrieving results from OperationRefs.
@@ -70,10 +70,10 @@ def get(refs: OperationRef[T] | Sequence[OperationRef[T]], /) -> T | list[T]:
 
     Examples:
         Single ref:
-            data = aviato.get(sandbox.read_file("/path"))
+            data = aviato.result(sandbox.read_file("/path"))
 
         Multiple refs:
-            results = aviato.get([sb.read_file(f) for f in files])
+            results = aviato.result([sb.read_file(f) for f in files])
     """
     if isinstance(refs, OperationRef):
         return refs.result()
@@ -242,6 +242,6 @@ __all__ = [
     "StreamReader",
     "Waitable",
     "WandbAuthError",
-    "get",
+    "result",
     "wait",
 ]

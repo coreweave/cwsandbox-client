@@ -1,4 +1,4 @@
-"""Tests for aviato.get() and aviato.wait() utility functions."""
+"""Tests for aviato.result() and aviato.wait() utility functions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import aviato
-from aviato import OperationRef, Process, Sandbox, get, wait
+from aviato import OperationRef, Process, Sandbox, result, wait
 from aviato._types import ProcessResult, StreamReader
 
 
@@ -30,30 +30,30 @@ def _run_coro_sync(coro: Coroutine[Any, Any, Any]) -> Any:
         loop.close()
 
 
-class TestGet:
-    """Tests for aviato.get() function."""
+class TestResult:
+    """Tests for aviato.result() function."""
 
-    def test_get_single_ref_returns_result(self) -> None:
-        """get() with single OperationRef returns the result."""
+    def test_result_single_ref_returns_result(self) -> None:
+        """result() with single OperationRef returns the result."""
         future: concurrent.futures.Future[str] = concurrent.futures.Future()
         future.set_result("test_value")
         ref: OperationRef[str] = OperationRef(future)
 
-        result = get(ref)
+        value = result(ref)
 
-        assert result == "test_value"
+        assert value == "test_value"
 
-    def test_get_single_ref_propagates_exception(self) -> None:
-        """get() with single OperationRef propagates exceptions."""
+    def test_result_single_ref_propagates_exception(self) -> None:
+        """result() with single OperationRef propagates exceptions."""
         future: concurrent.futures.Future[str] = concurrent.futures.Future()
         future.set_exception(ValueError("test error"))
         ref: OperationRef[str] = OperationRef(future)
 
         with pytest.raises(ValueError, match="test error"):
-            get(ref)
+            result(ref)
 
-    def test_get_list_returns_all_results(self) -> None:
-        """get() with list of OperationRefs returns list of results."""
+    def test_result_list_returns_all_results(self) -> None:
+        """result() with list of OperationRefs returns list of results."""
         futures = []
         refs = []
         for i in range(3):
@@ -62,18 +62,18 @@ class TestGet:
             futures.append(future)
             refs.append(OperationRef(future))
 
-        results = get(refs)
+        results = result(refs)
 
         assert results == [0, 10, 20]
 
-    def test_get_empty_list_returns_empty_list(self) -> None:
-        """get() with empty list returns empty list."""
-        result = get([])
+    def test_result_empty_list_returns_empty_list(self) -> None:
+        """result() with empty list returns empty list."""
+        value = result([])
 
-        assert result == []
+        assert value == []
 
-    def test_get_list_propagates_first_exception(self) -> None:
-        """get() with list propagates exception from first failing ref."""
+    def test_result_list_propagates_first_exception(self) -> None:
+        """result() with list propagates exception from first failing ref."""
         future1: concurrent.futures.Future[int] = concurrent.futures.Future()
         future1.set_result(1)
         future2: concurrent.futures.Future[int] = concurrent.futures.Future()
@@ -81,7 +81,7 @@ class TestGet:
         refs = [OperationRef(future1), OperationRef(future2)]
 
         with pytest.raises(RuntimeError, match="failed"):
-            get(refs)
+            result(refs)
 
 
 class TestWait:
@@ -329,10 +329,10 @@ class TestWaitTimeout:
 class TestExports:
     """Tests for module exports."""
 
-    def test_get_exported(self) -> None:
-        """get function is exported from aviato module."""
-        assert hasattr(aviato, "get")
-        assert aviato.get is get
+    def test_result_exported(self) -> None:
+        """result function is exported from aviato module."""
+        assert hasattr(aviato, "result")
+        assert aviato.result is result
 
     def test_wait_exported(self) -> None:
         """wait function is exported from aviato module."""
@@ -343,9 +343,9 @@ class TestExports:
         """Waitable type alias is exported from aviato module."""
         assert hasattr(aviato, "Waitable")
 
-    def test_get_in_all(self) -> None:
-        """get is in __all__."""
-        assert "get" in aviato.__all__
+    def test_result_in_all(self) -> None:
+        """result is in __all__."""
+        assert "result" in aviato.__all__
 
     def test_wait_in_all(self) -> None:
         """wait is in __all__."""
