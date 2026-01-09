@@ -64,8 +64,8 @@ def square(x: int) -> int:
 refs = square.map((x,) for x in range(10))
 
 # Collect all results
-from aviato import get
-results = get(refs)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+from aviato import results
+all_results = results(refs)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
 
 With tuples for multiple arguments:
@@ -77,7 +77,7 @@ def add(x: int, y: int) -> int:
 
 # Each tuple is unpacked as arguments
 refs = add.map([(1, 2), (3, 4), (5, 6)])
-results = get(refs)  # [3, 7, 11]
+all_results = results(refs)  # [3, 7, 11]
 ```
 
 ### local() - Local Execution
@@ -205,7 +205,7 @@ The function API is intentionally simple. For complex workflows:
 
 ```python
 import aviato
-from aviato import SandboxDefaults, Serialization, get
+from aviato import SandboxDefaults, Serialization, results
 import numpy as np
 
 defaults = SandboxDefaults(
@@ -230,8 +230,8 @@ with aviato.Session(defaults=defaults) as session:
 
     # Parallel execution
     refs = square.map((x,) for x in range(5))
-    results = get(refs)
-    print(f"Squares: {results}")
+    all_results = results(refs)
+    print(f"Squares: {all_results}")
 
     # NumPy example
     arr = np.array([1, 2, 3, 4, 5])
