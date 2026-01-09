@@ -252,14 +252,14 @@ On first signal, performs cleanup then chains to original handler. On second sig
 
 ### Module-Level Utilities
 
-**`aviato.get()`**: Block for one or more OperationRefs and return results.
+**`aviato.result()`**: Block for one or more OperationRefs and return results.
 
 ```python
 # Single ref
-data = aviato.get(sandbox.read_file("/path"))
+data = aviato.result(sandbox.read_file("/path"))
 
 # Multiple refs
-results = aviato.get([sb.read_file(f) for f in files])
+results = aviato.result([sb.read_file(f) for f in files])
 ```
 
 **`aviato.wait()`**: Wait for Sandbox, OperationRef, or Process objects to complete. Returns `(done, pending)` tuple.

@@ -99,7 +99,7 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 | `test_sandbox.py` | Sandbox class, status handling, exec, file ops |
 | `test_session.py` | Session class, sandbox management, context managers |
 | `test_types.py` | OperationRef, ProcessResult, Process, StreamReader |
-| `test_utilities.py` | aviato.get(), aviato.wait() utilities |
+| `test_utilities.py` | aviato.result(), aviato.wait() utilities |
 
 ### Integration Test Files (`tests/integration/aviato/`)
 
