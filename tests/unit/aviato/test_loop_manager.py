@@ -236,14 +236,11 @@ class TestLoopManagerSessionTracking:
         """Test register_session() adds session to tracking set."""
         manager = _LoopManager.get()
         mock_session = MagicMock()
+        mock_session.close = AsyncMock()
 
         manager.register_session(mock_session)
 
         assert mock_session in manager._sessions
-
-        # Clean up to prevent warning during test teardown - MagicMock.close()
-        # doesn't return a proper awaitable, which causes issues in cleanup_all()
-        manager._sessions.discard(mock_session)
 
     def test_sessions_are_weakly_referenced(self) -> None:
         """Test registered sessions can be garbage collected."""
