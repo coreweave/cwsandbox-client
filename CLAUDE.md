@@ -351,12 +351,11 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py` - Sandbox creation and execution
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
-- `list_sandboxes.py`, `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
+- `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
 - `delete_sandboxes.py` - Deletion patterns with `Sandbox.delete()`
 - `error_handling.py` - Exception hierarchy and error recovery patterns
 - `session_adopt_orphans.py`, `cleanup_by_tag.py`, `cleanup_old_sandboxes.py` - Orphan management and cleanup
 - `parallel_batch_job.py` - Parallel batch processing with progress tracking
-- `kwargs_validation_demo.py` - Parameter validation
 
 See `examples/README.md` and `examples/CLAUDE.md` for full documentation. For detailed guides, see `docs/guides/`.
 
