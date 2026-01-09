@@ -61,13 +61,13 @@ def main() -> None:
 
     # Without missing_ok, raises SandboxNotFoundError
     try:
-        Sandbox.delete(fake_id).get()
+        Sandbox.delete(fake_id).result()
     except SandboxNotFoundError as e:
         print("   Without missing_ok: caught SandboxNotFoundError")
         print(f"   sandbox_id={e.sandbox_id}")
 
     # With missing_ok=True, returns None instead of raising
-    Sandbox.delete(fake_id, missing_ok=True).get()
+    Sandbox.delete(fake_id, missing_ok=True).result()
     print("   With missing_ok=True: delete completed (no exception)")
     print()
 

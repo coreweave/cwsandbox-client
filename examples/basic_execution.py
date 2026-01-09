@@ -32,11 +32,11 @@ def main() -> None:
 
         # Write a file
         content = b"Hello, World!\n"
-        sandbox.write_file("/tmp/data.txt", content).get()
+        sandbox.write_file("/tmp/data.txt", content).result()
         print("write_file: '/tmp/data.txt'")
 
         # Read the file back
-        read_back = sandbox.read_file("/tmp/data.txt").get()
+        read_back = sandbox.read_file("/tmp/data.txt").result()
         decoded = read_back.decode("utf-8", errors="replace").rstrip()
         print(f"read_file bytes={len(read_back)} content={decoded}")
 

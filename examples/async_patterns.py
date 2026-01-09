@@ -2,11 +2,11 @@
 """Async patterns with aviato's sync/async hybrid API.
 
 All aviato operations support both sync and async usage:
-- Sync: call .get() or .result() to block for the result
+- Sync: call .result() to block for the result
 - Async: use await on OperationRef or Process objects
 
 This example shows how to use await in async contexts. The same operations
-work identically with .get()/.result() in sync code.
+work identically with .result() in sync code.
 
 Usage:
     uv run examples/async_patterns.py
@@ -22,7 +22,7 @@ async def main() -> None:
 
     # --- Awaiting OperationRef from discovery methods ---
     # Sandbox.list(), Sandbox.from_id(), Sandbox.delete() all return OperationRef
-    # In sync code: sandboxes = Sandbox.list(...).get()
+    # In sync code: sandboxes = Sandbox.list(...).result()
     # In async code: sandboxes = await Sandbox.list(...)
     print("Awaiting OperationRef from discovery methods")
     print("-" * 50)
