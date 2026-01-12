@@ -20,6 +20,53 @@ class TestSessionSandbox:
 
         assert isinstance(sandbox, Sandbox)
 
+    def test_sandbox_inherits_environment_variables_from_session_defaults(self) -> None:
+        """Test session.sandbox inherits environment variables from session defaults."""
+        from aviato import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            environment_variables={
+                "PROJECT_ID": "test-project",
+                "LOG_LEVEL": "info",
+            }
+        )
+        session = Session(defaults)
+
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox._environment_variables == {
+            "PROJECT_ID": "test-project",
+            "LOG_LEVEL": "info",
+        }
+
+    def test_sandbox_overrides_session_environment_variables(self) -> None:
+        """Test session.sandbox can override session environment variables."""
+        from aviato import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            environment_variables={
+                "PROJECT_ID": "test-project",
+                "LOG_LEVEL": "info",
+            }
+        )
+        session = Session(defaults)
+
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(
+                command="sleep",
+                args=["infinity"],
+                environment_variables={
+                    "LOG_LEVEL": "debug",  # Override
+                    "MODEL_NAME": "gpt2",  # Add new
+                },
+            )
+
+        assert sandbox._environment_variables == {
+            "PROJECT_ID": "test-project",  # Inherited
+            "LOG_LEVEL": "debug",  # Overridden
+            "MODEL_NAME": "gpt2",  # Added
+        }
 
 class TestSessionContextManager:
     """Tests for Session context manager."""

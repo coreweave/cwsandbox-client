@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from aviato import Sandbox, SandboxDefaults
+from aviato import Sandbox, SandboxDefaults, Session
 from tests.integration.aviato.conftest import _SESSION_TAG
 
 
@@ -329,6 +329,93 @@ def test_sandbox_exec_streaming_check_raises(sandbox_defaults: SandboxDefaults) 
             "echo 'output before exit' && exit 42",
         ]
 
+def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
+    """Test environment variables are passed into the sandbox."""
+    defaults = sandbox_defaults.with_overrides(
+        tags=sandbox_defaults.merge_tags(["env-vars"]),
+        environment_variables={
+            "PROJECT_ID": "test-project-123",
+            "LOG_LEVEL": "info",
+        },
+    )
+
+    with Session(defaults) as session:
+        # Test 1: Environment variables in sandbox exec
+        with session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            environment_variables={
+                "MODEL_NAME": "resnet50",
+                "LOG_LEVEL": "debug",  # Override session default
+            },
+        ) as sandbox:
+            result = sandbox.exec([
+                "python",
+                "-c",
+                "import os; "
+                "print(os.environ.get('PROJECT_ID')); "
+                "print(os.environ.get('LOG_LEVEL')); "
+                "print(os.environ.get('MODEL_NAME')); "
+            ]).result()
+
+            assert result.returncode == 0
+            lines = result.stdout.strip().split("\n")
+            # Session defaults are inherited
+            assert lines[0] == "test-project-123"
+            # Session default is overridden
+            assert lines[1] == "debug"
+            # Task-specific environment variables are added
+            assert lines[2] == "resnet50"
+
+
+def test_function_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
+    """Test environment variables are passed into the function."""
+    defaults = sandbox_defaults.with_overrides(
+        tags=sandbox_defaults.merge_tags(["env-vars"]),
+        environment_variables={
+            "PROJECT_ID": "test-project-123",
+            "LOG_LEVEL": "info",
+        },
+    )
+    with Session(defaults) as session:
+        additional_environment_variables = {
+            "MODEL_VERSION": "v2.0",
+            "LOG_LEVEL": "debug",
+        }
+
+        @session.function(environment_variables=additional_environment_variables)
+        def process_request(task_id: int) -> dict:
+            import os
+
+            return {
+                "task_id": task_id,
+                "project": os.environ.get("PROJECT_ID"),
+                "version": os.environ.get("MODEL_VERSION"),
+                "log_level": os.environ.get("LOG_LEVEL"),
+            }
+
+        # Test 1: Function inherits session defaults and adds/overrides env vars
+        result = process_request.remote(42).result()
+
+        assert result == {
+            "task_id": 42,
+            "project": "test-project-123",  # From session defaults
+            "version": "v2.0",  # From function decorator
+            "log_level": "debug",  # Overridden by function decorator
+        }
+
+        # Test 2: Verify that mutations to the environment variables are reflected
+        # in subsequent function calls
+        additional_environment_variables["MODEL_VERSION"] = "v3.0"
+
+        result = process_request.remote(43).result()
+
+        assert result == {
+            "task_id": 43,
+            "project": "test-project-123",
+            "version": "v3.0",  # Mutated value
+            "log_level": "debug",
+        }
 
 # Async context manager tests
 

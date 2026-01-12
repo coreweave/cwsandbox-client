@@ -1053,6 +1053,8 @@ class Sandbox:
                 request_kwargs["runway_ids"] = self._runway_ids
             if self._tower_ids:
                 request_kwargs["tower_ids"] = self._tower_ids
+            if self._environment_variables:
+                request_kwargs["environment_variables"] = self._environment_variables
 
             request_kwargs.update(self._start_kwargs)
 

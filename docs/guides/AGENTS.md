@@ -14,6 +14,7 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 | `sync-vs-async.md` | When to use sync vs async patterns, calling async from sync |
 | `sandbox-config.md` | Configure resources, mounted files, ports, timeouts |
 | `troubleshooting.md` | Debug common issues - sandbox failures, auth errors, timeouts |
+| `environment-variables.md` | Use environment variables in sandboxes |
 
 ## Key Patterns
 
