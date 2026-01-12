@@ -26,17 +26,23 @@ class OperationRef(Generic[T]):
 
     Examples:
         Synchronous usage:
-            ref = sandbox.read_file("/path/to/file")  # Returns OperationRef[bytes]
-            data = ref.result()  # Block until complete
+        ```python
+        ref = sandbox.read_file("/path/to/file")  # Returns OperationRef[bytes]
+        data = ref.result()  # Block until complete
+        ```
 
         With timeout:
-            try:
-                data = ref.result(timeout=5.0)
-            except concurrent.futures.TimeoutError:
-                print("Operation timed out")
+        ```python
+        try:
+            data = ref.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            print("Operation timed out")
+        ```
 
         Async usage:
-            data = await ref  # Awaitable in async context
+        ```python
+        data = await ref  # Awaitable in async context
+        ```
     """
 
     def __init__(self, future: concurrent.futures.Future[T]) -> None:
@@ -73,9 +79,11 @@ class OperationRef(Generic[T]):
             Generator that yields the result when complete.
 
         Example:
+            ```python
             async def example():
                 ref = sandbox.read_file("/path")
                 data = await ref  # Works in async context
+            ```
         """
         return asyncio.wrap_future(self._future).__await__()
 
@@ -103,11 +111,13 @@ class ProcessResult:
         command: The command that was executed
 
     Examples:
+        ```python
         result = process.result()
         if result.returncode == 0:
             print(result.stdout)
         else:
             print(f"Error: {result.stderr}")
+        ```
     """
 
     stdout: str
@@ -129,12 +139,16 @@ class StreamReader:
 
     Examples:
         Synchronous iteration:
-            for line in process.stdout:
-                print(line)
+        ```python
+        for line in process.stdout:
+            print(line)
+        ```
 
         Asynchronous iteration:
-            async for line in process.stdout:
-                print(line)
+        ```python
+        async for line in process.stdout:
+            print(line)
+        ```
     """
 
     def __init__(self, queue: asyncio.Queue[str | None], loop_manager: _LoopManager) -> None:
@@ -209,24 +223,32 @@ class Process(OperationRef[ProcessResult]):
 
     Examples:
         Basic execution with result:
-            process = sandbox.exec(["echo", "hello"])
-            result = process.result()
-            print(result.stdout)  # hello
+        ```python
+        process = sandbox.exec(["echo", "hello"])
+        result = process.result()
+        print(result.stdout)  # hello
+        ```
 
         Streaming output:
-            process = sandbox.exec(["python", "-c", "print('line1'); print('line2')"])
-            for line in process.stdout:
-                print(f"Got: {line}")
+        ```python
+        process = sandbox.exec(["python", "-c", "print('line1'); print('line2')"])
+        for line in process.stdout:
+            print(f"Got: {line}")
+        ```
 
         Async streaming:
-            async for line in process.stdout:
-                print(f"Got: {line}")
+        ```python
+        async for line in process.stdout:
+            print(f"Got: {line}")
+        ```
 
         Waiting with timeout:
-            try:
-                exit_code = process.wait(timeout=10.0)
-            except concurrent.futures.TimeoutError:
-                process.cancel()
+        ```python
+        try:
+            exit_code = process.wait(timeout=10.0)
+        except concurrent.futures.TimeoutError:
+            process.cancel()
+        ```
     """
 
     def __init__(
