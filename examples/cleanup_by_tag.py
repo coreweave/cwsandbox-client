@@ -17,24 +17,23 @@ Usage:
 """
 
 import argparse
-import asyncio
 
-from aviato import Sandbox
+from aviato import Sandbox, SandboxError
 
 
-async def create_tagged_sandboxes(tag: str, count: int) -> None:
+def create_tagged_sandboxes(tag: str, count: int) -> None:
     """Create some sandboxes with a specific tag."""
     print(f"Creating {count} sandboxes with tag '{tag}'...")
 
-    create_tasks = [
-        Sandbox.create(
+    # Sandbox.run() returns immediately; sandboxes start in parallel
+    sandboxes = [
+        Sandbox.run(
             "sleep",
             "infinity",
             tags=[tag, f"instance-{i}"],
         )
         for i in range(count)
     ]
-    sandboxes = await asyncio.gather(*create_tasks)
 
     for sb in sandboxes:
         print(f"  Created: {sb.sandbox_id} (tower: {sb.tower_id})")
@@ -43,12 +42,12 @@ async def create_tagged_sandboxes(tag: str, count: int) -> None:
     print("Run with --cleanup to delete them.")
 
 
-async def cleanup_tagged_sandboxes(tag: str) -> None:
+def cleanup_tagged_sandboxes(tag: str) -> None:
     """Find and delete all sandboxes with a specific tag."""
     print(f"Finding sandboxes with tag '{tag}'...")
 
-    # list() returns Sandbox instances we can operate on directly
-    sandboxes = await Sandbox.list(tags=[tag])
+    # list() returns OperationRef; use .result() to block for results
+    sandboxes = Sandbox.list(tags=[tag]).result()
     print(f"Found {len(sandboxes)} sandbox(es)")
 
     if not sandboxes:
@@ -62,23 +61,24 @@ async def cleanup_tagged_sandboxes(tag: str) -> None:
     print("\nStopping sandboxes...")
 
     # Stop all sandboxes concurrently
-    stop_tasks = [sb.stop() for sb in sandboxes]
-    results = await asyncio.gather(*stop_tasks, return_exceptions=True)
+    stop_refs = [sb.stop() for sb in sandboxes]
 
+    # Wait for each stop operation, handling failures individually
     stopped = 0
     failed = 0
-    for sb, result in zip(sandboxes, results, strict=False):
-        if isinstance(result, Exception):
-            print(f"  Failed to stop {sb.sandbox_id}: {result}")
-            failed += 1
-        else:
+    for sb, ref in zip(sandboxes, stop_refs, strict=False):
+        try:
+            ref.result()
             print(f"  Stopped: {sb.sandbox_id}")
             stopped += 1
+        except SandboxError as e:
+            print(f"  Failed to stop {sb.sandbox_id}: {e}")
+            failed += 1
 
     print(f"\nResults: {stopped} stopped, {failed} failed")
 
 
-async def main() -> None:
+def main() -> None:
     parser = argparse.ArgumentParser(description="Tag-based sandbox cleanup example")
     parser.add_argument("--create", action="store_true", help="Create test sandboxes")
     parser.add_argument("--cleanup", action="store_true", help="Clean up sandboxes")
@@ -87,12 +87,12 @@ async def main() -> None:
     args = parser.parse_args()
 
     if args.create:
-        await create_tagged_sandboxes(args.tag, args.count)
+        create_tagged_sandboxes(args.tag, args.count)
     elif args.cleanup:
-        await cleanup_tagged_sandboxes(args.tag)
+        cleanup_tagged_sandboxes(args.tag)
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aviato._function import (
+    RemoteFunction,
     _create_function_payload,
     _create_json_payload,
     _extract_closure_variables,
@@ -20,8 +21,9 @@ from aviato._function import (
     _parse_exception_from_stderr,
     _parse_json_result,
     _parse_sandbox_result,
-    create_function_wrapper,
 )
+from aviato._types import OperationRef
+from tests.unit.aviato.conftest import make_operation_ref, make_process
 
 T = TypeVar("T", bound=Callable[..., Any])
 
@@ -175,9 +177,9 @@ class TestIsSessionFunctionDecorator:
             func_def = tree.body[0]
             assert isinstance(func_def, ast.FunctionDef)
             decorator = func_def.decorator_list[0]
-            assert _is_session_function_decorator(
-                decorator
-            ), f"Should match @{session_name}.function()"
+            assert _is_session_function_decorator(decorator), (
+                f"Should match @{session_name}.function()"
+            )
 
     def test_rejects_bare_function_decorator(self) -> None:
         """Test that @function() alone is NOT matched (critical for avoiding false positives)."""
@@ -214,9 +216,9 @@ class TestIsSessionFunctionDecorator:
             func_def = tree.body[0]
             assert isinstance(func_def, ast.FunctionDef)
             decorator = func_def.decorator_list[0]
-            assert not _is_session_function_decorator(
-                decorator
-            ), f"Should not match @session.{method_name}()"
+            assert not _is_session_function_decorator(decorator), (
+                f"Should not match @session.{method_name}()"
+            )
 
 
 class TestExtractClosureVariables:
@@ -531,12 +533,90 @@ class TestJsonSerialization:
             _parse_json_result(b"not valid json {")
 
 
-class TestCreateFunctionWrapper:
-    """Tests for create_function_wrapper."""
+class TestRemoteFunction:
+    """Tests for RemoteFunction class."""
 
-    @pytest.mark.asyncio
-    async def test_rejects_async_function(self) -> None:
-        """Test wrapper rejects async functions with clear error."""
+    def test_remote_returns_operation_ref(self) -> None:
+        """Test that remote() returns an OperationRef."""
+        from aviato import Session
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(add, session=session)
+
+        # Mock the loop manager to avoid actual async execution
+        mock_future = MagicMock()
+        mock_future.result.return_value = 5
+
+        def mock_run_async(coro: Any) -> MagicMock:
+            coro.close()  # Close coroutine to prevent unawaited warning
+            return mock_future
+
+        session._loop_manager.run_async = MagicMock(side_effect=mock_run_async)
+
+        ref = remote_fn.remote(2, 3)
+
+        assert isinstance(ref, OperationRef)
+
+    def test_local_executes_without_sandbox(self) -> None:
+        """Test that local() executes the function directly."""
+        from aviato import Session
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(add, session=session)
+
+        result = remote_fn.local(2, 3)
+
+        assert result == 5
+
+    def test_map_returns_list_of_operation_refs(self) -> None:
+        """Test that map() returns a list of OperationRefs."""
+        from aviato import Session
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(add, session=session)
+
+        mock_future = MagicMock()
+
+        def mock_run_async(coro: Any) -> MagicMock:
+            coro.close()  # Close coroutine to prevent unawaited warning
+            return mock_future
+
+        session._loop_manager.run_async = MagicMock(side_effect=mock_run_async)
+
+        refs = remote_fn.map([(1, 2), (3, 4), (5, 6)])
+
+        assert len(refs) == 3
+        assert all(isinstance(ref, OperationRef) for ref in refs)
+
+    def test_preserves_function_name(self) -> None:
+        """Test that RemoteFunction preserves function metadata."""
+        from aviato import Session
+
+        session = Session()
+
+        def my_special_function(x: int) -> int:
+            """My docstring."""
+            return x * 2
+
+        remote_fn = RemoteFunction(my_special_function, session=session)
+
+        assert remote_fn.__name__ == "my_special_function"
+        assert remote_fn.__doc__ == "My docstring."
+
+    def test_rejects_async_function(self) -> None:
+        """Test that RemoteFunction rejects async functions."""
         from aviato import Session
         from aviato.exceptions import AsyncFunctionError
 
@@ -546,11 +626,10 @@ class TestCreateFunctionWrapper:
             return x * 2
 
         with pytest.raises(AsyncFunctionError, match="async"):
-            create_function_wrapper(async_func, session=session)
+            RemoteFunction(async_func, session=session)
 
-    @pytest.mark.asyncio
-    async def test_rejects_async_generator(self) -> None:
-        """Test wrapper rejects async generator functions."""
+    def test_rejects_async_generator(self) -> None:
+        """Test that RemoteFunction rejects async generator functions."""
         from aviato import Session
         from aviato.exceptions import AsyncFunctionError
 
@@ -560,41 +639,11 @@ class TestCreateFunctionWrapper:
             yield 1
 
         with pytest.raises(AsyncFunctionError, match="async"):
-            create_function_wrapper(async_gen, session=session)
+            RemoteFunction(async_gen, session=session)
 
     @pytest.mark.asyncio
-    async def test_wrapper_is_async(self) -> None:
-        """Test wrapper returns an async callable."""
-        import asyncio
-
-        from aviato import Session
-
-        session = Session()
-
-        def sync_func(x: int) -> int:
-            return x * 2
-
-        wrapper = create_function_wrapper(sync_func, session=session)
-
-        assert asyncio.iscoroutinefunction(wrapper)
-
-    @pytest.mark.asyncio
-    async def test_wrapper_preserves_function_name(self) -> None:
-        """Test wrapper preserves the original function name."""
-        from aviato import Session
-
-        session = Session()
-
-        def my_special_function(x: int) -> int:
-            return x
-
-        wrapper = create_function_wrapper(my_special_function, session=session)
-
-        assert wrapper.__name__ == "my_special_function"
-
-    @pytest.mark.asyncio
-    async def test_wrapper_executes_in_sandbox(self) -> None:
-        """Test wrapper creates sandbox and executes function."""
+    async def test_execute_async_runs_in_sandbox(self) -> None:
+        """Test that _execute_async creates sandbox and runs function."""
         from aviato import Session
         from aviato._types import Serialization
 
@@ -603,7 +652,7 @@ class TestCreateFunctionWrapper:
         def add(x: int, y: int) -> int:
             return x + y
 
-        wrapper = create_function_wrapper(
+        remote_fn = RemoteFunction(
             add,
             session=session,
             serialization=Serialization.JSON,
@@ -612,29 +661,26 @@ class TestCreateFunctionWrapper:
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
         mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
         mock_sandbox.sandbox_id = "test-sandbox-id"
-        mock_sandbox.write_file = AsyncMock()
-
-        mock_exec_result = MagicMock()
-        mock_exec_result.returncode = 0
-        mock_exec_result.stderr = ""
-        mock_sandbox.exec = AsyncMock(return_value=mock_exec_result)
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
 
         result_json = json.dumps(5).encode()
-        mock_sandbox.read_file = AsyncMock(return_value=result_json)
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
 
-        with patch.object(session, "create", return_value=mock_sandbox):
-            result = await wrapper(2, 3)
+        with patch("aviato._sandbox.Sandbox", return_value=mock_sandbox):
+            result = await remote_fn._execute_async(2, 3)
 
             assert result == 5
-            session.create.assert_called_once()
+            mock_sandbox._start_async.assert_called_once()
             mock_sandbox.write_file.assert_called_once()
             mock_sandbox.exec.assert_called_once()
             mock_sandbox.read_file.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_wrapper_raises_on_execution_failure(self) -> None:
-        """Test wrapper raises SandboxExecutionError on non-zero exit."""
+    async def test_execute_async_raises_on_failure(self) -> None:
+        """Test _execute_async raises SandboxExecutionError on non-zero exit."""
         from aviato import Session
         from aviato._types import Serialization
         from aviato.exceptions import SandboxExecutionError
@@ -644,7 +690,7 @@ class TestCreateFunctionWrapper:
         def failing_func() -> None:
             raise RuntimeError("boom")
 
-        wrapper = create_function_wrapper(
+        remote_fn = RemoteFunction(
             failing_func,
             session=session,
             serialization=Serialization.JSON,
@@ -653,111 +699,81 @@ class TestCreateFunctionWrapper:
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
         mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
         mock_sandbox.sandbox_id = "test-sandbox-id"
-        mock_sandbox.write_file = AsyncMock()
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(
+            return_value=make_process(returncode=1, stderr="RuntimeError: boom")
+        )
 
-        mock_exec_result = MagicMock()
-        mock_exec_result.returncode = 1
-        mock_exec_result.stderr = "RuntimeError: boom"
-        mock_sandbox.exec = AsyncMock(return_value=mock_exec_result)
-
-        with patch.object(session, "create", return_value=mock_sandbox):
+        with patch("aviato._sandbox.Sandbox", return_value=mock_sandbox):
             with pytest.raises(SandboxExecutionError, match="execution failed"):
-                await wrapper()
-
-    @pytest.mark.asyncio
-    async def test_wrapper_uses_pickle_serialization(self) -> None:
-        """Test wrapper uses pickle when specified."""
-        from aviato import Session
-        from aviato._types import Serialization
-
-        session = Session()
-
-        def compute(data: list[int]) -> int:
-            return sum(data)
-
-        wrapper = create_function_wrapper(
-            compute,
-            session=session,
-            serialization=Serialization.PICKLE,
-        )
-
-        mock_sandbox = MagicMock()
-        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
-        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
-        mock_sandbox.sandbox_id = "test-sandbox-id"
-        mock_sandbox.write_file = AsyncMock()
-
-        mock_exec_result = MagicMock()
-        mock_exec_result.returncode = 0
-        mock_exec_result.stderr = ""
-        mock_sandbox.exec = AsyncMock(return_value=mock_exec_result)
-
-        result_pickle = pickle.dumps(10)
-        mock_sandbox.read_file = AsyncMock(return_value=result_pickle)
-
-        with patch.object(session, "create", return_value=mock_sandbox):
-            result = await wrapper([1, 2, 3, 4])
-
-            assert result == 10
-
-            write_call = mock_sandbox.write_file.call_args
-            payload_bytes = write_call[0][1]
-            payload = pickle.loads(payload_bytes)
-            assert "source" in payload
-            assert payload["args"] == ([1, 2, 3, 4],)
+                await remote_fn._execute_async()
 
 
-class TestCreateFunctionWrapperKwargsValidation:
-    """Tests for kwargs validation in create_function_wrapper."""
+class TestSessionFunctionDecorator:
+    """Tests for session.function() decorator returning RemoteFunction."""
 
-    def test_valid_sandbox_kwargs(self) -> None:
-        """Test create_function_wrapper accepts valid sandbox_kwargs."""
+    def test_decorator_returns_remote_function(self) -> None:
+        """Test that @session.function() returns RemoteFunction."""
         from aviato import Session
 
         session = Session()
 
-        def compute(x: int) -> int:
+        @session.function()
+        def compute(x: int, y: int) -> int:
+            return x + y
+
+        assert isinstance(compute, RemoteFunction)
+
+    def test_decorated_function_has_remote_method(self) -> None:
+        """Test that decorated function has .remote() method."""
+        from aviato import Session
+
+        session = Session()
+
+        @session.function()
+        def compute(x: int, y: int) -> int:
+            return x + y
+
+        assert hasattr(compute, "remote")
+        assert callable(compute.remote)
+
+    def test_decorated_function_has_local_method(self) -> None:
+        """Test that decorated function has .local() method."""
+        from aviato import Session
+
+        session = Session()
+
+        @session.function()
+        def compute(x: int, y: int) -> int:
+            return x + y
+
+        assert hasattr(compute, "local")
+        result = compute.local(2, 3)
+        assert result == 5
+
+    def test_decorated_function_has_map_method(self) -> None:
+        """Test that decorated function has .map() method."""
+        from aviato import Session
+
+        session = Session()
+
+        @session.function()
+        def compute(x: int, y: int) -> int:
+            return x + y
+
+        assert hasattr(compute, "map")
+        assert callable(compute.map)
+
+    def test_decorated_function_preserves_name(self) -> None:
+        """Test that decorated function preserves original name."""
+        from aviato import Session
+
+        session = Session()
+
+        @session.function()
+        def my_special_function(x: int) -> int:
             return x * 2
 
-        wrapper = create_function_wrapper(
-            compute,
-            session=session,
-            resources={"cpu": "100m"},
-            ports=[{"container_port": 8080}],
-        )
-
-        assert callable(wrapper)
-
-    def test_invalid_sandbox_kwargs(self) -> None:
-        """Test create_function_wrapper rejects invalid sandbox_kwargs."""
-        from aviato import Session
-
-        session = Session()
-
-        def compute(x: int) -> int:
-            return x * 2
-
-        with pytest.raises(TypeError, match="unexpected keyword argument"):
-            create_function_wrapper(
-                compute,
-                session=session,
-                invalid_param="value",
-            )
-
-    def test_mixed_valid_invalid_sandbox_kwargs(self) -> None:
-        """Test create_function_wrapper rejects if any sandbox_kwargs are invalid."""
-        from aviato import Session
-
-        session = Session()
-
-        def compute(x: int) -> int:
-            return x * 2
-
-        with pytest.raises(TypeError, match="unexpected keyword argument"):
-            create_function_wrapper(
-                compute,
-                session=session,
-                resources={"cpu": "100m"},
-                invalid_param="value",
-            )
+        assert my_special_function.__name__ == "my_special_function"

@@ -19,17 +19,16 @@ Usage:
 """
 
 import argparse
-import asyncio
 
 from aviato import Sandbox
 from aviato.exceptions import SandboxNotFoundError
 
 
-async def create_long_running_sandbox() -> str:
+def create_long_running_sandbox() -> str:
     """Create a sandbox that will keep running."""
     print("Creating a long-running sandbox...")
 
-    sandbox = await Sandbox.create(
+    sandbox = Sandbox.run(
         "sleep",
         "infinity",
         tags=["reconnect-example"],
@@ -49,13 +48,13 @@ async def create_long_running_sandbox() -> str:
     return sandbox.sandbox_id
 
 
-async def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
+def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
     """Reconnect to an existing sandbox and optionally stop it."""
     print(f"Reconnecting to sandbox: {sandbox_id}")
 
     try:
         # from_id() returns a Sandbox instance attached to the existing sandbox
-        sandbox = await Sandbox.from_id(sandbox_id)
+        sandbox = Sandbox.from_id(sandbox_id).result()
     except SandboxNotFoundError:
         print(f"Error: Sandbox {sandbox_id} not found")
         print("It may have been stopped or never existed.")
@@ -69,25 +68,25 @@ async def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
 
     # Execute a command to prove we're connected
     print("Executing 'hostname' in the sandbox...")
-    result = await sandbox.exec(["hostname"])
+    result = sandbox.exec(["hostname"]).result()
     print(f"  Hostname: {result.stdout.strip()}")
     print()
 
     # Execute another command
     print("Executing 'uptime' in the sandbox...")
-    result = await sandbox.exec(["uptime"])
+    result = sandbox.exec(["uptime"]).result()
     print(f"  Uptime: {result.stdout.strip()}")
     print()
 
     if stop:
         print("Stopping sandbox...")
-        await sandbox.stop()
+        sandbox.stop().result()
         print("Sandbox stopped.")
     else:
         print("Sandbox is still running. Use --stop to stop it.")
 
 
-async def main() -> None:
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Reconnect to an existing sandbox",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -109,12 +108,12 @@ async def main() -> None:
     args = parser.parse_args()
 
     if args.create:
-        await create_long_running_sandbox()
+        create_long_running_sandbox()
     elif args.sandbox_id:
-        await reconnect_to_sandbox(args.sandbox_id, stop=args.stop)
+        reconnect_to_sandbox(args.sandbox_id, stop=args.stop)
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

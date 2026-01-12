@@ -11,139 +11,119 @@ from aviato import Sandbox, SandboxDefaults, Serialization
 GLOBAL_CONSTANT = 42
 
 
-@pytest.mark.asyncio
-async def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
     """Test creating sandbox via session."""
-    async with Sandbox.session(sandbox_defaults) as session:
-        sandbox = session.create()
+    with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
-        async with sandbox:
-            assert sandbox.sandbox_id is not None
+        assert sandbox.sandbox_id is not None
 
-            result = await sandbox.exec(["echo", "from session"])
-            assert result.returncode == 0
+        result = sandbox.exec(["echo", "from session"]).result()
+        assert result.returncode == 0
 
 
-@pytest.mark.asyncio
-async def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
     """Test session managing multiple sandboxes."""
-    async with Sandbox.session(sandbox_defaults) as session:
-        sb1 = session.create()
-        sb2 = session.create()
+    with Sandbox.session(sandbox_defaults) as session:
+        sb1 = session.sandbox(command="sleep", args=["infinity"])
+        sb2 = session.sandbox(command="sleep", args=["infinity"])
 
-        async with sb1, sb2:
-            r1 = await sb1.exec(["echo", "sandbox-1"])
-            r2 = await sb2.exec(["echo", "sandbox-2"])
+        r1 = sb1.exec(["echo", "sandbox-1"]).result()
+        r2 = sb2.exec(["echo", "sandbox-2"]).result()
 
-            assert r1.stdout.strip() == "sandbox-1"
-            assert r2.stdout.strip() == "sandbox-2"
+        assert r1.stdout.strip() == "sandbox-1"
+        assert r2.stdout.strip() == "sandbox-2"
 
 
-@pytest.mark.asyncio
-async def test_session_function_pickle(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_pickle(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function execution with pickle serialization."""
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
-        @session.function()
+        @session.function(serialization=Serialization.PICKLE)
         def add(x: int, y: int) -> int:
             return x + y
 
-        result = await add(2, 3)
+        result = add.remote(2, 3).result()
 
         assert result == 5
 
 
-@pytest.mark.asyncio
-async def test_session_function_json(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_json(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function execution with JSON serialization."""
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
         @session.function(serialization=Serialization.JSON)
         def create_dict(key: str, value: int) -> dict[str, int]:
             return {key: value}
 
-        result = await create_dict("test", 42)
+        result = create_dict.remote("test", 42).result()
 
         assert result == {"test": 42}
 
 
-@pytest.mark.asyncio
-async def test_session_function_with_closure(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_with_closure(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function with closure variables."""
     multiplier = 10
 
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def multiply(x: int) -> int:
             return x * multiplier
 
-        result = await multiply(5)
+        result = multiply.remote(5).result()
 
         assert result == 50
 
 
-@pytest.mark.asyncio
-async def test_session_function_raises_exception(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_raises_exception(sandbox_defaults: SandboxDefaults) -> None:
     """Test that exceptions from sandbox functions are properly propagated."""
     from aviato.exceptions import SandboxExecutionError
 
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def raises_value_error() -> None:
             raise ValueError("test error message")
 
         with pytest.raises(SandboxExecutionError) as exc_info:
-            await raises_value_error()
+            raises_value_error.remote().result()
 
         assert exc_info.value.exec_result is not None
         assert exc_info.value.exec_result.returncode != 0
 
 
-@pytest.mark.asyncio
-async def test_session_function_with_global_variables(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_with_global_variables(sandbox_defaults: SandboxDefaults) -> None:
     """Test function execution with module-level global variables."""
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
         @session.function()
         def use_global() -> int:
             return GLOBAL_CONSTANT * 2
 
-        result = await use_global()
+        result = use_global.remote().result()
 
         assert result == 84
 
 
-@pytest.mark.asyncio
-async def test_session_create_after_close_raises(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_sandbox_after_close_raises(sandbox_defaults: SandboxDefaults) -> None:
     """Test creating sandbox after session.close() raises SandboxError."""
     from aviato.exceptions import SandboxError
 
     session = Sandbox.session(sandbox_defaults)
 
-    await session.close()
+    session.close().result()
 
     with pytest.raises(SandboxError) as exc_info:
-        session.create()
+        session.sandbox()
 
     assert "closed" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
-async def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
-    """Test session.close() stops sandboxes that weren't manually stopped.
-
-    TODO: Convert to sync test when Session gets sync context manager support
-    in branch 04-session-function. Currently async because Session only has
-    async context manager in this branch.
-    """
-    async with Sandbox.session(sandbox_defaults) as session:
-        sandbox = session.create()
-
-        # Start sandbox in async context - must use __aenter__ directly since
-        # Session is async-only in this branch
-        await sandbox.__aenter__()
+def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
+    """Test session.close() stops sandboxes that weren't manually stopped."""
+    with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert sandbox.sandbox_id is not None
         assert session.sandbox_count == 1
@@ -153,10 +133,9 @@ async def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxD
     assert session.sandbox_count == 0
 
 
-@pytest.mark.asyncio
-async def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDefaults) -> None:
+def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function with complex types using pickle serialization."""
-    async with Sandbox.session(sandbox_defaults) as session:
+    with Sandbox.session(sandbox_defaults) as session:
 
         @session.function(serialization=Serialization.PICKLE)
         def process_nested(data: dict) -> dict:
@@ -166,8 +145,43 @@ async def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDe
                 "computed": data["value"] * 2,
             }
 
-        result = await process_nested({"value": 21, "nested": {"key": "val"}})
+        result = process_nested.remote({"value": 21, "nested": {"key": "val"}}).result()
 
         assert result["processed"] is True
         assert result["computed"] == 42
         assert result["original"]["nested"]["key"] == "val"
+
+
+# Async context manager tests
+
+
+@pytest.mark.asyncio
+async def test_session_async_context_manager(sandbox_defaults: SandboxDefaults) -> None:
+    """Test async context manager for Session.
+
+    Verifies that 'async with Session(...)' properly:
+    1. Creates and manages sandboxes
+    2. Allows await on exec() and file operations
+    3. Properly cleans up (stops all sandboxes) on exit
+
+    This is a regression test for event loop routing bugs where __aexit__
+    directly awaited async operations instead of routing through _LoopManager.
+    """
+    from aviato import Session
+
+    async with Session(sandbox_defaults) as session:
+        # Create sandbox through session
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+        assert sandbox.sandbox_id is not None
+
+        # Use await pattern (not .result())
+        result = await sandbox.exec(["echo", "async session"])
+        assert result.returncode == 0
+        assert result.stdout.strip() == "async session"
+
+        # Verify session.list() works with await
+        sandboxes = await session.list()
+        assert len(sandboxes) >= 1
+
+    # After exiting, all session sandboxes should be cleaned up
+    assert session.sandbox_count == 0

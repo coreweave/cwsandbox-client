@@ -16,13 +16,12 @@ Usage:
 """
 
 import argparse
-import asyncio
 from datetime import UTC, datetime, timedelta
 
-from aviato import Sandbox
+from aviato import Sandbox, SandboxError
 
 
-async def cleanup_old_sandboxes(
+def cleanup_old_sandboxes(
     max_age: timedelta,
     tags: list[str] | None = None,
     dry_run: bool = False,
@@ -38,8 +37,8 @@ async def cleanup_old_sandboxes(
         Tuple of (stopped_count, failed_count)
     """
     # Get all running sandboxes (optionally filtered by tags)
-    # Returns Sandbox instances with started_at populated
-    sandboxes = await Sandbox.list(status="running", tags=tags)
+    # list() returns OperationRef; use .result() to block for results
+    sandboxes = Sandbox.list(status="running", tags=tags).result()
 
     # Filter to old sandboxes (client-side)
     cutoff = datetime.now(UTC) - max_age
@@ -64,17 +63,17 @@ async def cleanup_old_sandboxes(
         else:
             try:
                 # sb is a Sandbox instance, so we can call stop() directly
-                await sb.stop()
+                sb.stop().result()
                 print(f"  Stopped: {sb.sandbox_id} (age: {age})")
                 stopped += 1
-            except Exception as e:
+            except SandboxError as e:
                 print(f"  Failed: {sb.sandbox_id} - {e}")
                 failed += 1
 
     return stopped, failed
 
 
-async def main() -> None:
+def main() -> None:
     parser = argparse.ArgumentParser(description="Clean up old sandboxes")
     parser.add_argument(
         "--max-age-hours",
@@ -103,7 +102,7 @@ async def main() -> None:
     if args.dry_run:
         print("DRY RUN MODE - no sandboxes will be stopped\n")
 
-    stopped, failed = await cleanup_old_sandboxes(
+    stopped, failed = cleanup_old_sandboxes(
         max_age=max_age,
         tags=args.tags,
         dry_run=args.dry_run,
@@ -113,4 +112,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

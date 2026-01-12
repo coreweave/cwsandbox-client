@@ -1,33 +1,33 @@
 """Function decorator example using sessions.
 
 This example demonstrates:
-- Using Sandbox.session() for managing sandboxes
+- Using Session for managing sandboxes
 - The @session.function() decorator for remote function execution
 - Both JSON (default) and PICKLE serialization modes
 - Closure and global variable capture
+- .map() for parallel execution across multiple inputs
+- .local() for testing without creating sandboxes
 """
 
-import asyncio
-
-from aviato import Sandbox, SandboxDefaults, Serialization
+from aviato import SandboxDefaults, Serialization, Session
 
 # Module-level global variable (will be captured automatically)
 GLOBAL_MULTIPLIER = 100
 
 
-async def main() -> None:
+def main() -> None:
     defaults = SandboxDefaults(
         container_image="python:3.11",
         tags=("example", "function-decorator"),
     )
 
-    async with Sandbox.session(defaults) as session:
+    with Session(defaults) as session:
         # Basic function with JSON serialization (default, safe)
         @session.function()
         def add(x: int, y: int) -> int:
             return x + y
 
-        result = await add(2, 3)
+        result = add.remote(2, 3).result()
         print(f"add(2, 3) = {result}")
         print()
 
@@ -36,7 +36,7 @@ async def main() -> None:
         def create_config(name: str, value: int) -> dict[str, object]:
             return {"name": name, "value": value, "computed": value * 2}
 
-        result = await create_config("test", 42)
+        result = create_config.remote("test", 42).result()
         print(f"create_config result: {result}")
         print()
 
@@ -48,7 +48,7 @@ async def main() -> None:
             # Uses both closure (local_offset) and global (GLOBAL_MULTIPLIER)
             return x * GLOBAL_MULTIPLIER + local_offset
 
-        result = await compute_with_context(5)
+        result = compute_with_context.remote(5).result()
         print(f"compute_with_context(5) = {result}")
         print(f"  (5 * {GLOBAL_MULTIPLIER} + {local_offset} = {result})")
         print()
@@ -63,9 +63,25 @@ async def main() -> None:
             }
 
         complex_data = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
-        result = await process_complex(complex_data)
+        result = process_complex.remote(complex_data).result()
         print(f"process_complex result: {result}")
+        print()
+
+        # .map() for parallel execution across multiple inputs
+        @session.function()
+        def square(x: int) -> int:
+            return x * x
+
+        refs = square.map([(1,), (2,), (3,), (4,), (5,)])
+        results = [ref.result() for ref in refs]
+        print(f"square.map() results: {results}")
+        print()
+
+        # .local() for testing without creating a sandbox
+        local_result = square.local(7)
+        print(f"square.local(7) = {local_result}")
+        print("  (Executed in current process, no sandbox created)")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -9,14 +9,13 @@ import pickle
 import textwrap
 import types
 import uuid
-from functools import wraps
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 
 from aviato._defaults import DEFAULT_TEMP_DIR
-from aviato._types import Serialization
+from aviato._types import OperationRef, Serialization
 from aviato.exceptions import (
     AsyncFunctionError,
     FunctionSerializationError,
@@ -24,7 +23,7 @@ from aviato.exceptions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable, Iterable
 
     from aviato._session import Session
 
@@ -32,6 +31,256 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteFunction(Generic[P, R]):
+    """Wrapper for remote function execution in sandboxes.
+
+    RemoteFunction wraps a Python function for execution in a sandbox.
+    It provides methods to execute remotely, locally (for testing), and
+    map over multiple inputs in parallel.
+
+    The wrapped function must be synchronous. Async functions are not supported.
+
+    Type Parameters:
+        P: The parameter spec of the wrapped function.
+        R: The return type of the wrapped function.
+
+    Examples:
+        Basic usage with decorator:
+            with Session(defaults) as session:
+                @session.function()
+                def compute(x: int, y: int) -> int:
+                    return x + y
+
+                # Call .remote() to execute in sandbox
+                ref = compute.remote(2, 3)
+                result = ref.result()  # Block for result
+                print(result)  # 5
+
+        Using .map() for parallel execution:
+            refs = compute.map([(1, 2), (3, 4), (5, 6)])
+            results = [ref.result() for ref in refs]
+
+        Using .local() for testing:
+            result = compute.local(2, 3)  # Runs locally, no sandbox
+    """
+
+    def __init__(
+        self,
+        fn: Callable[P, R],
+        *,
+        session: Session,
+        container_image: str | None = None,
+        serialization: Serialization = Serialization.JSON,
+        temp_dir: str = DEFAULT_TEMP_DIR,
+        resources: dict[str, Any] | None = None,
+        mounted_files: list[dict[str, Any]] | None = None,
+        s3_mount: dict[str, Any] | None = None,
+        ports: list[dict[str, Any]] | None = None,
+        service: dict[str, Any] | None = None,
+        max_timeout_seconds: int | None = None,
+    ) -> None:
+        """Initialize RemoteFunction with function and execution configuration.
+
+        Args:
+            fn: The function to wrap for remote execution
+            session: The sandbox session to use for execution
+            container_image: Override container image for this function
+            serialization: Serialization mode (JSON by default for safety)
+            temp_dir: Directory for temporary payload/result files in sandbox
+            resources: Resource requests (CPU, memory, GPU)
+            mounted_files: Files to mount into the sandbox
+            s3_mount: S3 bucket mount configuration
+            ports: Port mappings for the sandbox
+            service: Service configuration for network access
+            max_timeout_seconds: Maximum timeout for sandbox operations
+        """
+        unwrapped = fn
+        while hasattr(unwrapped, "__wrapped__"):
+            unwrapped = unwrapped.__wrapped__
+
+        if inspect.iscoroutinefunction(unwrapped) or inspect.isasyncgenfunction(unwrapped):
+            raise AsyncFunctionError(
+                f"Function '{fn.__name__}' is async, but @session.function() only supports "
+                "synchronous functions. The sandbox executes Python synchronously. "
+                "If you need async behavior, run your async code inside the sync function "
+                "using asyncio.run()."
+            )
+
+        self._fn = fn
+        self._session = session
+        self._container_image = container_image
+        self._serialization = serialization
+        self._temp_dir = temp_dir
+        self._resources = resources
+        self._mounted_files = mounted_files
+        self._s3_mount = s3_mount
+        self._ports = ports
+        self._service = service
+        self._max_timeout_seconds = max_timeout_seconds
+
+        # Preserve function metadata
+        self.__name__ = fn.__name__
+        self.__doc__ = fn.__doc__
+        self.__module__ = fn.__module__
+        self.__qualname__ = getattr(fn, "__qualname__", fn.__name__)
+        self.__annotations__ = getattr(fn, "__annotations__", {})
+
+    def remote(self, *args: P.args, **kwargs: P.kwargs) -> OperationRef[R]:
+        """Execute the function in a sandbox, return OperationRef immediately.
+
+        Args:
+            *args: Positional arguments to pass to the function.
+            **kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            OperationRef[R]: Use .result() to block until result is ready.
+
+        Example:
+            ref = compute.remote(2, 3)
+            result = ref.result()  # Block for result
+            # Or in async context:
+            result = await ref
+        """
+        future = self._session._loop_manager.run_async(self._execute_async(*args, **kwargs))
+        return OperationRef(future)
+
+    def map(self, items: Iterable[tuple[Any, ...]]) -> list[OperationRef[R]]:
+        """Execute the function for each item, return OperationRefs immediately.
+
+        Each item should be a tuple of positional arguments for the function.
+        All executions are launched in parallel.
+
+        Args:
+            items: Iterable of argument tuples to pass to the function.
+
+        Returns:
+            List of OperationRef[R], one for each item.
+
+        Example:
+            # Execute add(1, 2), add(3, 4), add(5, 6) in parallel
+            refs = add.map([(1, 2), (3, 4), (5, 6)])
+            results = [ref.result() for ref in refs]  # [3, 7, 11]
+        """
+        # Type ignore: ParamSpec doesn't support tuple unpacking validation
+        return [self.remote(*item) for item in items]  # type: ignore[call-arg]
+
+    def local(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Execute the function locally without a sandbox.
+
+        Useful for testing and debugging. Runs the original function
+        directly in the current Python process.
+
+        Args:
+            *args: Positional arguments to pass to the function.
+            **kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            The result of the function execution.
+
+        Example:
+            # Test without sandbox overhead
+            result = compute.local(2, 3)
+            assert result == 5
+        """
+        return self._fn(*args, **kwargs)
+
+    async def _execute_async(self, *args: Any, **kwargs: Any) -> R:
+        """Internal async execution logic.
+
+        Creates a sandbox, serializes the function and arguments,
+        executes in the sandbox, and deserializes the result.
+        """
+        logger.debug("Executing function %s in sandbox", self._fn.__name__)
+
+        source = _get_function_source_for_sandbox(self._fn)
+        closure_vars = _extract_closure_variables(self._fn)
+        global_vars = _extract_global_variables(self._fn)
+
+        merged_vars = {**global_vars, **closure_vars}
+
+        file_id = uuid.uuid4()
+        payload_file = f"{self._temp_dir}/sandbox_payload_{file_id.hex}.bin"
+        result_file = f"{self._temp_dir}/sandbox_result_{file_id.hex}.bin"
+
+        mode_config = _SERIALIZATION_MODES[self._serialization.value]
+
+        payload_bytes = mode_config.create_payload(
+            source, self._fn.__name__, merged_vars, args, kwargs
+        )
+
+        execution_script = mode_config.template.format(
+            payload_file=payload_file,
+            result_file=result_file,
+            temp_dir=self._temp_dir,
+        )
+
+        sandbox_kwargs: dict[str, Any] = {}
+        if self._resources is not None:
+            sandbox_kwargs["resources"] = self._resources
+        if self._mounted_files is not None:
+            sandbox_kwargs["mounted_files"] = self._mounted_files
+        if self._s3_mount is not None:
+            sandbox_kwargs["s3_mount"] = self._s3_mount
+        if self._ports is not None:
+            sandbox_kwargs["ports"] = self._ports
+        if self._service is not None:
+            sandbox_kwargs["service"] = self._service
+        if self._max_timeout_seconds is not None:
+            sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
+
+        # Import here to avoid circular import
+        from aviato._sandbox import Sandbox
+
+        # Create sandbox directly and use async start to avoid deadlock.
+        # session.sandbox() uses sync APIs which would deadlock when called
+        # from the daemon thread running this async method.
+        sandbox = Sandbox(
+            container_image=self._container_image,
+            defaults=self._session._defaults,
+            _session=self._session,
+            **sandbox_kwargs,
+        )
+        self._session._register_sandbox(sandbox)
+        await sandbox._start_async()
+
+        logger.debug("Sandbox started for function %s", self._fn.__name__)
+
+        async with sandbox:
+            await sandbox.write_file(payload_file, payload_bytes)
+
+            logger.debug(
+                "Executing function %s in sandbox %s",
+                self._fn.__name__,
+                sandbox.sandbox_id,
+            )
+            exec_result = await sandbox.exec(["python", "-c", execution_script])
+
+            if exec_result.returncode != 0:
+                stderr = exec_result.stderr
+                exception_type, exception_message = _parse_exception_from_stderr(stderr)
+
+                logger.error(
+                    "Function %s failed in sandbox: %s",
+                    self._fn.__name__,
+                    exception_message or stderr[:200],
+                )
+
+                error_detail = exception_message or stderr
+                raise SandboxExecutionError(
+                    f"Function '{self._fn.__name__}' execution failed in sandbox: {error_detail}",
+                    exec_result=exec_result,
+                    exception_type=exception_type,
+                    exception_message=exception_message,
+                )
+
+            result_content = await sandbox.read_file(result_file)
+            result_value = mode_config.parse_result(result_content)
+
+            logger.debug("Function %s completed successfully", self._fn.__name__)
+            return result_value  # type: ignore[no-any-return]
+
 
 # Bytecode opcodes that reference global variables used when serializing functions.
 _GLOBAL_OPS = frozenset(
@@ -41,127 +290,6 @@ _GLOBAL_OPS = frozenset(
         dis.opmap.get("DELETE_GLOBAL"),  # Deleting: del SOME_GLOBAL
     )
 )
-
-
-def create_function_wrapper(
-    func: Callable[P, R],
-    *,
-    session: Session,
-    container_image: str | None = None,
-    serialization: Serialization = Serialization.JSON,
-    temp_dir: str = DEFAULT_TEMP_DIR,
-    resources: dict[str, Any] | None = None,
-    mounted_files: list[dict[str, Any]] | None = None,
-    s3_mount: dict[str, Any] | None = None,
-    ports: list[dict[str, Any]] | None = None,
-    service: dict[str, Any] | None = None,
-    max_timeout_seconds: int | None = None,
-) -> Callable[P, Awaitable[R]]:
-    """Create an async wrapper that executes the function in a sandbox.
-
-    Args:
-        func: The function to wrap
-        session: The sandbox session to use for execution
-        container_image: Override container image for this function
-        serialization: Serialization mode (JSON by default for safety)
-        temp_dir: Directory for temporary payload/result files in sandbox
-        resources: Resource requests (CPU, memory, GPU)
-        mounted_files: Files to mount into the sandbox
-        s3_mount: S3 bucket mount configuration
-        ports: Port mappings for the sandbox
-        service: Service configuration for network access
-        max_timeout_seconds: Maximum timeout for sandbox operations
-    """
-    unwrapped = func
-    while hasattr(unwrapped, "__wrapped__"):
-        unwrapped = unwrapped.__wrapped__
-
-    if inspect.iscoroutinefunction(unwrapped) or inspect.isasyncgenfunction(unwrapped):
-        raise AsyncFunctionError(
-            f"Function '{func.__name__}' is async, but @session.function() only supports "
-            "synchronous functions. The sandbox executes Python synchronously. "
-            "If you need async behavior, run your async code inside the sync function "
-            "using asyncio.run()."
-        )
-
-    sandbox_kwargs: dict[str, Any] = {}
-    if resources is not None:
-        sandbox_kwargs["resources"] = resources
-    if mounted_files is not None:
-        sandbox_kwargs["mounted_files"] = mounted_files
-    if s3_mount is not None:
-        sandbox_kwargs["s3_mount"] = s3_mount
-    if ports is not None:
-        sandbox_kwargs["ports"] = ports
-    if service is not None:
-        sandbox_kwargs["service"] = service
-    if max_timeout_seconds is not None:
-        sandbox_kwargs["max_timeout_seconds"] = max_timeout_seconds
-
-    @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> R:
-        logger.debug("Executing function %s in sandbox", func.__name__)
-
-        source = _get_function_source_for_sandbox(func)
-        closure_vars = _extract_closure_variables(func)
-        global_vars = _extract_global_variables(func)
-
-        merged_vars = {**global_vars, **closure_vars}
-
-        file_id = uuid.uuid4()
-        payload_file = f"{temp_dir}/sandbox_payload_{file_id.hex}.bin"
-        result_file = f"{temp_dir}/sandbox_result_{file_id.hex}.bin"
-
-        mode_config = _SERIALIZATION_MODES[serialization.value]
-
-        payload_bytes = mode_config.create_payload(source, func.__name__, merged_vars, args, kwargs)
-
-        execution_script = mode_config.template.format(
-            payload_file=payload_file,
-            result_file=result_file,
-            temp_dir=temp_dir,
-        )
-
-        sandbox = session.create(
-            command="tail",
-            args=["-f", "/dev/null"],
-            container_image=container_image,
-            **sandbox_kwargs,
-        )
-
-        logger.debug("Starting sandbox for function %s", func.__name__)
-
-        async with sandbox:
-            await sandbox.write_file(payload_file, payload_bytes)
-
-            logger.debug("Executing function %s in sandbox %s", func.__name__, sandbox.sandbox_id)
-            exec_result = await sandbox.exec(["python", "-c", execution_script])
-
-            if exec_result.returncode != 0:
-                stderr = exec_result.stderr
-                exception_type, exception_message = _parse_exception_from_stderr(stderr)
-
-                logger.error(
-                    "Function %s failed in sandbox: %s",
-                    func.__name__,
-                    exception_message or stderr[:200],
-                )
-
-                error_detail = exception_message or stderr
-                raise SandboxExecutionError(
-                    f"Function '{func.__name__}' execution failed in sandbox: {error_detail}",
-                    exec_result=exec_result,
-                    exception_type=exception_type,
-                    exception_message=exception_message,
-                )
-
-            result_content = await sandbox.read_file(result_file)
-            result_value = mode_config.parse_result(result_content)
-
-            logger.debug("Function %s completed successfully", func.__name__)
-            return result_value  # type: ignore[no-any-return]
-
-    return wrapper
 
 
 def _get_function_source_for_sandbox(func: Callable[..., Any]) -> str:

@@ -6,15 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aviato import Sandbox, Session
+from tests.unit.aviato.conftest import make_operation_ref, make_process
 
 
-class TestSessionCreate:
-    """Tests for Session.create method."""
+class TestSessionSandbox:
+    """Tests for Session.sandbox method."""
 
-    def test_create_returns_sandbox(self) -> None:
-        """Test session.create returns a Sandbox instance."""
+    def test_sandbox_returns_sandbox(self) -> None:
+        """Test session.sandbox returns a Sandbox instance."""
         session = Session()
-        sandbox = session.create(command="sleep", args=["infinity"])
+        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
 
@@ -38,16 +40,18 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock
 
         session = Session()
-        sandbox1 = session.create(command="sleep", args=["infinity"])
-        sandbox2 = session.create(command="sleep", args=["infinity"])
+        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
+            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
 
-        sandbox1.stop = AsyncMock()
-        sandbox2.stop = AsyncMock()
+        # Mock the internal async stop method (close uses _stop_async directly)
+        sandbox1._stop_async = AsyncMock()
+        sandbox2._stop_async = AsyncMock()
 
-        await session.close()
+        await session._close_async()
 
-        sandbox1.stop.assert_called_once()
-        sandbox2.stop.assert_called_once()
+        sandbox1._stop_async.assert_called_once()
+        sandbox2._stop_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_sandbox_deregisters_on_stop(self) -> None:
@@ -55,7 +59,8 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock, MagicMock
 
         session = Session()
-        sandbox = session.create(command="sleep", args=["infinity"])
+        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
 
         sandbox._client = MagicMock()
@@ -79,29 +84,111 @@ class TestSessionCleanup:
         from aviato.exceptions import SandboxError
 
         session = Session()
-        sandbox1 = session.create(command="sleep", args=["infinity"])
-        sandbox2 = session.create(command="sleep", args=["infinity"])
-        sandbox3 = session.create(command="sleep", args=["infinity"])
+        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
+            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
+            sandbox3 = session.sandbox(command="sleep", args=["infinity"])
 
-        sandbox1.stop = AsyncMock()
-        sandbox2.stop = AsyncMock(side_effect=Exception("Network error"))
-        sandbox3.stop = AsyncMock()
+        # Mock the internal async stop method (close uses _stop_async directly)
+        sandbox1._stop_async = AsyncMock()
+        sandbox2._stop_async = AsyncMock(side_effect=Exception("Network error"))
+        sandbox3._stop_async = AsyncMock()
 
         with pytest.raises(SandboxError, match="Failed to stop 1 sandbox"):
-            await session.close()
+            await session._close_async()
 
-        sandbox1.stop.assert_called_once()
-        sandbox2.stop.assert_called_once()
-        sandbox3.stop.assert_called_once()
+        sandbox1._stop_async.assert_called_once()
+        sandbox2._stop_async.assert_called_once()
+        sandbox3._stop_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self) -> None:
         """Test calling close() multiple times is safe."""
         session = Session()
 
-        # Should not raise on repeated calls
-        await session.close()
-        await session.close()
+        # Should not raise on repeated calls (use _close_async for async test)
+        await session._close_async()
+        await session._close_async()
+
+    def test_close_returns_operation_ref(self) -> None:
+        """Test close() returns OperationRef that can be awaited."""
+        from aviato import OperationRef
+
+        session = Session()
+        ref = session.close()
+
+        assert isinstance(ref, OperationRef)
+        # Get the result (should complete without error)
+        ref.result()
+
+
+class TestSessionSandboxMethod:
+    """Tests for Session.sandbox() method."""
+
+    def test_sandbox_returns_sandbox(self) -> None:
+        """Test session.sandbox() returns a Sandbox instance."""
+        from unittest.mock import patch
+
+        session = Session()
+
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        assert isinstance(sandbox, Sandbox)
+        assert sandbox._session is session
+
+    def test_sandbox_starts_sandbox(self) -> None:
+        """Test session.sandbox() calls start() on the sandbox."""
+        from unittest.mock import patch
+
+        session = Session()
+
+        with patch.object(Sandbox, "start") as mock_start:
+            session.sandbox(command="sleep", args=["infinity"])
+            mock_start.assert_called_once()
+
+    def test_sandbox_raises_if_session_closed(self) -> None:
+        """Test session.sandbox() raises SandboxError if session is closed."""
+        from aviato.exceptions import SandboxError
+
+        session = Session()
+        session._closed = True
+
+        with pytest.raises(SandboxError, match="session is closed"):
+            session.sandbox(command="sleep", args=["infinity"])
+
+
+class TestSessionSyncContextManager:
+    """Tests for Session sync context manager."""
+
+    def test_sync_context_manager_works(self) -> None:
+        """Test Session can be used as sync context manager."""
+        from unittest.mock import MagicMock, patch
+
+        with patch.object(Session, "close") as mock_close:
+            mock_ref = MagicMock()
+            mock_close.return_value = mock_ref
+
+            with Session() as session:
+                assert isinstance(session, Session)
+
+            mock_close.assert_called_once()
+            mock_ref.result.assert_called_once()
+
+    def test_sync_context_manager_closes_on_exception(self) -> None:
+        """Test sync context manager closes session even on exception."""
+        from unittest.mock import MagicMock, patch
+
+        with patch.object(Session, "close") as mock_close:
+            mock_ref = MagicMock()
+            mock_close.return_value = mock_ref
+
+            with pytest.raises(ValueError):
+                with Session():
+                    raise ValueError("test error")
+
+            mock_close.assert_called_once()
+            mock_ref.result.assert_called_once()
 
 
 class TestSessionFromSandbox:
@@ -116,9 +203,9 @@ class TestSessionFromSandbox:
 class TestSessionFunctionDecorator:
     """Tests for Session.function() decorator."""
 
-    def test_function_decorator_returns_async_callable(self) -> None:
-        """Test @session.function() returns an async function that preserves name."""
-        import asyncio
+    def test_function_decorator_returns_remote_function(self) -> None:
+        """Test @session.function() returns a RemoteFunction that preserves name."""
+        from aviato._function import RemoteFunction
 
         session = Session()
 
@@ -126,7 +213,7 @@ class TestSessionFunctionDecorator:
         def my_function(x: int, y: int) -> int:
             return x + y
 
-        assert asyncio.iscoroutinefunction(my_function)
+        assert isinstance(my_function, RemoteFunction)
         assert my_function.__name__ == "my_function"
 
     @pytest.mark.asyncio
@@ -141,19 +228,16 @@ class TestSessionFunctionDecorator:
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
         mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
         mock_sandbox.sandbox_id = "test-sandbox-id"
-        mock_sandbox.write_file = AsyncMock()
-
-        mock_exec_result = MagicMock()
-        mock_exec_result.returncode = 0
-        mock_exec_result.stderr = ""
-        mock_sandbox.exec = AsyncMock(return_value=mock_exec_result)
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
 
         result_json = json.dumps(5).encode()
-        mock_sandbox.read_file = AsyncMock(return_value=result_json)
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
 
-        with patch.object(session, "create", return_value=mock_sandbox):
-            result = await add(2, 3)
+        with patch("aviato._sandbox.Sandbox", return_value=mock_sandbox):
+            result = await add.remote(2, 3)
 
             assert result == 5
 
@@ -170,19 +254,16 @@ class TestSessionFunctionDecorator:
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
         mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
         mock_sandbox.sandbox_id = "test-sandbox-id"
-        mock_sandbox.write_file = AsyncMock()
-
-        mock_exec_result = MagicMock()
-        mock_exec_result.returncode = 0
-        mock_exec_result.stderr = ""
-        mock_sandbox.exec = AsyncMock(return_value=mock_exec_result)
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
 
         result_json = json.dumps(50).encode()
-        mock_sandbox.read_file = AsyncMock(return_value=result_json)
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
 
-        with patch.object(session, "create", return_value=mock_sandbox):
-            result = await compute_with_closure(5)
+        with patch("aviato._sandbox.Sandbox", return_value=mock_sandbox):
+            result = await compute_with_closure.remote(5)
 
             assert result == 50
 
@@ -209,23 +290,24 @@ class TestSessionFunctionDecorator:
 class TestSessionKwargsValidation:
     """Tests for kwargs validation in Session methods."""
 
-    def test_create_with_valid_kwargs(self) -> None:
-        """Test Session.create accepts valid kwargs."""
+    def test_sandbox_with_valid_kwargs(self) -> None:
+        """Test Session.sandbox accepts valid kwargs."""
         session = Session()
-        sandbox = session.create(
-            command="echo",
-            args=["hello"],
-            resources={"cpu": "100m"},
-            ports=[{"container_port": 8080}],
-        )
+        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
+            sandbox = session.sandbox(
+                command="echo",
+                args=["hello"],
+                resources={"cpu": "100m"},
+                ports=[{"container_port": 8080}],
+            )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
 
-    def test_create_with_invalid_kwargs(self) -> None:
-        """Test Session.create rejects invalid kwargs."""
+    def test_sandbox_with_invalid_kwargs(self) -> None:
+        """Test Session.sandbox rejects invalid kwargs."""
         session = Session()
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            session.create(
+            session.sandbox(
                 command="echo",
                 args=["hello"],
                 invalid_param="value",
@@ -243,7 +325,7 @@ class TestSessionKwargsValidation:
             return x + y
 
         # Decorator should work without raising
-        assert callable(add)
+        assert callable(add.remote)
 
     def test_function_with_invalid_sandbox_kwargs(self) -> None:
         """Test session.function() rejects invalid sandbox_kwargs."""

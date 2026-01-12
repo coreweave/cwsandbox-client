@@ -9,16 +9,14 @@ Usage:
     uv run examples/delete_sandboxes.py
 """
 
-import asyncio
-
 from aviato import Sandbox
 from aviato.exceptions import SandboxNotFoundError
 
 
-async def main() -> None:
+def main() -> None:
     # Create a sandbox to demonstrate deletion
     print("Creating a test sandbox...")
-    sandbox = await Sandbox.create(
+    sandbox = Sandbox.run(
         "sleep",
         "infinity",
         tags=["delete-example"],
@@ -29,56 +27,48 @@ async def main() -> None:
     # Method 1: Delete by ID using class method
     # Useful when you only have the ID, not a Sandbox instance
     print(f"Deleting sandbox {sandbox_id} using Sandbox.delete()...")
-    success = await Sandbox.delete(sandbox_id)
-    print(f"Deletion successful: {success}\n")
+    Sandbox.delete(sandbox_id).result()
+    print("Deletion completed\n")
 
     # Try to delete again - this will raise SandboxNotFoundError
     print("Attempting to delete the same sandbox again...")
     try:
-        await Sandbox.delete(sandbox_id)
+        Sandbox.delete(sandbox_id).result()
     except SandboxNotFoundError as e:
         print(f"Expected error: {e}\n")
 
     # Use missing_ok=True to suppress the error
     print("Deleting with missing_ok=True...")
-    success = await Sandbox.delete(sandbox_id, missing_ok=True)
-    print(f"Deletion result: {success} (False means already deleted)\n")
+    Sandbox.delete(sandbox_id, missing_ok=True).result()
+    print("Deletion completed (no error even though already deleted)\n")
 
     # Method 2: Delete using stop() on a discovered sandbox
     print("Creating another sandbox to demonstrate stop() on discovered sandbox...")
-    sandbox2 = await Sandbox.create(
-        "sleep",
-        "infinity",
-        tags=["delete-example-2"],
-    )
+    sandbox2 = Sandbox.run(tags=["delete-example-2"])
     print(f"Created sandbox: {sandbox2.sandbox_id}")
 
     # Discover it via list() and stop it
-    sandboxes = await Sandbox.list(tags=["delete-example-2"])
+    sandboxes = Sandbox.list(tags=["delete-example-2"]).result()
     if sandboxes:
         discovered = sandboxes[0]
         print(f"Found sandbox via list(): {discovered.sandbox_id}")
-        await discovered.stop()
+        discovered.stop().result()
         print("Stopped via discovered.stop()\n")
 
     # Method 3: Attach to sandbox by ID and stop
     print("Creating another sandbox to demonstrate from_id()...")
-    sandbox3 = await Sandbox.create(
-        "sleep",
-        "infinity",
-        tags=["delete-example-3"],
-    )
+    sandbox3 = Sandbox.run(tags=["delete-example-3"])
     sandbox3_id = sandbox3.sandbox_id
     print(f"Created sandbox: {sandbox3_id}")
 
     # Attach to it by ID and stop
-    attached = await Sandbox.from_id(sandbox3_id)
+    attached = Sandbox.from_id(sandbox3_id).result()
     print(f"Attached to sandbox: {attached.sandbox_id}, status: {attached.status}")
-    await attached.stop()
+    attached.stop().result()
     print("Stopped via attached.stop()\n")
 
     print("All examples completed!")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
