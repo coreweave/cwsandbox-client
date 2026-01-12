@@ -2,6 +2,8 @@
 
 This document uses [RFC 2119](https://www.ietf.org/rfc/rfc2119.txt) keywords: MUST, SHOULD, MAY, etc.
 
+For development setup and workflow, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ---
 
 ## Code
