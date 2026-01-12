@@ -48,22 +48,28 @@ class RemoteFunction(Generic[P, R]):
 
     Examples:
         Basic usage with decorator:
-            with Session(defaults) as session:
-                @session.function()
-                def compute(x: int, y: int) -> int:
-                    return x + y
+        ```python
+        with Session(defaults) as session:
+            @session.function()
+            def compute(x: int, y: int) -> int:
+                return x + y
 
-                # Call .remote() to execute in sandbox
-                ref = compute.remote(2, 3)
-                result = ref.result()  # Block for result
-                print(result)  # 5
+            # Call .remote() to execute in sandbox
+            ref = compute.remote(2, 3)
+            result = ref.result()  # Block for result
+            print(result)  # 5
+        ```
 
         Using .map() for parallel execution:
-            refs = compute.map([(1, 2), (3, 4), (5, 6)])
-            results = [ref.result() for ref in refs]
+        ```python
+        refs = compute.map([(1, 2), (3, 4), (5, 6)])
+        results = [ref.result() for ref in refs]
+        ```
 
         Using .local() for testing:
-            result = compute.local(2, 3)  # Runs locally, no sandbox
+        ```python
+        result = compute.local(2, 3)  # Runs locally, no sandbox
+        ```
     """
 
     def __init__(
@@ -138,10 +144,12 @@ class RemoteFunction(Generic[P, R]):
             OperationRef[R]: Use .result() to block until result is ready.
 
         Example:
+            ```python
             ref = compute.remote(2, 3)
             result = ref.result()  # Block for result
             # Or in async context:
             result = await ref
+            ```
         """
         future = self._session._loop_manager.run_async(self._execute_async(*args, **kwargs))
         return OperationRef(future)
@@ -159,9 +167,11 @@ class RemoteFunction(Generic[P, R]):
             List of OperationRef[R], one for each item.
 
         Example:
+            ```python
             # Execute add(1, 2), add(3, 4), add(5, 6) in parallel
             refs = add.map([(1, 2), (3, 4), (5, 6)])
             results = [ref.result() for ref in refs]  # [3, 7, 11]
+            ```
         """
         # Type ignore: ParamSpec doesn't support tuple unpacking validation
         return [self.remote(*item) for item in items]  # type: ignore[call-arg]
@@ -180,9 +190,11 @@ class RemoteFunction(Generic[P, R]):
             The result of the function execution.
 
         Example:
+            ```python
             # Test without sandbox overhead
             result = compute.local(2, 3)
             assert result == 5
+            ```
         """
         return self._fn(*args, **kwargs)
 
@@ -364,6 +376,7 @@ def _extract_global_variables(func: Callable[..., Any]) -> dict[str, Any]:
     references, then extracts only those values.
 
     Example:
+        ```python
         MODULE_CONFIG = {"key": "value"}  # Used by func
         UNUSED_GLOBAL = "not needed"       # Not used by func
 
@@ -372,6 +385,7 @@ def _extract_global_variables(func: Callable[..., Any]) -> dict[str, Any]:
 
         # Returns {"MODULE_CONFIG": {"key": "value"}}
         # Does NOT include UNUSED_GLOBAL
+        ```
     """
     while hasattr(func, "__wrapped__"):
         func = func.__wrapped__

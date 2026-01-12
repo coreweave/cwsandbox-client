@@ -70,10 +70,14 @@ def results(refs: OperationRef[T] | Sequence[OperationRef[T]], /) -> T | list[T]
 
     Examples:
         Single ref:
-            data = aviato.results(sandbox.read_file("/path"))
+        ```python
+        data = aviato.results(sandbox.read_file("/path"))
+        ```
 
         Multiple refs:
-            all_results = aviato.results([sb.read_file(f) for f in files])
+        ```python
+        all_results = aviato.results([sb.read_file(f) for f in files])
+        ```
     """
     if isinstance(refs, OperationRef):
         return refs.result()
@@ -106,15 +110,21 @@ def wait(
 
     Examples:
         Wait for all sandboxes to be running:
-            sandboxes = [Sandbox.run(...) for _ in range(5)]
-            done, pending = aviato.wait(sandboxes)
+        ```python
+        sandboxes = [Sandbox.run(...) for _ in range(5)]
+        done, pending = aviato.wait(sandboxes)
+        ```
 
         Wait for first 2 operations to complete:
-            refs = [sb.read_file(f) for f in files]
-            done, pending = aviato.wait(refs, num_returns=2)
+        ```python
+        refs = [sb.read_file(f) for f in files]
+        done, pending = aviato.wait(refs, num_returns=2)
+        ```
 
         Wait with timeout:
-            done, pending = aviato.wait(procs, timeout=30.0)
+        ```python
+        done, pending = aviato.wait(procs, timeout=30.0)
+        ```
     """
     if num_returns is not None and num_returns < 1:
         raise ValueError(f"num_returns must be at least 1, got {num_returns}")

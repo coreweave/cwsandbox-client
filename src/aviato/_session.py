@@ -31,6 +31,7 @@ class Session:
     - You want automatic cleanup of orphaned sandboxes
 
     Example:
+        ```python
         defaults = SandboxDefaults(container_image="python:3.11")
 
         # Sync context manager
@@ -56,6 +57,7 @@ class Session:
         async with Session(defaults) as session:
             sb = session.sandbox(command="sleep", args=["infinity"])
             result = await sb.exec(["echo", "hello"])
+        ```
     """
 
     def __init__(self, defaults: SandboxDefaults | None = None) -> None:
@@ -103,7 +105,9 @@ class Session:
             SandboxError: If one or more running sandboxes failed to stop.
 
         Example:
+            ```python
             session.close().result()  # Block until all sandboxes stopped
+            ```
         """
         future = self._loop_manager.run_async(self._close_async())
         return OperationRef(future)
@@ -189,10 +193,12 @@ class Session:
             SandboxError: If the session has been closed.
 
         Example:
+            ```python
             with Session(defaults) as session:
                 sb = session.sandbox(command="sleep", args=["infinity"])
                 sb.wait()  # Optional: block until RUNNING
                 result = sb.exec(["echo", "hello"]).result()
+            ```
         """
         if self._closed:
             raise SandboxError(
@@ -248,6 +254,7 @@ class Session:
             or await directly in async contexts.
 
         Example:
+            ```python
             # Session defaults include a tag for this application/run
             defaults = SandboxDefaults(tags=("my-app", "run-abc123"))
 
@@ -261,6 +268,7 @@ class Session:
             # Async usage
             async with Session(defaults) as session:
                 orphans = await session.list(adopt=True)
+            ```
         """
         future = self._loop_manager.run_async(
             self._list_async(
@@ -328,6 +336,7 @@ class Session:
             or await directly in async contexts.
 
         Example:
+            ```python
             with Session(defaults) as session:
                 # Sync usage - reconnect to a sandbox
                 sb = session.from_id("sandbox-abc123").result()
@@ -338,6 +347,7 @@ class Session:
             async with Session(defaults) as session:
                 sb = await session.from_id("sandbox-abc123")
                 result = await sb.exec(["echo", "hello"])
+            ```
         """
         future = self._loop_manager.run_async(self._from_id_async(sandbox_id, adopt=adopt))
         return OperationRef(future)
@@ -377,6 +387,7 @@ class Session:
             ValueError: If the sandbox has no sandbox_id
 
         Example:
+            ```python
             with Session(defaults) as session:
                 # Get sandboxes via class method
                 sandboxes = Sandbox.list(tags=["my-job"]).result()
@@ -386,6 +397,7 @@ class Session:
                     session.adopt(sb)
 
                 # Now they'll be stopped when session closes
+            ```
         """
         if self._closed:
             raise SandboxError("Cannot adopt sandbox: session is closed")
@@ -433,6 +445,7 @@ class Session:
             A decorator that wraps a function as a RemoteFunction
 
         Example:
+            ```python
             with Session(defaults) as session:
                 @session.function()
                 def compute(x: int, y: int) -> int:
@@ -456,6 +469,7 @@ class Session:
                 # Map over multiple inputs in parallel
                 refs = compute.map([(1, 2), (3, 4), (5, 6)])
                 results = [ref.result() for ref in refs]
+            ```
         """
 
         def decorator(f: Callable[P, R]) -> RemoteFunction[P, R]:

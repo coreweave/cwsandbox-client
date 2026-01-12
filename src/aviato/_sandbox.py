@@ -120,35 +120,34 @@ class Sandbox:
     All methods return immediately and can be used in both sync and async contexts.
     Operations are executed in a background event loop managed by _LoopManager.
 
-    Construction patterns:
-
-    1. Factory method:
-
+    Examples:
+        Factory method:
+        ```python
         sb = Sandbox.run("echo", "hello")  # Returns immediately
         result = sb.exec(["echo", "more"]).result()  # Block for result
         sb.stop().result()  # Block for completion
+        ```
 
-    2. Context manager:
-
+        Context manager (recommended):
+        ```python
         with Sandbox.run("sleep", "infinity") as sb:
             result = sb.exec(["echo", "hello"]).result()
         # Automatically stopped on exit
+        ```
 
-    3. Async context manager:
-
+        Async context manager:
+        ```python
         async with Sandbox.run("sleep", "infinity") as sb:
             result = await sb.exec(["echo", "hello"])
+        ```
 
-    Key methods:
-        run(*args): Create and start sandbox, return immediately
-        start(): Send start request, return once backend accepts
-        wait(): Block until sandbox reaches RUNNING status
-        wait_until_complete(): Block until sandbox reaches terminal state
-        exec(command): Execute command, return Process for streaming/result
-        read_file(path): Read file, return OperationRef[bytes]
-        write_file(path, content): Write file, return OperationRef[None]
-        stop(): Stop sandbox, return OperationRef[bool]
-
+    Attributes:
+        sandbox_id: Unique identifier for this sandbox.
+        status: Cached status from last API call.
+        tower_id: Tower ID where sandbox is running.
+        runway_id: Runway ID for this sandbox.
+        returncode: Exit code if sandbox completed.
+        started_at: When sandbox started running.
     """
 
     def __init__(
@@ -302,6 +301,7 @@ class Sandbox:
             A Sandbox instance (start request sent, but may still be starting)
 
         Example:
+            ```python
             # Using defaults (tail -f /dev/null)
             sb = Sandbox.run()
 
@@ -316,6 +316,7 @@ class Sandbox:
             # Or use context manager for automatic cleanup
             with Sandbox.run("sleep", "infinity") as sb:
                 result = sb.exec(["echo", "hello"]).result()
+            ```
         """
         command = args[0] if args else None
         cmd_args = list(args[1:]) if len(args) > 1 else None
@@ -358,6 +359,7 @@ class Sandbox:
             A Session instance
 
         Example:
+            ```python
             session = Sandbox.session(defaults)
             sb = session.create(command="sleep", args=["infinity"])
 
@@ -366,6 +368,7 @@ class Sandbox:
                 return x + y
 
             await session.close()
+            ```
         """
         from aviato._session import Session
 
@@ -442,6 +445,7 @@ class Sandbox:
             or await directly in async contexts.
 
         Example:
+            ```python
             # Sync usage
             sandboxes = Sandbox.list(tags=["my-batch-job"]).result()
             for sb in sandboxes:
@@ -452,6 +456,7 @@ class Sandbox:
             sandboxes = await Sandbox.list(status="running")
             for sb in sandboxes:
                 result = await sb.exec(["echo", "hello"])
+            ```
         """
         future = _LoopManager.get().run_async(
             cls._list_async(
@@ -552,6 +557,7 @@ class Sandbox:
             SandboxNotFoundError: If sandbox doesn't exist
 
         Example:
+            ```python
             # Sync usage
             sb = Sandbox.from_id("sandbox-abc123").result()
             result = sb.exec(["python", "-c", "print('hello')"]).result()
@@ -560,6 +566,7 @@ class Sandbox:
             # Async usage
             sb = await Sandbox.from_id("sandbox-abc123")
             result = await sb.exec(["python", "-c", "print('hello')"])
+            ```
         """
         future = _LoopManager.get().run_async(
             cls._from_id_async(
@@ -650,6 +657,7 @@ class Sandbox:
             SandboxError: If deletion failed for other reasons
 
         Example:
+            ```python
             # Sync usage
             Sandbox.delete("sandbox-abc123").result()
 
@@ -658,6 +666,7 @@ class Sandbox:
 
             # Async usage
             await Sandbox.delete("sandbox-abc123")
+            ```
         """
         future = _LoopManager.get().run_async(
             cls._delete_async(
@@ -817,9 +826,11 @@ class Sandbox:
             SandboxNotRunningError: If sandbox has not been started
 
         Example:
+            ```python
             sb = Sandbox.run("sleep", "10")
             status = sb.get_status()
             print(f"Sandbox is {status}")  # SandboxStatus.PENDING or RUNNING
+            ```
         """
         return self._loop_manager.run_sync(self._get_status_async())
 
@@ -1169,10 +1180,12 @@ class Sandbox:
         Does NOT wait for RUNNING status. Use wait() to block until ready.
 
         Example:
+            ```python
             sandbox = Sandbox(command="sleep", args=["infinity"])
             sandbox.start()
             print(f"Started sandbox: {sandbox.sandbox_id}")
             sandbox.wait()  # Block until RUNNING
+            ```
         """
         self._loop_manager.run_sync(self._start_async())
 
@@ -1193,8 +1206,10 @@ class Sandbox:
             SandboxTimeoutError: If timeout expires
 
         Example:
+            ```python
             sb = Sandbox.run("sleep", "infinity").wait()
             result = sb.exec(["echo", "ready"]).result()
+            ```
         """
         self._loop_manager.run_sync(self._wait_until_running_async(timeout))
         return self
@@ -1223,9 +1238,11 @@ class Sandbox:
             SandboxFailedError: If sandbox failed
 
         Example:
+            ```python
             sb = Sandbox.run("python", "-c", "print('done')")
             sb.wait_until_complete()
             print(f"Exit code: {sb.returncode}")
+            ```
         """
         self._loop_manager.run_sync(self._wait_until_complete_async(timeout, raise_on_termination))
         return self
@@ -1234,9 +1251,11 @@ class Sandbox:
         """Make sandbox awaitable - await sandbox waits until RUNNING.
 
         Example:
+            ```python
             sb = Sandbox.run("sleep", "infinity")
             await sb  # Wait until RUNNING
             result = await sb.exec(["echo", "hello"])
+            ```
         """
 
         async def _await_running() -> Sandbox:
@@ -1327,10 +1346,12 @@ class Sandbox:
             (unless missing_ok=True).
 
         Example:
+            ```python
             sb.stop().result()  # Block until stopped
 
             # Ignore if already deleted
             sb.stop(missing_ok=True).result()
+            ```
         """
         future = self._loop_manager.run_async(
             self._stop_async(
@@ -1537,6 +1558,7 @@ class Sandbox:
             ValueError: If command is empty or cwd is invalid (empty or relative path)
 
         Example:
+            ```python
             # Get result directly
             process = sb.exec(["echo", "hello"])
             result = process.result()
@@ -1553,6 +1575,7 @@ class Sandbox:
 
             # Async usage
             result = await sb.exec(["echo", "hello"])
+            ```
         """
         if not command:
             raise ValueError("Command cannot be empty")
@@ -1643,7 +1666,9 @@ class Sandbox:
             OperationRef[bytes]: Use .result() to block and retrieve contents.
 
         Example:
+            ```python
             data = sb.read_file("/output/result.txt").result()
+            ```
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._read_file_async(filepath, timeout))
@@ -1718,7 +1743,9 @@ class Sandbox:
             OperationRef[None]: Use .result() to block until complete.
 
         Example:
+            ```python
             sb.write_file("/input/data.txt", b"content").result()
+            ```
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._write_file_async(filepath, contents, timeout))

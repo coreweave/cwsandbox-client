@@ -43,6 +43,7 @@ class SandboxDefaults:
     the backend and can be used to query sandboxes by tag.
 
     Example:
+        ```python
         defaults = SandboxDefaults(
             container_image="python:3.12",
             command="tail",
@@ -51,6 +52,7 @@ class SandboxDefaults:
             max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
             tags=("my-workload", "experiment-42"),
         )
+        ```
     """
 
     container_image: str = DEFAULT_CONTAINER_IMAGE
