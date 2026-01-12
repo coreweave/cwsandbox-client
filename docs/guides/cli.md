@@ -68,10 +68,10 @@ aviato sandbox list -v
 ```
 
 ```
-ID                                    STATUS     AGE   IMAGE
-a1b2c3d4-5678-90ab-cdef-1234567890ab  running    5m    python:3.11
-e5f6a7b8-9012-34cd-ef56-7890abcdef12  running    2h    pytorch/pytorch:latest
-12345678-abcd-ef01-2345-6789abcdef01  completed  1d    python:3.11
+ID                                    STATUS     AGE   TOWER       RUNWAY
+a1b2c3d4-5678-90ab-cdef-1234567890ab  running    5m    tower-abc   runway-123
+e5f6a7b8-9012-34cd-ef56-7890abcdef12  running    2h    tower-def   runway-456
+12345678-abcd-ef01-2345-6789abcdef01  completed  1d    tower-abc   runway-789
 ```
 
 ---

@@ -85,8 +85,10 @@ class TestFormatSandboxTable:
     def test_verbose_mode(self, mock_sandbox: MagicMock) -> None:
         """Test verbose mode shows additional columns."""
         result = format_sandbox_table([mock_sandbox], verbose=True)
-        assert "IMAGE" in result
-        assert "python:3.11" in result
+        assert "TOWER" in result
+        assert "RUNWAY" in result
+        assert "tower-abc" in result
+        assert "runway-123" in result
 
 
 class TestFormatSandboxJson:

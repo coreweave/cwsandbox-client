@@ -13,7 +13,8 @@ def mock_sandbox() -> MagicMock:
     sb.sandbox_id = "sb-abc123"
     sb.status = "running"
     sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
-    sb.container_image = "python:3.11"
+    sb.tower_id = "tower-abc"
+    sb.runway_id = "runway-123"
     return sb
 
 
@@ -26,6 +27,7 @@ def mock_sandboxes(mock_sandbox: MagicMock) -> list[MagicMock]:
     sb2.sandbox_id = "sb-def456"
     sb2.status = "completed"
     sb2.started_at = datetime(2025, 1, 7, 10, 0, 0, tzinfo=UTC)
-    sb2.container_image = "ubuntu:22.04"
+    sb2.tower_id = "tower-def"
+    sb2.runway_id = "runway-456"
 
     return [sb1, sb2]

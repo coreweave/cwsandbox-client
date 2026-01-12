@@ -85,7 +85,8 @@ class TestListCommandIntegration:
         runner = CliRunner()
         result = runner.invoke(cli, ["sandbox", "list", "--tag", cli_test_tag, "-v"])
         assert result.exit_code == 0
-        assert "IMAGE" in result.output
+        assert "TOWER" in result.output
+        assert "RUNWAY" in result.output
 
     def test_list_nonexistent_tag_returns_empty(self) -> None:
         """Test list with nonexistent tag returns no results."""

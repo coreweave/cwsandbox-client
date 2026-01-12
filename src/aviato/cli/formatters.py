@@ -24,11 +24,9 @@ def format_sandbox_table(sandboxes: list[Sandbox], verbose: bool = False) -> str
         return "No sandboxes found."
 
     # Define columns
-    # todo: tower intentionally left out until we decide if this
-    #       is relevant to users.
     headers = ["ID", "STATUS", "AGE"]
     if verbose:
-        headers.append("IMAGE")
+        headers.extend(["TOWER", "RUNWAY"])
 
     rows: list[list[str]] = []
     for sb in sandboxes:
@@ -37,8 +35,9 @@ def format_sandbox_table(sandboxes: list[Sandbox], verbose: bool = False) -> str
         age = _format_age(sb.started_at) if sb.started_at else "-"
         row: list[str] = [sandbox_id, status, age]
         if verbose:
-            image = getattr(sb, "container_image", None) or "-"
-            row.append(image)
+            tower_id = sb.tower_id or "-"
+            runway_id = sb.runway_id or "-"
+            row.extend([tower_id, runway_id])
         rows.append(row)
 
     # Calculate column widths

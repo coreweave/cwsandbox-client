@@ -128,11 +128,13 @@ class TestListCommand:
         mock_sb.sandbox_id = "sb-verbose"
         mock_sb.status = SandboxStatus.RUNNING
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
-        mock_sb.container_image = "python:3.11"
+        mock_sb.tower_id = "tower-xyz"
+        mock_sb.runway_id = "runway-789"
 
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "-v"])
             assert result.exit_code == 0
-            assert "IMAGE" in result.output
+            assert "TOWER" in result.output
+            assert "RUNWAY" in result.output
