@@ -1,6 +1,6 @@
 """Unit tests for aviato.exceptions module."""
 
-from aviato._types import ExecResult
+from aviato._types import ProcessResult
 from aviato.exceptions import (
     AsyncFunctionError,
     AviatoAuthenticationError,
@@ -65,10 +65,12 @@ class TestSandboxExecutionError:
 
     def test_with_exec_result(self) -> None:
         """Test exception with exec result."""
-        exec_result = ExecResult(
+        exec_result = ProcessResult(
+            stdout="output",
+            stderr="error message",
+            returncode=1,
             stdout_bytes=b"output",
             stderr_bytes=b"error message",
-            returncode=1,
             command=["python", "-c", "exit(1)"],
         )
         exc = SandboxExecutionError(
