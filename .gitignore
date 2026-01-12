@@ -34,3 +34,21 @@ coverage.xml
 # IDE
 .idea/
 .vscode/
+
+# Claude Code local settings (auto-managed, but explicit)
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Temporary analysis and planning documents
+# Use these suffixes for files that shouldn't be committed:
+#   -OLD     Superseded/archived versions
+#   -draft   Work in progress
+#   -tmp     Temporary files
+#   -notes   Personal analysis notes
+*-OLD.md
+*-draft.md
+*-tmp.md
+*-notes.md
+
+# Claude Orchestration
+.atari/

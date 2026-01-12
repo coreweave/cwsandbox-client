@@ -70,38 +70,28 @@ def wandb_netrc_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         yield
 
 
-@pytest.mark.asyncio
-async def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
+def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
     """Test W&B authentication via environment variables.
 
     Requires: WANDB_API_KEY and WANDB_ENTITY_NAME env vars.
     """
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sandbox:
         assert sandbox.sandbox_id is not None
 
-        result = await sandbox.exec(["echo", "hello from wandb"])
+        result = sandbox.exec(["echo", "hello from wandb"]).result()
         assert result.returncode == 0
         assert "hello from wandb" in result.stdout
 
 
-@pytest.mark.asyncio
-async def test_wandb_auth_via_netrc(wandb_netrc_auth: None) -> None:
+def test_wandb_auth_via_netrc(wandb_netrc_auth: None) -> None:
     """Test W&B authentication via netrc file.
 
     Requires: WANDB_ENTITY_NAME env var, plus either WANDB_API_KEY env var
     or existing ~/.netrc credentials for api.wandb.ai.
     """
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
+    with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sandbox:
         assert sandbox.sandbox_id is not None
 
-        result = await sandbox.exec(["echo", "hello from netrc"])
+        result = sandbox.exec(["echo", "hello from netrc"]).result()
         assert result.returncode == 0
         assert "hello from netrc" in result.stdout

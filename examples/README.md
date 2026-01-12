@@ -14,7 +14,19 @@ This directory contains example scripts demonstrating how to use the `aviato` pa
    export AVIATO_API_KEY="your-api-key"
    ```
 
-## Examples
+## Sync vs Async Patterns
+
+The aviato SDK uses a sync/async hybrid API. **Most users should use sync patterns** - they require no asyncio boilerplate and work in Jupyter notebooks without `nest_asyncio`.
+
+**Sync patterns** (recommended): All examples except `async_patterns.py`
+
+**Async patterns** (alternative): `async_patterns.py` demonstrates using `await` with the hybrid API
+
+See [Sync vs Async Guide](../docs/guides/sync-vs-async.md) for when to use each pattern.
+
+---
+
+## Sync Examples (Recommended)
 
 ### Quick Start (`quick_start.py`)
 
@@ -25,9 +37,9 @@ python examples/quick_start.py
 ```
 
 Demonstrates:
-- Using `Sandbox.create()` factory method for quick sandbox creation
+- Using `Sandbox.run()` factory method for quick sandbox creation
 - Auto-starting sandboxes with positional command arguments
-- Using `wait()` to wait for completion
+- Using `wait()` to wait for RUNNING status
 
 ### Basic Execution (`basic_execution.py`)
 
@@ -43,6 +55,19 @@ Demonstrates:
 - Executing commands with `exec()`
 - Reading and writing files
 
+### Streaming Exec (`streaming_exec.py`)
+
+Real-time command output with streaming exec:
+
+```bash
+python examples/streaming_exec.py
+```
+
+Demonstrates:
+- Real-time stdout iteration as lines arrive
+- Separate stdout/stderr handling
+- Process lifecycle (returncode, poll, wait, result)
+
 ### Function Decorator (`function_decorator.py`)
 
 Execute Python functions in sandboxes:
@@ -52,10 +77,24 @@ python examples/function_decorator.py
 ```
 
 Demonstrates:
-- Using `Sandbox.session()` for session management
+- Using `Session(defaults)` for session management
 - The `@session.function()` decorator
 - Pickle and JSON serialization modes
 - Functions with closure variables
+
+### Error Handling (`error_handling.py`)
+
+Proper error handling with the exception hierarchy:
+
+```bash
+python examples/error_handling.py
+```
+
+Demonstrates:
+- `SandboxExecutionError` with `check=True`
+- `SandboxTimeoutError` from exec timeout
+- `SandboxNotFoundError` with `missing_ok=True`
+- `SandboxTerminatedError` from `wait_until_complete()`
 
 ### Multiple Sandboxes (`multiple_sandboxes.py`)
 
@@ -67,21 +106,8 @@ python examples/multiple_sandboxes.py
 
 Demonstrates:
 - Creating multiple sandboxes via session
-- Running parallel commands with `asyncio.gather()`
+- Running parallel commands with fire-then-collect pattern
 - Automatic cleanup on session exit
-
-### List Sandboxes (`list_sandboxes.py`)
-
-Query and filter existing sandboxes:
-
-```bash
-python examples/list_sandboxes.py
-```
-
-Demonstrates:
-- Using `Sandbox.list()` to query existing sandboxes
-- Filtering by status, tags, tower IDs, etc.
-- Performing operations on discovered sandboxes
 
 ### Delete Sandboxes (`delete_sandboxes.py`)
 
@@ -141,18 +167,19 @@ Demonstrates:
 - Using `session.from_id()` to attach and adopt by ID
 - Automatic cleanup of adopted sandboxes on session exit
 
-### Batch Job with Cleanup (`batch_job_with_cleanup.py`)
+### Parallel Batch Job (`parallel_batch_job.py`)
 
-Robust batch job pattern with cleanup:
+Parallel batch processing with progress tracking:
 
 ```bash
-python examples/batch_job_with_cleanup.py
+python examples/parallel_batch_job.py
 ```
 
 Demonstrates:
-- Using unique tags for batch job identification
-- Cleanup in `finally` block to handle interruptions
-- Using `Sandbox.list()` to find orphaned sandboxes from the batch
+- Creating multiple sandboxes in parallel via Session
+- Submitting long-running commands concurrently
+- Using `aviato.wait()` to process results as they complete
+- Progress tracking through a batch job
 
 ### Cleanup by Tag (`cleanup_by_tag.py`)
 
@@ -169,7 +196,7 @@ python examples/cleanup_by_tag.py --cleanup
 Demonstrates:
 - Tagging sandboxes for easy identification
 - Using `Sandbox.list(tags=...)` to find sandboxes
-- Parallel cleanup with `asyncio.gather()`
+- Parallel cleanup with fire-then-collect pattern
 
 ### Cleanup Old Sandboxes (`cleanup_old_sandboxes.py`)
 
@@ -188,26 +215,43 @@ Demonstrates:
 - Client-side filtering after `Sandbox.list()`
 - Dry run mode for safe testing
 
+---
+
+## Async Example
+
+### Async Patterns (`async_patterns.py`)
+
+Using await with OperationRef and Process:
+
+```bash
+python examples/async_patterns.py
+```
+
+Demonstrates:
+- Awaiting `OperationRef` from `Sandbox.list()`, `Sandbox.from_id()`, `Sandbox.delete()`
+- Awaiting `Process` from `exec()`
+- Awaiting file operations (`read_file()`, `write_file()`)
+- Parallel operations with `asyncio.gather()`
+- Async session context managers
+
+---
+
 ## API Patterns
+
+The aviato SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.result()` (sync) or `await` (async).
+
+The `exec()` method returns a `Process` object. Call `.result()` to block for the final result. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 
 ### Quick Usage (Factory Method)
 
 ```python
-# One-liner creation - auto-starts
-sandbox = await Sandbox.create("echo", "hello")
-await sandbox.stop()
-```
+# One-liner creation - returns immediately
+sb = Sandbox.run("echo", "hello")
+sb.stop().result()  # Block for completion
 
-### Full Control (Constructor)
-
-```python
-# Explicit construction with context manager
-async with Sandbox(
-    command="sleep",
-    args=["infinity"],
-    container_image="python:3.11",
-) as sandbox:
-    result = await sandbox.exec(["echo", "hello"])
+# Context manager for automatic cleanup
+with Sandbox.run() as sb:
+    result = sb.exec(["echo", "hello"]).result()
 ```
 
 ### With Defaults
@@ -219,29 +263,30 @@ defaults = SandboxDefaults(
     tags=("my-app",),
 )
 
-async with Sandbox(command="...", defaults=defaults) as sandbox:
-    ...
+with Sandbox.run(defaults=defaults) as sb:
+    result = sb.exec(["echo", "hello"]).result()
 ```
 
 ### Session for Multiple Sandboxes
 
 ```python
-async with Sandbox.session(defaults) as session:
-    sb1 = session.create(command="sleep", args=["infinity"])
-    sb2 = session.create(command="sleep", args=["infinity"])
-    
-    async with sb1, sb2:
-        ...
+with Session(defaults) as session:
+    sb1 = session.sandbox()
+    sb2 = session.sandbox()
+
+    result1 = sb1.exec(["echo", "from sb1"]).result()
+    result2 = sb2.exec(["echo", "from sb2"]).result()
+# Automatically cleans up all sandboxes on exit
 ```
 
 ### Function Execution
 
 ```python
-async with Sandbox.session(defaults) as session:
+with Session(defaults) as session:
     @session.function()
     def compute(x: int, y: int) -> int:
         return x + y
-    
-    result = await compute(2, 3)
-    print(result.value)  # 5
+
+    ref = compute.remote(2, 3)  # Returns OperationRef immediately
+    result = ref.result()       # Block for result: 5
 ```

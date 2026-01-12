@@ -15,33 +15,32 @@ uv pip install -e .
 ## Quick Start
 
 ```python
-import asyncio
 from aviato import Sandbox
 
-async def main():
-    # Quick one-liner with factory method
-    sandbox = await Sandbox.create("echo", "Hello, World!")
-    await sandbox.stop()
+# Quick one-liner with factory method (sync/async hybrid API)
+sb = Sandbox.run("echo", "Hello, World!")
+sb.stop().result()  # Block for completion
 
-    # Or with context manager for automatic cleanup
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        container_image="python:3.11",
-    ) as sandbox:
-        result = await sandbox.exec(["python", "-c", "print(2 + 2)"])
-        print(result.stdout)  # 4
+# Context manager for automatic cleanup
+with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sb:
+    result = sb.exec(["python", "-c", "print(2 + 2)"]).result()
+    print(result.stdout)  # 4
 
-asyncio.run(main())
+# Also works in async contexts
+async with Sandbox.run("sleep", "infinity") as sb:
+    result = await sb.exec(["python", "-c", "print(2 + 2)"])
+    print(result.stdout)  # 4
 ```
 
 ## Usage
 
-See the [examples/](examples/) directory for runnable scripts, or read the guides:
+See the [documentation](docs/README.md) for comprehensive guides, or browse:
 
-- **[Basic Execution](docs/examples/basic-execution.md)** - `SandboxDefaults`, `exec()`, and file operations
-- **[Function Decorator](docs/examples/function-decorator.md)** - Execute Python functions with `@session.function()`
-- **[Parallel Sandboxes](docs/examples/parallel-sandboxes.md)** - Manage multiple sandboxes concurrently
+- **[Execution Guide](docs/guides/execution.md)** - Running commands with `exec()`
+- **[Remote Functions](docs/guides/remote-functions.md)** - Execute Python functions with `@session.function()`
+- **[Sessions Guide](docs/guides/sessions.md)** - Manage multiple sandboxes concurrently
+
+For runnable scripts, see [examples/](examples/).
 
 ## Configuration
 

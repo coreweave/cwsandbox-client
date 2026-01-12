@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
     "coreweave-aviato-connectrpc-python==0.6.0.1.20251229201041+75728b022d6d",
     "pydantic>=2.0.0",
+    "h2>=4.0.0",  # Required for HTTP/2 streaming exec
 ]
 
 [project.optional-dependencies]
@@ -36,7 +37,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
-    "pytest-dotenv>=0.5.0",
+    "pytest-dotenv>=0.5.2",
     "pytest-xdist>=3.5.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
@@ -59,6 +60,7 @@ addopts = [
     "--showlocals",
 ]
 asyncio_mode = "auto"
+env_files = [".env"]
 
 [tool.coverage.run]
 source = ["src"]
