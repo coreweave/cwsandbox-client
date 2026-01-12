@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 
 import click
 
-from aviato import Sandbox
+from aviato import Sandbox, SandboxStatus
 from aviato.cli.formatters import (
     format_sandbox_json,
     format_sandbox_quiet,
@@ -25,7 +24,7 @@ def sandbox() -> None:
 @click.option(
     "--status",
     "-s",
-    type=click.Choice(["running", "completed", "failed", "stopped"], case_sensitive=False),
+    type=click.Choice([s.value for s in SandboxStatus], case_sensitive=False),
     help="Filter by sandbox status.",
 )
 @click.option(
@@ -74,12 +73,10 @@ def list_sandboxes(
         aviato sandbox list -o quiet
     """
     try:
-        sandboxes = asyncio.run(
-            Sandbox.list(
-                tags=list(tags) if tags else None,
-                status=status,
-            )
-        )
+        sandboxes = Sandbox.list(
+            tags=list(tags) if tags else None,
+            status=status,
+        ).result()
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

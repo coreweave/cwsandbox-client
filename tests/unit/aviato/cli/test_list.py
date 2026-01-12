@@ -2,11 +2,25 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
+from aviato import SandboxStatus
 from aviato.cli.main import cli
+
+
+def _mock_operation_ref(
+    return_value: object = None,
+    side_effect: Exception | None = None,
+) -> MagicMock:
+    """Create a mock OperationRef that returns value from .result()."""
+    mock_ref = MagicMock()
+    if side_effect is not None:
+        mock_ref.result.side_effect = side_effect
+    else:
+        mock_ref.result.return_value = return_value
+    return mock_ref
 
 
 class TestListCommand:
@@ -14,8 +28,8 @@ class TestListCommand:
 
     def test_list_no_sandboxes(self) -> None:
         """Test list command with no sandboxes."""
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = []
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list"])
             assert result.exit_code == 0
@@ -25,30 +39,32 @@ class TestListCommand:
         """Test list command with sandboxes."""
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "sb-test123"
-        mock_sb.status = "running"
+        mock_sb.status = SandboxStatus.RUNNING
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
 
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = [mock_sb]
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list"])
             assert result.exit_code == 0
             assert "sb-test123" in result.output
-            assert "running" in result.output
+            assert SandboxStatus.RUNNING.value in result.output
 
     def test_list_status_filter(self) -> None:
         """Test list command with status filter."""
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = []
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "--status", "running"])
+            result = runner.invoke(
+                cli, ["sandbox", "list", "--status", SandboxStatus.RUNNING.value]
+            )
             assert result.exit_code == 0
-            mock_list.assert_called_once_with(tags=None, status="running")
+            mock_list.assert_called_once_with(tags=None, status=SandboxStatus.RUNNING.value)
 
     def test_list_tag_filter(self) -> None:
         """Test list command with tag filter."""
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = []
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "--tag", "my-tag"])
             assert result.exit_code == 0
@@ -56,8 +72,8 @@ class TestListCommand:
 
     def test_list_multiple_tags(self) -> None:
         """Test list command with multiple tag filters."""
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = []
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "--tag", "tag1", "--tag", "tag2"])
             assert result.exit_code == 0
@@ -67,18 +83,18 @@ class TestListCommand:
         """Test list command with JSON output."""
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "sb-json123"
-        mock_sb.status = "completed"
+        mock_sb.status = SandboxStatus.COMPLETED
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
 
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = [mock_sb]
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "-o", "json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data) == 1
             assert data[0]["id"] == "sb-json123"
-            assert data[0]["status"] == "completed"
+            assert data[0]["status"] == SandboxStatus.COMPLETED
 
     def test_list_quiet_output(self) -> None:
         """Test list command with quiet output."""
@@ -87,8 +103,8 @@ class TestListCommand:
         mock_sb2 = MagicMock()
         mock_sb2.sandbox_id = "sb-quiet2"
 
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = [mock_sb1, mock_sb2]
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([mock_sb1, mock_sb2])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "-o", "quiet"])
             assert result.exit_code == 0
@@ -98,8 +114,8 @@ class TestListCommand:
 
     def test_list_error_handling(self) -> None:
         """Test list command handles errors gracefully."""
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.side_effect = Exception("Connection failed")
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref(side_effect=Exception("Connection failed"))
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list"])
             assert result.exit_code == 1
@@ -110,12 +126,12 @@ class TestListCommand:
         """Test list command with verbose flag."""
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "sb-verbose"
-        mock_sb.status = "running"
+        mock_sb.status = SandboxStatus.RUNNING
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
         mock_sb.container_image = "python:3.11"
 
-        with patch("aviato.cli.sandbox.Sandbox.list", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = [mock_sb]
+        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+            mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["sandbox", "list", "-v"])
             assert result.exit_code == 0

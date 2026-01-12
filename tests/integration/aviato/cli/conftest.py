@@ -1,7 +1,8 @@
 """Fixtures for CLI integration tests."""
 
+from collections.abc import Generator
+
 import pytest
-import pytest_asyncio
 
 from aviato import Sandbox
 
@@ -12,15 +13,15 @@ def cli_test_tag() -> str:
     return "cli-integration-test"
 
 
-@pytest_asyncio.fixture
-async def test_sandbox(cli_test_tag: str) -> Sandbox:
+@pytest.fixture
+def test_sandbox(cli_test_tag: str) -> Generator[Sandbox, None, None]:
     """Create a real sandbox for testing, stop on cleanup."""
-    sandbox = await Sandbox.create(
-        "sleep", "infinity",
+    sandbox = Sandbox.run(
+        "sleep",
+        "infinity",
         container_image="python:3.11",
         tags=[cli_test_tag],
         max_lifetime_seconds=120,
-    )
+    ).wait()
     yield sandbox
-    await sandbox.stop()
-
+    sandbox.stop().result()

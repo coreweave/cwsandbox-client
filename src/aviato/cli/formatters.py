@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -25,11 +24,12 @@ def format_sandbox_table(sandboxes: list[Sandbox], verbose: bool = False) -> str
         return "No sandboxes found."
 
     # Define columns
+    # todo: tower intentionally left out until we decide if this
+    #       is relevant to users.
     headers = ["ID", "STATUS", "AGE"]
     if verbose:
         headers.append("IMAGE")
 
-    # Build rows
     rows: list[list[str]] = []
     for sb in sandboxes:
         sandbox_id = sb.sandbox_id or "-"
@@ -47,14 +47,11 @@ def format_sandbox_table(sandboxes: list[Sandbox], verbose: bool = False) -> str
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(cell))
 
-    # Format output
     lines: list[str] = []
 
-    # Header
     header_line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
     lines.append(header_line)
 
-    # Rows
     for row in rows:
         row_line = "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row))
         lines.append(row_line)
@@ -92,11 +89,6 @@ def format_sandbox_quiet(sandboxes: list[Sandbox]) -> str:
         Newline-separated sandbox IDs.
     """
     return "\n".join(sb.sandbox_id for sb in sandboxes if sb.sandbox_id)
-
-
-def is_tty() -> bool:
-    """Check if stdout is a TTY."""
-    return sys.stdout.isatty()
 
 
 def _format_age(started_at: datetime) -> str:
