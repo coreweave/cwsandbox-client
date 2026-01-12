@@ -1,6 +1,5 @@
 # mise.toml - Task runner configuration for aviato-client
-# Run tasks with: mise run <task> or mise r <task>
-# Pass additional args: mise run test:e2e -- -p --keep-going
+# Run tasks with: mise run <task>
 
 # =============================================================================
 # Formatting & Linting
@@ -10,17 +9,17 @@
 description = "Format code with ruff"
 run = "uv run ruff format ."
 
+[tasks."format:check"]
+description = "Check formatting without changes"
+run = "uv run ruff format --check ."
+
 [tasks.lint]
 description = "Lint code with ruff (auto-fix enabled)"
 run = "uv run ruff check --fix ."
 
 [tasks."lint:check"]
-description = "Lint code without auto-fix (CI mode)"
+description = "Lint code without auto-fix"
 run = "uv run ruff check ."
-
-[tasks."format:check"]
-description = "Check formatting without changes (CI mode)"
-run = "uv run ruff format --check ."
 
 # =============================================================================
 # Type Checking
@@ -66,18 +65,9 @@ run = "uv run pytest --cov=src --cov-report=term-missing"
 # =============================================================================
 
 [tasks.check]
-description = "Run all quality checks (format, lint, typecheck, test)"
-run = [
-    "uv run ruff format --check .",
-    "uv run ruff check .",
-    "uv run mypy src/",
-    "uv run pytest",
-]
+description = "Run all quality checks (runs in parallel)"
+depends = ["format:check", "lint:check", "typecheck", "test"]
 alias = "c"
-
-[tasks.ci]
-description = "Full CI pipeline (same as check)"
-depends = ["check"]
 
 # =============================================================================
 # Development Helpers
@@ -85,7 +75,7 @@ depends = ["check"]
 
 [tasks.install]
 description = "Install project dependencies"
-run = "uv pip install -e '.[dev]'"
+run = "uv sync --extra dev"
 
 [tasks.clean]
 description = "Remove build artifacts and caches"
