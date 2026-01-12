@@ -28,10 +28,28 @@ async with Sandbox.run("sleep", "infinity") as sb:
     print(result.stdout)  # 4
 ```
 
+## CLI
+
+The package includes a command-line interface for managing sandboxes:
+
+```bash
+# List all running sandboxes
+aviato sandbox list --status running
+
+# List sandboxes as JSON
+aviato sandbox list -o json
+
+# Filter by tag
+aviato sandbox list --tag my-project
+```
+
+See the [CLI Reference](docs/guides/cli.md) for full documentation.
+
 ## Usage
 
 See the [documentation](docs/README.md) for comprehensive guides, or browse:
 
+- **[CLI Reference](docs/guides/cli.md)** - Command-line interface for managing sandboxes
 - **[Execution Guide](docs/guides/execution.md)** - Running commands with `exec()`
 - **[Remote Functions](docs/guides/remote-functions.md)** - Execute Python functions with `@session.function()`
 - **[Sessions Guide](docs/guides/sessions.md)** - Manage multiple sandboxes concurrently

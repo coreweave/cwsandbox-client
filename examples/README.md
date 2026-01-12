@@ -14,6 +14,26 @@ This directory contains example scripts demonstrating how to use the `aviato` pa
    export AVIATO_API_KEY="your-api-key"
    ```
 
+## Command Line Interface
+
+The aviato package includes a CLI for managing sandboxes:
+
+```bash
+# List all sandboxes
+aviato sandbox list
+
+# List running sandboxes in JSON format
+aviato sandbox list --status running -o json
+
+# Filter by tags
+aviato sandbox list --tag my-project
+
+# Get IDs only (for scripting)
+aviato sandbox list -o quiet
+```
+
+See [CLI Reference](../docs/guides/cli.md) for full documentation.
+
 ## Sync vs Async Patterns
 
 The aviato SDK uses a sync/async hybrid API. **Most users should use sync patterns** - they require no asyncio boilerplate and work in Jupyter notebooks without `nest_asyncio`.

@@ -82,6 +82,7 @@ Most operations handle state transitions automatically. For example, `exec()` wa
 
 | Guide | Topic |
 |-------|-------|
+| [CLI Reference](guides/cli.md) | Command-line interface for managing sandboxes |
 | [Execution](guides/execution.md) | Commands, streaming, timeouts, working directories |
 | [File Operations](guides/file-operations.md) | Reading, writing, parallel transfers |
 | [Sessions](guides/sessions.md) | Managing multiple sandboxes with shared config |
