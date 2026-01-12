@@ -142,19 +142,6 @@ class Session:
                 f"Failed to stop {len(errors)} sandbox(es). Some sandboxes may still be running."
             ) from ExceptionGroup("Sandbox stop failures", errors)
 
-    async def _cleanup_async(self) -> None:
-        """Called by LoopManager during shutdown for graceful cleanup.
-
-        Best-effort cleanup: silently ignores errors to ensure all sandboxes
-        are attempted even if some fail.
-        """
-        for sandbox in list(self._sandboxes.values()):
-            try:
-                await sandbox._stop_async()
-            except Exception:
-                pass  # Best effort
-        self._sandboxes.clear()
-
     def _register_sandbox(self, sandbox: Sandbox) -> None:
         """Register a sandbox for tracking."""
         self._sandboxes[id(sandbox)] = sandbox
