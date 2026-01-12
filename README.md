@@ -2,15 +2,11 @@
 
 A Python client library for Aviato sandboxes.
 
-## Installation
+## Development
 
-```bash
-git clone https://github.com/coreweave/aviato-client.git
-cd aviato-client
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
+
+For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick Start
 

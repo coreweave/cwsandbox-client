@@ -6,41 +6,9 @@ This file provides guidance to AI coding assistants when working with code in th
 
 Python client library for Aviato sandboxes - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
 
-## Development Commands
+## Development Setup
 
-Use mise for task running (see `mise.toml` for all tasks):
-
-```bash
-# Setup
-uv venv && source .venv/bin/activate
-mise run install                          # Install dev dependencies
-
-# Quality checks
-mise run check                            # Format, lint, typecheck, test (all at once)
-mise run format                           # Format with ruff
-mise run lint                             # Lint with ruff (auto-fix)
-mise run typecheck                        # Type check with mypy
-
-# Testing
-mise run test                             # Unit tests
-mise run test:e2e                         # Integration tests (requires auth)
-mise run test:e2e:parallel                # Integration tests in parallel
-
-# Integration test auth setup (see .env.example for options)
-# cp .env.example .env && edit .env with credentials
-mise run test:all                         # All tests
-mise run test:cov                         # Unit tests with coverage
-
-# Utilities
-mise run clean                            # Remove caches and build artifacts
-mise run precommit                        # Run pre-commit hooks
-```
-
-Direct commands (equivalent to mise tasks):
-```bash
-uv run pytest tests/unit/aviato/test_sandbox.py    # Single file
-uv run pytest -k "test_create"                     # By name pattern
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for setup, workflow, and all development tasks.
 
 ## Architecture
 
