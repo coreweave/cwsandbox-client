@@ -1,4 +1,4 @@
-"""Basic sandbox execution example using the new API.
+"""Basic sandbox execution example using the sync API.
 
 This example demonstrates:
 - Creating a sandbox using the context manager pattern
@@ -6,12 +6,10 @@ This example demonstrates:
 - Reading and writing files
 """
 
-import asyncio
-
 from aviato import Sandbox, SandboxDefaults
 
 
-async def main() -> None:
+def main() -> None:
     # Define reusable defaults
     defaults = SandboxDefaults(
         container_image="ubuntu:22.04",
@@ -19,37 +17,33 @@ async def main() -> None:
         tags=("example", "basic-execution"),
     )
 
-    # Use the constructor with context manager for full control
-    async with Sandbox(
-        command="sleep",
-        args=["infinity"],
-        defaults=defaults,
-    ) as sandbox:
+    # Use Sandbox.run() with context manager for automatic cleanup
+    with Sandbox.run(defaults=defaults) as sandbox:
         print(f"Sandbox started: {sandbox.sandbox_id}")
         print(f"Running on tower: {sandbox.tower_id}")
 
         # Check sandbox status
-        status = await sandbox.get_status()
+        status = sandbox.get_status()
         print(f"Sandbox status: {status}")
 
         # Execute a simple command
-        result = await sandbox.exec(["echo", "Hello from Aviato sandbox"])
+        result = sandbox.exec(["echo", "Hello from Aviato sandbox"]).result()
         print(result.stdout.rstrip())
 
         # Write a file
         content = b"Hello, World!\n"
-        await sandbox.write_file("/tmp/data.txt", content)
+        sandbox.write_file("/tmp/data.txt", content).result()
         print("write_file: '/tmp/data.txt'")
 
         # Read the file back
-        read_back = await sandbox.read_file("/tmp/data.txt")
+        read_back = sandbox.read_file("/tmp/data.txt").result()
         decoded = read_back.decode("utf-8", errors="replace").rstrip()
         print(f"read_file bytes={len(read_back)} content={decoded}")
 
         # Verify with cat
-        result = await sandbox.exec(["cat", "/tmp/data.txt"])
+        result = sandbox.exec(["cat", "/tmp/data.txt"]).result()
         print(f"cat /tmp/data.txt -> {result.stdout.rstrip()}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

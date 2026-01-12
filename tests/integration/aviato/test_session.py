@@ -132,14 +132,24 @@ async def test_session_create_after_close_raises(sandbox_defaults: SandboxDefaul
 
 @pytest.mark.asyncio
 async def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
-    """Test session.close() stops sandboxes that weren't manually stopped."""
+    """Test session.close() stops sandboxes that weren't manually stopped.
+
+    TODO: Convert to sync test when Session gets sync context manager support
+    in branch 04-session-function. Currently async because Session only has
+    async context manager in this branch.
+    """
     async with Sandbox.session(sandbox_defaults) as session:
         sandbox = session.create()
-        await sandbox.start()
+
+        # Start sandbox in async context - must use __aenter__ directly since
+        # Session is async-only in this branch
+        await sandbox.__aenter__()
 
         assert sandbox.sandbox_id is not None
         assert session.sandbox_count == 1
+        # Intentionally NOT calling __aexit__ - sandbox is orphaned
 
+    # Session close should have stopped the orphaned sandbox
     assert session.sandbox_count == 0
 
 

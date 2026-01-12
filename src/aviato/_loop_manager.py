@@ -8,7 +8,7 @@ The daemon thread approach provides several benefits:
 - Works seamlessly in Jupyter notebooks without nest_asyncio
 - Independent of any user-managed event loop
 - Allows reliable cleanup via atexit and signal handlers
-- Simple API: users call .result() or .get() to block, await for async
+- Simple API: users call .result() to block, await for async
 """
 
 from __future__ import annotations
