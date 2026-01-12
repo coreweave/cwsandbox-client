@@ -1,6 +1,7 @@
 """A Python client library for Aviato sandboxes."""
 
 from aviato._auth import WandbAuthError
+from aviato._capabilities import Capabilities, RunwayInfo
 from aviato._defaults import SandboxDefaults
 from aviato._sandbox import Sandbox, SandboxStatus
 from aviato._session import Session
@@ -25,9 +26,11 @@ __all__ = [
     "AsyncFunctionError",
     "AviatoAuthenticationError",
     "AviatoError",
+    "Capabilities",
     "ExecResult",
     "FunctionError",
     "FunctionSerializationError",
+    "RunwayInfo",
     "Sandbox",
     "SandboxDefaults",
     "SandboxError",
