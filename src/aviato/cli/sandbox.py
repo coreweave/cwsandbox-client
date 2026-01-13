@@ -1,4 +1,4 @@
-"""Sandbox subcommand group."""
+"""Sandbox commands for the Aviato CLI."""
 
 from __future__ import annotations
 
@@ -14,13 +14,7 @@ from aviato.cli.formatters import (
 )
 
 
-@click.group()
-def sandbox() -> None:
-    """Manage Aviato sandboxes."""
-    pass
-
-
-@sandbox.command(name="list")
+@click.command(name="list")
 @click.option(
     "--status",
     "-s",
@@ -58,19 +52,19 @@ def list_sandboxes(
     Examples:
 
         # List all sandboxes
-        aviato sandbox list
+        aviato list
 
         # Filter by status
-        aviato sandbox list --status running
+        aviato list --status running
 
         # Filter by tag
-        aviato sandbox list --tag my-project
+        aviato list --tag my-project
 
         # Output as JSON
-        aviato sandbox list -o json
+        aviato list -o json
 
         # Show only IDs (useful for scripting)
-        aviato sandbox list -o quiet
+        aviato list -o quiet
     """
     try:
         sandboxes = Sandbox.list(

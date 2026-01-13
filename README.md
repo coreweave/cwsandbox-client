@@ -34,13 +34,13 @@ The package includes a command-line interface for managing sandboxes:
 
 ```bash
 # List all running sandboxes
-aviato sandbox list --status running
+aviato list --status running
 
 # List sandboxes as JSON
-aviato sandbox list -o json
+aviato list -o json
 
 # Filter by tag
-aviato sandbox list --tag my-project
+aviato list --tag my-project
 ```
 
 See the [CLI Reference](docs/guides/cli.md) for full documentation.

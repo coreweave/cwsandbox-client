@@ -25,14 +25,14 @@ export WANDB_ENTITY_NAME="your-entity"
 
 ## Commands
 
-### aviato sandbox list
+### aviato list
 
 List sandboxes with optional filters.
 
 **Usage:**
 
 ```bash
-aviato sandbox list [OPTIONS]
+aviato list [OPTIONS]
 ```
 
 **Options:**
@@ -49,7 +49,7 @@ aviato sandbox list [OPTIONS]
 #### Table Output (Default)
 
 ```bash
-aviato sandbox list
+aviato list
 ```
 
 ```
@@ -64,7 +64,7 @@ e5f6a7b8-9012-34cd-ef56-7890abcdef12  running    2h
 #### Table Output with Verbose
 
 ```bash
-aviato sandbox list -v
+aviato list -v
 ```
 
 ```
@@ -79,7 +79,7 @@ e5f6a7b8-9012-34cd-ef56-7890abcdef12  running    2h    tower-def   runway-456
 #### JSON Output
 
 ```bash
-aviato sandbox list -o json
+aviato list -o json
 ```
 
 ```json
@@ -109,7 +109,7 @@ aviato sandbox list -o json
 Returns only sandbox IDs, one per line. Useful for scripting:
 
 ```bash
-aviato sandbox list -o quiet
+aviato list -o quiet
 ```
 
 ```
@@ -123,7 +123,7 @@ e5f6a7b8-9012-34cd-ef56-7890abcdef12
 #### Filter by Status
 
 ```bash
-aviato sandbox list --status running
+aviato list --status running
 ```
 
 ```
@@ -139,7 +139,7 @@ Available statuses: `running`, `pending`, `creating`, `completed`, `failed`, `te
 #### Filter by Tag
 
 ```bash
-aviato sandbox list --tag my-project
+aviato list --tag my-project
 ```
 
 ```
@@ -150,7 +150,7 @@ a1b2c3d4-5678-90ab-cdef-1234567890ab  running  5m
 Filter by multiple tags (sandboxes must have ALL specified tags):
 
 ```bash
-aviato sandbox list --tag my-project --tag batch-job
+aviato list --tag my-project --tag batch-job
 ```
 
 ---
@@ -160,7 +160,7 @@ aviato sandbox list --tag my-project --tag batch-job
 When no sandboxes match the filters:
 
 ```bash
-aviato sandbox list --tag nonexistent-tag
+aviato list --tag nonexistent-tag
 ```
 
 ```

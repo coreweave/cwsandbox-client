@@ -1,4 +1,4 @@
-"""Integration tests for aviato sandbox list command.
+"""Integration tests for aviato list command.
 
 These tests require a running Aviato backend.
 Authentication is read from ~/.netrc or environment variables.
@@ -13,25 +13,25 @@ from aviato.cli.main import cli
 
 
 class TestListCommandIntegration:
-    """Integration tests for aviato sandbox list command."""
+    """Integration tests for aviato list command."""
 
     def test_list_returns_success(self) -> None:
         """Test list command runs successfully against real API."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["sandbox", "list"])
+        result = runner.invoke(cli, ["list"])
         assert result.exit_code == 0
 
     def test_list_shows_created_sandbox(self, test_sandbox: Sandbox, cli_test_tag: str) -> None:
         """Test list command shows a sandbox we just created."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["sandbox", "list", "--tag", cli_test_tag])
+        result = runner.invoke(cli, ["list", "--tag", cli_test_tag])
         assert result.exit_code == 0
         assert test_sandbox.sandbox_id in result.output
 
     def test_list_json_output_is_valid(self, test_sandbox: Sandbox, cli_test_tag: str) -> None:
         """Test list --output json returns valid JSON."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["sandbox", "list", "--tag", cli_test_tag, "-o", "json"])
+        result = runner.invoke(cli, ["list", "--tag", cli_test_tag, "-o", "json"])
         assert result.exit_code == 0
 
         data = json.loads(result.output)
@@ -45,7 +45,7 @@ class TestListCommandIntegration:
     def test_list_quiet_output_contains_id(self, test_sandbox: Sandbox, cli_test_tag: str) -> None:
         """Test list --output quiet returns only IDs."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["sandbox", "list", "--tag", cli_test_tag, "-o", "quiet"])
+        result = runner.invoke(cli, ["list", "--tag", cli_test_tag, "-o", "quiet"])
         assert result.exit_code == 0
         assert test_sandbox.sandbox_id in result.output
 
@@ -61,7 +61,7 @@ class TestListCommandIntegration:
         """Test list --status running returns running sandboxes."""
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["sandbox", "list", "--tag", cli_test_tag, "--status", "running"]
+            cli, ["list", "--tag", cli_test_tag, "--status", "running"]
         )
         assert result.exit_code == 0
         assert test_sandbox.sandbox_id in result.output
@@ -72,7 +72,7 @@ class TestListCommandIntegration:
         """Test list --status completed excludes our running sandbox."""
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["sandbox", "list", "--tag", cli_test_tag, "--status", "completed", "-o", "quiet"]
+            cli, ["list", "--tag", cli_test_tag, "--status", "completed", "-o", "quiet"]
         )
         assert result.exit_code == 0
         # Our test sandbox is running, not completed
@@ -83,7 +83,7 @@ class TestListCommandIntegration:
     ) -> None:
         """Test list --verbose shows additional columns."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["sandbox", "list", "--tag", cli_test_tag, "-v"])
+        result = runner.invoke(cli, ["list", "--tag", cli_test_tag, "-v"])
         assert result.exit_code == 0
         assert "TOWER" in result.output
         assert "RUNWAY" in result.output
@@ -92,7 +92,7 @@ class TestListCommandIntegration:
         """Test list with nonexistent tag returns no results."""
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["sandbox", "list", "--tag", "nonexistent-tag-12345", "-o", "quiet"]
+            cli, ["list", "--tag", "nonexistent-tag-12345", "-o", "quiet"]
         )
         assert result.exit_code == 0
         # Should be empty or "No sandboxes found"

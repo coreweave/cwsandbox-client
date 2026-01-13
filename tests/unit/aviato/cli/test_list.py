@@ -1,4 +1,4 @@
-"""Unit tests for aviato sandbox list command."""
+"""Unit tests for aviato list command."""
 
 import json
 from datetime import UTC, datetime
@@ -24,14 +24,14 @@ def _mock_operation_ref(
 
 
 class TestListCommand:
-    """Tests for aviato sandbox list command."""
+    """Tests for aviato list command."""
 
     def test_list_no_sandboxes(self) -> None:
         """Test list command with no sandboxes."""
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list"])
+            result = runner.invoke(cli, ["list"])
             assert result.exit_code == 0
             assert "No sandboxes found" in result.output
 
@@ -45,7 +45,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list"])
+            result = runner.invoke(cli, ["list"])
             assert result.exit_code == 0
             assert "sb-test123" in result.output
             assert SandboxStatus.RUNNING.value in result.output
@@ -55,9 +55,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
-            result = runner.invoke(
-                cli, ["sandbox", "list", "--status", SandboxStatus.RUNNING.value]
-            )
+            result = runner.invoke(cli, ["list", "--status", SandboxStatus.RUNNING.value])
             assert result.exit_code == 0
             mock_list.assert_called_once_with(tags=None, status=SandboxStatus.RUNNING.value)
 
@@ -66,7 +64,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "--tag", "my-tag"])
+            result = runner.invoke(cli, ["list", "--tag", "my-tag"])
             assert result.exit_code == 0
             mock_list.assert_called_once_with(tags=["my-tag"], status=None)
 
@@ -75,7 +73,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "--tag", "tag1", "--tag", "tag2"])
+            result = runner.invoke(cli, ["list", "--tag", "tag1", "--tag", "tag2"])
             assert result.exit_code == 0
             mock_list.assert_called_once_with(tags=["tag1", "tag2"], status=None)
 
@@ -89,7 +87,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "-o", "json"])
+            result = runner.invoke(cli, ["list", "-o", "json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data) == 1
@@ -106,7 +104,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb1, mock_sb2])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "-o", "quiet"])
+            result = runner.invoke(cli, ["list", "-o", "quiet"])
             assert result.exit_code == 0
             lines = result.output.strip().split("\n")
             assert "sb-quiet1" in lines
@@ -117,7 +115,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref(side_effect=Exception("Connection failed"))
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list"])
+            result = runner.invoke(cli, ["list"])
             assert result.exit_code == 1
             assert "Error" in result.output
             assert "Connection failed" in result.output
@@ -134,7 +132,7 @@ class TestListCommand:
         with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
-            result = runner.invoke(cli, ["sandbox", "list", "-v"])
+            result = runner.invoke(cli, ["list", "-v"])
             assert result.exit_code == 0
             assert "TOWER" in result.output
             assert "RUNWAY" in result.output

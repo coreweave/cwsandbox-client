@@ -2,7 +2,7 @@
 
 import click
 
-from aviato.cli.sandbox import sandbox
+from aviato.cli.sandbox import list_sandboxes
 
 
 @click.group()
@@ -12,7 +12,7 @@ def cli() -> None:
     pass
 
 
-cli.add_command(sandbox)
+cli.add_command(list_sandboxes)
 
 
 if __name__ == "__main__":

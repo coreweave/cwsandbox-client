@@ -20,16 +20,16 @@ The aviato package includes a CLI for managing sandboxes:
 
 ```bash
 # List all sandboxes
-aviato sandbox list
+aviato list
 
 # List running sandboxes in JSON format
-aviato sandbox list --status running -o json
+aviato list --status running -o json
 
 # Filter by tags
-aviato sandbox list --tag my-project
+aviato list --tag my-project
 
 # Get IDs only (for scripting)
-aviato sandbox list -o quiet
+aviato list -o quiet
 ```
 
 See [CLI Reference](../docs/guides/cli.md) for full documentation.
