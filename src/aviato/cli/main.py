@@ -2,7 +2,7 @@
 
 import click
 
-from aviato.cli.sandbox import list_sandboxes
+from aviato.cli._sandbox import list_sandboxes
 
 
 @click.group()

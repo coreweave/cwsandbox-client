@@ -28,7 +28,7 @@ class TestListCommand:
 
     def test_list_no_sandboxes(self) -> None:
         """Test list command with no sandboxes."""
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["list"])
@@ -42,7 +42,7 @@ class TestListCommand:
         mock_sb.status = SandboxStatus.RUNNING
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
 
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["list"])
@@ -52,7 +52,7 @@ class TestListCommand:
 
     def test_list_status_filter(self) -> None:
         """Test list command with status filter."""
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "--status", SandboxStatus.RUNNING.value])
@@ -61,7 +61,7 @@ class TestListCommand:
 
     def test_list_tag_filter(self) -> None:
         """Test list command with tag filter."""
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "--tag", "my-tag"])
@@ -70,7 +70,7 @@ class TestListCommand:
 
     def test_list_multiple_tags(self) -> None:
         """Test list command with multiple tag filters."""
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "--tag", "tag1", "--tag", "tag2"])
@@ -84,7 +84,7 @@ class TestListCommand:
         mock_sb.status = SandboxStatus.COMPLETED
         mock_sb.started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
 
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "-o", "json"])
@@ -101,7 +101,7 @@ class TestListCommand:
         mock_sb2 = MagicMock()
         mock_sb2.sandbox_id = "sb-quiet2"
 
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb1, mock_sb2])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "-o", "quiet"])
@@ -112,7 +112,7 @@ class TestListCommand:
 
     def test_list_error_handling(self) -> None:
         """Test list command handles errors gracefully."""
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref(side_effect=Exception("Connection failed"))
             runner = CliRunner()
             result = runner.invoke(cli, ["list"])
@@ -129,7 +129,7 @@ class TestListCommand:
         mock_sb.tower_id = "tower-xyz"
         mock_sb.runway_id = "runway-789"
 
-        with patch("aviato.cli.sandbox.Sandbox.list") as mock_list:
+        with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb])
             runner = CliRunner()
             result = runner.invoke(cli, ["list", "-v"])

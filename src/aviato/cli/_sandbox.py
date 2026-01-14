@@ -7,7 +7,7 @@ import sys
 import click
 
 from aviato import Sandbox, SandboxStatus
-from aviato.cli.formatters import (
+from aviato.cli._formatters import (
     format_sandbox_json,
     format_sandbox_quiet,
     format_sandbox_table,
