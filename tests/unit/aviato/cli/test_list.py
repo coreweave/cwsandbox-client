@@ -95,7 +95,7 @@ class TestListCommand:
             assert data[0]["status"] == SandboxStatus.COMPLETED.value
 
     def test_list_quiet_output(self) -> None:
-        """Test list command with quiet output."""
+        """Test list command with quiet flag."""
         mock_sb1 = MagicMock()
         mock_sb1.sandbox_id = "sb-quiet1"
         mock_sb2 = MagicMock()
@@ -104,7 +104,7 @@ class TestListCommand:
         with patch("aviato.cli._sandbox.Sandbox.list") as mock_list:
             mock_list.return_value = _mock_operation_ref([mock_sb1, mock_sb2])
             runner = CliRunner()
-            result = runner.invoke(cli, ["list", "-o", "quiet"])
+            result = runner.invoke(cli, ["list", "-q"])
             assert result.exit_code == 0
             lines = result.output.strip().split("\n")
             assert "sb-quiet1" in lines

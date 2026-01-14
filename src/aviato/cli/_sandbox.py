@@ -31,9 +31,15 @@ from aviato.cli._formatters import (
 @click.option(
     "--output",
     "-o",
-    type=click.Choice(["table", "json", "quiet"], case_sensitive=False),
+    type=click.Choice(["table", "json"], case_sensitive=False),
     default="table",
     help="Output format.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    help="Show only sandbox IDs (useful for scripting).",
 )
 @click.option(
     "--verbose",
@@ -45,6 +51,7 @@ def list_sandboxes(
     status: str | None,
     tags: tuple[str, ...],
     output: str,
+    quiet: bool,
     verbose: bool,
 ) -> None:
     """List sandboxes.
@@ -64,7 +71,7 @@ def list_sandboxes(
         aviato list -o json
 
         # Show only IDs (useful for scripting)
-        aviato list -o quiet
+        aviato list -q
     """
     try:
         sandboxes = Sandbox.list(
@@ -75,10 +82,10 @@ def list_sandboxes(
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    if output == "json":
-        result = format_sandbox_json(sandboxes)
-    elif output == "quiet":
+    if quiet:
         result = format_sandbox_quiet(sandboxes)
+    elif output == "json":
+        result = format_sandbox_json(sandboxes)
     else:
         result = format_sandbox_table(sandboxes, verbose=verbose)
 
