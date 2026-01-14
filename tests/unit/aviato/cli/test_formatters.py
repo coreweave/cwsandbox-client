@@ -31,7 +31,7 @@ class TestFormatAge:
 
         with patch("aviato.cli.formatters.datetime") as mock_dt:
             mock_dt.now.return_value = datetime(2025, 1, 8, 12, 5, 0, tzinfo=UTC)
-            mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+            mock_dt.side_effect = datetime
             started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
             result = _format_age(started_at)
             assert result == "5m"
@@ -55,6 +55,16 @@ class TestFormatAge:
             started_at = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
             result = _format_age(started_at)
             assert result == "2d"
+
+    def test_format_age_future_timestamp(self) -> None:
+        """Test formatting age when timestamp is in the future returns '-'."""
+        from unittest.mock import patch
+
+        with patch("aviato.cli.formatters.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2025, 1, 8, 12, 0, 0, tzinfo=UTC)
+            started_at = datetime(2025, 1, 8, 13, 0, 0, tzinfo=UTC)  # 1 hour in future
+            result = _format_age(started_at)
+            assert result == "-"
 
 
 class TestFormatSandboxTable:

@@ -70,7 +70,7 @@ def format_sandbox_json(sandboxes: list[Sandbox]) -> str:
     data = [
         {
             "id": sb.sandbox_id,
-            "status": sb.status,
+            "status": sb.status.value if sb.status else None,
             "started_at": sb.started_at.isoformat() if sb.started_at else None,
         }
         for sb in sandboxes
@@ -97,7 +97,7 @@ def _format_age(started_at: datetime) -> str:
         started_at: The start time.
 
     Returns:
-        Human-readable age (e.g., "2h", "5m", "3d").
+        Human-readable age (e.g., "2h", "5m", "3d"), or "-" if timestamp is in the future.
     """
     now = datetime.now(UTC)
     if started_at.tzinfo is None:
@@ -107,7 +107,7 @@ def _format_age(started_at: datetime) -> str:
     total_seconds = int(delta.total_seconds())
 
     if total_seconds < 0:
-        return "0s"
+        return "-"
 
     if total_seconds < 60:
         return f"{total_seconds}s"

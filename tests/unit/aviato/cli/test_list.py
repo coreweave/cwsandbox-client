@@ -92,7 +92,7 @@ class TestListCommand:
             data = json.loads(result.output)
             assert len(data) == 1
             assert data[0]["id"] == "sb-json123"
-            assert data[0]["status"] == SandboxStatus.COMPLETED
+            assert data[0]["status"] == SandboxStatus.COMPLETED.value
 
     def test_list_quiet_output(self) -> None:
         """Test list command with quiet output."""
