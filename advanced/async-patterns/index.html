@@ -10,25 +10,31 @@
       
       
       
+        <link rel="canonical" href="https://coreweave.github.io/aviato-client/advanced/async-patterns/">
       
+      
+        <link rel="prev" href="../../tutorial/08-cleanup/">
+      
+      
+        <link rel="next" href="../managing-sandboxes/">
       
       
         
       
       
-      <link rel="icon" href="/aviato-client/assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
     
     
       
-        <title>Aviato Client</title>
+        <title>Async Patterns - Aviato Client</title>
       
     
     
-      <link rel="stylesheet" href="/aviato-client/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="/aviato-client/assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -47,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="/aviato-client/assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("/aviato-client/",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -73,6 +79,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#async-patterns" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -83,7 +94,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/aviato-client/." title="Aviato Client" class="md-header__button md-logo" aria-label="Aviato Client" data-md-component="logo">
+    <a href="../.." title="Aviato Client" class="md-header__button md-logo" aria-label="Aviato Client" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -103,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              
+              Async Patterns
             
           </span>
         </div>
@@ -216,7 +227,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/aviato-client/." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -237,7 +248,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/aviato-client/tutorial/01-first-sandbox/" class="md-tabs__link">
+        <a href="../../tutorial/01-first-sandbox/" class="md-tabs__link">
           
   
   
@@ -253,11 +264,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="/aviato-client/advanced/async-patterns/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
           
   
   
@@ -275,7 +288,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/aviato-client/api/" class="md-tabs__link">
+      <a href="../../api/" class="md-tabs__link">
         
   
   
@@ -310,7 +323,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/aviato-client/." title="Aviato Client" class="md-nav__button md-logo" aria-label="Aviato Client" data-md-component="logo">
+    <a href="../.." title="Aviato Client" class="md-nav__button md-logo" aria-label="Aviato Client" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -340,7 +353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -417,7 +430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/01-first-sandbox/" class="md-nav__link">
+      <a href="../../tutorial/01-first-sandbox/" class="md-nav__link">
         
   
   
@@ -445,7 +458,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/02-configuration/" class="md-nav__link">
+      <a href="../../tutorial/02-configuration/" class="md-nav__link">
         
   
   
@@ -473,7 +486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/03-running-commands/" class="md-nav__link">
+      <a href="../../tutorial/03-running-commands/" class="md-nav__link">
         
   
   
@@ -501,7 +514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/04-streaming/" class="md-nav__link">
+      <a href="../../tutorial/04-streaming/" class="md-nav__link">
         
   
   
@@ -529,7 +542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/05-files/" class="md-nav__link">
+      <a href="../../tutorial/05-files/" class="md-nav__link">
         
   
   
@@ -557,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/06-multiple-sandboxes/" class="md-nav__link">
+      <a href="../../tutorial/06-multiple-sandboxes/" class="md-nav__link">
         
   
   
@@ -585,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/07-remote-functions/" class="md-nav__link">
+      <a href="../../tutorial/07-remote-functions/" class="md-nav__link">
         
   
   
@@ -613,7 +626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/tutorial/08-cleanup/" class="md-nav__link">
+      <a href="../../tutorial/08-cleanup/" class="md-nav__link">
         
   
   
@@ -645,24 +658,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -680,7 +698,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -695,10 +713,19 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/aviato-client/advanced/async-patterns/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -714,6 +741,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -726,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/advanced/managing-sandboxes/" class="md-nav__link">
+      <a href="../managing-sandboxes/" class="md-nav__link">
         
   
   
@@ -754,7 +782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/advanced/troubleshooting/" class="md-nav__link">
+      <a href="../troubleshooting/" class="md-nav__link">
         
   
   
@@ -789,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/aviato-client/api/" class="md-nav__link">
+      <a href="../../api/" class="md-nav__link">
         
   
   
@@ -826,6 +854,8 @@
   
   
   
+    
+  
   
 </nav>
                   </div>
@@ -838,8 +868,51 @@
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+
+  
+  
+
+
+<h1 id="async-patterns">Async Patterns<a class="headerlink" href="#async-patterns" title="Permanent link">&para;</a></h1>
+<p>Use <code>await</code> instead of <code>.result()</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="k">async</span> <span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<p>Parallel with <code>asyncio.gather()</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;one&quot;</span><span class="p">]),</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;two&quot;</span><span class="p">]),</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
+</code></pre></div>
+<p>Async streaming with <code>async for</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">process</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;bash&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;for i in 1 2 3; do echo $i; sleep 1; done&quot;</span><span class="p">])</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">async</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">process</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">process</span>
+</code></pre></div>
+<p>Sync and async can be mixed - the SDK uses a background thread.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -882,10 +955,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/aviato-client/", "features": ["navigation.tabs", "navigation.top", "search.suggest", "content.code.copy"], "search": "/aviato-client/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="/aviato-client/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
