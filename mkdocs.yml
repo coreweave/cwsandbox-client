@@ -63,6 +63,15 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Tutorial:
+      - 1. Your First Sandbox: tutorial/01-first-sandbox.md
+      - 2. Configuring Sandboxes: tutorial/02-configuration.md
+      - 3. Running Commands: tutorial/03-running-commands.md
+      - 4. Streaming Output: tutorial/04-streaming.md
+      - 5. Reading & Writing Files: tutorial/05-files.md
+      - 6. Managing Multiple Sandboxes: tutorial/06-multiple-sandboxes.md
+      - 7. Remote Function Execution: tutorial/07-remote-functions.md
+      - 8. Cleanup: tutorial/08-cleanup.md
   - Guides:
       - Command Execution: guides/execution.md
       - File Operations: guides/file-operations.md
