@@ -71,7 +71,7 @@ with aviato.Session(defaults=defaults) as session:
     )
 ```
 
-See the [Sandbox Configuration Guide](sandbox-config.md) for all available options.
+See the [Sandbox Configuration Guide](sandbox-configuration.md) for all available options.
 
 ## Multiple Sandbox Management
 

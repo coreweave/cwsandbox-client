@@ -4,8 +4,12 @@ Python client library for Aviato sandboxes - a remote code execution platform.
 
 ## Installation
 
+Clone and install the SDK locally:
+
 ```bash
-pip install aviato
+git clone https://github.com/coreweave/aviato-client.git
+cd aviato-client
+uv sync
 ```
 
 ## Authentication
@@ -77,6 +81,10 @@ PENDING -> CREATING -> RUNNING -> (COMPLETED | FAILED | TERMINATED)
 ```
 
 Most operations handle state transitions automatically. For example, `exec()` waits for RUNNING before executing.
+
+## Tutorial
+
+New to Aviato? The [Tutorial](tutorial/01-first-sandbox.md) walks you through the SDK step by step, from creating your first sandbox to cleanup patterns.
 
 ## Guides
 

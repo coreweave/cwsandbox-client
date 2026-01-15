@@ -2,11 +2,9 @@
 
 A Python client library for Aviato sandboxes.
 
-## Development
+## Documentation
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
-
-For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+See the [documentation site](https://coreweave.github.io/aviato-client/) for the full tutorial, guides, and API reference.
 
 ## Quick Start
 
@@ -28,29 +26,8 @@ async with Sandbox.run("sleep", "infinity") as sb:
     print(result.stdout)  # 4
 ```
 
-## Usage
+## Development
 
-See the [documentation](docs/README.md) for comprehensive guides, or browse:
+See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
 
-- **[Execution Guide](docs/guides/execution.md)** - Running commands with `exec()`
-- **[Remote Functions](docs/guides/remote-functions.md)** - Execute Python functions with `@session.function()`
-- **[Sessions Guide](docs/guides/sessions.md)** - Manage multiple sandboxes concurrently
-
-For runnable scripts, see [examples/](examples/).
-
-## Configuration
-
-### Environment Variables
-
-The SDK supports two authentication strategies. Aviato credentials take priority if both are configured.
-
-#### Aviato Authentication
-
-- `AVIATO_API_KEY` - API key for Aviato authentication
-- `AVIATO_BASE_URL` - Aviato API URL (default: `https://atc.cwaviato.com`)
-
-#### Weights & Biases Authentication
-
-- `WANDB_API_KEY` - W&B API key (or use `~/.netrc` with `api.wandb.ai`)
-- `WANDB_ENTITY_NAME` - W&B entity/team name (required for W&B auth)
-- `WANDB_PROJECT_NAME` - W&B project name (default: `uncategorized`)
+For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
