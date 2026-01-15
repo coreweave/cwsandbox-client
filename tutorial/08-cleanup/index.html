@@ -16,7 +16,7 @@
         <link rel="prev" href="../07-remote-functions/">
       
       
-        <link rel="next" href="../../advanced/async-patterns/">
+        <link rel="next" href="../../guides/execution/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>8. Cleanup & Orphan Recovery - Aviato Client</title>
+        <title>8. Cleanup - Aviato Client</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#8-cleanup-orphan-recovery" class="md-skip">
+        <a href="#8-cleanup" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              8. Cleanup & Orphan Recovery
+              8. Cleanup
             
           </span>
         </div>
@@ -270,11 +270,11 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../advanced/async-patterns/" class="md-tabs__link">
+        <a href="../../guides/execution/" class="md-tabs__link">
           
   
   
-  Advanced
+  Guides
 
         </a>
       </li>
@@ -647,7 +647,7 @@
   <span class="md-ellipsis">
     
   
-    8. Cleanup & Orphan Recovery
+    8. Cleanup
   
 
     
@@ -697,7 +697,7 @@
   <span class="md-ellipsis">
     
   
-    Advanced
+    Guides
   
 
     
@@ -713,7 +713,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Advanced
+    Guides
   
 
           </label>
@@ -726,14 +726,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/async-patterns/" class="md-nav__link">
+      <a href="../../guides/execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Async Patterns
+    Command Execution
   
 
     
@@ -754,14 +754,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/managing-sandboxes/" class="md-nav__link">
+      <a href="../../guides/file-operations/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Managing Sandboxes
+    File Operations
   
 
     
@@ -782,7 +782,147 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/troubleshooting/" class="md-nav__link">
+      <a href="../../guides/sessions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/remote-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cleanup-patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cleanup Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/sandbox-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/sync-vs-async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sync vs Async
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/troubleshooting/" class="md-nav__link">
         
   
   
@@ -875,19 +1015,19 @@
   
 
 
-<h1 id="8-cleanup-orphan-recovery">8. Cleanup &amp; Orphan Recovery<a class="headerlink" href="#8-cleanup-orphan-recovery" title="Permanent link">&para;</a></h1>
+<h1 id="8-cleanup">8. Cleanup<a class="headerlink" href="#8-cleanup" title="Permanent link">&para;</a></h1>
 <p>Context managers handle cleanup automatically:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Stopped automatically</span>
 </code></pre></div>
-<p>The SDK also cleans up on script exit and Ctrl+C.</p>
-<p>To find orphaned sandboxes (e.g., from a crash), use tags:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">sandboxes</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;my-app&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">for</span> <span class="n">sb</span> <span class="ow">in</span> <span class="n">sandboxes</span><span class="p">:</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">sb</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">missing_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<p>For sandboxes created without a context manager, call <code>.stop()</code> explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">sandbox</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">sandbox</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </code></pre></div>
-<p><strong>Tutorial complete!</strong> See the <a href="../../advanced/async-patterns/">Advanced</a> section or <a href="../../api/">API Reference</a> for more.</p>
+<p>The SDK also registers global cleanup handlers for <code>atexit</code> and signals (Ctrl+C, SIGTERM), so sandboxes are stopped even on unexpected exits.</p>
+<p>For batch cleanup, tagging strategies, and orphan recovery, see the <a href="../../guides/cleanup-patterns/">Cleanup Patterns Guide</a>.</p>
 
 
 

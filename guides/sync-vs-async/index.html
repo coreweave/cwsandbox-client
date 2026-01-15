@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://coreweave.github.io/aviato-client/advanced/troubleshooting/">
+        <link rel="canonical" href="https://coreweave.github.io/aviato-client/guides/sync-vs-async/">
       
       
-        <link rel="prev" href="../managing-sandboxes/">
+        <link rel="prev" href="../sandbox-configuration/">
       
       
-        <link rel="next" href="../../api/">
+        <link rel="next" href="../troubleshooting/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Troubleshooting - Aviato Client</title>
+        <title>Sync vs Async - Aviato Client</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#troubleshooting" class="md-skip">
+        <a href="#sync-vs-async-patterns" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Troubleshooting
+              Sync vs Async
             
           </span>
         </div>
@@ -270,11 +270,11 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../async-patterns/" class="md-tabs__link">
+        <a href="../execution/" class="md-tabs__link">
           
   
   
-  Advanced
+  Guides
 
         </a>
       </li>
@@ -633,7 +633,7 @@
   <span class="md-ellipsis">
     
   
-    8. Cleanup & Orphan Recovery
+    8. Cleanup
   
 
     
@@ -687,7 +687,7 @@
   <span class="md-ellipsis">
     
   
-    Advanced
+    Guides
   
 
     
@@ -703,7 +703,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Advanced
+    Guides
   
 
           </label>
@@ -716,14 +716,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../async-patterns/" class="md-nav__link">
+      <a href="../execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Async Patterns
+    Command Execution
   
 
     
@@ -744,14 +744,126 @@
   
   
     <li class="md-nav__item">
-      <a href="../managing-sandboxes/" class="md-nav__link">
+      <a href="../file-operations/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Managing Sandboxes
+    File Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sessions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../remote-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cleanup-patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cleanup Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sandbox-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox Configuration
   
 
     
@@ -788,7 +900,7 @@
   <span class="md-ellipsis">
     
   
-    Troubleshooting
+    Sync vs Async
   
 
     
@@ -806,7 +918,7 @@
   <span class="md-ellipsis">
     
   
-    Troubleshooting
+    Sync vs Async
   
 
     
@@ -832,10 +944,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authentication" class="md-nav__link">
+  <a href="#quick-decision-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication
+        Quick Decision Guide
       
     </span>
   </a>
@@ -843,10 +955,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-errors" class="md-nav__link">
+  <a href="#sync-pattern-recommended-default" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Common Errors
+        Sync Pattern (Recommended Default)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sync Pattern (Recommended Default)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-sync-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Sync Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-codebases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Async Codebases
       
     </span>
   </a>
@@ -854,10 +994,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#streaming" class="md-nav__link">
+  <a href="#parallel-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Streaming
+        Parallel Execution
       
     </span>
   </a>
@@ -865,21 +1005,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#orphaned-sandboxes" class="md-nav__link">
+  <a href="#jupyter-notebooks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Orphaned Sandboxes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#help" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Help
+        Jupyter Notebooks
       
     </span>
   </a>
@@ -890,6 +1019,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -956,10 +1113,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authentication" class="md-nav__link">
+  <a href="#quick-decision-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication
+        Quick Decision Guide
       
     </span>
   </a>
@@ -967,10 +1124,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-errors" class="md-nav__link">
+  <a href="#sync-pattern-recommended-default" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Common Errors
+        Sync Pattern (Recommended Default)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sync Pattern (Recommended Default)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-sync-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Sync Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-codebases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Async Codebases
       
     </span>
   </a>
@@ -978,10 +1163,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#streaming" class="md-nav__link">
+  <a href="#parallel-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Streaming
+        Parallel Execution
       
     </span>
   </a>
@@ -989,21 +1174,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#orphaned-sandboxes" class="md-nav__link">
+  <a href="#jupyter-notebooks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Orphaned Sandboxes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#help" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Help
+        Jupyter Notebooks
       
     </span>
   </a>
@@ -1030,44 +1204,140 @@
   
 
 
-<h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
-<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
-<p><strong>401 errors</strong>: Set <code>AVIATO_API_KEY</code>, or <code>WANDB_API_KEY</code> + <code>WANDB_ENTITY_NAME</code>.</p>
-<h2 id="common-errors">Common Errors<a class="headerlink" href="#common-errors" title="Permanent link">&para;</a></h2>
+<h1 id="sync-vs-async-patterns">Sync vs Async Patterns<a class="headerlink" href="#sync-vs-async-patterns" title="Permanent link">&para;</a></h1>
+<p>The aviato SDK provides a unified sync/async hybrid API. All operations work with both patterns.</p>
+<h2 id="quick-decision-guide">Quick Decision Guide<a class="headerlink" href="#quick-decision-guide" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Exception</th>
-<th>Cause</th>
-<th>Fix</th>
+<th>Use Case</th>
+<th>Pattern</th>
+<th>Reason</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>SandboxTimeoutError</code></td>
-<td>Command exceeded timeout</td>
-<td>Increase <code>timeout_seconds</code></td>
+<td>Most operations</td>
+<td>Sync</td>
+<td>Simpler code, no asyncio boilerplate</td>
 </tr>
 <tr>
-<td><code>SandboxExecutionError</code></td>
-<td>Command failed with <code>check=True</code></td>
-<td>Check <code>e.exec_result.stderr</code></td>
+<td>Parallel execution</td>
+<td>Sync</td>
+<td>Operations are non-blocking by design</td>
 </tr>
 <tr>
-<td><code>SandboxNotFoundError</code></td>
-<td>Sandbox doesn't exist</td>
-<td>Use <code>missing_ok=True</code></td>
+<td>Jupyter notebooks</td>
+<td>Sync</td>
+<td>No nest_asyncio needed</td>
+</tr>
+<tr>
+<td>Async codebase</td>
+<td>Async</td>
+<td>Integrates with existing async code</td>
 </tr>
 </tbody>
 </table>
-<h2 id="streaming">Streaming<a class="headerlink" href="#streaming" title="Permanent link">&para;</a></h2>
-<p>No output? Iterate <code>stdout</code> <em>before</em> <code>.result()</code>. Output buffered? Use <code>flush=True</code> or <code>python -u</code>.</p>
-<h2 id="orphaned-sandboxes">Orphaned Sandboxes<a class="headerlink" href="#orphaned-sandboxes" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">for</span> <span class="n">sb</span> <span class="ow">in</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;my-app&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">():</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">sb</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">missing_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<p><strong>Rule of thumb</strong>: Use sync patterns (<code>.result()</code>) for simplicity. All methods work with both sync and async patterns.</p>
+<h2 id="sync-pattern-recommended-default">Sync Pattern (Recommended Default)<a class="headerlink" href="#sync-pattern-recommended-default" title="Permanent link">&para;</a></h2>
+<p>All SDK operations work synchronously. Operations return immediately with lazy result objects:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Sandbox.run() returns immediately</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">sandbox</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># .result() blocks for result</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>  <span class="c1"># &quot;hello\n&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Context manager for automatic cleanup</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;ls&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="help">Help<a class="headerlink" href="#help" title="Permanent link">&para;</a></h2>
-<p><a href="../../api/">API Reference</a> · <a href="https://github.com/coreweave/aviato-client/issues">GitHub Issues</a></p>
+<h3 id="key-sync-methods">Key Sync Methods<a class="headerlink" href="#key-sync-methods" title="Permanent link">&para;</a></h3>
+<p>Most methods return <code>OperationRef</code>, a lazy object that implements a <code>.result()</code> blocking method to get the value
+while also being awaitable for async codebases.</p>
+<p>Sandbox <code>exec</code> calls return a <code>Process</code> object (which inherits from <code>OperationRef</code>) and uses <code>.result()</code> to block
+and return a <code>ProcessResult</code> instance with information about the command that was run. <code>Process</code> has additional
+functionality like output streaming, and is also awaitable for async codebases. </p>
+<ul>
+<li><code>Sandbox.run()</code> - Create and start sandbox (returns immediately)</li>
+<li><code>Sandbox.list()</code> - Query existing sandboxes (returns OperationRef)</li>
+<li><code>Sandbox.from_id()</code> - Attach to existing sandbox (returns OperationRef)</li>
+<li><code>Sandbox.delete()</code> - Delete sandbox by ID (returns OperationRef)</li>
+<li><code>sandbox.exec()</code> - Execute command (returns Process)</li>
+<li><code>sandbox.read_file()</code> - Read file contents (returns OperationRef)</li>
+<li><code>sandbox.write_file()</code> - Write file contents (returns OperationRef)</li>
+<li><code>sandbox.stop()</code> - Stop sandbox (returns OperationRef)</li>
+<li><code>sandbox.wait()</code> - Wait until RUNNING status</li>
+<li><code>sandbox.wait_until_complete()</code> - Wait until terminal status</li>
+<li><code>sandbox.get_status()</code> - Fetch fresh status</li>
+<li><code>session.list()</code> - Query sandboxes matching session tags (returns OperationRef)</li>
+<li><code>session.from_id()</code> - Attach and optionally adopt by ID (returns OperationRef)</li>
+</ul>
+<h2 id="async-codebases">Async Codebases<a class="headerlink" href="#async-codebases" title="Permanent link">&para;</a></h2>
+<p><code>OperationRef</code> is awaitable, so the same methods work in async code without <code>.result()</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="c1"># Sandbox.run() returns immediately</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">sandbox</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="c1"># await instead of .result()</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>  <span class="c1"># &quot;hello\n&quot;</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="c1"># Async context manager for automatic cleanup</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="k">async</span> <span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;ls&quot;</span><span class="p">])</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h2 id="parallel-execution">Parallel Execution<a class="headerlink" href="#parallel-execution" title="Permanent link">&para;</a></h2>
+<p>The sync API supports parallel execution because operations are <strong>non-blocking by design</strong>. Methods like <code>exec()</code>, <code>read_file()</code>, and <code>write_file()</code> return immediately - you only block when you call <code>.result()</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># Start multiple sandboxes (each returns immediately)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">sandboxes</span> <span class="o">=</span> <span class="p">[</span><span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">)]</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># Fire off commands on each sandbox (non-blocking)</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">processes</span> <span class="o">=</span> <span class="p">[</span><span class="n">sb</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;sandbox-</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">])</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">sb</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">sandboxes</span><span class="p">)]</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># Now block for all results</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">result</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">]</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="c1"># Clean up</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="k">for</span> <span class="n">sb</span> <span class="ow">in</span> <span class="n">sandboxes</span><span class="p">:</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="n">sb</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+</code></pre></div>
+<p>This pattern executes commands in parallel without any async code. The key insight: <strong>non-blocking != async</strong>. The sync API is non-blocking, you just use <code>.result()</code> to block when you need results.</p>
+<h2 id="jupyter-notebooks">Jupyter Notebooks<a class="headerlink" href="#jupyter-notebooks" title="Permanent link">&para;</a></h2>
+<p>The sync API works in Jupyter without <code>nest_asyncio</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Cell 1 - Create sandbox</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">sandbox</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">sandbox</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>  <span class="c1"># Wait until RUNNING</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># Cell 2 - Execute commands</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;print(1+1)&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Cell 3 - Discovery</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">sandboxes</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;notebook&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">sandboxes</span><span class="p">)</span><span class="si">}</span><span class="s2"> sandboxes&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># Cell 4 - Cleanup</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="n">sandbox</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</code></pre></div>
+<p>For async operations in Jupyter, use <code>await</code> directly (Jupyter has a built-in event loop):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Works in Jupyter without asyncio.run()</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">sandboxes</span> <span class="o">=</span> <span class="k">await</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;notebook&quot;</span><span class="p">])</span>
+</code></pre></div>
 
 
 

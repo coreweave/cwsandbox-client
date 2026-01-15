@@ -270,11 +270,11 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../advanced/async-patterns/" class="md-tabs__link">
+        <a href="../../guides/execution/" class="md-tabs__link">
           
   
   
-  Advanced
+  Guides
 
         </a>
       </li>
@@ -648,7 +648,7 @@
   <span class="md-ellipsis">
     
   
-    8. Cleanup & Orphan Recovery
+    8. Cleanup
   
 
     
@@ -697,7 +697,7 @@
   <span class="md-ellipsis">
     
   
-    Advanced
+    Guides
   
 
     
@@ -713,7 +713,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Advanced
+    Guides
   
 
           </label>
@@ -726,14 +726,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/async-patterns/" class="md-nav__link">
+      <a href="../../guides/execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Async Patterns
+    Command Execution
   
 
     
@@ -754,14 +754,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/managing-sandboxes/" class="md-nav__link">
+      <a href="../../guides/file-operations/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Managing Sandboxes
+    File Operations
   
 
     
@@ -782,7 +782,147 @@
   
   
     <li class="md-nav__item">
-      <a href="../../advanced/troubleshooting/" class="md-nav__link">
+      <a href="../../guides/sessions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/remote-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cleanup-patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cleanup Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/sandbox-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/sync-vs-async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sync vs Async
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/troubleshooting/" class="md-nav__link">
         
   
   
@@ -877,7 +1017,13 @@
 
 <h1 id="1-your-first-sandbox">1. Your First Sandbox<a class="headerlink" href="#1-your-first-sandbox" title="Permanent link">&para;</a></h1>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>aviato
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AVIATO_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Option 1: Aviato API key</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AVIATO_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Option 2: W&amp;B credentials</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-wandb-key&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY_NAME</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
