@@ -20,8 +20,9 @@ Sessions clean up all their sandboxes:
 
 ```python
 import aviato
+from aviato import SandboxDefaults
 
-with aviato.Session(container_image="python:3.11") as session:
+with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
     sb1 = session.sandbox()
     sb2 = session.sandbox()
 # Both sandboxes stopped automatically
@@ -55,7 +56,9 @@ sandbox.stop(snapshot_on_stop=True).result()
 ### Session close()
 
 ```python
-session = aviato.Session(container_image="python:3.11")
+from aviato import SandboxDefaults
+
+session = aviato.Session(SandboxDefaults(container_image="python:3.11"))
 sandbox = session.sandbox()
 # ...
 session.close().result()  # Stops all sandboxes
@@ -113,8 +116,9 @@ Bring orphans under session management for automatic cleanup:
 
 ```python
 import aviato
+from aviato import SandboxDefaults
 
-with aviato.Session(container_image="python:3.11") as session:
+with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
     orphans = session.list(tags=["my-project"]).result()
     for sandbox in orphans:
         session.adopt(sandbox)
