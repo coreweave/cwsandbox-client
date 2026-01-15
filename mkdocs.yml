@@ -68,7 +68,7 @@ nav:
       - File Operations: guides/file-operations.md
       - Sessions: guides/sessions.md
       - Remote Functions: guides/remote-functions.md
-      - Sandbox Configuration: guides/sandbox-config.md
+      - Sandbox Configuration: guides/sandbox-configuration.md
       - Cleanup Patterns: guides/cleanup-patterns.md
       - Sync vs Async: guides/sync-vs-async.md
       - Troubleshooting: guides/troubleshooting.md
