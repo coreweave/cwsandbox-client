@@ -160,11 +160,13 @@ For very large files:
 
 ```python
 # For large data, use S3 mount instead
-sandbox = Sandbox(
+with Sandbox.run(
     s3_mount={
         "bucket": "my-data-bucket",
         "mount_path": "/data",
         "read_only": False,
     }
-)
+) as sandbox:
+    # Files in /data are backed by S3
+    sandbox.exec(["ls", "/data"]).result()
 ```

@@ -8,8 +8,9 @@ The function decorator API lets you execute Python functions in isolated sandbox
 
 ```python
 import aviato
+from aviato import SandboxDefaults
 
-with aviato.Session(container_image="python:3.11") as session:
+with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
     @session.function()
     def compute(x: int, y: int) -> int:
         return x + y
