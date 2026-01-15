@@ -240,7 +240,7 @@ Demonstrates:
 
 The aviato SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.result()` (sync) or `await` (async).
 
-The `exec()` method returns a `Process` object. Call `.result()` to block for the final result. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
+The `exec()` method returns a `Process` object. Call `.result()` to block for the final result. By default, output is silent (access via `result.stdout`). For convenience, use `quiet=False` to print output in real-time without manual iteration.
 
 ### Quick Usage (Factory Method)
 

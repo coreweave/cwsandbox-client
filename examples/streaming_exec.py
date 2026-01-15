@@ -1,7 +1,9 @@
 """Streaming command execution with real-time output.
 
-This example demonstrates iterating over process.stdout to receive
-lines as they arrive, rather than waiting for the command to complete.
+This example demonstrates three patterns for handling output:
+1. Silent (default): Access output via result.stdout
+2. Streaming: Iterate over process.stdout for real-time processing
+3. Auto-print (convenience): Use quiet=False for quick debugging
 """
 
 from aviato import Sandbox, SandboxDefaults
@@ -13,23 +15,29 @@ def main() -> None:
         tags=("example", "streaming-exec"),
     )
 
+    # Sleep between prints to demonstrate real-time streaming
+    cmd = "import time\nfor i in range(5):\n    print(f'Line {i}', flush=True)\n    time.sleep(0.3)"
+
     with Sandbox.run(defaults=defaults) as sb:
-        print("=== Real-time stdout iteration ===")
-        # Sleep between prints to demonstrate real-time streaming
-        cmd = (
-            "import time\n"
-            "for i in range(5):\n"
-            "    print(f'Line {i}', flush=True)\n"
-            "    time.sleep(0.3)"
-        )
+        # Option 1: Silent (default) - access output via result
+        print("=== Option 1: Silent (default) ===")
+        result = sb.exec(["python", "-c", cmd]).result()
+        print(f"Output:\n{result.stdout}")
+        print(f"Exit code: {result.returncode}\n")
+
+        # Option 2: Streaming - iterate for real-time processing
+        print("=== Option 2: Streaming ===")
         process = sb.exec(["python", "-c", cmd])
 
-        # Iterate over stdout as lines arrive
         for line in process.stdout:
-            print(f"Received: {line.rstrip()}")
+            print(f"[stdout] {line.rstrip()}")
 
-        # Get final result after iteration completes
         result = process.result()
+        print(f"Exit code: {result.returncode}\n")
+
+        # Option 3: Auto-print (convenience) - for quick debugging
+        print("=== Option 3: Auto-print (convenience) ===")
+        result = sb.exec(["python", "-c", cmd], quiet=False).result()
         print(f"Exit code: {result.returncode}")
 
 

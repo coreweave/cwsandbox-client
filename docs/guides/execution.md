@@ -35,7 +35,18 @@ print(result.returncode)  # 0
 result = sandbox.exec(["ls", "-la"]).result()
 ```
 
-## Streaming Output
+## Output Handling
+
+### Default: Silent
+
+By default, `exec()` captures output without printing:
+
+```python
+result = sandbox.exec(["echo", "Hello!"]).result()
+print(result.stdout)  # "Hello!\n"
+```
+
+### Streaming Output
 
 For real-time output, iterate over `process.stdout` before calling `.result()`:
 
@@ -56,6 +67,17 @@ Use streaming when you need to:
 - Monitor long-running processes
 - Process output as it arrives
 - Implement progress indicators
+
+### Auto-print (Convenience)
+
+For quick debugging or when you just want to watch output without processing it, use `quiet=False`:
+
+```python
+result = sandbox.exec(["python", "long_script.py"], quiet=False).result()
+```
+
+Both stdout and stderr are printed to stdout. Set `AVIATO_EXEC_PRINT=1` to enable globally.
+
 
 ## Working Directory
 

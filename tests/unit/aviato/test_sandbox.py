@@ -1,6 +1,7 @@
 """Unit tests for aviato._sandbox module."""
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -384,6 +385,262 @@ class TestSandboxExec:
 
         # Without cwd, command should not be wrapped
         assert captured_command == ["ls", "-la"]
+
+    def test_exec_default_silent(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test exec() is silent by default (quiet=True)."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "output"
+            response.output.data = b"hello world\n"
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+            yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            # Default: quiet=True, so no output is printed
+            process = sandbox.exec(["echo", "hello"])
+            result = process.result()
+
+        captured = capsys.readouterr()
+        assert captured.out == ""  # Silent by default
+        assert result.stdout == "hello world\n"
+
+    def test_exec_quiet_false_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test exec() with quiet=False prints output."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "output"
+            response.output.data = b"hello world\n"
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+            yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            # quiet=False enables printing
+            process = sandbox.exec(["echo", "hello"], quiet=False)
+            result = process.result()
+
+        captured = capsys.readouterr()
+        assert "hello world\n" in captured.out
+        assert result.stdout == "hello world\n"
+
+    def test_exec_quiet_false_prints_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test exec() with quiet=False prints stderr to stdout."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "output"
+            response.output.data = b"error message\n"
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
+            yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 1
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            # quiet=False enables printing
+            process = sandbox.exec(["cmd"], quiet=False)
+            result = process.result()
+
+        captured = capsys.readouterr()
+        # stderr should be printed to stdout
+        assert "error message\n" in captured.out
+        assert result.stderr == "error message\n"
+
+    def test_exec_iteration_with_quiet_false(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test iterating stdout with quiet=False prints AND allows iteration."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            for i in range(3):
+                response = MagicMock()
+                response.HasField = lambda field: field == "output"
+                response.output.data = f"line{i}\n".encode()
+                response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+                yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            # quiet=False - output should be printed AND iterable
+            process = sandbox.exec(["echo", "test"], quiet=False)
+
+            # Iterate and collect lines
+            iterated_lines = list(process.stdout)
+            result = process.result()
+
+        captured = capsys.readouterr()
+
+        # Both printing AND iteration should work
+        assert "line0\n" in captured.out  # Auto-printed
+        assert "line1\n" in captured.out
+        assert "line2\n" in captured.out
+        assert iterated_lines == ["line0\n", "line1\n", "line2\n"]  # Also iterable
+        assert result.stdout == "line0\nline1\nline2\n"
+
+    def test_exec_env_var_enables_print(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test AVIATO_EXEC_PRINT=1 enables output printing."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "output"
+            response.output.data = b"output\n"
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+            yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+            patch.dict("os.environ", {"AVIATO_EXEC_PRINT": "1"}),
+        ):
+            mock_auth.return_value.headers = {}
+            # quiet=True (default) but env var enables printing
+            process = sandbox.exec(["echo", "test"])
+            result = process.result()
+
+        captured = capsys.readouterr()
+        # Env var enables printing
+        assert "output\n" in captured.out
+        assert result.stdout == "output\n"
+
+    def test_exec_env_var_unset_uses_kwarg(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test that unset AVIATO_EXEC_PRINT uses quiet kwarg value."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "output"
+            response.output.data = b"output\n"
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+            yield response
+
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            # Ensure env var is not set
+            os.environ.pop("AVIATO_EXEC_PRINT", None)
+            mock_auth.return_value.headers = {}
+            # quiet=True (explicit), env var unset, so kwarg wins - no printing
+            process = sandbox.exec(["echo", "test"], quiet=True)
+            result = process.result()
+
+        captured = capsys.readouterr()
+        # Explicit quiet=True means no printing
+        assert captured.out == ""
+        assert result.stdout == "output\n"
 
 
 class TestExecCwdHelperFunctions:
