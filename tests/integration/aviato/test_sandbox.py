@@ -362,15 +362,15 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
     # (sandbox._stopped should be True, but we can't easily verify this externally)
 
 
-# quiet mode tests
+# print_output tests
 
 
 def test_sandbox_exec_default_is_silent(
     sandbox_defaults: SandboxDefaults, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Test exec() is silent by default (quiet=True)."""
+    """Test exec() is silent by default (print_output=False)."""
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        # Default: quiet=True, so no output is printed
+        # Default: print_output=False, so no output is printed
         result = sandbox.exec(["echo", "silent by default"]).result()
 
         captured = capsys.readouterr()
@@ -378,24 +378,24 @@ def test_sandbox_exec_default_is_silent(
         assert result.stdout.strip() == "silent by default"  # But available in result
 
 
-def test_sandbox_exec_quiet_false_prints_output(
+def test_sandbox_exec_print_output_true_prints_output(
     sandbox_defaults: SandboxDefaults, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Test exec() with quiet=False prints output."""
+    """Test exec() with print_output=True prints output."""
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        result = sandbox.exec(["echo", "printed output"], quiet=False).result()
+        result = sandbox.exec(["echo", "printed output"], print_output=True).result()
 
         captured = capsys.readouterr()
         assert "printed output" in captured.out
         assert result.stdout.strip() == "printed output"
 
 
-def test_sandbox_exec_quiet_false_prints_stderr(
+def test_sandbox_exec_print_output_true_prints_stderr(
     sandbox_defaults: SandboxDefaults, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Test exec() with quiet=False prints stderr to stdout."""
+    """Test exec() with print_output=True prints stderr to stdout."""
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        result = sandbox.exec(["sh", "-c", "echo stderr_msg >&2"], quiet=False).result()
+        result = sandbox.exec(["sh", "-c", "echo stderr_msg >&2"], print_output=True).result()
 
         captured = capsys.readouterr()
         # stderr should be printed to stdout (no prefix)

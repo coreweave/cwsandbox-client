@@ -70,10 +70,10 @@ Use streaming when you need to:
 
 ### Auto-print (Convenience)
 
-For quick debugging or when you just want to watch output without processing it, use `quiet=False`:
+For quick debugging or when you just want to watch output without processing it, use `print_output=True`:
 
 ```python
-result = sandbox.exec(["python", "long_script.py"], quiet=False).result()
+result = sandbox.exec(["python", "long_script.py"], print_output=True).result()
 ```
 
 Both stdout and stderr are printed to stdout. Set `AVIATO_EXEC_PRINT=1` to enable globally.

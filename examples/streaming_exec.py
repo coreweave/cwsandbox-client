@@ -3,7 +3,7 @@
 This example demonstrates three patterns for handling output:
 1. Silent (default): Access output via result.stdout
 2. Streaming: Iterate over process.stdout for real-time processing
-3. Auto-print (convenience): Use quiet=False for quick debugging
+3. Auto-print (convenience): Use print_output=True for quick debugging
 """
 
 from aviato import Sandbox, SandboxDefaults
@@ -37,7 +37,7 @@ def main() -> None:
 
         # Option 3: Auto-print (convenience) - for quick debugging
         print("=== Option 3: Auto-print (convenience) ===")
-        result = sb.exec(["python", "-c", cmd], quiet=False).result()
+        result = sb.exec(["python", "-c", cmd], print_output=True).result()
         print(f"Exit code: {result.returncode}")
 
 

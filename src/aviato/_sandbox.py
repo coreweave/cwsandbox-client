@@ -1371,7 +1371,7 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
-        quiet: bool = True,
+        print_output: bool = False,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
@@ -1379,7 +1379,7 @@ class Sandbox:
         Buffers output while also pushing to queues for real-time streaming.
         Signals end-of-stream with None sentinel when command completes.
 
-        If quiet is False, prints each line to stdout as it arrives.
+        If print_output is True, prints each line to stdout as it arrives.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
 
@@ -1475,9 +1475,9 @@ class Sandbox:
                         text = data.decode("utf-8", errors="replace")
                         stream_type = response.output.stream_type
 
-                        # Print in real-time unless quiet mode
-                        if not quiet and text:
-                            print(f"{text}", end="")
+                        # Print in real-time if print_output is enabled
+                        if print_output and text:
+                            print(text, end="")
 
                         if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
                             stdout_buffer.append(data)
@@ -1541,7 +1541,7 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
-        quiet: bool = True,
+        print_output: bool = False,
     ) -> Process:
         """Execute command, return Process immediately.
 
@@ -1556,9 +1556,9 @@ class Sandbox:
             check: If True, raise SandboxExecutionError on non-zero returncode
             timeout_seconds: Timeout for command execution (after sandbox is RUNNING).
                 Does not include time waiting for sandbox to reach RUNNING status.
-            quiet: If True (default), output is not printed - access via result.stdout.
-                For convenience, set to False to print output in real-time without
-                manual iteration. Set AVIATO_EXEC_PRINT=1 to enable printing globally.
+            print_output: If True, print stdout and stderr in real-time as they arrive.
+                By default (False), output is not printed - access via result.stdout.
+                Set AVIATO_EXEC_PRINT=1 to enable printing globally.
 
         Returns:
             Process handle with streaming stdout/stderr. Call .result() to block
@@ -1575,7 +1575,7 @@ class Sandbox:
             print(result.stdout)
 
             # Convenience: auto-print without manual iteration
-            result = sb.exec(["echo", "hello"], quiet=False).result()
+            result = sb.exec(["echo", "hello"], print_output=True).result()
 
             # With working directory
             result = sb.exec(["ls", "-la"], cwd="/app").result()
@@ -1596,7 +1596,7 @@ class Sandbox:
 
         # Environment variable can enable printing globally
         env_print = os.environ.get("AVIATO_EXEC_PRINT", "").lower()
-        effective_quiet = quiet and env_print not in ("true", "1")
+        effective_print = print_output or env_print in ("true", "1")
 
         # Unbounded queues prevent data loss when producer fills queue before consumer iterates.
         # Bounded queues caused race conditions with HTTP/2 stream buffering.
@@ -1611,7 +1611,7 @@ class Sandbox:
                 cwd=cwd,
                 check=check,
                 timeout_seconds=timeout_seconds,
-                quiet=effective_quiet,
+                print_output=effective_print,
             )
         )
 

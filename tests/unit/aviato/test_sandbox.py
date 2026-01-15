@@ -387,7 +387,7 @@ class TestSandboxExec:
         assert captured_command == ["ls", "-la"]
 
     def test_exec_default_silent(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test exec() is silent by default (quiet=True)."""
+        """Test exec() is silent by default (print_output=False)."""
         from coreweave.aviato.v1beta1 import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -418,7 +418,7 @@ class TestSandboxExec:
             ),
         ):
             mock_auth.return_value.headers = {}
-            # Default: quiet=True, so no output is printed
+            # Default: print_output=False, so no output is printed
             process = sandbox.exec(["echo", "hello"])
             result = process.result()
 
@@ -426,8 +426,8 @@ class TestSandboxExec:
         assert captured.out == ""  # Silent by default
         assert result.stdout == "hello world\n"
 
-    def test_exec_quiet_false_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test exec() with quiet=False prints output."""
+    def test_exec_print_output_true_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test exec() with print_output=True prints output."""
         from coreweave.aviato.v1beta1 import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -458,16 +458,16 @@ class TestSandboxExec:
             ),
         ):
             mock_auth.return_value.headers = {}
-            # quiet=False enables printing
-            process = sandbox.exec(["echo", "hello"], quiet=False)
+            # print_output=True enables printing
+            process = sandbox.exec(["echo", "hello"], print_output=True)
             result = process.result()
 
         captured = capsys.readouterr()
         assert "hello world\n" in captured.out
         assert result.stdout == "hello world\n"
 
-    def test_exec_quiet_false_prints_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test exec() with quiet=False prints stderr to stdout."""
+    def test_exec_print_output_true_prints_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test exec() with print_output=True prints stderr to stdout."""
         from coreweave.aviato.v1beta1 import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -498,8 +498,8 @@ class TestSandboxExec:
             ),
         ):
             mock_auth.return_value.headers = {}
-            # quiet=False enables printing
-            process = sandbox.exec(["cmd"], quiet=False)
+            # print_output=True enables printing
+            process = sandbox.exec(["cmd"], print_output=True)
             result = process.result()
 
         captured = capsys.readouterr()
@@ -507,8 +507,10 @@ class TestSandboxExec:
         assert "error message\n" in captured.out
         assert result.stderr == "error message\n"
 
-    def test_exec_iteration_with_quiet_false(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test iterating stdout with quiet=False prints AND allows iteration."""
+    def test_exec_iteration_with_print_output_true(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test iterating stdout with print_output=True prints AND allows iteration."""
         from coreweave.aviato.v1beta1 import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -540,8 +542,8 @@ class TestSandboxExec:
             ),
         ):
             mock_auth.return_value.headers = {}
-            # quiet=False - output should be printed AND iterable
-            process = sandbox.exec(["echo", "test"], quiet=False)
+            # print_output=True - output should be printed AND iterable
+            process = sandbox.exec(["echo", "test"], print_output=True)
 
             # Iterate and collect lines
             iterated_lines = list(process.stdout)
@@ -589,7 +591,7 @@ class TestSandboxExec:
             patch.dict("os.environ", {"AVIATO_EXEC_PRINT": "1"}),
         ):
             mock_auth.return_value.headers = {}
-            # quiet=True (default) but env var enables printing
+            # print_output=False (default) but env var enables printing
             process = sandbox.exec(["echo", "test"])
             result = process.result()
 
@@ -599,7 +601,7 @@ class TestSandboxExec:
         assert result.stdout == "output\n"
 
     def test_exec_env_var_unset_uses_kwarg(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test that unset AVIATO_EXEC_PRINT uses quiet kwarg value."""
+        """Test that unset AVIATO_EXEC_PRINT uses print_output kwarg value."""
         from coreweave.aviato.v1beta1 import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -633,12 +635,12 @@ class TestSandboxExec:
             # Ensure env var is not set
             os.environ.pop("AVIATO_EXEC_PRINT", None)
             mock_auth.return_value.headers = {}
-            # quiet=True (explicit), env var unset, so kwarg wins - no printing
-            process = sandbox.exec(["echo", "test"], quiet=True)
+            # print_output=False (explicit), env var unset, so kwarg wins - no printing
+            process = sandbox.exec(["echo", "test"], print_output=False)
             result = process.result()
 
         captured = capsys.readouterr()
-        # Explicit quiet=True means no printing
+        # Explicit print_output=False means no printing
         assert captured.out == ""
         assert result.stdout == "output\n"
 
