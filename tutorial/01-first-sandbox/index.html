@@ -444,6 +444,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Your First Sandbox
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -460,6 +478,47 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-your-first-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Your First Sandbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -997,6 +1056,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-your-first-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Your First Sandbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1016,26 +1105,33 @@
 
 
 <h1 id="1-your-first-sandbox">1. Your First Sandbox<a class="headerlink" href="#1-your-first-sandbox" title="Permanent link">&para;</a></h1>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>aviato
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Option 1: Aviato API key</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AVIATO_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Option 2: W&amp;B credentials</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-wandb-key&quot;</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY_NAME</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
+<h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<p>Clone and install the SDK locally:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/coreweave/aviato-client.git
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>aviato-client
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>sync
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello!&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<p>Set your credentials:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Option 1: Aviato API key</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AVIATO_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Option 2: W&amp;B credentials</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-wandb-key&quot;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY_NAME</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
 </code></pre></div>
-<p><strong>What's happening:</strong>
-- <code>Sandbox.run()</code> creates a sandbox
-- <code>exec()</code> runs a command, returning immediately
-- <code>.result()</code> blocks until complete</p>
-<p>This non-blocking pattern lets you run operations in parallel.</p>
+<h2 id="run-your-first-sandbox">Run Your First Sandbox<a class="headerlink" href="#run-your-first-sandbox" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello!&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>What's happening:</strong></p>
+<ul>
+<li><code>Sandbox.run()</code> creates a sandbox and returns it inside a context manager</li>
+<li><code>exec()</code> runs a command and returns a <code>Process</code> object</li>
+<li><code>.result()</code> waits for the command to complete and returns the output</li>
+</ul>
 
 
 

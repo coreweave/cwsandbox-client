@@ -511,6 +511,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tutorial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guides" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1267,6 +1278,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tutorial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guides" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1322,7 +1344,10 @@
 <h1 id="aviato-sdk-documentation">Aviato SDK Documentation<a class="headerlink" href="#aviato-sdk-documentation" title="Permanent link">&para;</a></h1>
 <p>Python client library for Aviato sandboxes - a remote code execution platform.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>aviato
+<p>Clone and install the SDK locally:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/coreweave/aviato-client.git
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>aviato-client
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>sync
 </code></pre></div>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
 <p>The SDK checks for credentials in this order:</p>
@@ -1395,6 +1420,8 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>PENDING -&gt; CREATING -&gt; RUNNING -&gt; (COMPLETED | FAILED | TERMINATED)
 </code></pre></div>
 <p>Most operations handle state transitions automatically. For example, <code>exec()</code> waits for RUNNING before executing.</p>
+<h2 id="tutorial">Tutorial<a class="headerlink" href="#tutorial" title="Permanent link">&para;</a></h2>
+<p>New to Aviato? The <a href="tutorial/01-first-sandbox/">Tutorial</a> walks you through the SDK step by step, from creating your first sandbox to cleanup patterns.</p>
 <h2 id="guides">Guides<a class="headerlink" href="#guides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -1024,8 +1024,7 @@
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">result</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </code></pre></div>
-<p><strong>Important:</strong> Iterate <code>stdout</code> <em>before</em> calling <code>.result()</code>.</p>
-<p>If output is buffered, use <code>print(..., flush=True)</code> in your script or run with <code>python -u</code>.</p>
+<p><strong>Note:</strong> To stream output in real-time, iterate over <code>process.stdout</code> before calling <code>.result()</code>. If you only need the final output, you can skip iteration and access it via <code>result.stdout</code> after calling <code>.result()</code>.</p>
 <p>For more streaming patterns, see the <a href="../../guides/execution/">Execution Guide</a>.</p>
 
 
