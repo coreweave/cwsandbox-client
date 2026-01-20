@@ -37,7 +37,7 @@ result = sandbox.exec(["ls", "-la"]).result()
 
 ## Output Handling
 
-### Default: Silent
+### Default: Silent (requires explicit handling)
 
 By default, `exec()` captures output without printing:
 
