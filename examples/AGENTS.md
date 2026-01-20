@@ -22,7 +22,7 @@ Runnable example scripts (13 total) demonstrating aviato SDK usage patterns.
 | `cleanup_by_tag.py` | Sync | `def main()` | Tag-based cleanup |
 | `cleanup_old_sandboxes.py` | Sync | `def main()` | Age-based cleanup |
 
-The `exec()` method returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. By default, output is silent (access via `result.stdout`). For convenience, use `print_output=True` to print output in real-time without manual iteration.
+The `exec()` method returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output. For convenience, use `print_output=True` to print output in real-time without manual iteration.
 
 For detailed guides, see `docs/guides/`. See [Sync vs Async](../docs/guides/sync-vs-async.md) for when to use each pattern.
 

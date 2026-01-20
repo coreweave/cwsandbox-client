@@ -78,7 +78,6 @@ result = sandbox.exec(["python", "long_script.py"], print_output=True).result()
 
 Both stdout and stderr are printed to stdout. Set `AVIATO_EXEC_PRINT=1` to enable globally.
 
-
 ## Working Directory
 
 Set the working directory with `cwd`:
