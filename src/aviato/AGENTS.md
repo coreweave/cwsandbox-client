@@ -68,4 +68,4 @@ mise run test:e2e      # Requires auth credentials
 
 ## Notes
 
-- **Exec API**: `exec()` returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming output.
+- **Exec API**: `exec()` returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. By default, output is silent (access via `result.stdout`). Iterate `process.stdout` before `.result()` for real-time streaming, or for convenience, use `print_output=True` to auto-print without manual iteration.
