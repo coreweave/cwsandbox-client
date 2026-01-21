@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://coreweave.github.io/aviato-client/guides/CLAUDE/">
+        <link rel="canonical" href="https://coreweave.github.io/aviato-client/guides/environment-variables/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>How-To Guides - Aviato Client</title>
+        <title>Environment Variables - Aviato Client</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#how-to-guides" class="md-skip">
+        <a href="#environment-variables" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +110,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              How-To Guides
+              Environment Variables
             
           </span>
         </div>
@@ -983,10 +983,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#files" class="md-nav__link">
+  <a href="#basic-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Files
+        Basic Usage
       
     </span>
   </a>
@@ -994,10 +994,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#key-patterns" class="md-nav__link">
+  <a href="#session-level-defaults" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key Patterns
+        Session-Level Defaults
       
     </span>
   </a>
@@ -1005,21 +1005,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#writing-new-guides" class="md-nav__link">
+  <a href="#remote-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writing New Guides
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#relationship-to-other-docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Relationship to Other Docs
+        Remote Functions
       
     </span>
   </a>
@@ -1046,75 +1035,94 @@
   
 
 
-<h1 id="how-to-guides">How-To Guides<a class="headerlink" href="#how-to-guides" title="Permanent link">&para;</a></h1>
-<p>Task-oriented guides for common operations. Each guide answers "How do I...?"</p>
-<h2 id="files">Files<a class="headerlink" href="#files" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Guide</th>
-<th>Task</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>execution.md</code></td>
-<td>Run commands with <code>exec()</code> - buffered and streaming modes</td>
-</tr>
-<tr>
-<td><code>file-operations.md</code></td>
-<td>Read and write files in sandboxes</td>
-</tr>
-<tr>
-<td><code>sessions.md</code></td>
-<td>Manage multiple sandboxes with shared configuration</td>
-</tr>
-<tr>
-<td><code>remote-functions.md</code></td>
-<td>Execute Python functions remotely with <code>@session.function()</code></td>
-</tr>
-<tr>
-<td><code>cleanup-patterns.md</code></td>
-<td>Resource management and graceful shutdown</td>
-</tr>
-<tr>
-<td><code>sync-vs-async.md</code></td>
-<td>When to use sync vs async patterns, calling async from sync</td>
-</tr>
-<tr>
-<td><code>sandbox-config.md</code></td>
-<td>Configure resources, mounted files, ports, timeouts</td>
-</tr>
-<tr>
-<td><code>troubleshooting.md</code></td>
-<td>Debug common issues - sandbox failures, auth errors, timeouts</td>
-</tr>
-<tr>
-<td><code>environment-variables.md</code></td>
-<td>Use environment variables in sandboxes</td>
-</tr>
-</tbody>
-</table>
-<h2 id="key-patterns">Key Patterns<a class="headerlink" href="#key-patterns" title="Permanent link">&para;</a></h2>
-<p>All guides follow these conventions:</p>
-<ul>
-<li><strong>Process for exec</strong>: <code>exec()</code> returns a <code>Process</code> (inherits from OperationRef) - call <code>.result()</code> to block for the result</li>
-<li><strong>OperationRef for other ops</strong>: <code>read_file()</code>, <code>write_file()</code>, <code>stop()</code> return <code>OperationRef</code> - call <code>.result()</code> to block</li>
-<li><strong>Context managers</strong>: Use <code>with</code> statements for automatic cleanup</li>
-</ul>
-<h2 id="writing-new-guides">Writing New Guides<a class="headerlink" href="#writing-new-guides" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Focus on a single task ("How do I X?")</li>
-<li>Start with the simplest working example</li>
-<li>Add variations for common needs</li>
-<li>Include error handling where relevant</li>
-<li>Link to reference docs for parameter details</li>
-<li>Use <code>.result()</code> consistently for both Process and OperationRef</li>
-</ol>
-<h2 id="relationship-to-other-docs">Relationship to Other Docs<a class="headerlink" href="#relationship-to-other-docs" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Examples</strong> (<code>examples/</code>): Runnable Python scripts</li>
-</ul>
+<h1 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h1>
+<p>This guide covers how to use environment variables in sandboxes.</p>
+<blockquote>
+<p><strong>Security Note:</strong> Environment variables should <strong>not</strong> be used for sensitive information like API keys, passwords, or other secrets.</p>
+</blockquote>
+<h2 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
+<p>Set environment variables when creating a sandbox:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">environment_variables</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;LOG_LEVEL&quot;</span><span class="p">:</span> <span class="s2">&quot;info&quot;</span><span class="p">},</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="s2">&quot;python&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="s2">&quot;-c&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="s2">&quot;import os; print(os.environ.get(&#39;LOG_LEVEL&#39;));&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>  <span class="c1"># &quot;info&quot;</span>
+</code></pre></div>
+<h2 id="session-level-defaults">Session-Level Defaults<a class="headerlink" href="#session-level-defaults" title="Permanent link">&para;</a></h2>
+<p>Use sessions to share environment variables across multiple sandboxes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aviato</span><span class="w"> </span><span class="kn">import</span> <span class="n">SandboxDefaults</span><span class="p">,</span> <span class="n">Session</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">environment_variables</span><span class="o">=</span><span class="p">{</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="s2">&quot;PROJECT_ID&quot;</span><span class="p">:</span> <span class="s2">&quot;my-project&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="s2">&quot;LOG_LEVEL&quot;</span><span class="p">:</span> <span class="s2">&quot;info&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="p">},</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">)</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">()</span> <span class="k">as</span> <span class="n">sb1</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">sb1</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>            <span class="s2">&quot;python&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>            <span class="s2">&quot;-c&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>            <span class="s2">&quot;import os; print(os.environ.get(&#39;LOG_LEVEL&#39;));&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>  <span class="c1"># &quot;info&quot;</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="c1"># Override LOG_LEVEL and add new variable</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>        <span class="n">environment_variables</span><span class="o">=</span><span class="p">{</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>            <span class="s2">&quot;LOG_LEVEL&quot;</span><span class="p">:</span> <span class="s2">&quot;debug&quot;</span><span class="p">,</span>  <span class="c1"># Override session default</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>            <span class="s2">&quot;MODEL_NAME&quot;</span><span class="p">:</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span>  <span class="c1"># Add new variable</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>        <span class="p">}</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="p">)</span> <span class="k">as</span> <span class="n">sb2</span><span class="p">:</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">sb2</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>            <span class="s2">&quot;python&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>            <span class="s2">&quot;-c&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>            <span class="s2">&quot;import os; &quot;</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>            <span class="s2">&quot;print(os.environ.get(&#39;PROJECT_ID&#39;)); &quot;</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>            <span class="s2">&quot;print(os.environ.get(&#39;LOG_LEVEL&#39;)); &quot;</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>            <span class="s2">&quot;print(os.environ.get(&#39;MODEL_NAME&#39;));&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>        <span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>        <span class="n">lines</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>  <span class="c1"># [&quot;my-project&quot;, &quot;debug&quot;, &quot;gpt-4&quot;]</span>
+</code></pre></div>
+<h2 id="remote-functions">Remote Functions<a class="headerlink" href="#remote-functions" title="Permanent link">&para;</a></h2>
+<p>Environment variables work with remote functions:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="nd">@session</span><span class="o">.</span><span class="n">function</span><span class="p">(</span><span class="n">environment_variables</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;MODEL_VERSION&quot;</span><span class="p">:</span> <span class="s2">&quot;v2.0&quot;</span><span class="p">})</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">task_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="k">return</span> <span class="p">{</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>            <span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="n">task_id</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>            <span class="s2">&quot;project&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PROJECT_ID&quot;</span><span class="p">),</span>  <span class="c1"># From session defaults</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MODEL_VERSION&quot;</span><span class="p">),</span>  <span class="c1"># From function decorator</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="p">}</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># {&quot;task&quot;: 42, &quot;project&quot;: &quot;my-project&quot;, &quot;version&quot;: &quot;v2.0&quot;}</span>
+</code></pre></div>
+<blockquote>
+<p><strong>⚠️ Caution:</strong> Environment variables are passed by reference. Mutations will be reflected in subsequent function calls:</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">env_vars</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;MODEL_VERSION&quot;</span><span class="p">:</span> <span class="s2">&quot;v2.0&quot;</span><span class="p">}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nd">@session</span><span class="o">.</span><span class="n">function</span><span class="p">(</span><span class="n">environment_variables</span><span class="o">=</span><span class="n">env_vars</span><span class="p">)</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">task_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MODEL_VERSION&quot;</span><span class="p">)}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>  <span class="c1"># version: &quot;v2.0&quot;</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">env_vars</span><span class="p">[</span><span class="s2">&quot;MODEL_VERSION&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;v3.0&quot;</span>  <span class="c1"># Mutate the dictionary</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">result</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>  <span class="c1"># version: &quot;v3.0&quot; (changed)</span>
+</code></pre></div>
 
 
 
