@@ -227,6 +227,58 @@ Demonstrates:
 
 See [SWE-bench Guide](../docs/guides/swebench.md) for full documentation.
 
+### RL Training Examples (`rl_training/`)
+
+Examples for reinforcement learning training with code execution rewards:
+
+#### Reward Function (`rl_training/reward_function.py`)
+
+Standalone reward function for RL training loops:
+
+```bash
+python examples/rl_training/reward_function.py
+```
+
+Demonstrates:
+- Fresh sandbox per execution for isolation
+- Tagging with job ID for tracking
+- Timeout handling with zero reward fallback
+- Cleanup of all sandboxes on exit
+
+#### TRL GRPO Integration (`rl_training/trl_grpo_integration.py`)
+
+Integrating Aviato with TRL's GRPOTrainer:
+
+```bash
+# Requires GPU and: pip install trl transformers datasets torch
+python examples/rl_training/trl_grpo_integration.py
+```
+
+Demonstrates:
+- GRPOTrainer `reward_funcs` parameter
+- Batch reward computation with parallel sandboxes
+- Step-based tagging for tracking
+- Code extraction from model completions
+
+#### Unsloth Integration (`rl_training/unsloth_integration.py`)
+
+Memory-efficient training with Unsloth and TRL:
+
+```bash
+# Requires CUDA GPU and Unsloth:
+# pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+# pip install trl transformers datasets torch
+python examples/rl_training/unsloth_integration.py
+```
+
+Demonstrates:
+- FastLanguageModel with 4-bit quantization
+- LoRA adapters for parameter-efficient training
+- GRPOTrainer integration with sandbox rewards
+- Model name tagging for multi-model experiments
+
+See `docs/guides/rl-training.md` for comprehensive documentation.
+
 ---
 
 ## Async Example

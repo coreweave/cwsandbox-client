@@ -1,0 +1,21 @@
+# ART: Aviato Reward Toolkit dependencies
+
+# Core
+aviato
+
+# LLM inference
+openai
+
+# Dataset loading
+datasets
+
+# Logging and experiment tracking
+wandb
+
+# Optional: Full training support
+transformers
+trl
+torch
+
+# Optional: vLLM serving (install separately for GPU inference)
+# pip install vllm
