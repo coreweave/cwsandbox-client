@@ -99,20 +99,3 @@ env_vars["MODEL_VERSION"] = "v3.0"  # Mutate the dictionary
 
 result = process.remote(42).result()  # version: "v3.0" (changed)
 ```
-
-## Extended Example: Loading from .env File
-
-Use `python-dotenv` to load environment variables from a `.env` file:
-
-```python
-from dotenv import dotenv_values
-from aviato import SandboxDefaults, Session
-
-env_vars = dict(dotenv_values(".env"))
-defaults = SandboxDefaults(environment_variables=env_vars)
-
-with Session(defaults) as session:
-    with session.sandbox(command="python", args=["app.py"]) as sandbox:
-        # Sandbox has all variables from .env file
-        pass
-```

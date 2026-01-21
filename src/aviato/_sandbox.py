@@ -418,6 +418,7 @@ class Sandbox:
         sandbox._max_lifetime_seconds = None
         sandbox._runway_ids = None
         sandbox._tower_ids = None
+        sandbox._environment_variables = {}
         sandbox._client = None
         sandbox._stopped = False
         sandbox._returncode = None
