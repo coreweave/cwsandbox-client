@@ -167,6 +167,7 @@ class Session:
         ports: list[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox with session defaults, return immediately.
 
@@ -185,6 +186,9 @@ class Session:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
+            environment_variables: Environment variables to inject into the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive config only.
 
         Returns:
             A started Sandbox instance. Use .wait() to block until RUNNING.
@@ -219,6 +223,7 @@ class Session:
             ports=ports,
             service=service,
             max_timeout_seconds=max_timeout_seconds,
+            environment_variables=environment_variables,
             defaults=self._defaults,
             _session=self,
         )
@@ -419,6 +424,7 @@ class Session:
         ports: Sequence[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        environment_variables: dict[str, str] | None = None,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
 
@@ -440,6 +446,9 @@ class Session:
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
+            environment_variables: Environment variables to inject into the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive config only.
 
         Returns:
             A decorator that wraps a function as a RemoteFunction
@@ -485,6 +494,7 @@ class Session:
                 ports=list(ports) if ports else None,
                 service=service,
                 max_timeout_seconds=max_timeout_seconds,
+                environment_variables=environment_variables,
             )
 
         return decorator

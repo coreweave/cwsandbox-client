@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aviato import Sandbox
+from aviato import Sandbox, SandboxDefaults
 from aviato.exceptions import SandboxNotRunningError
 
 
@@ -704,6 +704,74 @@ class TestSandboxWaitForRunning:
             assert sandbox.returncode == 0
 
 
+class TestSandboxEnvironmentVariables:
+    """Tests for environment variables merging behavior."""
+
+    def test_env_vars_inherit_from_defaults(self) -> None:
+        """Test sandbox inherits environment variables from defaults."""
+        defaults = SandboxDefaults(
+            environment_variables={
+                "LOG_LEVEL": "info",
+                "REGION": "us-west",
+            }
+        )
+
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+        )
+
+        assert sandbox._environment_variables == {
+            "LOG_LEVEL": "info",
+            "REGION": "us-west",
+        }
+
+    def test_env_vars_merge_with_defaults(self) -> None:
+        """Test sandbox-specific env vars merge with defaults."""
+        defaults = SandboxDefaults(
+            environment_variables={
+                "LOG_LEVEL": "info",
+                "REGION": "us-west",
+            }
+        )
+
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            environment_variables={
+                "LOG_LEVEL": "debug",  # Override default
+                "USER_ID": "123",  # Add new
+            },
+        )
+
+        assert sandbox._environment_variables == {
+            "LOG_LEVEL": "debug",  # Overridden
+            "REGION": "us-west",  # From defaults
+            "USER_ID": "123",  # Added
+        }
+
+    def test_env_vars_empty_when_no_defaults_or_params(self) -> None:
+        """Test env vars is empty dict when nothing specified."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+        )
+
+        assert sandbox._environment_variables == {}
+
+    def test_env_vars_only_from_params_when_no_defaults(self) -> None:
+        """Test env vars uses only params when no defaults."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            environment_variables={"API_KEY": "secret"},
+        )
+
+        assert sandbox._environment_variables == {"API_KEY": "secret"}
+
+
 class TestSandboxStop:
     """Tests for Sandbox.stop method."""
 
@@ -824,11 +892,13 @@ class TestSandboxKwargsValidation:
             ports=[{"container_port": 8080}],
             service={"public": True},
             max_timeout_seconds=60,
+            environment_variables={"TEST_ENV_VAR": "test-value"},
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
         assert sandbox._start_kwargs["service"] == {"public": True}
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
+        assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
     def test_init_with_invalid_kwargs(self) -> None:
         """Test Sandbox.__init__ rejects invalid kwargs."""

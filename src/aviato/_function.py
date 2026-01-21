@@ -86,6 +86,7 @@ class RemoteFunction(Generic[P, R]):
         ports: list[dict[str, Any]] | None = None,
         service: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        environment_variables: dict[str, str] | None = None,
     ) -> None:
         """Initialize RemoteFunction with function and execution configuration.
 
@@ -101,6 +102,9 @@ class RemoteFunction(Generic[P, R]):
             ports: Port mappings for the sandbox
             service: Service configuration for network access
             max_timeout_seconds: Maximum timeout for sandbox operations
+            environment_variables: Environment variables to inject into the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive config only.
         """
         unwrapped = fn
         while hasattr(unwrapped, "__wrapped__"):
@@ -125,7 +129,7 @@ class RemoteFunction(Generic[P, R]):
         self._ports = ports
         self._service = service
         self._max_timeout_seconds = max_timeout_seconds
-
+        self._environment_variables = environment_variables
         # Preserve function metadata
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
@@ -241,6 +245,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["service"] = self._service
         if self._max_timeout_seconds is not None:
             sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
+        if self._environment_variables is not None:
+            sandbox_kwargs["environment_variables"] = self._environment_variables
 
         # Import here to avoid circular import
         from aviato._sandbox import Sandbox

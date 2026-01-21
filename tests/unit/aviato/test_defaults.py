@@ -93,3 +93,31 @@ class TestSandboxDefaults:
         assert new_defaults.container_image == "python:3.11"
         assert new_defaults.base_url == "http://example.com"
         assert new_defaults.request_timeout_seconds == 120.0
+
+    def test_merge_environment_variables_empty_base(self) -> None:
+        """Test merge_environment_variables with no default environment variables."""
+        defaults = SandboxDefaults()
+
+        result = defaults.merge_environment_variables({"LOG_LEVEL": "info"})
+
+        assert result == {"LOG_LEVEL": "info"}
+
+    def test_merge_environment_variables_with_additional(self) -> None:
+        """Test merge_environment_variables with additional environment variables."""
+        defaults = SandboxDefaults(
+            environment_variables={
+                "LOG_LEVEL": "info",
+                "REGION": "us-west",
+            },
+        )
+
+        result = defaults.merge_environment_variables({
+            "LOG_LEVEL": "debug",
+            "MODEL": "gpt2",
+        })
+
+        assert result == {
+            "LOG_LEVEL": "debug",  # Overridden
+            "REGION": "us-west",  # Preserved
+            "MODEL": "gpt2",  # Added
+        }
