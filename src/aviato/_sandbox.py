@@ -218,12 +218,19 @@ class Sandbox:
 
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
 
-        self._runway_ids = runway_ids or (
-            list(self._defaults.runway_ids) if self._defaults.runway_ids else None
-        )
-        self._tower_ids = tower_ids or (
-            list(self._defaults.tower_ids) if self._defaults.tower_ids else None
-        )
+        if runway_ids is not None:
+            self._runway_ids = list(runway_ids)
+        elif self._defaults.runway_ids:
+            self._runway_ids = list(self._defaults.runway_ids)
+        else:
+            self._runway_ids = None
+
+        if tower_ids is not None:
+            self._tower_ids = list(tower_ids)
+        elif self._defaults.tower_ids:
+            self._tower_ids = list(self._defaults.tower_ids)
+        else:
+            self._tower_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
         # Use explicit resources or fall back to defaults
@@ -271,6 +278,8 @@ class Sandbox:
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
+        runway_ids: list[str] | None = None,
+        tower_ids: list[str] | None = None,
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -292,6 +301,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
+            runway_ids: Optional list of runway IDs
+            tower_ids: Optional list of tower IDs
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
@@ -331,6 +342,8 @@ class Sandbox:
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
+            runway_ids=runway_ids,
+            tower_ids=tower_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -513,9 +526,9 @@ class Sandbox:
                 request_kwargs["tags"] = tags
             if status_enum:
                 request_kwargs["status"] = status_enum.to_proto()
-            if runway_ids:
+            if runway_ids is not None:
                 request_kwargs["runway_ids"] = runway_ids
-            if tower_ids:
+            if tower_ids is not None:
                 request_kwargs["tower_ids"] = tower_ids
 
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
@@ -1069,9 +1082,9 @@ class Sandbox:
 
             if self._max_lifetime_seconds is not None:
                 request_kwargs["max_lifetime_seconds"] = int(self._max_lifetime_seconds)
-            if self._runway_ids:
+            if self._runway_ids is not None:
                 request_kwargs["runway_ids"] = self._runway_ids
-            if self._tower_ids:
+            if self._tower_ids is not None:
                 request_kwargs["tower_ids"] = self._tower_ids
 
             request_kwargs.update(self._start_kwargs)

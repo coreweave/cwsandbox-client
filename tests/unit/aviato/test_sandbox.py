@@ -1196,3 +1196,61 @@ class TestSandboxServiceAddressAndExposedPorts:
 
                 assert sandbox.service_address is None
                 assert sandbox.exposed_ports is None
+
+
+class TestSandboxRunwayAndTowerIds:
+    """Tests for runway_ids and tower_ids parameters."""
+
+    def test_runway_ids_stored_on_sandbox(self) -> None:
+        """Test runway_ids are stored on sandbox instance."""
+        sandbox = Sandbox(runway_ids=["runway-1", "runway-2"])
+        assert sandbox._runway_ids == ["runway-1", "runway-2"]
+
+    def test_tower_ids_stored_on_sandbox(self) -> None:
+        """Test tower_ids are stored on sandbox instance."""
+        sandbox = Sandbox(tower_ids=["tower-1", "tower-2"])
+        assert sandbox._tower_ids == ["tower-1", "tower-2"]
+
+    def test_empty_runway_ids_overrides_defaults(self) -> None:
+        """Test empty runway_ids list overrides defaults."""
+        from aviato._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(runway_ids=("default-runway",))
+        sandbox = Sandbox(runway_ids=[], defaults=defaults)
+        assert sandbox._runway_ids == []
+
+    def test_empty_tower_ids_overrides_defaults(self) -> None:
+        """Test empty tower_ids list overrides defaults."""
+        from aviato._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(tower_ids=("default-tower",))
+        sandbox = Sandbox(tower_ids=[], defaults=defaults)
+        assert sandbox._tower_ids == []
+
+    def test_none_runway_ids_uses_defaults(self) -> None:
+        """Test None runway_ids falls back to defaults."""
+        from aviato._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(runway_ids=("default-runway",))
+        sandbox = Sandbox(defaults=defaults)
+        assert sandbox._runway_ids == ["default-runway"]
+
+    def test_none_tower_ids_uses_defaults(self) -> None:
+        """Test None tower_ids falls back to defaults."""
+        from aviato._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(tower_ids=("default-tower",))
+        sandbox = Sandbox(defaults=defaults)
+        assert sandbox._tower_ids == ["default-tower"]
+
+    def test_run_passes_runway_ids(self) -> None:
+        """Test Sandbox.run passes runway_ids to sandbox."""
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run(runway_ids=["runway-1"])
+            assert sandbox._runway_ids == ["runway-1"]
+
+    def test_run_passes_tower_ids(self) -> None:
+        """Test Sandbox.run passes tower_ids to sandbox."""
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run(tower_ids=["tower-1"])
+            assert sandbox._tower_ids == ["tower-1"]

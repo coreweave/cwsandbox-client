@@ -161,6 +161,8 @@ class Session:
         args: list[str] | None = None,
         container_image: str | None = None,
         tags: list[str] | None = None,
+        runway_ids: list[str] | None = None,
+        tower_ids: list[str] | None = None,
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -179,6 +181,8 @@ class Session:
             args: Arguments for the command
             container_image: Container image to use
             tags: Tags for the sandbox (merged with session defaults)
+            runway_ids: Optional list of runway IDs
+            tower_ids: Optional list of tower IDs
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
@@ -213,6 +217,8 @@ class Session:
             args=args,
             container_image=container_image,
             tags=tags,
+            runway_ids=runway_ids,
+            tower_ids=tower_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -296,12 +302,19 @@ class Session:
         merged_tags = self._defaults.merge_tags(tags)
 
         # Use session's default runway/tower IDs if not overridden
-        effective_runway_ids = runway_ids or (
-            list(self._defaults.runway_ids) if self._defaults.runway_ids else None
-        )
-        effective_tower_ids = tower_ids or (
-            list(self._defaults.tower_ids) if self._defaults.tower_ids else None
-        )
+        if runway_ids is not None:
+            effective_runway_ids = list(runway_ids)
+        elif self._defaults.runway_ids:
+            effective_runway_ids = list(self._defaults.runway_ids)
+        else:
+            effective_runway_ids = None
+
+        if tower_ids is not None:
+            effective_tower_ids = list(tower_ids)
+        elif self._defaults.tower_ids:
+            effective_tower_ids = list(self._defaults.tower_ids)
+        else:
+            effective_tower_ids = None
 
         sandboxes = await Sandbox._list_async(
             tags=merged_tags if merged_tags else None,
@@ -413,6 +426,8 @@ class Session:
         container_image: str | None = None,
         serialization: Serialization = Serialization.JSON,
         temp_dir: str | None = None,
+        runway_ids: builtins.list[str] | None = None,
+        tower_ids: builtins.list[str] | None = None,
         resources: dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -434,6 +449,8 @@ class Session:
                 but only in trusted environments.
             temp_dir: Override temp directory for payload/result files in sandbox.
                 Defaults to session default. Created if missing.
+            runway_ids: Optional list of runway IDs
+            tower_ids: Optional list of tower IDs
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
@@ -479,6 +496,8 @@ class Session:
                 container_image=container_image,
                 serialization=serialization,
                 temp_dir=temp_dir or self._defaults.temp_dir,
+                runway_ids=runway_ids,
+                tower_ids=tower_ids,
                 resources=resources,
                 mounted_files=list(mounted_files) if mounted_files else None,
                 s3_mount=s3_mount,
