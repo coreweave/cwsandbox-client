@@ -225,12 +225,19 @@ class Sandbox:
             environment_variables
         )
 
-        self._runway_ids = runway_ids or (
-            list(self._defaults.runway_ids) if self._defaults.runway_ids else None
-        )
-        self._tower_ids = tower_ids or (
-            list(self._defaults.tower_ids) if self._defaults.tower_ids else None
-        )
+        if runway_ids is not None:
+            self._runway_ids = list(runway_ids)
+        elif self._defaults.runway_ids:
+            self._runway_ids = list(self._defaults.runway_ids)
+        else:
+            self._runway_ids = None
+
+        if tower_ids is not None:
+            self._tower_ids = list(tower_ids)
+        elif self._defaults.tower_ids:
+            self._tower_ids = list(self._defaults.tower_ids)
+        else:
+            self._tower_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
         # Use explicit resources or fall back to defaults
@@ -264,6 +271,8 @@ class Sandbox:
         self._status_updated_at: datetime | None = None
         self._started_at: datetime | None = None
         self._tower_group_id: str | None = None
+        self._service_address: str | None = None
+        self._exposed_ports: tuple[tuple[int, str], ...] | None = None
 
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
@@ -277,6 +286,8 @@ class Sandbox:
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
+        runway_ids: list[str] | None = None,
+        tower_ids: list[str] | None = None,
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -299,6 +310,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
+            runway_ids: Optional list of runway IDs
+            tower_ids: Optional list of tower IDs
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
@@ -340,6 +353,8 @@ class Sandbox:
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
+            runway_ids=runway_ids,
+            tower_ids=tower_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -427,6 +442,8 @@ class Sandbox:
         sandbox._start_kwargs = {}
         sandbox._start_lock = asyncio.Lock()
         sandbox._loop_manager = _LoopManager.get()
+        sandbox._service_address = None
+        sandbox._exposed_ports = None
         return sandbox
 
     @classmethod
@@ -522,9 +539,9 @@ class Sandbox:
                 request_kwargs["tags"] = tags
             if status_enum:
                 request_kwargs["status"] = status_enum.to_proto()
-            if runway_ids:
+            if runway_ids is not None:
                 request_kwargs["runway_ids"] = runway_ids
-            if tower_ids:
+            if tower_ids is not None:
                 request_kwargs["tower_ids"] = tower_ids
 
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
@@ -794,6 +811,34 @@ class Sandbox:
         """Tower group ID where the sandbox is running."""
         return self._tower_group_id
 
+    @property
+    def service_address(self) -> str | None:
+        """External address for accessing sandbox services.
+
+        Returns an address like '166.19.9.70:8080' for network-accessible sandboxes
+        (SSH, web services). Availability depends on tower configuration.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - Tower uses ClusterIP instead of LoadBalancer
+        """
+        return self._service_address
+
+    @property
+    def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
+        """Exposed ports for the sandbox.
+
+        Returns a tuple of (container_port, name) tuples for ports exposed by
+        the sandbox. Useful for network-accessible sandboxes.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - No ports were exposed
+        """
+        return self._exposed_ports
+
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
@@ -1050,9 +1095,9 @@ class Sandbox:
 
             if self._max_lifetime_seconds is not None:
                 request_kwargs["max_lifetime_seconds"] = int(self._max_lifetime_seconds)
-            if self._runway_ids:
+            if self._runway_ids is not None:
                 request_kwargs["runway_ids"] = self._runway_ids
-            if self._tower_ids:
+            if self._tower_ids is not None:
                 request_kwargs["tower_ids"] = self._tower_ids
             if self._environment_variables:
                 request_kwargs["environment_variables"] = self._environment_variables
@@ -1078,6 +1123,12 @@ class Sandbox:
             self._sandbox_id = sandbox_id
             self._status = SandboxStatus.PENDING
             self._status_updated_at = datetime.now(UTC)
+            self._service_address = response.service_address or None
+            self._exposed_ports = (
+                tuple((p.container_port, p.name) for p in response.exposed_ports)
+                if response.exposed_ports
+                else None
+            )
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id

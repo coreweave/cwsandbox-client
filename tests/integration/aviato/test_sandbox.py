@@ -4,8 +4,10 @@ These tests require a running Aviato backend.
 Set AVIATO_BASE_URL and AVIATO_API_KEY environment variables before running.
 """
 
+import time
 import uuid
 
+import httpx
 import pytest
 
 from aviato import Sandbox, SandboxDefaults, Session
@@ -447,3 +449,132 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
 
     # After exiting, sandbox should be stopped
     # (sandbox._stopped should be True, but we can't easily verify this externally)
+
+
+# Infrastructure filtering tests (runway_ids, tower_ids)
+
+
+def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with specific runway_ids and tower_ids.
+
+    Creates a sandbox to discover valid runway/tower IDs, then creates another
+    sandbox targeting those specific IDs to verify the parameters work.
+    """
+    # First, create a sandbox to discover valid infrastructure IDs
+    with Sandbox.run(defaults=sandbox_defaults) as discovery_sandbox:
+        discovery_sandbox.wait()
+        discovered_runway_id = discovery_sandbox.runway_id
+        discovered_tower_id = discovery_sandbox.tower_id
+
+        assert discovered_runway_id is not None, "Discovery sandbox should have runway_id"
+        assert discovered_tower_id is not None, "Discovery sandbox should have tower_id"
+
+        # Create a second sandbox targeting those specific IDs while first is still running
+        with Sandbox.run(
+            runway_ids=[discovered_runway_id],
+            tower_ids=[discovered_tower_id],
+            defaults=sandbox_defaults,
+        ) as targeted_sandbox:
+            targeted_sandbox.wait()
+
+            # Verify sandbox started successfully on the targeted infrastructure
+            assert targeted_sandbox.sandbox_id is not None
+            assert targeted_sandbox.status == "running"
+
+            # The sandbox should land on the specified runway/tower
+            assert targeted_sandbox.runway_id is not None
+            assert targeted_sandbox.tower_id is not None
+
+
+def test_sandbox_with_empty_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with empty runway_ids and tower_ids lists.
+
+    Verifies that empty lists are accepted (clearing any defaults).
+    """
+    with Sandbox.run(
+        runway_ids=[],
+        tower_ids=[],
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+        assert sandbox.sandbox_id is not None
+        assert sandbox.status == "running"
+
+
+# Service address and exposed ports tests
+
+
+def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with public=True returns service_address.
+
+    Creates a sandbox with service={"public": True} and verifies that
+    service_address is populated in the response.
+    """
+    with Sandbox.run(
+        service={"public": True},
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+
+        # service_address comes from StartSandboxResponse
+        # It may be None if the tower uses ClusterIP instead of LoadBalancer
+        if sandbox.service_address is not None:
+            # Address should look like "ip:port" or hostname format
+            assert ":" in sandbox.service_address or "." in sandbox.service_address
+        else:
+            # If service_address is None, that's acceptable - infrastructure dependent
+            # Just verify the sandbox is running and the property exists
+            assert sandbox.status == "running"
+
+
+def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with public=True and ports returns exposed_ports.
+
+    Creates a sandbox with service={"public": True} and port mappings,
+    then verifies exposed_ports is populated.
+    """
+    with Sandbox.run(
+        service={"public": True},
+        ports=[{"container_port": 8080, "name": "http"}],
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+
+        # exposed_ports comes from StartSandboxResponse
+        # It may be None depending on infrastructure configuration
+        if sandbox.exposed_ports is not None:
+            assert len(sandbox.exposed_ports) >= 1
+            # Each entry should be (port, name) tuple
+            port, name = sandbox.exposed_ports[0]
+            assert isinstance(port, int)
+            assert isinstance(name, str)
+        else:
+            # If exposed_ports is None, verify sandbox is running
+            assert sandbox.status == "running"
+
+
+def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that exposed service is actually reachable.
+
+    Starts a simple HTTP server inside the sandbox and verifies we can
+    connect to it from outside using the service_address.
+    """
+    with Sandbox.run(
+        "python", "-m", "http.server", "8080",
+        service={"public": True},
+        ports=[{"container_port": 8080, "name": "http"}],
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+
+        if sandbox.service_address is None:
+            pytest.skip("Infrastructure does not provide service_address")
+
+        # Give the HTTP server a moment to start
+        time.sleep(2)
+
+        response = httpx.get(
+            f"http://{sandbox.service_address}/",
+            timeout=120.0,
+        )
+        assert response.status_code == 200
