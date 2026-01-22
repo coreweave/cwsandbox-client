@@ -52,3 +52,6 @@ CLAUDE.local.md
 
 # Claude Orchestration
 .atari/
+
+# Example output logs
+logs/

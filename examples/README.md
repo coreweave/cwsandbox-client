@@ -215,6 +215,18 @@ Demonstrates:
 - Client-side filtering after `Sandbox.list()`
 - Dry run mode for safe testing
 
+### SWE-bench Evaluation (`swebench/run_evaluation.py`)
+
+Demonstrates using Aviato as a backend for running agentic model evaluations at scale. The script runs SWE-bench evaluations in parallel using Aviato sandboxes, showing how to orchestrate many concurrent evaluation instances.
+
+Demonstrates:
+- Using `Session` with `ThreadPoolExecutor` for parallel sandbox execution
+- Integration with evaluation frameworks (SWE-bench)
+- Pre-built container images from external registries (Epoch AI)
+- Per-instance cleanup patterns for batch workloads
+
+See [SWE-bench Guide](../docs/guides/swebench.md) for full documentation.
+
 ---
 
 ## Async Example

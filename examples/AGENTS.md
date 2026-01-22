@@ -1,6 +1,6 @@
 # Examples
 
-Runnable example scripts (13 total) demonstrating aviato SDK usage patterns.
+Runnable example scripts (14 total) demonstrating aviato SDK usage patterns.
 
 ## API Patterns
 
@@ -21,6 +21,7 @@ Runnable example scripts (13 total) demonstrating aviato SDK usage patterns.
 | `parallel_batch_job.py` | Sync | `def main()` | Parallel batch processing with aviato.wait() |
 | `cleanup_by_tag.py` | Sync | `def main()` | Tag-based cleanup |
 | `cleanup_old_sandboxes.py` | Sync | `def main()` | Age-based cleanup |
+| `swebench/run_evaluation.py` | Sync | `def main()` | SWE-bench evaluation with parallel sandboxes |
 
 The `exec()` method returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 

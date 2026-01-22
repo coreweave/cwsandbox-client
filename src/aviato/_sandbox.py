@@ -1151,7 +1151,7 @@ class Sandbox:
                 self._started_at = (
                     response.started_at_time.ToDatetime() if response.started_at_time else None
                 )
-                logger.info("Sandbox %s is running", self._sandbox_id)
+                logger.debug("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
                 self._status = SandboxStatus.FAILED
                 self._status_updated_at = datetime.now(UTC)
