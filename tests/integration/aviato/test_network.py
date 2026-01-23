@@ -45,14 +45,14 @@ def network_sandbox(
         sandbox.stop(missing_ok=True).result()
 
 
-def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with ingress_mode=public returns service_address.
+def test_sandbox_internal_service_address(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with ingress_mode=internal returns service_address.
 
-    Creates a sandbox with network={"ingress_mode": "public"} and verifies that
+    Creates a sandbox with network={"ingress_mode": "internal"} and verifies that
     service_address is populated in the response.
     """
     with network_sandbox(
-        network={"ingress_mode": "public"},
+        network={"ingress_mode": "internal", "exposed_ports": [8080]},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -68,15 +68,14 @@ def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> No
             assert sandbox.status == "running"
 
 
-def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with ingress_mode=public and ports returns exposed_ports.
+def test_sandbox_internal_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with ingress_mode=internal returns exposed_ports.
 
-    Creates a sandbox with network config and port mappings,
-    then verifies exposed_ports is populated.
+    Creates a sandbox with network config (exposed_ports) and verifies
+    exposed_ports is populated in the response.
     """
     with network_sandbox(
-        network={"ingress_mode": "public", "exposed_ports": [8080]},
-        ports=[{"container_port": 8080, "name": "http"}],
+        network={"ingress_mode": "internal", "exposed_ports": [8080]},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -101,7 +100,7 @@ def test_sandbox_applied_network_modes(sandbox_defaults: SandboxDefaults) -> Non
     mode properties are populated in the response.
     """
     with network_sandbox(
-        network={"ingress_mode": "public"},
+        network={"ingress_mode": "internal", "exposed_ports": [8080]},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -123,7 +122,7 @@ def test_sandbox_applied_network_modes(sandbox_defaults: SandboxDefaults) -> Non
             assert len(sandbox.applied_egress_mode) > 0
 
 
-def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
+def test_sandbox_internal_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
     """Test that exposed service is actually reachable.
 
     Starts a simple HTTP server inside the sandbox and verifies we can
@@ -134,8 +133,7 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
         "-m",
         "http.server",
         "8080",
-        network={"ingress_mode": "public", "exposed_ports": [8080]},
-        ports=[{"container_port": 8080, "name": "http"}],
+        network={"ingress_mode": "internal", "exposed_ports": [8080]},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -187,7 +185,7 @@ def test_sandbox_ingress_and_egress_modes(sandbox_defaults: SandboxDefaults) -> 
     applied_ingress_mode and applied_egress_mode are populated.
     """
     with network_sandbox(
-        network={"ingress_mode": "public", "egress_mode": "default"},
+        network={"ingress_mode": "internal", "egress_mode": "default", "exposed_ports": [8080]},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -221,7 +219,7 @@ def test_session_sandbox_with_network(sandbox_defaults: SandboxDefaults) -> None
             sandbox = session.sandbox(
                 command="sleep",
                 args=["infinity"],
-                network={"ingress_mode": "public", "egress_mode": "default"},
+                network={"ingress_mode": "internal", "egress_mode": "default", "exposed_ports": [8080]},
             )
         except ValueError as e:
             if "network" in str(e) and "no" in str(e).lower() and "field" in str(e).lower():
