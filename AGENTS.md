@@ -61,7 +61,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `mounted_files` - Files to mount into the sandbox
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
-- `service` - Service configuration for network access
+- `network` - Network configuration for service exposure (ingress_mode, exposed_ports, egress_mode)
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
 
 Class methods:

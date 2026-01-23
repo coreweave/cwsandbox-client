@@ -131,16 +131,39 @@ sandbox = Sandbox.run(
 |-------|------|-------------|
 | `container_port` | int | Port inside the sandbox |
 
-## Service
+## Network
 
-Configure network service options:
+Configure network options for service exposure and egress:
 
 ```python
+# Expose ports publicly with ingress_mode
 sandbox = Sandbox.run(
-    service={
-        "name": "my-service",
+    "python", "-m", "http.server", "8080",
+    ports=[{"container_port": 8080}],
+    network={
+        "ingress_mode": "public",
+        "exposed_ports": [8080],
     },
 )
+
+# Access the service_address property after sandbox is running
+sandbox.wait()
+print(sandbox.service_address)  # e.g., "166.19.9.70:8080"
+```
+
+### Network Options
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ingress_mode` | str | Mode for incoming traffic (e.g., "public", "internal"). Tower-specific. |
+| `exposed_ports` | list[int] | Container ports to expose via the Kubernetes Service. |
+| `egress_mode` | str | Mode for outgoing traffic (e.g., "direct", "natgateway"). Tower-specific. |
+
+After the sandbox starts, you can check the applied modes:
+
+```python
+print(sandbox.applied_ingress_mode)  # Actual mode applied by backend
+print(sandbox.applied_egress_mode)
 ```
 
 ## Timeouts

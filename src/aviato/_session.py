@@ -167,7 +167,7 @@ class Session:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
@@ -188,7 +188,10 @@ class Session:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration for service exposure. Dict with keys:
+                - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
+                - exposed_ports: List of container port numbers to expose
+                - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -227,7 +230,7 @@ class Session:
             mounted_files=mounted_files,
             s3_mount=s3_mount,
             ports=ports,
-            service=service,
+            network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             defaults=self._defaults,
@@ -437,7 +440,7 @@ class Session:
         mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: Sequence[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
@@ -461,7 +464,10 @@ class Session:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration for service exposure. Dict with keys:
+                - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
+                - exposed_ports: List of container port numbers to expose
+                - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -511,7 +517,7 @@ class Session:
                 mounted_files=list(mounted_files) if mounted_files else None,
                 s3_mount=s3_mount,
                 ports=list(ports) if ports else None,
-                service=service,
+                network=network,
                 max_timeout_seconds=max_timeout_seconds,
                 environment_variables=environment_variables,
             )

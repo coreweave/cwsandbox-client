@@ -167,7 +167,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         _session: Session | None = None,
@@ -190,7 +190,10 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration for service exposure. Dict with keys:
+                - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
+                - exposed_ports: List of container port numbers to expose
+                - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -250,8 +253,8 @@ class Sandbox:
             self._start_kwargs["s3_mount"] = s3_mount
         if ports is not None:
             self._start_kwargs["ports"] = ports
-        if service is not None:
-            self._start_kwargs["service"] = service
+        if network is not None:
+            self._start_kwargs["network"] = network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
@@ -273,6 +276,8 @@ class Sandbox:
         self._tower_group_id: str | None = None
         self._service_address: str | None = None
         self._exposed_ports: tuple[tuple[int, str], ...] | None = None
+        self._applied_ingress_mode: str | None = None
+        self._applied_egress_mode: str | None = None
 
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
@@ -292,7 +297,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
@@ -316,7 +321,10 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration for service exposure. Dict with keys:
+                - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
+                - exposed_ports: List of container port numbers to expose
+                - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -359,7 +367,7 @@ class Sandbox:
             mounted_files=mounted_files,
             s3_mount=s3_mount,
             ports=ports,
-            service=service,
+            network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
         )
@@ -839,6 +847,38 @@ class Sandbox:
         """
         return self._exposed_ports
 
+    @property
+    def applied_ingress_mode(self) -> str | None:
+        """The ingress mode that was applied to this sandbox.
+
+        This is the actual network ingress mode applied by the backend, which may
+        differ from what was requested if the backend applied defaults. Common
+        values include "public", "internal", or custom modes configured by the
+        tower operator.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - No network configuration was requested
+        """
+        return self._applied_ingress_mode
+
+    @property
+    def applied_egress_mode(self) -> str | None:
+        """The egress mode that was applied to this sandbox.
+
+        This is the actual network egress mode applied by the backend, which may
+        differ from what was requested if the backend applied defaults. Common
+        values include "direct", "natgateway", or custom modes configured by the
+        tower operator.
+
+        Returns None if:
+        - Sandbox hasn't been started yet
+        - Sandbox was obtained via from_id() or list()
+        - No network configuration was requested
+        """
+        return self._applied_egress_mode
+
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
@@ -1128,6 +1168,12 @@ class Sandbox:
                 tuple((p.container_port, p.name) for p in response.exposed_ports)
                 if response.exposed_ports
                 else None
+            )
+            self._applied_ingress_mode = (
+                getattr(response, "applied_ingress_mode", None) or None
+            )
+            self._applied_egress_mode = (
+                getattr(response, "applied_egress_mode", None) or None
             )
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)

@@ -505,13 +505,13 @@ def test_sandbox_with_empty_runway_and_tower_ids(sandbox_defaults: SandboxDefaul
 
 
 def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public=True returns service_address.
+    """Test sandbox with ingress_mode=public returns service_address.
 
-    Creates a sandbox with service={"public": True} and verifies that
+    Creates a sandbox with network={"ingress_mode": "public"} and verifies that
     service_address is populated in the response.
     """
     with Sandbox.run(
-        service={"public": True},
+        network={"ingress_mode": "public"},
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -528,13 +528,13 @@ def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> No
 
 
 def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public=True and ports returns exposed_ports.
+    """Test sandbox with ingress_mode=public and ports returns exposed_ports.
 
-    Creates a sandbox with service={"public": True} and port mappings,
+    Creates a sandbox with network config and port mappings,
     then verifies exposed_ports is populated.
     """
     with Sandbox.run(
-        service={"public": True},
+        network={"ingress_mode": "public", "exposed_ports": [8080]},
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
     ) as sandbox:
@@ -561,7 +561,7 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
     """
     with Sandbox.run(
         "python", "-m", "http.server", "8080",
-        service={"public": True},
+        network={"ingress_mode": "public", "exposed_ports": [8080]},
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
     ) as sandbox:
