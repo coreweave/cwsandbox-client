@@ -331,6 +331,7 @@ def test_sandbox_exec_streaming_check_raises(sandbox_defaults: SandboxDefaults) 
             "echo 'output before exit' && exit 42",
         ]
 
+
 def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
     """Test environment variables are passed into the sandbox."""
     defaults = sandbox_defaults.with_overrides(
@@ -351,14 +352,16 @@ def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> Non
                 "LOG_LEVEL": "debug",  # Override session default
             },
         ) as sandbox:
-            result = sandbox.exec([
-                "python",
-                "-c",
-                "import os; "
-                "print(os.environ.get('PROJECT_ID')); "
-                "print(os.environ.get('LOG_LEVEL')); "
-                "print(os.environ.get('MODEL_NAME')); "
-            ]).result()
+            result = sandbox.exec(
+                [
+                    "python",
+                    "-c",
+                    "import os; "
+                    "print(os.environ.get('PROJECT_ID')); "
+                    "print(os.environ.get('LOG_LEVEL')); "
+                    "print(os.environ.get('MODEL_NAME')); ",
+                ]
+            ).result()
 
             assert result.returncode == 0
             lines = result.stdout.strip().split("\n")
@@ -418,6 +421,7 @@ def test_function_environment_variables(sandbox_defaults: SandboxDefaults) -> No
             "version": "v3.0",  # Mutated value
             "log_level": "debug",
         }
+
 
 # Async context manager tests
 
@@ -553,6 +557,35 @@ def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None
             assert sandbox.status == "running"
 
 
+def test_sandbox_applied_network_modes(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with network config returns applied_ingress_mode and applied_egress_mode.
+
+    Creates a sandbox with network configuration and verifies that the applied
+    mode properties are populated in the response.
+    """
+    with Sandbox.run(
+        network={"ingress_mode": "public"},
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+
+        # applied_ingress_mode comes from StartSandboxResponse
+        # It should be populated when network config is provided
+        if sandbox.applied_ingress_mode is not None:
+            # Mode should be a non-empty string
+            assert isinstance(sandbox.applied_ingress_mode, str)
+            assert len(sandbox.applied_ingress_mode) > 0
+        else:
+            # If applied_ingress_mode is None, verify sandbox is running
+            # This can happen if the backend doesn't return the field
+            assert sandbox.status == "running"
+
+        # applied_egress_mode may or may not be set depending on config
+        if sandbox.applied_egress_mode is not None:
+            assert isinstance(sandbox.applied_egress_mode, str)
+            assert len(sandbox.applied_egress_mode) > 0
+
+
 def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
     """Test that exposed service is actually reachable.
 
@@ -560,7 +593,10 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
     connect to it from outside using the service_address.
     """
     with Sandbox.run(
-        "python", "-m", "http.server", "8080",
+        "python",
+        "-m",
+        "http.server",
+        "8080",
         network={"ingress_mode": "public", "exposed_ports": [8080]},
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,

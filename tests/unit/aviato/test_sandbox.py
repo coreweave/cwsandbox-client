@@ -1269,6 +1269,145 @@ class TestSandboxServiceAddressAndExposedPorts:
                 assert sandbox.exposed_ports is None
 
 
+class TestSandboxAppliedModes:
+    """Tests for applied_ingress_mode and applied_egress_mode properties."""
+
+    def test_applied_ingress_mode_none_before_start(self) -> None:
+        """Test applied_ingress_mode is None before sandbox is started."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.applied_ingress_mode is None
+
+    def test_applied_egress_mode_none_before_start(self) -> None:
+        """Test applied_egress_mode is None before sandbox is started."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.applied_egress_mode is None
+
+    def test_start_captures_applied_ingress_mode(self) -> None:
+        """Test start() captures applied_ingress_mode from response."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = "public"
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_ingress_mode == "public"
+
+    def test_start_captures_applied_egress_mode(self) -> None:
+        """Test start() captures applied_egress_mode from response."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = "direct"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_egress_mode == "direct"
+
+    def test_start_treats_empty_applied_ingress_mode_as_none(self) -> None:
+        """Test start() treats empty string applied_ingress_mode as None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_ingress_mode is None
+
+    def test_start_treats_empty_applied_egress_mode_as_none(self) -> None:
+        """Test start() treats empty string applied_egress_mode as None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_egress_mode is None
+
+    def test_start_captures_both_applied_modes(self) -> None:
+        """Test start() captures both applied_ingress_mode and applied_egress_mode."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = "10.0.0.1:8080"
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = "public"
+        mock_start_response.applied_egress_mode = "natgateway"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_ingress_mode == "public"
+            assert sandbox.applied_egress_mode == "natgateway"
+
+    @pytest.mark.asyncio
+    async def test_from_id_has_none_for_applied_modes(self, mock_aviato_api_key: str) -> None:
+        """Test from_id() returns sandbox with None applied modes."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        mock_response = atc_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_instance = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+
+            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
+                mock_atc_instance = MagicMock()
+                mock_atc_client.return_value = mock_atc_instance
+                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+
+                sandbox = await Sandbox.from_id("test-123")
+
+                assert sandbox.applied_ingress_mode is None
+                assert sandbox.applied_egress_mode is None
+
+
 class TestSandboxRunwayAndTowerIds:
     """Tests for runway_ids and tower_ids parameters."""
 

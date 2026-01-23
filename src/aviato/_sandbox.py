@@ -452,6 +452,8 @@ class Sandbox:
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
+        sandbox._applied_ingress_mode = None
+        sandbox._applied_egress_mode = None
         return sandbox
 
     @classmethod
@@ -1169,12 +1171,8 @@ class Sandbox:
                 if response.exposed_ports
                 else None
             )
-            self._applied_ingress_mode = (
-                getattr(response, "applied_ingress_mode", None) or None
-            )
-            self._applied_egress_mode = (
-                getattr(response, "applied_egress_mode", None) or None
-            )
+            self._applied_ingress_mode = getattr(response, "applied_ingress_mode", None) or None
+            self._applied_egress_mode = getattr(response, "applied_egress_mode", None) or None
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id

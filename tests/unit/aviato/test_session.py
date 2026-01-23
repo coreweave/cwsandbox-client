@@ -68,6 +68,7 @@ class TestSessionSandbox:
             "MODEL_NAME": "gpt2",  # Added
         }
 
+
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
