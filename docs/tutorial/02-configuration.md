@@ -47,5 +47,5 @@ Mounted files are read-only. Use `write_file()` for files that need modification
 
 ---
 
-For reusable configuration across multiple sandboxes, use `SandboxDefaults`. See the [Sandbox Configuration Guide](../guides/sandbox-configuration.md) for all available options including GPU resources, ports, and services.
+For reusable configuration across multiple sandboxes, use `SandboxDefaults`. See the [Sandbox Configuration Guide](../guides/sandbox-configuration.md) for all available options including GPU resources, ports, and network options.
 
