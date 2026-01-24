@@ -150,6 +150,9 @@ class Sandbox:
         started_at: When sandbox started running.
     """
 
+    _runway_ids: list[str] | None
+    _tower_ids: list[str] | None
+
     def __init__(
         self,
         *,
@@ -166,7 +169,7 @@ class Sandbox:
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
+        sandbox_ports: list[dict[str, Any]] | None = None,
         network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
@@ -189,10 +192,13 @@ class Sandbox:
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
+            sandbox_ports: Port mappings for the sandbox. If not provided but
+                network.exposed_ports is set, sandbox_ports will be auto-populated
+                from exposed_ports using TCP protocol and "port-{number}" names.
             network: Network configuration for service exposure. Dict with keys:
                 - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
-                - exposed_ports: List of container port numbers to expose
+                - exposed_ports: List of container port numbers to expose (must be a
+                    subset of sandbox_ports)
                 - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
@@ -228,19 +234,17 @@ class Sandbox:
             environment_variables
         )
 
+        self._runway_ids: list[str] | None = None
         if runway_ids is not None:
             self._runway_ids = list(runway_ids)
         elif self._defaults.runway_ids:
             self._runway_ids = list(self._defaults.runway_ids)
-        else:
-            self._runway_ids = None
 
+        self._tower_ids: list[str] | None = None
         if tower_ids is not None:
             self._tower_ids = list(tower_ids)
         elif self._defaults.tower_ids:
             self._tower_ids = list(self._defaults.tower_ids)
-        else:
-            self._tower_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
         # Use explicit resources or fall back to defaults
@@ -251,8 +255,8 @@ class Sandbox:
             self._start_kwargs["mounted_files"] = mounted_files
         if s3_mount is not None:
             self._start_kwargs["s3_mount"] = s3_mount
-        if ports is not None:
-            self._start_kwargs["ports"] = ports
+        if sandbox_ports is not None:
+            self._start_kwargs["sandbox_ports"] = sandbox_ports
         if network is not None:
             self._start_kwargs["network"] = network
         if max_timeout_seconds is not None:
@@ -296,7 +300,7 @@ class Sandbox:
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
+        sandbox_ports: list[dict[str, Any]] | None = None,
         network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
@@ -320,10 +324,13 @@ class Sandbox:
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
+            sandbox_ports: Port mappings for the sandbox. If not provided but
+                network.exposed_ports is set, sandbox_ports will be auto-populated
+                from exposed_ports using TCP protocol and "port-{number}" names.
             network: Network configuration for service exposure. Dict with keys:
                 - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
-                - exposed_ports: List of container port numbers to expose
+                - exposed_ports: List of container port numbers to expose (must be a
+                    subset of sandbox_ports)
                 - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
@@ -366,7 +373,7 @@ class Sandbox:
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
-            ports=ports,
+            sandbox_ports=sandbox_ports,
             network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
@@ -1145,6 +1152,24 @@ class Sandbox:
                 request_kwargs["environment_variables"] = self._environment_variables
 
             request_kwargs.update(self._start_kwargs)
+
+            # Auto-populate sandbox_ports from network.exposed_ports if not provided
+            network_config = request_kwargs.get("network")
+            if network_config and "exposed_ports" in network_config:
+                exposed_ports = network_config["exposed_ports"]
+                if exposed_ports and not request_kwargs.get("sandbox_ports"):
+                    request_kwargs["sandbox_ports"] = [
+                        {
+                            "container_port": port,
+                            "name": f"port-{port}",
+                            "protocol": "TCP",
+                        }
+                        for port in exposed_ports
+                    ]
+
+            # Map SDK's sandbox_ports to protobuf field name (ports)
+            if "sandbox_ports" in request_kwargs:
+                request_kwargs["ports"] = request_kwargs.pop("sandbox_ports")
 
             logger.debug("Starting sandbox with image %s", self._container_image)
 

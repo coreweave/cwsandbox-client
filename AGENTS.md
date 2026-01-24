@@ -60,8 +60,8 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `resources` - Resource requests (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox
 - `s3_mount` - S3 bucket mount configuration
-- `ports` - Port mappings for the sandbox
-- `network` - Network configuration for service exposure (ingress_mode, exposed_ports, egress_mode)
+- `sandbox_ports` - Port mappings for the sandbox. If not provided but network.exposed_ports is set, auto-populated using TCP protocol and "port-{number}" names.
+- `network` - Network configuration for service exposure (ingress_mode, exposed_ports, egress_mode). Note: exposed_ports must be a subset of sandbox_ports.
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
 
 Class methods:

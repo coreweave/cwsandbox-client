@@ -889,13 +889,13 @@ class TestSandboxKwargsValidation:
             command="echo",
             args=["hello"],
             resources={"cpu": "100m", "memory": "128Mi"},
-            ports=[{"container_port": 8080}],
+            sandbox_ports=[{"container_port": 8080}],
             network={"ingress_mode": "public", "exposed_ports": [8080]},
             max_timeout_seconds=60,
             environment_variables={"TEST_ENV_VAR": "test-value"},
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
-        assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+        assert sandbox._start_kwargs["sandbox_ports"] == [{"container_port": 8080}]
         expected_network = {"ingress_mode": "public", "exposed_ports": [8080]}
         assert sandbox._start_kwargs["network"] == expected_network
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
@@ -928,11 +928,11 @@ class TestSandboxKwargsValidation:
                 "echo",
                 "hello",
                 resources={"cpu": "100m"},
-                ports=[{"container_port": 8080}],
+                sandbox_ports=[{"container_port": 8080}],
             )
             mock_start.assert_called_once()
             assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
-            assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+            assert sandbox._start_kwargs["sandbox_ports"] == [{"container_port": 8080}]
 
     def test_run_with_invalid_kwargs(self) -> None:
         """Test Sandbox.run rejects invalid kwargs."""
@@ -942,6 +942,131 @@ class TestSandboxKwargsValidation:
                 "hello",
                 invalid_param="value",
             )
+
+
+class TestSandboxPortsAutoPopulation:
+    """Tests for auto-population of sandbox_ports from network.exposed_ports."""
+
+    @pytest.mark.asyncio
+    async def test_auto_populates_sandbox_ports_from_exposed_ports(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test sandbox_ports is auto-populated from network.exposed_ports when not provided."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            network={"ingress_mode": "internal", "exposed_ports": [8080, 9000]},
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            await sandbox._start_async()
+
+            # Verify start was called with auto-populated ports (mapped from sandbox_ports)
+            start_call = sandbox._client.start.call_args
+            request = start_call[0][0]
+            # The SDK maps sandbox_ports to the protobuf field 'ports'
+            assert len(request.ports) == 2
+            assert request.ports[0].container_port == 8080
+            assert request.ports[0].name == "port-8080"
+            assert request.ports[0].protocol == "TCP"
+            assert request.ports[1].container_port == 9000
+            assert request.ports[1].name == "port-9000"
+            assert request.ports[1].protocol == "TCP"
+
+    @pytest.mark.asyncio
+    async def test_explicit_sandbox_ports_not_overwritten(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test explicit sandbox_ports are not overwritten by auto-population."""
+        explicit_ports = [{"container_port": 8080, "name": "custom-http", "protocol": "UDP"}]
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            sandbox_ports=explicit_ports,
+            network={"ingress_mode": "internal", "exposed_ports": [8080, 9000]},
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            await sandbox._start_async()
+
+            # Verify start was called with explicit ports (mapped from sandbox_ports)
+            start_call = sandbox._client.start.call_args
+            request = start_call[0][0]
+            # The SDK maps sandbox_ports to the protobuf field 'ports'
+            # Only the explicit port should be present, not auto-populated ones
+            assert len(request.ports) == 1
+            assert request.ports[0].container_port == 8080
+            assert request.ports[0].name == "custom-http"
+            assert request.ports[0].protocol == "UDP"
+
+    @pytest.mark.asyncio
+    async def test_no_auto_population_when_no_exposed_ports(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test no auto-population when network has no exposed_ports."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            network={"egress_mode": "default"},
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            await sandbox._start_async()
+
+            # Verify start was called without ports
+            start_call = sandbox._client.start.call_args
+            request = start_call[0][0]
+            assert len(request.ports) == 0
+
+    @pytest.mark.asyncio
+    async def test_no_auto_population_when_no_network(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test no auto-population when no network config provided."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            await sandbox._start_async()
+
+            # Verify start was called without ports
+            start_call = sandbox._client.start.call_args
+            request = start_call[0][0]
+            assert len(request.ports) == 0
 
 
 class TestSandboxList:

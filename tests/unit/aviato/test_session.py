@@ -346,10 +346,10 @@ class TestSessionKwargsValidation:
                 command="echo",
                 args=["hello"],
                 resources={"cpu": "100m"},
-                ports=[{"container_port": 8080}],
+                sandbox_ports=[{"container_port": 8080}],
             )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
-        assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+        assert sandbox._start_kwargs["sandbox_ports"] == [{"container_port": 8080}]
 
     def test_sandbox_with_invalid_kwargs(self) -> None:
         """Test Session.sandbox rejects invalid kwargs."""
@@ -367,7 +367,7 @@ class TestSessionKwargsValidation:
 
         @session.function(
             resources={"cpu": "100m"},
-            ports=[{"container_port": 8080}],
+            sandbox_ports=[{"container_port": 8080}],
         )
         def add(x: int, y: int) -> int:
             return x + y

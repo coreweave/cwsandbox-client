@@ -219,7 +219,11 @@ def test_session_sandbox_with_network(sandbox_defaults: SandboxDefaults) -> None
             sandbox = session.sandbox(
                 command="sleep",
                 args=["infinity"],
-                network={"ingress_mode": "internal", "egress_mode": "default", "exposed_ports": [8080]},
+                network={
+                    "ingress_mode": "internal",
+                    "egress_mode": "default",
+                    "exposed_ports": [8080],
+                },
             )
         except ValueError as e:
             if "network" in str(e) and "no" in str(e).lower() and "field" in str(e).lower():

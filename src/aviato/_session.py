@@ -166,7 +166,7 @@ class Session:
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
+        sandbox_ports: list[dict[str, Any]] | None = None,
         network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
@@ -187,10 +187,13 @@ class Session:
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
+            sandbox_ports: Port mappings for the sandbox. If not provided but
+                network.exposed_ports is set, sandbox_ports will be auto-populated
+                from exposed_ports using TCP protocol and "port-{number}" names.
             network: Network configuration for service exposure. Dict with keys:
                 - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
-                - exposed_ports: List of container port numbers to expose
+                - exposed_ports: List of container port numbers to expose (must be a
+                    subset of sandbox_ports)
                 - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
@@ -229,7 +232,7 @@ class Session:
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
-            ports=ports,
+            sandbox_ports=sandbox_ports,
             network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
@@ -439,7 +442,7 @@ class Session:
         resources: dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
-        ports: Sequence[dict[str, Any]] | None = None,
+        sandbox_ports: Sequence[dict[str, Any]] | None = None,
         network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
@@ -463,10 +466,13 @@ class Session:
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
+            sandbox_ports: Port mappings for the sandbox. If not provided but
+                network.exposed_ports is set, sandbox_ports will be auto-populated
+                from exposed_ports using TCP protocol and "port-{number}" names.
             network: Network configuration for service exposure. Dict with keys:
                 - ingress_mode: Mode name for incoming traffic (e.g., "public", "internal")
-                - exposed_ports: List of container port numbers to expose
+                - exposed_ports: List of container port numbers to expose (must be a
+                    subset of sandbox_ports)
                 - egress_mode: Mode name for outgoing traffic (e.g., "direct", "natgateway")
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
@@ -516,7 +522,7 @@ class Session:
                 resources=resources,
                 mounted_files=list(mounted_files) if mounted_files else None,
                 s3_mount=s3_mount,
-                ports=list(ports) if ports else None,
+                sandbox_ports=list(sandbox_ports) if sandbox_ports else None,
                 network=network,
                 max_timeout_seconds=max_timeout_seconds,
                 environment_variables=environment_variables,
