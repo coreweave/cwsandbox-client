@@ -993,17 +993,16 @@ class TestSandboxPortsAutoPopulation:
 
             await sandbox._start_async()
 
-            # Verify start was called with auto-populated ports (mapped from sandbox_ports)
+            # Verify start was called with auto-populated sandbox_ports
             start_call = sandbox._client.start.call_args
             request = start_call[0][0]
-            # The SDK maps sandbox_ports to the protobuf field 'ports'
-            assert len(request.ports) == 2
-            assert request.ports[0].container_port == 8080
-            assert request.ports[0].name == "port-8080"
-            assert request.ports[0].protocol == "TCP"
-            assert request.ports[1].container_port == 9000
-            assert request.ports[1].name == "port-9000"
-            assert request.ports[1].protocol == "TCP"
+            assert len(request.sandbox_ports) == 2
+            assert request.sandbox_ports[0].container_port == 8080
+            assert request.sandbox_ports[0].name == "port-8080"
+            assert request.sandbox_ports[0].protocol == "TCP"
+            assert request.sandbox_ports[1].container_port == 9000
+            assert request.sandbox_ports[1].name == "port-9000"
+            assert request.sandbox_ports[1].protocol == "TCP"
 
     @pytest.mark.asyncio
     async def test_explicit_sandbox_ports_not_overwritten(
@@ -1029,15 +1028,14 @@ class TestSandboxPortsAutoPopulation:
 
             await sandbox._start_async()
 
-            # Verify start was called with explicit ports (mapped from sandbox_ports)
+            # Verify start was called with explicit sandbox_ports
             start_call = sandbox._client.start.call_args
             request = start_call[0][0]
-            # The SDK maps sandbox_ports to the protobuf field 'ports'
             # Only the explicit port should be present, not auto-populated ones
-            assert len(request.ports) == 1
-            assert request.ports[0].container_port == 8080
-            assert request.ports[0].name == "custom-http"
-            assert request.ports[0].protocol == "UDP"
+            assert len(request.sandbox_ports) == 1
+            assert request.sandbox_ports[0].container_port == 8080
+            assert request.sandbox_ports[0].name == "custom-http"
+            assert request.sandbox_ports[0].protocol == "UDP"
 
     @pytest.mark.asyncio
     async def test_no_auto_population_when_no_exposed_ports(
@@ -1061,10 +1059,10 @@ class TestSandboxPortsAutoPopulation:
 
             await sandbox._start_async()
 
-            # Verify start was called without ports
+            # Verify start was called without sandbox_ports
             start_call = sandbox._client.start.call_args
             request = start_call[0][0]
-            assert len(request.ports) == 0
+            assert len(request.sandbox_ports) == 0
 
     @pytest.mark.asyncio
     async def test_no_auto_population_when_no_network(
@@ -1087,10 +1085,10 @@ class TestSandboxPortsAutoPopulation:
 
             await sandbox._start_async()
 
-            # Verify start was called without ports
+            # Verify start was called without sandbox_ports
             start_call = sandbox._client.start.call_args
             request = start_call[0][0]
-            assert len(request.ports) == 0
+            assert len(request.sandbox_ports) == 0
 
 
 class TestSandboxList:

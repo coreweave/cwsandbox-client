@@ -1167,10 +1167,6 @@ class Sandbox:
                         for port in exposed_ports
                     ]
 
-            # Map SDK's sandbox_ports to protobuf field name (ports)
-            if "sandbox_ports" in request_kwargs:
-                request_kwargs["ports"] = request_kwargs.pop("sandbox_ports")
-
             logger.debug("Starting sandbox with image %s", self._container_image)
 
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
