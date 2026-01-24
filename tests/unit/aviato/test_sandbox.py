@@ -658,6 +658,30 @@ class TestSandboxStart:
             with pytest.raises(SandboxNotRunningError, match="Sandbox start was cancelled"):
                 sandbox.start()
 
+    def test_start_captures_tower_runway_status_from_response(self) -> None:
+        """Test start captures tower_id, runway_id, and status from response."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        from aviato._sandbox import SandboxStatus
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.tower_id = "tower-123"
+        mock_start_response.runway_id = "runway-456"
+        mock_start_response.sandbox_status = atc_pb2.SANDBOX_STATUS_CREATING
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.tower_id == "tower-123"
+            assert sandbox.runway_id == "runway-456"
+            assert sandbox.status == SandboxStatus.CREATING
+
 
 class TestSandboxWaitForRunning:
     """Tests for wait() which waits until RUNNING status."""

@@ -1188,7 +1188,9 @@ class Sandbox:
 
             sandbox_id = str(response.sandbox_id)
             self._sandbox_id = sandbox_id
-            self._status = SandboxStatus.PENDING
+            self._tower_id = response.tower_id or None
+            self._runway_id = response.runway_id or None
+            self._status = SandboxStatus.from_proto(response.sandbox_status)
             self._status_updated_at = datetime.now(UTC)
             self._service_address = response.service_address or None
             self._exposed_ports = (
@@ -1199,7 +1201,7 @@ class Sandbox:
             self._applied_ingress_mode = getattr(response, "applied_ingress_mode", None) or None
             self._applied_egress_mode = getattr(response, "applied_egress_mode", None) or None
 
-            logger.debug("Sandbox %s created (pending)", sandbox_id)
+            logger.debug("Sandbox %s created (status=%s)", sandbox_id, self._status.value)
             return sandbox_id
 
     async def _wait_until_running_async(self, timeout: float | None = None) -> None:
