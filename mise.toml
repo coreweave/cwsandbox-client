@@ -89,3 +89,49 @@ run = [
 description = "Run pre-commit hooks"
 run = "uv run pre-commit run --all-files"
 alias = "pc"
+
+# =============================================================================
+# Local Development (Backend Integration)
+# =============================================================================
+
+[tasks."dev:protos"]
+description = "Regenerate Python protos from local backend and install"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKEND_DIR="${AVIATO_BACKEND_DIR:-../aviato}"
+
+if [[ ! -d "$BACKEND_DIR" ]]; then
+    echo "Error: Backend directory not found at $BACKEND_DIR"
+    echo "Set AVIATO_BACKEND_DIR to the correct path"
+    exit 1
+fi
+
+GEN_PYTHON_DIR="$BACKEND_DIR/gen/python"
+
+echo "Generating Python protos..."
+(cd "$BACKEND_DIR" && buf generate --template buf.gen.python.yaml --include-imports)
+
+# Set up namespace packages and pyproject.toml for local install
+touch "$GEN_PYTHON_DIR/google/__init__.py" "$GEN_PYTHON_DIR/google/api/__init__.py"
+cat > "$GEN_PYTHON_DIR/pyproject.toml" << 'EOF'
+[project]
+name = "coreweave-aviato-connectrpc-python"
+version = "0.0.0.dev0"
+dependencies = ["protobuf>=5.29.0", "connect-python", "googleapis-common-protos"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["coreweave", "google"]
+EOF
+
+echo "Installing local protos..."
+uv lock --upgrade-package protobuf && uv sync --extra dev
+uv pip install -e "$GEN_PYTHON_DIR"
+
+echo "Done!"
+"""

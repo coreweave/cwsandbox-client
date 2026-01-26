@@ -8,6 +8,9 @@ packages = ["src/aviato"]
 [[tool.uv.index]]
 url = "https://buf.build/gen/python"
 
+[tool.uv.sources]
+coreweave-aviato-connectrpc-python = { path = "../aviato/gen/python" }
+
 [project]
 name = "aviato"
 version = "0.1.0"
