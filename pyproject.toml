@@ -69,7 +69,6 @@ addopts = [
     "--showlocals",
 ]
 asyncio_mode = "auto"
-env_files = [".env"]
 
 [tool.coverage.run]
 source = ["src"]
