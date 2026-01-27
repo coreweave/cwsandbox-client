@@ -1,21 +1,16 @@
-# ART: Aviato Reward Toolkit dependencies
+# ART: Agent Reinforcement Trainer dependencies
+#
+# Install aviato from source first:
+#   uv pip install -e .
 
-# Core
-aviato
+# ART framework for multi-step agent training
+openpipe-art==0.5.7
 
-# LLM inference
-openai
+# LLM inference (for OpenAI-compatible backends)
+openai==2.15.0
 
 # Dataset loading
-datasets
+datasets==4.5.0
 
-# Logging and experiment tracking
-wandb
-
-# Optional: Full training support
-transformers
-trl
-torch
-
-# Optional: vLLM serving (install separately for GPU inference)
-# pip install vllm
+# Optional: W&B logging
+wandb==0.24.0
