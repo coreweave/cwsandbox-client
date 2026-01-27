@@ -151,9 +151,7 @@ def main() -> None:
 
         print("\nFinal summary (original order):")
         print("-" * 60)
-        for i, (test_id, reward, exp) in enumerate(
-            zip(test_cases, rewards, expected, strict=True)
-        ):
+        for i, (test_id, reward, exp) in enumerate(zip(test_cases, rewards, expected, strict=True)):
             status = "PASS" if reward == 1.0 else "FAIL"
             match = "OK" if (reward == 1.0) == (exp == "pass") else "UNEXPECTED"
             print(f"  Problem {i} ({test_id}): reward={reward:.1f} [{status}] {match}")

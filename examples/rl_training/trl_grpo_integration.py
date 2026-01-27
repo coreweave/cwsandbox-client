@@ -77,10 +77,13 @@ def make_reward_function(session: Session, training_step: int = 0):
 
         # Create sandboxes and execute non-empty code in parallel
         processes = [
-            (i, session.sandbox().exec(
-                ["python", "-c", code],
-                timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
-            ))
+            (
+                i,
+                session.sandbox().exec(
+                    ["python", "-c", code],
+                    timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
+                ),
+            )
             for i, code in code_indices
         ]
 
@@ -96,7 +99,8 @@ def make_reward_function(session: Session, training_step: int = 0):
                     successes += 1
             except Exception as e:
                 exceptions += 1
-                print(f"  [Aviato] WARNING: Sandbox exception for completion {i}: {type(e).__name__}: {e}")
+                err_type = type(e).__name__
+                print(f"  [Aviato] WARNING: Sandbox exception {i}: {err_type}: {e}")
 
         total_executions[0] += len(code_indices)
         total_successes[0] += successes
@@ -130,7 +134,10 @@ def create_toy_dataset():
         {
             "prompt": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Write code that adds 2 and 3, then prints the result."},
+                {
+                    "role": "user",
+                    "content": "Write code that adds 2 and 3, then prints the result.",
+                },
             ],
             "expected_output": "5",
         },
@@ -144,21 +151,30 @@ def create_toy_dataset():
         {
             "prompt": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Write code that prints the sum of numbers from 1 to 10."},
+                {
+                    "role": "user",
+                    "content": "Write code that prints the sum of numbers from 1 to 10.",
+                },
             ],
             "expected_output": "55",
         },
         {
             "prompt": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Write code that prints the length of the string 'aviato'."},
+                {
+                    "role": "user",
+                    "content": "Write code that prints the length of the string 'aviato'.",
+                },
             ],
             "expected_output": "6",
         },
         {
             "prompt": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Write code that prints the maximum of [3, 1, 4, 1, 5, 9]."},
+                {
+                    "role": "user",
+                    "content": "Write code that prints the maximum of [3, 1, 4, 1, 5, 9].",
+                },
             ],
             "expected_output": "9",
         },
