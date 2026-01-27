@@ -1,59 +1,128 @@
 # RL Training Guide
 
-This guide covers using Aviato sandboxes for reinforcement learning training workflows, specifically for computing code execution rewards.
+This guide covers using Aviato sandboxes for reinforcement learning training workflows, focusing on agent training with tool execution.
 
-## Why Sandboxes for Code Execution Rewards
+## Contents
 
-Training LLMs to generate code requires executing model outputs to verify correctness. Running untrusted code from a model presents security and reproducibility challenges: the code might perform file system operations, make network requests, or produce non-deterministic results. Sandboxes solve these problems by providing isolated, ephemeral environments where code runs without affecting the host system. Each execution starts from a clean state, ensuring consistent reward computation across training runs.
+- [Why Sandboxes for Agent Tool Execution](#why-sandboxes-for-agent-tool-execution)
+- [Prerequisites](#prerequisites)
+- [Core Pattern](#core-pattern)
+- [Tagging for Job Metadata](#tagging-for-job-metadata)
+- [Try it: reward_function.py](#try-it-reward_functionpy)
+- [TRL/Unsloth Integration](#trlunsloth-integration)
+- [Try it: trl_grpo_integration.py](#try-it-trl_grpo_integrationpy)
+- [Try it: unsloth_integration.py](#try-it-unsloth_integrationpy)
+- [Error Handling in Agent Episodes](#error-handling-in-agent-episodes)
+- [Monitoring and Debugging](#monitoring-and-debugging)
+- [Multi-step Rollouts with ART](#multi-step-rollouts-with-art)
 
-Aviato sandboxes are designed for this use case. They start quickly, handle concurrent executions, and integrate with Python training code through a sync/async hybrid API. The tagging and listing APIs enable cleanup and monitoring, which matters when running thousands of executions during a training job.
+## Why Sandboxes for Agent Tool Execution
+
+Training code agents with reinforcement learning requires executing tool calls (bash commands, file operations) in isolated environments. Running untrusted commands from a model is risky: the code might modify the host filesystem, make network requests, or produce non-deterministic results. Sandboxes solve this by providing isolated, ephemeral environments where tool calls execute without affecting the host or other rollouts.
+
+In an agent training loop, the model generates actions (tool calls), the sandbox executes them, and observations flow back to the model. The sandbox persists across multiple tool calls within an episode, maintaining state as the agent works through a task. Reward is computed based on the final sandbox state (e.g., tests passing) or trajectory quality.
+
+Aviato sandboxes start quickly and handle concurrent executions. The tagging and listing APIs help with cleanup and monitoring when you're running thousands of episodes.
+
+## Prerequisites
+
+Set your API key:
+
+```bash
+export AVIATO_API_KEY="your-api-key"
+```
+
+Install aviato from source (from repo root):
+
+```bash
+uv pip install -e .
+```
 
 ## Core Pattern
 
-The fundamental pattern is creating sandboxes within your training loop to evaluate model-generated code:
+The basic setup: an agent loop runs on your training infrastructure, and tool calls execute in a sandbox.
 
 ```python
 import aviato
-from aviato import Sandbox, SandboxDefaults
+from aviato import Sandbox
 
-def compute_reward(generated_code: str, test_cases: list[dict]) -> float:
-    with Sandbox.run() as sandbox:
-        # Write the generated code to the sandbox
-        sandbox.write_file("/tmp/solution.py", generated_code.encode()).result()
+def run_agent_episode(model, task: dict, sandbox: Sandbox) -> tuple[list, float]:
+    """Run one agent episode, returning trajectory and reward."""
+    messages = [{"role": "user", "content": task["prompt"]}]
 
-        # Run test cases
-        passed = 0
-        for test in test_cases:
-            result = sandbox.exec(
-                ["python", "/tmp/solution.py"],
-                timeout_seconds=10.0,
-            ).result()
+    for step in range(task.get("max_steps", 10)):
+        # Model generates next action
+        response = model.generate(messages)
+        messages.append({"role": "assistant", "content": response})
 
-            if result.returncode == 0 and test["expected"] in result.stdout:
-                passed += 1
+        tool_calls = parse_tool_calls(response)
+        if not tool_calls:
+            break
 
-        return passed / len(test_cases)
+        # Execute tool calls in sandbox
+        for tool in tool_calls:
+            if tool.name == "bash":
+                result = sandbox.exec(
+                    ["bash", "-c", tool.command],
+                    timeout_seconds=30.0,
+                ).result()
+                observation = f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+            elif tool.name == "read_file":
+                content = sandbox.read_file(tool.path).result()
+                observation = content.decode()
+            elif tool.name == "write_file":
+                sandbox.write_file(tool.path, tool.content.encode()).result()
+                observation = "File written successfully"
+
+            messages.append({"role": "tool", "name": tool.name, "content": observation})
+
+    # Compute reward from final sandbox state
+    test_result = sandbox.exec(task["test_command"]).result()
+    reward = 1.0 if test_result.returncode == 0 else 0.0
+
+    return messages, reward
 ```
 
-This pattern creates a fresh sandbox for each reward computation. The context manager ensures cleanup happens even if an exception occurs during execution.
+The sandbox persists across tool calls within an episode, so file changes accumulate as the agent works.
+
+### Training step with parallel episodes
+
+Process a batch of tasks with one sandbox per episode:
+
+```python
+def training_step(model, batch: list[dict], session) -> list[float]:
+    """Run agent episodes for a batch of tasks."""
+
+    # Create sandboxes in parallel
+    sandboxes = [session.sandbox() for _ in batch]
+
+    trajectories = []
+    rewards = []
+
+    for task, sandbox in zip(batch, sandboxes):
+        trajectory, reward = run_agent_episode(model, task, sandbox)
+        trajectories.append(trajectory)
+        rewards.append(reward)
+        sandbox.stop()  # Non-blocking cleanup
+
+    # trajectories and rewards go to policy update
+    return rewards
+```
 
 ## Tagging for Job Metadata
 
-Tags enable filtering and discovery of sandboxes created by your training jobs. Include metadata that helps identify sandboxes when debugging or cleaning up:
+Tags let you filter and find sandboxes created by your training jobs. Include metadata that helps identify sandboxes when debugging or cleaning up:
 
 ```python
+import os
 from aviato import SandboxDefaults
 
-def make_defaults(
-    wandb_run_id: str,
-    training_step: int,
-    model_name: str,
-) -> SandboxDefaults:
+def make_defaults(model_name: str) -> SandboxDefaults:
     return SandboxDefaults(
         container_image="python:3.11",
         tags=(
-            f"run:{wandb_run_id}",
-            f"step:{training_step}",
+            f"wandb-run:{os.environ.get('WANDB_RUN_ID', 'local')}",
+            f"slurm-job:{os.environ.get('SLURM_JOB_ID', 'interactive')}",
             f"model:{model_name}",
             "rl-training",
         ),
@@ -64,340 +133,329 @@ Useful metadata to include in tags:
 
 | Tag Pattern | Purpose |
 |-------------|---------|
-| `run:{id}` | W&B run ID or job identifier for filtering by training run |
-| `step:{n}` | Training step number for debugging specific iterations |
+| `wandb-run:{id}` | W&B run ID (from `WANDB_RUN_ID` env var) for filtering by training run |
+| `slurm-job:{id}` | Slurm job ID (from `SLURM_JOB_ID` env var) for cluster job tracking |
 | `model:{name}` | Model name or checkpoint for multi-model experiments |
 | `env:{name}` | Environment (dev, staging, prod) for resource management |
 
-Tags propagate to the backend, enabling queries like "find all sandboxes from run abc123" without maintaining local state.
+Sandbox tags become Kubernetes pod labels, which the CoreWeave observability platform uses for filtering and dashboards.
 
-## Cleanup Patterns
+## Try it: reward_function.py
 
-Training jobs can create thousands of sandboxes. Proper cleanup prevents resource accumulation and simplifies debugging.
+The simplest integration: compute code execution rewards with parallel sandbox execution.
 
-### Session-Based Cleanup
+**What it does:**
+- Executes a set of toy code completions (arithmetic, string operations, syntax errors, runtime errors)
+- Creates one sandbox per completion for isolation
+- Computes binary rewards: 1.0 for successful execution, 0.0 for failure
+- Shows progress as results arrive (faster executions complete first)
 
-Sessions provide automatic cleanup of all sandboxes when the session closes:
+**How it uses Aviato:**
 
-```python
-import aviato
-from aviato import SandboxDefaults
-
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("rl-training", f"run:{run_id}"),
-)
-
-with aviato.Session(defaults=defaults) as session:
-    for step in range(num_steps):
-        # Sandboxes created through session are tracked
-        sandbox = session.sandbox()
-        reward = evaluate_in_sandbox(sandbox, model_output)
-        sandbox.stop().result()
-
-# All remaining sandboxes cleaned up when session exits
-```
-
-### Cleanup on Job Failure
-
-When training fails, sandboxes from the failed job may remain running. Query by tags to find and clean them:
+The example uses `aviato.wait()` to process results as they complete:
 
 ```python
-from aviato import Sandbox
+# Create sandboxes and execute all completions in parallel
+processes = [
+    session.sandbox().exec(
+        ["python", "-c", code],
+        timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
+    )
+    for code in completions
+]
 
-def cleanup_run(run_id: str) -> int:
-    orphans = Sandbox.list(tags=[f"run:{run_id}"]).result()
-    for sandbox in orphans:
-        sandbox.stop(missing_ok=True).result()
-    return len(orphans)
-```
-
-Call this function in your job's finally block or error handler to ensure cleanup happens regardless of how the job terminates.
-
-### Cleanup Old Sandboxes
-
-For scheduled cleanup of sandboxes older than a threshold:
-
-```python
-from datetime import datetime, timedelta, timezone
-from aviato import Sandbox
-
-def cleanup_old_sandboxes(max_age_hours: int = 24) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    sandboxes = Sandbox.list(tags=["rl-training"]).result()
-
-    cleaned = 0
-    for sandbox in sandboxes:
-        if sandbox.started_at and sandbox.started_at < cutoff:
-            sandbox.stop(missing_ok=True).result()
-            cleaned += 1
-
-    return cleaned
-```
-
-## Parallelism for Concurrent Rollouts
-
-RL training benefits from evaluating multiple rollouts concurrently. Aviato supports several parallelism patterns.
-
-### Parallel Sandbox Creation
-
-Create sandboxes in parallel to reduce startup latency:
-
-```python
-import aviato
-from aviato import Sandbox, SandboxDefaults
-
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("rl-training",),
-)
-
-def parallel_evaluate(code_samples: list[str]) -> list[float]:
-    # Start all sandboxes concurrently
-    sandboxes = [Sandbox.run(defaults=defaults) for _ in code_samples]
-
-    # Wait for all to be running
-    aviato.wait(sandboxes)
-
-    # Execute in parallel
-    processes = [
-        sb.exec(["python", "-c", code])
-        for sb, code in zip(sandboxes, code_samples)
-    ]
-
-    # Collect results
-    rewards = []
-    for process in processes:
-        result = process.result()
-        rewards.append(1.0 if result.returncode == 0 else 0.0)
-
-    # Cleanup
-    aviato.result([sb.stop() for sb in sandboxes])
-
-    return rewards
-```
-
-### Session with Worker Pool
-
-For sustained parallel evaluation, maintain a pool of sandboxes:
-
-```python
-import aviato
-from aviato import SandboxDefaults
-
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("rl-training", "worker-pool"),
-)
-
-with aviato.Session(defaults=defaults) as session:
-    # Create worker pool
-    pool_size = 8
-    workers = [session.sandbox() for _ in range(pool_size)]
-
-    # Distribute work across workers
-    for batch in batches:
-        processes = [
-            worker.exec(["python", "-c", code])
-            for worker, code in zip(workers, batch)
-        ]
-        results = [p.result() for p in processes]
-        # Process results...
-```
-
-### Waiting for First N Results
-
-When you need results from a subset of parallel executions:
-
-```python
-import aviato
-
-processes = [sb.exec(["python", "evaluate.py"]) for sb in sandboxes]
-
-# Wait for first 5 to complete
-done, pending = aviato.wait(processes, num_returns=5)
-
-# Use completed results immediately
-for process in done:
+# Collect results as they complete
+while pending:
+    [process], pending = aviato.wait(pending, num_returns=1)
     result = process.result()
-    # Process result...
-
-# Cancel or wait for remaining
-for process in pending:
-    process.cancel()
+    reward = 1.0 if result.returncode == 0 else 0.0
 ```
 
-## TRL GRPOTrainer Integration
+**Run it:**
 
-TRL's GRPOTrainer accepts a reward function that receives model completions and returns scores. Wrap Aviato execution in this function:
-
-```python
-from aviato import Sandbox, SandboxDefaults
-from trl import GRPOConfig, GRPOTrainer
-
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("trl-grpo", f"run:{wandb_run_id}"),
-)
-
-def reward_fn(completions: list[str], **kwargs) -> list[float]:
-    rewards = []
-    for completion in completions:
-        code = extract_code(completion)
-        with Sandbox.run(defaults=defaults) as sandbox:
-            result = sandbox.exec(
-                ["python", "-c", code],
-                timeout_seconds=30.0,
-            ).result()
-            rewards.append(1.0 if result.returncode == 0 else 0.0)
-    return rewards
-
-trainer = GRPOTrainer(
-    model=model,
-    reward_funcs=[reward_fn],
-    args=GRPOConfig(
-        output_dir="./grpo_output",
-        num_generations=4,
-    ),
-    train_dataset=dataset,
-)
-
-trainer.train()
+```bash
+uv run examples/rl_training/reward_function.py
 ```
 
-For better throughput, parallelize the reward computation:
+No additional dependencies required. No GPU needed.
+
+**Expected output:**
+
+Results arrive as executions complete, so faster problems finish first:
+
+```
+RL Training Reward Function Example (job: 4768f471)
+============================================================
+
+Evaluating 5 completions...
+
+Progress (results arrive as executions complete):
+------------------------------------------------------------
+  [1/5] Problem 0 (slow-sum): PASS
+  [2/5] Problem 1 (string-ops): PASS
+  [3/5] Problem 2 (delayed-error): FAIL
+  [4/5] Problem 3 (syntax-error): FAIL
+  [5/5] Problem 4 (slow-list): PASS
+------------------------------------------------------------
+
+Final summary (original order):
+------------------------------------------------------------
+  Problem 0 (slow-sum): reward=1.0 [PASS] OK
+  Problem 1 (string-ops): reward=1.0 [PASS] OK
+  Problem 2 (delayed-error): reward=0.0 [FAIL] OK
+  Problem 3 (syntax-error): reward=0.0 [FAIL] OK
+  Problem 4 (slow-list): reward=1.0 [PASS] OK
+------------------------------------------------------------
+Total reward: 3.0/5
+Pass rate: 3/5 (60%)
+```
+
+## TRL/Unsloth Integration
+
+TRL and Unsloth use a reward function interface where completions map directly to rewards. The agent generates a completion, and the reward function executes it in a sandbox.
+
+The standard pattern uses `<answer>` XML tags for code extraction (matching the format used in GRPO math examples with `\boxed{}`):
 
 ```python
 import aviato
-from aviato import Sandbox, SandboxDefaults
+from aviato import SandboxDefaults
 
-defaults = SandboxDefaults(
+session = aviato.Session(defaults=SandboxDefaults(
     container_image="python:3.11",
-    tags=("trl-grpo", f"run:{wandb_run_id}"),
-)
+    tags=("trl-grpo",),
+))
+
+def extract_xml_answer(text: str) -> str:
+    if "<answer>" not in text:
+        return ""
+    return text.split("<answer>")[-1].split("</answer>")[0].strip()
 
 def reward_fn(completions: list[str], **kwargs) -> list[float]:
-    codes = [extract_code(c) for c in completions]
+    codes = [extract_xml_answer(c) for c in completions]
+    code_indices = [(i, code) for i, code in enumerate(codes) if code]
 
-    # Create sandboxes in parallel
-    sandboxes = [Sandbox.run(defaults=defaults) for _ in codes]
-    aviato.wait(sandboxes)
-
-    # Execute in parallel
     processes = [
-        sb.exec(["python", "-c", code], timeout_seconds=30.0)
-        for sb, code in zip(sandboxes, codes)
+        (i, session.sandbox().exec(
+            ["python", "-c", code],
+            timeout_seconds=30.0,
+        ))
+        for i, code in code_indices
     ]
 
-    # Collect results
-    rewards = [
-        1.0 if p.result().returncode == 0 else 0.0
-        for p in processes
-    ]
-
-    # Cleanup
-    aviato.result([sb.stop() for sb in sandboxes])
+    rewards = [0.0] * len(codes)
+    for i, process in processes:
+        try:
+            rewards[i] = 1.0 if process.result().returncode == 0 else 0.0
+        except Exception:
+            pass
 
     return rewards
 ```
 
-## Unsloth + GRPO Integration
+This pattern works for training models to generate correct code in a single turn.
 
-Unsloth provides optimized model training. The reward function pattern is similar:
+## Try it: trl_grpo_integration.py
+
+Aviato sandboxes with TRL's GRPOTrainer for code execution rewards.
+
+**What it does:**
+- Loads a small model (`Qwen/Qwen2.5-0.5B-Instruct`)
+- Creates a toy dataset of simple coding problems
+- Trains the model using GRPO with sandbox-based reward computation
+- Runs 10 training steps to demonstrate the integration
+
+**How it uses Aviato:**
+
+The reward function extracts code from `<answer>` tags (the standard GRPO pattern), creates sandboxes in parallel through a Session, executes each completion, and returns binary rewards:
 
 ```python
-from unsloth import FastLanguageModel
-import aviato
-from aviato import Sandbox, SandboxDefaults
+def extract_xml_answer(text: str) -> str:
+    """Extract answer from XML-style <answer> tags."""
+    if "<answer>" not in text:
+        return ""
+    answer = text.split("<answer>")[-1]
+    answer = answer.split("</answer>")[0]
+    return answer.strip()
 
-# Load model with Unsloth
+def code_execution_reward(completions: list[str], **kwargs) -> list[float]:
+    codes = [extract_xml_answer(c) for c in completions]
+
+    # Create sandboxes and execute non-empty code in parallel
+    processes = [
+        (i, session.sandbox().exec(
+            ["python", "-c", code],
+            timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
+        ))
+        for i, code in enumerate(codes) if code
+    ]
+
+    # Collect rewards, defaulting to 0.0
+    rewards = [0.0] * len(codes)
+    for i, process in processes:
+        try:
+            result = process.result()
+            rewards[i] = 1.0 if result.returncode == 0 else 0.0
+        except Exception:
+            rewards[i] = 0.0
+
+    return rewards
+```
+
+The prompts use a system message instructing the model to format code with `<answer>` tags:
+
+```python
+SYSTEM_PROMPT = """You solve coding problems by writing Python code.
+Put your code inside <answer> tags like this: <answer>print("hello")</answer>
+Only include the code, no explanations."""
+```
+
+The Session tracks sandboxes and cleans them up when it closes.
+
+**Run it:**
+
+```bash
+uv pip install trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
+uv run examples/rl_training/trl_grpo_integration.py
+```
+
+GPU is recommended for reasonable performance. Without one, training works but is slow.
+
+**Expected output:**
+
+```
+TRL GRPO Integration Example (job: def67890)
+============================================================
+
+Loading model: Qwen/Qwen2.5-0.5B-Instruct
+Creating toy dataset...
+Dataset size: 5 problems
+
+Setting up GRPOTrainer...
+
+Starting training (10 steps)...
+------------------------------------------------------------
+  [Aviato] Reward call 1: 2 sandboxes, 0/2 passed
+  [Aviato] Reward call 2: 1 sandboxes, 0/1 passed, 1 skipped (no code)
+  [Aviato] Reward call 3: 0 sandboxes, 0/0 passed, 2 skipped (no code)
+  [Aviato] Reward call 4: 2 sandboxes, 0/2 passed
+  ...
+  [Aviato] Reward call 8: 2 sandboxes, 1/2 passed
+  [Aviato] Reward call 9: 2 sandboxes, 1/2 passed
+  [Aviato] Reward call 10: 1 sandboxes, 0/1 passed, 1 skipped (no code)
+[training logs]
+------------------------------------------------------------
+
+Training completed successfully!
+```
+
+**Understanding the output:**
+
+The number of sandboxes varies per step because we only create sandboxes when `extract_code_block()` finds extractable Python code in the model's completion. When the model generates text without recognizable code (no markdown fences like ` ```python `, no `<code>` tags), that completion is skipped and receives a reward of 0.0.
+
+- `2 sandboxes, 0/2 passed` - Model generated 2 code blocks, both failed execution
+- `1 sandboxes, 0/1 passed, 1 skipped (no code)` - Model generated 1 code block (failed) and 1 text-only completion
+- `0 sandboxes, 0/0 passed, 2 skipped (no code)` - Model generated no extractable code in either completion
+
+Expected with a small, untrained model. As training progresses, you should see fewer skipped completions and more passes.
+
+## Try it: unsloth_integration.py
+
+Unsloth's memory-efficient optimizations with Aviato sandbox-based rewards for GRPO training.
+
+**What it does:**
+- Loads a 4-bit quantized model using Unsloth's `FastLanguageModel`
+- Applies LoRA adapters for parameter-efficient fine-tuning
+- Uses the same sandbox-based reward pattern as the TRL example
+- Runs on consumer GPUs thanks to reduced memory usage
+
+**Unsloth optimizations:**
+
+```python
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name="unsloth/Qwen2.5-Coder-1.5B",
+    model_name="unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit",
     max_seq_length=2048,
     load_in_4bit=True,
 )
 
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("unsloth-grpo", f"run:{wandb_run_id}"),
+model = FastLanguageModel.get_peft_model(
+    model,
+    r=16,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", ...],
+    lora_alpha=16,
+    use_gradient_checkpointing="unsloth",
 )
-
-def code_reward(completions: list[str], **kwargs) -> list[float]:
-    rewards = []
-
-    # Parallel execution for batch
-    sandboxes = [Sandbox.run(defaults=defaults) for _ in completions]
-    aviato.wait(sandboxes)
-
-    processes = []
-    for sandbox, completion in zip(sandboxes, completions):
-        code = extract_code_block(completion)
-        processes.append(
-            sandbox.exec(["python", "-c", code], timeout_seconds=30.0)
-        )
-
-    for process in processes:
-        try:
-            result = process.result()
-            rewards.append(1.0 if result.returncode == 0 else 0.0)
-        except Exception:
-            rewards.append(0.0)
-
-    aviato.result([sb.stop() for sb in sandboxes])
-
-    return rewards
 ```
 
-When using Unsloth's GRPO implementation, pass the reward function to the trainer:
+The reward function is identical to the TRL example. Unsloth handles model optimization, Aviato handles code execution.
 
-```python
-from trl import GRPOConfig, GRPOTrainer
+**Run it:**
 
-trainer = GRPOTrainer(
-    model=model,
-    processing_class=tokenizer,
-    reward_funcs=[code_reward],
-    args=GRPOConfig(
-        output_dir="./unsloth_grpo",
-        per_device_train_batch_size=4,
-        num_generations=4,
-        max_completion_length=512,
-    ),
-    train_dataset=dataset,
-)
-
-trainer.train()
+```bash
+uv pip install unsloth==2026.1.4 trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
+uv run examples/rl_training/unsloth_integration.py
 ```
 
-## Error Handling in Reward Functions
+Requires CUDA GPU. Unsloth optimizations are CUDA-only.
 
-Reward functions must not raise exceptions, as this interrupts training. Handle errors gracefully:
+**Expected output:**
+
+```
+Unsloth GRPO Integration Example (job: ghi11223)
+============================================================
+
+Loading model with Unsloth: unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit
+Creating toy dataset...
+Dataset size: 5 problems
+
+Setting up GRPOTrainer with Unsloth model...
+
+Starting training (1 step)...
+------------------------------------------------------------
+  [Aviato] Reward call 1: 2 sandboxes, 0/2 passed
+[training logs]
+------------------------------------------------------------
+
+Training completed successfully!
+
+Unsloth optimizations applied:
+  - 4-bit quantization for memory efficiency
+  - LoRA adapters for parameter-efficient training
+  - Gradient checkpointing for reduced memory
+```
+
+The sandbox output follows the same pattern as the TRL example - see the explanation above for details on varying sandbox counts.
+
+## Error Handling in Agent Episodes
+
+Sandbox operations can fail (timeouts, missing files, sandbox termination). Return observations that help the agent understand what went wrong:
 
 ```python
-from aviato import Sandbox, SandboxDefaults, SandboxTimeoutError
+from aviato import SandboxTimeoutError, SandboxFileError
 
-defaults = SandboxDefaults(
-    container_image="python:3.11",
-    tags=("rl-training",),
-)
-
-def robust_reward(completion: str) -> float:
-    code = extract_code(completion)
-    if not code:
-        return 0.0
-
+def execute_tool(sandbox, tool) -> str:
+    """Execute a tool call, returning an observation string."""
     try:
-        with Sandbox.run(defaults=defaults) as sandbox:
+        if tool.name == "bash":
             result = sandbox.exec(
-                ["python", "-c", code],
+                ["bash", "-c", tool.command],
                 timeout_seconds=30.0,
             ).result()
-            return 1.0 if result.returncode == 0 else 0.0
+            return f"exit={result.returncode}\n{result.stdout}{result.stderr}"
+        elif tool.name == "read_file":
+            content = sandbox.read_file(tool.path).result()
+            return content.decode()
+        elif tool.name == "write_file":
+            sandbox.write_file(tool.path, tool.content.encode()).result()
+            return "File written successfully"
     except SandboxTimeoutError:
-        return 0.0
-    except Exception:
-        return 0.0
+        return "Error: command timed out after 30 seconds"
+    except SandboxFileError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error: {type(e).__name__}: {e}"
 ```
+
+For reward computation, catch exceptions and return a fallback reward instead of propagating to the training loop.
 
 ## Monitoring and Debugging
 
@@ -410,7 +468,7 @@ from aviato import Sandbox, SandboxStatus
 
 def count_active_sandboxes(run_id: str) -> dict:
     sandboxes = Sandbox.list(
-        tags=[f"run:{run_id}"],
+        tags=[f"wandb-run:{run_id}"],
         status=[SandboxStatus.RUNNING, SandboxStatus.PENDING],
     ).result()
 
@@ -430,25 +488,180 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Assumes `session` is created at module level
+
 def logged_reward(completion: str, step: int) -> float:
     code = extract_code(completion)
 
-    with Sandbox.run(defaults=defaults) as sandbox:
-        result = sandbox.exec(
-            ["python", "-c", code],
-            timeout_seconds=30.0,
-        ).result()
+    sandbox = session.sandbox()
+    sandbox.wait()
+    result = sandbox.exec(
+        ["python", "-c", code],
+        timeout_seconds=30.0,
+    ).result()
 
-        logger.debug(
-            "Reward computation",
-            extra={
-                "step": step,
-                "sandbox_id": sandbox.sandbox_id,
-                "returncode": result.returncode,
-                "stdout_len": len(result.stdout),
-                "stderr_len": len(result.stderr),
-            },
-        )
+    logger.debug(
+        "Reward computation",
+        extra={
+            "step": step,
+            "sandbox_id": sandbox.sandbox_id,
+            "returncode": result.returncode,
+            "stdout_len": len(result.stdout),
+            "stderr_len": len(result.stderr),
+        },
+    )
 
-        return 1.0 if result.returncode == 0 else 0.0
+    sandbox.stop()
+    return 1.0 if result.returncode == 0 else 0.0
+```
+
+## Multi-step Rollouts with ART
+
+The TRL and Unsloth examples above use sandboxes for **single-shot execution**: one sandbox per completion, execute once, return a reward. This works for training models to generate correct code in one attempt.
+
+**Stateful multi-step rollouts** are different: the agent takes multiple actions within a single sandbox, and the sandbox maintains state between actions. The agent can write a file, run it, see the error, edit the file, and try again - all within the same sandbox. Ephemeral execution environments can't do this.
+
+The `examples/rl_training/art/` directory demonstrates this pattern on the MBPP benchmark. When a solution fails, the agent receives error feedback and can modify its approach while the sandbox preserves all prior file changes and environment state.
+
+### Overview
+
+[ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) is an open-source RL framework by OpenPipe for training multi-step agents using GRPO. This example uses Aviato sandboxes with ART:
+
+- Loads problems from the MBPP benchmark
+- Generates solutions using an LLM (vLLM or OpenAI)
+- Executes solutions in stateful Aviato sandboxes that persist across attempts
+- Computes binary rewards based on test case results
+- Supports multi-step rollouts where the agent iterates on failures
+
+### Prerequisites
+
+| Mode | Requirements |
+|------|-------------|
+| Dry run | CPU only |
+| OpenAI backend | CPU only (inference via API) |
+| vLLM backend | GPU required (A100/H100 recommended) |
+
+Environment variables:
+
+```bash
+export AVIATO_API_KEY="your-aviato-key"
+export WANDB_API_KEY="your-wandb-key"
+export OPENAI_API_KEY="your-openai-key"  # if using --use-openai
+```
+
+### Installation
+
+```bash
+uv pip install -r examples/rl_training/art/requirements.txt
+```
+
+Or install individually:
+
+```bash
+uv pip install wandb==0.24.0 openai==2.15.0 datasets==4.5.0 transformers==5.0.0
+```
+
+### Running the Example
+
+```bash
+# Dry run with OpenAI (no training, just rollouts)
+uv run examples/rl_training/art/train.py --use-openai --dry-run
+
+# Full training with vLLM (start vLLM server first)
+vllm serve Qwen/Qwen2.5-3B-Instruct --port 8000
+uv run examples/rl_training/art/train.py
+```
+
+Expected output:
+
+```
+Loading MBPP problems...
+Loaded 100 problems
+
+ART Training (job: a1b2c3d4)
+============================================================
+Model: gpt-4o-mini
+Problems: 100
+Steps: 10
+Batch size: 4
+============================================================
+
+W&B run: https://wandb.ai/your-entity/aviato-rl-demo/runs/abc123
+
+Starting training loop...
+------------------------------------------------------------
+  Step 0: reward=0.500, success=50.0% (2/4), time=45.2s
+  Step 1: reward=0.750, success=75.0% (3/4), time=38.1s
+  Step 2: reward=0.500, success=50.0% (2/4), time=42.3s
+  ...
+------------------------------------------------------------
+
+Training complete!
+  Total trajectories: 40
+  Successful: 22 (55.0%)
+  Steps completed: 10
+```
+
+### Configuration Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | `Qwen/Qwen2.5-3B-Instruct` | Model name for vLLM or OpenAI |
+| `--project` | `aviato-rl-demo` | W&B project name |
+| `--num-steps` | `10` | Number of training steps |
+| `--batch-size` | `4` | Problems per training step |
+| `--max-attempts` | `3` | Max solution attempts per problem |
+| `--dry-run` | `false` | Run rollouts without training |
+| `--use-openai` | `false` | Use OpenAI API instead of vLLM |
+
+### Architecture
+
+```
+art/
+├── train.py         # Training loop and CLI
+├── rollout.py       # Multi-step sandbox execution
+├── rewards.py       # MBPP loading and reward calculation
+└── types.py         # Trajectory and TrainableModel protocols
+```
+
+Each rollout creates a fresh sandbox with `Sandbox.run()`. It writes the solution and test script, runs with a timeout, and captures errors on failure for the next attempt. Cleanup happens via `sandbox.stop()` in a finally block.
+
+Sandboxes are tagged with job ID and problem ID for tracking:
+
+```python
+tags=(
+    "art-rollout",
+    f"job-{job_id}",
+    f"problem-{problem.task_id}",
+)
+```
+
+### Data Flow
+
+```
+MBPP Dataset
+     │
+     ▼
+┌─────────────────┐
+│  TrainingLoop   │
+│  (batch problems)│
+└────────┬────────┘
+         │ parallel
+         ▼
+┌─────────────────┐     ┌─────────────────┐
+│    rollout()    │────▶│  Aviato Sandbox │
+│ (multi-step)    │◀────│  (code exec)    │
+└────────┬────────┘     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Trajectory    │
+│ (messages+reward)│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  W&B Logging    │
+│  + Training     │
+└─────────────────┘
 ```
