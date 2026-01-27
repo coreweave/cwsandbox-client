@@ -4,9 +4,9 @@ This directory contains example scripts demonstrating how to use the `aviato` pa
 
 ## Prerequisites
 
-1. Install the package:
+1. Install from source (from repo root):
    ```bash
-   pip install aviato
+   uv pip install -e .
    ```
 
 2. Set your API key:
@@ -266,8 +266,7 @@ Memory-efficient training with Unsloth and TRL:
 
 ```bash
 # Requires CUDA GPU and Unsloth:
-# pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-# pip install trl transformers datasets torch
+# uv pip install unsloth==2026.1.4 trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
 python examples/rl_training/unsloth_integration.py
 ```
 
