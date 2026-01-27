@@ -9,9 +9,8 @@ This guide covers using Aviato sandboxes for reinforcement learning training wor
 - [Core Pattern](#core-pattern)
 - [Tagging for Job Metadata](#tagging-for-job-metadata)
 - [Try it: reward_function.py](#try-it-reward_functionpy)
-- [TRL/Unsloth Integration](#trlunsloth-integration)
+- [TRL GRPOTrainer Integration](#trl-grpotrainer-integration)
 - [Try it: trl_grpo_integration.py](#try-it-trl_grpo_integrationpy)
-- [Try it: unsloth_integration.py](#try-it-unsloth_integrationpy)
 - [Error Handling in Agent Episodes](#error-handling-in-agent-episodes)
 - [Monitoring and Debugging](#monitoring-and-debugging)
 - [Multi-step Rollouts with ART](#multi-step-rollouts-with-art)
@@ -210,9 +209,9 @@ Total reward: 3.0/5
 Pass rate: 3/5 (60%)
 ```
 
-## TRL/Unsloth Integration
+## TRL GRPOTrainer Integration
 
-TRL and Unsloth use a reward function interface where completions map directly to rewards. The agent generates a completion, and the reward function executes it in a sandbox.
+TRL uses a reward function interface where completions map directly to rewards. The agent generates a completion, and the reward function executes it in a sandbox.
 
 The standard pattern uses `<answer>` XML tags for code extraction (matching the format used in GRPO math examples with `\boxed{}`):
 
@@ -358,73 +357,6 @@ The number of sandboxes varies per step because we only create sandboxes when `e
 
 Expected with a small, untrained model. As training progresses, you should see fewer skipped completions and more passes.
 
-## Try it: unsloth_integration.py
-
-Unsloth's memory-efficient optimizations with Aviato sandbox-based rewards for GRPO training.
-
-**What it does:**
-- Loads a 4-bit quantized model using Unsloth's `FastLanguageModel`
-- Applies LoRA adapters for parameter-efficient fine-tuning
-- Uses the same sandbox-based reward pattern as the TRL example
-- Runs on consumer GPUs thanks to reduced memory usage
-
-**Unsloth optimizations:**
-
-```python
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name="unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit",
-    max_seq_length=2048,
-    load_in_4bit=True,
-)
-
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=16,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", ...],
-    lora_alpha=16,
-    use_gradient_checkpointing="unsloth",
-)
-```
-
-The reward function is identical to the TRL example. Unsloth handles model optimization, Aviato handles code execution.
-
-**Run it:**
-
-```bash
-uv pip install unsloth==2026.1.4 trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
-uv run examples/rl_training/unsloth_integration.py
-```
-
-Requires CUDA GPU. Unsloth optimizations are CUDA-only.
-
-**Expected output:**
-
-```
-Unsloth GRPO Integration Example (job: ghi11223)
-============================================================
-
-Loading model with Unsloth: unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit
-Creating toy dataset...
-Dataset size: 5 problems
-
-Setting up GRPOTrainer with Unsloth model...
-
-Starting training (1 step)...
-------------------------------------------------------------
-  [Aviato] Reward call 1: 2 sandboxes, 0/2 passed
-[training logs]
-------------------------------------------------------------
-
-Training completed successfully!
-
-Unsloth optimizations applied:
-  - 4-bit quantization for memory efficiency
-  - LoRA adapters for parameter-efficient training
-  - Gradient checkpointing for reduced memory
-```
-
-The sandbox output follows the same pattern as the TRL example - see the explanation above for details on varying sandbox counts.
-
 ## Error Handling in Agent Episodes
 
 Sandbox operations can fail (timeouts, missing files, sandbox termination). Return observations that help the agent understand what went wrong:
@@ -517,7 +449,7 @@ def logged_reward(completion: str, step: int) -> float:
 
 ## Multi-step Rollouts with ART
 
-The TRL and Unsloth examples above use sandboxes for **single-shot execution**: one sandbox per completion, execute once, return a reward. This works for training models to generate correct code in one attempt.
+The TRL example above uses sandboxes for **single-shot execution**: one sandbox per completion, execute once, return a reward. This works for training models to generate correct code in one attempt.
 
 **Stateful multi-step rollouts** are different: the agent takes multiple actions within a single sandbox, and the sandbox maintains state between actions. The agent can write a file, run it, see the error, edit the file, and try again - all within the same sandbox. Ephemeral execution environments can't do this.
 

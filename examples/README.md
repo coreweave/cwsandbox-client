@@ -260,22 +260,6 @@ Demonstrates:
 - Step-based tagging for tracking
 - Code extraction from model completions
 
-#### Unsloth Integration (`rl_training/unsloth_integration.py`)
-
-Memory-efficient training with Unsloth and TRL:
-
-```bash
-# Requires CUDA GPU and Unsloth:
-# uv pip install unsloth==2026.1.4 trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
-python examples/rl_training/unsloth_integration.py
-```
-
-Demonstrates:
-- FastLanguageModel with 4-bit quantization
-- LoRA adapters for parameter-efficient training
-- GRPOTrainer integration with sandbox rewards
-- Model name tagging for multi-model experiments
-
 See `docs/guides/rl-training.md` for comprehensive documentation.
 
 ---
