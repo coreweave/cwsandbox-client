@@ -10,15 +10,15 @@ CUDA kernels and 4-bit quantization. Combined with Aviato sandboxes for
 code execution rewards, this enables efficient GRPO training on code generation.
 
 Key patterns demonstrated:
+- Session-based sandbox management for automatic cleanup
+- Parallel sandbox creation and execution with session.sandbox().exec()
 - FastLanguageModel with 4-bit quantization
 - Memory-efficient training with LoRA adapters
 - GRPOTrainer integration with sandbox-based rewards
 - Tagging with model name for tracking
-- Parallel sandbox execution for batch rewards
 
 Requirements:
-    pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-    pip install trl transformers datasets torch
+    uv pip install unsloth==2026.1.4 trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
 
 Usage:
     uv run examples/rl_training/unsloth_integration.py
@@ -28,11 +28,9 @@ Note: Requires GPU with CUDA support. Unsloth optimizations are CUDA-only.
 
 from __future__ import annotations
 
-import re
 import uuid
 
-import aviato
-from aviato import Sandbox, SandboxDefaults, SandboxTimeoutError
+from aviato import SandboxDefaults, Session
 
 JOB_ID = uuid.uuid4().hex[:8]
 
@@ -40,44 +38,34 @@ EXECUTION_TIMEOUT_SECONDS = 10.0
 SANDBOX_LIFETIME_SECONDS = 60.0
 
 
-def extract_code_block(text: str) -> str:
-    """Extract Python code from a completion.
+def extract_xml_answer(text: str) -> str:
+    """Extract answer from XML-style <answer> tags.
 
-    Handles both fenced code blocks and raw code.
+    This follows the standard pattern used in GRPO training examples.
+    The model is prompted to put its code inside <answer>...</answer> tags.
     """
-    # Try to extract from markdown code block
-    match = re.search(r"```(?:python)?\n?(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Try to extract from <code> tags
-    match = re.search(r"<code>(.*?)</code>", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Return raw text, stripping common prefixes
-    lines = text.strip().split("\n")
-    code_lines = []
-    for line in lines:
-        # Skip lines that look like prompts or explanations
-        if line.startswith("#") or line.startswith(">>>"):
-            continue
-        code_lines.append(line)
-    return "\n".join(code_lines).strip()
+    if "<answer>" not in text:
+        return ""
+    answer = text.split("<answer>")[-1]
+    answer = answer.split("</answer>")[0]
+    return answer.strip()
 
 
-def make_reward_function(model_name: str, training_step: int = 0):
+def make_reward_function(session: Session, model_name: str, training_step: int = 0):
     """Create a reward function with model and step-based tagging.
 
     Args:
+        session: Session for sandbox management
         model_name: Model name for sandbox tagging
         training_step: Current training step for sandbox tagging
 
     Returns:
         A reward function compatible with TRL's GRPOTrainer
     """
-    # Sanitize model name for use in tags
-    model_tag = model_name.replace("/", "-").replace(".", "-")
+    # Track cumulative stats across reward function calls
+    call_count = [0]  # Use list to allow mutation in closure
+    total_executions = [0]
+    total_successes = [0]
 
     def code_execution_reward(completions: list[str], **kwargs) -> list[float]:
         """Compute rewards by executing code completions in sandboxes.
@@ -89,69 +77,57 @@ def make_reward_function(model_name: str, training_step: int = 0):
         Returns:
             List of rewards (1.0 for successful execution, 0.0 for failure)
         """
-        codes = [extract_code_block(c) for c in completions]
+        call_count[0] += 1
+        codes = [extract_xml_answer(c) for c in completions]
 
-        defaults = SandboxDefaults(
-            container_image="python:3.11",
-            max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
-            tags=(
-                "rl-training",
-                "unsloth-grpo",
-                f"job-{JOB_ID}",
-                f"step-{training_step}",
-                f"model-{model_tag}",
-            ),
-        )
+        # Track which indices have empty code (reward 0.0)
+        code_indices = [(i, code) for i, code in enumerate(codes) if code]
 
-        # Create sandboxes in parallel for the batch
-        sandboxes = [Sandbox.run(defaults=defaults) for _ in codes]
-        aviato.wait(sandboxes)
+        # Create sandboxes and execute non-empty code in parallel
+        processes = [
+            (i, session.sandbox().exec(
+                ["python", "-c", code],
+                timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
+            ))
+            for i, code in code_indices
+        ]
 
-        # Execute code in parallel
-        processes = []
-        for sandbox, code in zip(sandboxes, codes, strict=True):
-            if not code:
-                processes.append(None)
-                continue
-            processes.append(
-                sandbox.exec(
-                    ["python", "-c", code],
-                    timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
-                )
-            )
-
-        # Collect rewards
-        rewards = []
-        for process in processes:
-            if process is None:
-                rewards.append(0.0)
-                continue
+        # Collect rewards, defaulting to 0.0
+        rewards = [0.0] * len(codes)
+        successes = 0
+        exceptions = 0
+        for i, process in processes:
             try:
                 result = process.result()
-                rewards.append(1.0 if result.returncode == 0 else 0.0)
-            except SandboxTimeoutError:
-                rewards.append(0.0)
-            except Exception:
-                rewards.append(0.0)
+                if result.returncode == 0:
+                    rewards[i] = 1.0
+                    successes += 1
+            except Exception as e:
+                exceptions += 1
+                print(f"  [Aviato] WARNING: Sandbox exception for completion {i}: {type(e).__name__}: {e}")
 
-        # Cleanup all sandboxes
-        aviato.result([sb.stop(missing_ok=True) for sb in sandboxes])
+        total_executions[0] += len(code_indices)
+        total_successes[0] += successes
 
+        # Show sandbox usage for this batch
+        skipped = len(codes) - len(code_indices)
+        skip_note = f", {skipped} skipped (no code)" if skipped else ""
+        exception_note = f", {exceptions} exceptions" if exceptions else ""
+        print(
+            f"  [Aviato] Reward call {call_count[0]}: "
+            f"{len(code_indices)} sandboxes, "
+            f"{successes}/{len(code_indices)} passed{skip_note}{exception_note}"
+        )
+
+        # Session handles sandbox cleanup automatically
         return rewards
 
     return code_execution_reward
 
 
-def cleanup_job_sandboxes() -> None:
-    """Clean up any remaining sandboxes from this job."""
-    try:
-        sandboxes = Sandbox.list(tags=[f"job-{JOB_ID}"]).result()
-        if sandboxes:
-            print(f"\nCleaning up {len(sandboxes)} sandbox(es)...")
-            for sb in sandboxes:
-                sb.stop(missing_ok=True).result()
-    except Exception as e:
-        print(f"Cleanup error: {e}")
+SYSTEM_PROMPT = """You solve coding problems by writing Python code.
+Put your code inside <answer> tags like this: <answer>print("hello")</answer>
+Only include the code, no explanations."""
 
 
 def create_toy_dataset():
@@ -160,35 +136,38 @@ def create_toy_dataset():
 
     problems = [
         {
-            "prompt": (
-                "Write a Python function that adds two numbers and prints "
-                "the result. Call it with 2 and 3.\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that adds 2 and 3, then prints the result."},
+            ],
             "expected_output": "5",
         },
         {
-            "prompt": "Write Python code that prints 'Hello, World!'.\n\n```python\n",
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints 'Hello, World!'."},
+            ],
             "expected_output": "Hello, World!",
         },
         {
-            "prompt": (
-                "Write Python code that prints the sum of numbers from 1 to 10."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the sum of numbers from 1 to 10."},
+            ],
             "expected_output": "55",
         },
         {
-            "prompt": (
-                "Write Python code that prints the length of the string 'aviato'."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the length of the string 'aviato'."},
+            ],
             "expected_output": "6",
         },
         {
-            "prompt": (
-                "Write Python code that prints the maximum of [3, 1, 4, 1, 5, 9]."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the maximum of [3, 1, 4, 1, 5, 9]."},
+            ],
             "expected_output": "9",
         },
     ]
@@ -202,10 +181,7 @@ def main() -> None:
     except ImportError as e:
         print(f"Missing Unsloth: {e}")
         print("\nInstall Unsloth:")
-        print(
-            '  pip install "unsloth[colab-new] @ '
-            'git+https://github.com/unslothai/unsloth.git"'
-        )
+        print("  uv pip install unsloth==2026.1.4")
         return
 
     try:
@@ -213,7 +189,7 @@ def main() -> None:
     except ImportError as e:
         print(f"Missing TRL: {e}")
         print("\nInstall required packages:")
-        print("  pip install trl transformers datasets torch")
+        print("  uv pip install trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0")
         return
 
     print(f"Unsloth GRPO Integration Example (job: {JOB_ID})")
@@ -267,13 +243,23 @@ def main() -> None:
     dataset = create_toy_dataset()
     print(f"Dataset size: {len(dataset)} problems")
 
-    # Create reward function with model name for tagging
-    print("\nSetting up GRPOTrainer with Unsloth model...")
-    reward_fn = make_reward_function(model_name=model_name, training_step=0)
+    # Sanitize model name for use in tags
+    model_tag = model_name.replace("/", "-").replace(".", "-")
+
+    defaults = SandboxDefaults(
+        container_image="python:3.11",
+        max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
+        tags=(
+            "rl-training",
+            "unsloth-grpo",
+            f"job-{JOB_ID}",
+            f"model-{model_tag}",
+        ),
+    )
 
     # Configure GRPO for minimal training (proof of concept)
     config = GRPOConfig(
-        output_dir="./unsloth_grpo_output",
+        output_dir="./examples/output/rl_training/unsloth_grpo",
         per_device_train_batch_size=2,
         num_generations=2,
         max_completion_length=128,
@@ -282,7 +268,11 @@ def main() -> None:
         report_to="none",  # Disable W&B/tensorboard for example
     )
 
-    try:
+    # Session manages sandbox lifecycle; cleanup happens automatically on exit
+    with Session(defaults=defaults) as session:
+        reward_fn = make_reward_function(session, model_name=model_name, training_step=0)
+
+        print("\nSetting up GRPOTrainer with Unsloth model...")
         trainer = GRPOTrainer(
             model=model,
             processing_class=tokenizer,
@@ -300,15 +290,6 @@ def main() -> None:
         print("  - 4-bit quantization for memory efficiency")
         print("  - LoRA adapters for parameter-efficient training")
         print("  - Gradient checkpointing for reduced memory")
-
-    except Exception as e:
-        print(f"\nTraining error: {e}")
-        print("\nNote: This example requires a CUDA GPU with Unsloth support.")
-        print("The integration pattern remains valid for GPU environments.")
-        raise
-
-    finally:
-        cleanup_job_sandboxes()
 
 
 if __name__ == "__main__":

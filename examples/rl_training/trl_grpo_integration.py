@@ -5,13 +5,13 @@ This example demonstrates integrating Aviato sandboxes with TRL's GRPOTrainer
 for reinforcement learning with code execution rewards.
 
 Key patterns demonstrated:
+- Session-based sandbox management for automatic cleanup
 - GRPOTrainer reward_funcs parameter
-- Batch reward computation with parallel Aviato sandboxes
+- Parallel sandbox creation and execution with session.sandbox().exec()
 - Tagging with training step for tracking
-- Sync API usage (TRL is sync)
 
 Requirements:
-    pip install trl transformers datasets torch
+    uv pip install trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
 
 Usage:
     uv run examples/rl_training/trl_grpo_integration.py
@@ -21,11 +21,9 @@ Note: Requires GPU for training. Without GPU, the script will run but be slow.
 
 from __future__ import annotations
 
-import re
 import uuid
 
-import aviato
-from aviato import Sandbox, SandboxDefaults, SandboxTimeoutError
+from aviato import SandboxDefaults, Session
 
 JOB_ID = uuid.uuid4().hex[:8]
 
@@ -33,41 +31,33 @@ EXECUTION_TIMEOUT_SECONDS = 10.0
 SANDBOX_LIFETIME_SECONDS = 60.0
 
 
-def extract_code_block(text: str) -> str:
-    """Extract Python code from a completion.
+def extract_xml_answer(text: str) -> str:
+    """Extract answer from XML-style <answer> tags.
 
-    Handles both fenced code blocks and raw code.
+    This follows the standard pattern used in GRPO training examples.
+    The model is prompted to put its code inside <answer>...</answer> tags.
     """
-    # Try to extract from markdown code block
-    match = re.search(r"```(?:python)?\n?(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Try to extract from <code> tags
-    match = re.search(r"<code>(.*?)</code>", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Return raw text, stripping common prefixes
-    lines = text.strip().split("\n")
-    code_lines = []
-    for line in lines:
-        # Skip lines that look like prompts or explanations
-        if line.startswith("#") or line.startswith(">>>"):
-            continue
-        code_lines.append(line)
-    return "\n".join(code_lines).strip()
+    if "<answer>" not in text:
+        return ""
+    answer = text.split("<answer>")[-1]
+    answer = answer.split("</answer>")[0]
+    return answer.strip()
 
 
-def make_reward_function(training_step: int = 0):
+def make_reward_function(session: Session, training_step: int = 0):
     """Create a reward function with step-based tagging.
 
     Args:
+        session: Session for sandbox management
         training_step: Current training step for sandbox tagging
 
     Returns:
         A reward function compatible with TRL's GRPOTrainer
     """
+    # Track cumulative stats across reward function calls
+    call_count = [0]  # Use list to allow mutation in closure
+    total_executions = [0]
+    total_successes = [0]
 
     def code_execution_reward(completions: list[str], **kwargs) -> list[float]:
         """Compute rewards by executing code completions in sandboxes.
@@ -79,68 +69,57 @@ def make_reward_function(training_step: int = 0):
         Returns:
             List of rewards (1.0 for successful execution, 0.0 for failure)
         """
-        codes = [extract_code_block(c) for c in completions]
+        call_count[0] += 1
+        codes = [extract_xml_answer(c) for c in completions]
 
-        defaults = SandboxDefaults(
-            container_image="python:3.11",
-            max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
-            tags=(
-                "rl-training",
-                "trl-grpo",
-                f"job-{JOB_ID}",
-                f"step-{training_step}",
-            ),
-        )
+        # Track which indices have empty code (reward 0.0)
+        code_indices = [(i, code) for i, code in enumerate(codes) if code]
 
-        # Create sandboxes in parallel for the batch
-        sandboxes = [Sandbox.run(defaults=defaults) for _ in codes]
-        aviato.wait(sandboxes)
+        # Create sandboxes and execute non-empty code in parallel
+        processes = [
+            (i, session.sandbox().exec(
+                ["python", "-c", code],
+                timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
+            ))
+            for i, code in code_indices
+        ]
 
-        # Execute code in parallel
-        processes = []
-        for sandbox, code in zip(sandboxes, codes, strict=True):
-            if not code:
-                processes.append(None)
-                continue
-            processes.append(
-                sandbox.exec(
-                    ["python", "-c", code],
-                    timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
-                )
-            )
-
-        # Collect rewards
-        rewards = []
-        for process in processes:
-            if process is None:
-                rewards.append(0.0)
-                continue
+        # Collect rewards, defaulting to 0.0
+        rewards = [0.0] * len(codes)
+        successes = 0
+        exceptions = 0
+        for i, process in processes:
             try:
                 result = process.result()
-                rewards.append(1.0 if result.returncode == 0 else 0.0)
-            except SandboxTimeoutError:
-                rewards.append(0.0)
-            except Exception:
-                rewards.append(0.0)
+                if result.returncode == 0:
+                    rewards[i] = 1.0
+                    successes += 1
+            except Exception as e:
+                exceptions += 1
+                print(f"  [Aviato] WARNING: Sandbox exception for completion {i}: {type(e).__name__}: {e}")
 
-        # Cleanup all sandboxes
-        aviato.result([sb.stop(missing_ok=True) for sb in sandboxes])
+        total_executions[0] += len(code_indices)
+        total_successes[0] += successes
 
+        # Show sandbox usage for this batch
+        skipped = len(codes) - len(code_indices)
+        skip_note = f", {skipped} skipped (no code)" if skipped else ""
+        exception_note = f", {exceptions} exceptions" if exceptions else ""
+        print(
+            f"  [Aviato] Reward call {call_count[0]}: "
+            f"{len(code_indices)} sandboxes, "
+            f"{successes}/{len(code_indices)} passed{skip_note}{exception_note}"
+        )
+
+        # Session handles sandbox cleanup automatically
         return rewards
 
     return code_execution_reward
 
 
-def cleanup_job_sandboxes() -> None:
-    """Clean up any remaining sandboxes from this job."""
-    try:
-        sandboxes = Sandbox.list(tags=[f"job-{JOB_ID}"]).result()
-        if sandboxes:
-            print(f"\nCleaning up {len(sandboxes)} sandbox(es)...")
-            for sb in sandboxes:
-                sb.stop(missing_ok=True).result()
-    except Exception as e:
-        print(f"Cleanup error: {e}")
+SYSTEM_PROMPT = """You solve coding problems by writing Python code.
+Put your code inside <answer> tags like this: <answer>print("hello")</answer>
+Only include the code, no explanations."""
 
 
 def create_toy_dataset():
@@ -149,35 +128,38 @@ def create_toy_dataset():
 
     problems = [
         {
-            "prompt": (
-                "Write a Python function that adds two numbers and prints "
-                "the result. Call it with 2 and 3.\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that adds 2 and 3, then prints the result."},
+            ],
             "expected_output": "5",
         },
         {
-            "prompt": "Write Python code that prints 'Hello, World!'.\n\n```python\n",
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints 'Hello, World!'."},
+            ],
             "expected_output": "Hello, World!",
         },
         {
-            "prompt": (
-                "Write Python code that prints the sum of numbers from 1 to 10."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the sum of numbers from 1 to 10."},
+            ],
             "expected_output": "55",
         },
         {
-            "prompt": (
-                "Write Python code that prints the length of the string 'aviato'."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the length of the string 'aviato'."},
+            ],
             "expected_output": "6",
         },
         {
-            "prompt": (
-                "Write Python code that prints the maximum of [3, 1, 4, 1, 5, 9]."
-                "\n\n```python\n"
-            ),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Write code that prints the maximum of [3, 1, 4, 1, 5, 9]."},
+            ],
             "expected_output": "9",
         },
     ]
@@ -192,7 +174,7 @@ def main() -> None:
     except ImportError as e:
         print(f"Missing dependency: {e}")
         print("\nInstall required packages:")
-        print("  pip install trl transformers datasets torch")
+        print("  uv pip install trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0")
         return
 
     print(f"TRL GRPO Integration Example (job: {JOB_ID})")
@@ -205,10 +187,6 @@ def main() -> None:
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForCausalLM.from_pretrained(model_name)
-
-        # Ensure pad token is set
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
     except Exception as e:
         print(f"Failed to load model: {e}")
         print("Make sure you have enough memory and transformers installed.")
@@ -218,22 +196,32 @@ def main() -> None:
     dataset = create_toy_dataset()
     print(f"Dataset size: {len(dataset)} problems")
 
-    # Create reward function with initial step
-    print("\nSetting up GRPOTrainer...")
-    reward_fn = make_reward_function(training_step=0)
+    defaults = SandboxDefaults(
+        container_image="python:3.11",
+        max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
+        tags=(
+            "rl-training",
+            "trl-grpo",
+            f"job-{JOB_ID}",
+        ),
+    )
 
     # Configure GRPO for minimal training (proof of concept)
     config = GRPOConfig(
-        output_dir="./grpo_output",
+        output_dir="./examples/output/rl_training/trl_grpo",
         per_device_train_batch_size=2,
         num_generations=2,
         max_completion_length=128,
-        max_steps=1,  # Single step to prove integration
+        max_steps=10,
         logging_steps=1,
         report_to="none",  # Disable W&B/tensorboard for example
     )
 
-    try:
+    # Session manages sandbox lifecycle; cleanup happens automatically on exit
+    with Session(defaults=defaults) as session:
+        reward_fn = make_reward_function(session, training_step=0)
+
+        print("\nSetting up GRPOTrainer...")
         trainer = GRPOTrainer(
             model=model,
             processing_class=tokenizer,
@@ -242,19 +230,11 @@ def main() -> None:
             train_dataset=dataset,
         )
 
-        print("\nStarting training (1 step)...")
+        print("\nStarting training (10 steps)...")
         print("-" * 60)
         trainer.train()
         print("-" * 60)
         print("\nTraining completed successfully!")
-
-    except Exception as e:
-        print(f"\nTraining error: {e}")
-        print("\nNote: Full training requires GPU. The integration pattern is still valid.")
-        raise
-
-    finally:
-        cleanup_job_sandboxes()
 
 
 if __name__ == "__main__":

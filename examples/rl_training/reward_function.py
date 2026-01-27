@@ -8,10 +8,11 @@ The reward function executes model-generated code completions against test cases
 in isolated sandboxes, returning binary rewards (1.0 for pass, 0.0 for fail).
 
 Key patterns demonstrated:
-- Fresh sandbox per execution for isolation
+- Session-based sandbox management for automatic cleanup
+- Parallel sandbox creation and execution
+- Progress tracking with aviato.wait() as results complete
 - Tagging with job ID and problem index for tracking
 - Timeout handling (zero reward on timeout)
-- Cleanup of all sandboxes on exit
 
 Usage:
     uv run examples/rl_training/reward_function.py
@@ -21,77 +22,67 @@ from __future__ import annotations
 
 import uuid
 
-from aviato import Sandbox, SandboxDefaults, SandboxTimeoutError
+import aviato
+from aviato import SandboxDefaults, Session
 
 JOB_ID = uuid.uuid4().hex[:8]
 
 EXECUTION_TIMEOUT_SECONDS = 10.0
-SANDBOX_LIFETIME_SECONDS = 60.0
+SANDBOX_LIFETIME_SECONDS = 300.0
 
 
 def code_execution_reward(
+    session: Session,
     completions: list[str],
     test_cases: list[str],
-) -> list[float]:
+) -> list[tuple[int, float]]:
     """Compute rewards by executing code completions against test cases.
 
     Each completion is executed in a fresh sandbox. A reward of 1.0 is given
     if execution succeeds (returncode 0), otherwise 0.0.
 
     Args:
+        session: Session for sandbox management
         completions: List of code strings to execute
         test_cases: List of test case identifiers (used for tagging)
 
     Returns:
-        List of rewards (1.0 for success, 0.0 for failure/timeout)
+        List of (index, reward) tuples in completion order
     """
-    rewards = []
-
-    for i, (code, test_id) in enumerate(zip(completions, test_cases, strict=True)):
-        defaults = SandboxDefaults(
-            container_image="python:3.11",
-            max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
-            tags=(
-                "rl-training",
-                f"job-{JOB_ID}",
-                f"problem-{i}",
-                f"test-{test_id}",
-            ),
+    # Create sandboxes and execute all completions in parallel
+    processes = [
+        session.sandbox().exec(
+            ["python", "-c", code],
+            timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
         )
+        for code in completions
+    ]
 
-        reward = 0.0
-        sandbox = None
+    # Map processes to their indices for tracking completion order
+    process_to_idx = {id(p): i for i, p in enumerate(processes)}
+
+    # Collect results as they complete, showing progress
+    results: list[tuple[int, float]] = []
+    pending = list(processes)
+    total = len(processes)
+
+    while pending:
+        [process], pending = aviato.wait(pending, num_returns=1)
+        idx = process_to_idx[id(process)]
+        test_id = test_cases[idx]
+
         try:
-            sandbox = Sandbox.run(defaults=defaults)
-            sandbox.wait()
-            result = sandbox.exec(
-                ["python", "-c", code],
-                timeout_seconds=EXECUTION_TIMEOUT_SECONDS,
-            ).result()
+            result = process.result()
             reward = 1.0 if result.returncode == 0 else 0.0
-        except SandboxTimeoutError:
-            reward = 0.0
         except Exception:
             reward = 0.0
-        finally:
-            if sandbox is not None:
-                sandbox.stop(missing_ok=True).result()
 
-        rewards.append(reward)
+        results.append((idx, reward))
+        status = "PASS" if reward == 1.0 else "FAIL"
+        print(f"  [{len(results)}/{total}] Problem {idx} ({test_id}): {status}")
 
-    return rewards
-
-
-def cleanup_job_sandboxes() -> None:
-    """Clean up any remaining sandboxes from this job."""
-    try:
-        sandboxes = Sandbox.list(tags=[f"job-{JOB_ID}"]).result()
-        if sandboxes:
-            print(f"\nCleaning up {len(sandboxes)} sandbox(es)...")
-            for sb in sandboxes:
-                sb.stop(missing_ok=True).result()
-    except Exception as e:
-        print(f"Cleanup error: {e}")
+    # Session handles sandbox cleanup automatically
+    return results
 
 
 def main() -> None:
@@ -99,35 +90,36 @@ def main() -> None:
     print("=" * 60)
 
     # Toy problems: (code completion, test case ID, expected result)
+    # Some include sleeps to demonstrate out-of-order completion
     problems = [
-        # Problem 0: Simple arithmetic (should pass)
+        # Problem 0: Slow computation (should pass, 2s delay)
         (
-            "print(2 + 2)",
-            "arithmetic",
+            "import time; time.sleep(2); print(sum(range(100)))",
+            "slow-sum",
             "pass",
         ),
-        # Problem 1: String manipulation (should pass)
+        # Problem 1: Fast string op (should pass, instant)
         (
             "print('hello'.upper())",
             "string-ops",
             "pass",
         ),
-        # Problem 2: Syntax error (should fail)
+        # Problem 2: Medium delay with error (should fail, 1s delay)
+        (
+            "import time; time.sleep(1); x = 1 / 0",
+            "delayed-error",
+            "fail",
+        ),
+        # Problem 3: Syntax error (should fail, instant)
         (
             "print('missing paren'",
             "syntax-error",
             "fail",
         ),
-        # Problem 3: Runtime error (should fail)
+        # Problem 4: Slowest computation (should pass, 3s delay)
         (
-            "x = 1 / 0",
-            "runtime-error",
-            "fail",
-        ),
-        # Problem 4: List comprehension (should pass)
-        (
-            "print([x * 2 for x in range(5)])",
-            "list-comp",
+            "import time; time.sleep(3); print([x * 2 for x in range(5)])",
+            "slow-list",
             "pass",
         ),
     ]
@@ -138,10 +130,26 @@ def main() -> None:
 
     print(f"\nEvaluating {len(completions)} completions...\n")
 
-    try:
-        rewards = code_execution_reward(completions, test_cases)
+    defaults = SandboxDefaults(
+        container_image="python:3.11",
+        max_lifetime_seconds=SANDBOX_LIFETIME_SECONDS,
+        tags=(
+            "rl-training",
+            f"job-{JOB_ID}",
+        ),
+    )
 
-        print("\nResults:")
+    with Session(defaults=defaults) as session:
+        print("Progress (results arrive as executions complete):")
+        print("-" * 60)
+        results = code_execution_reward(session, completions, test_cases)
+        print("-" * 60)
+
+        # Sort by original index for final summary
+        results.sort(key=lambda x: x[0])
+        rewards = [r for _, r in results]
+
+        print("\nFinal summary (original order):")
         print("-" * 60)
         for i, (test_id, reward, exp) in enumerate(
             zip(test_cases, rewards, expected, strict=True)
@@ -155,8 +163,6 @@ def main() -> None:
 
         passed = sum(1 for r in rewards if r == 1.0)
         print(f"Pass rate: {passed}/{len(rewards)} ({100 * passed / len(rewards):.0f}%)")
-    finally:
-        cleanup_job_sandboxes()
 
 
 if __name__ == "__main__":
