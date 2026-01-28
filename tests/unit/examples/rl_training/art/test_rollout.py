@@ -203,15 +203,21 @@ class TestRunTestsInSandbox:
 
 
 class TestHandleToolCall:
-    """Tests for handle_tool_call function."""
+    """Tests for handle_tool_call function.
+
+    Note: handle_tool_call now expects ResponseFunctionToolCall objects from the
+    Responses API, which have .name and .arguments directly (not nested under .function).
+    """
 
     @pytest.mark.asyncio
     async def test_execute_code_tool(
         self, mock_sandbox: MagicMock, sample_problem: Problem
     ) -> None:
         tool_call = MagicMock()
-        tool_call.function.name = EXECUTE_CODE_NAME
-        tool_call.function.arguments = json.dumps({"code": "print('hello')"})
+        tool_call.name = EXECUTE_CODE_NAME
+        tool_call.arguments = json.dumps({"code": "print('hello')"})
+        tool_call.call_id = "call_123"
+        tool_call.type = "function_call"
 
         config = RolloutConfig()
         result, is_submission, passed = await handle_tool_call(
@@ -227,8 +233,10 @@ class TestHandleToolCall:
         self, mock_sandbox: MagicMock, sample_problem: Problem
     ) -> None:
         tool_call = MagicMock()
-        tool_call.function.name = SUBMIT_SOLUTION_NAME
-        tool_call.function.arguments = json.dumps({"code": "def add(a, b): return a + b"})
+        tool_call.name = SUBMIT_SOLUTION_NAME
+        tool_call.arguments = json.dumps({"code": "def add(a, b): return a + b"})
+        tool_call.call_id = "call_456"
+        tool_call.type = "function_call"
 
         config = RolloutConfig()
         result, is_submission, passed = await handle_tool_call(
@@ -243,8 +251,10 @@ class TestHandleToolCall:
         self, failing_sandbox: MagicMock, sample_problem: Problem
     ) -> None:
         tool_call = MagicMock()
-        tool_call.function.name = SUBMIT_SOLUTION_NAME
-        tool_call.function.arguments = json.dumps({"code": "def add(a, b): return a - b"})
+        tool_call.name = SUBMIT_SOLUTION_NAME
+        tool_call.arguments = json.dumps({"code": "def add(a, b): return a - b"})
+        tool_call.call_id = "call_789"
+        tool_call.type = "function_call"
 
         config = RolloutConfig()
         result, is_submission, passed = await handle_tool_call(
@@ -258,8 +268,10 @@ class TestHandleToolCall:
     @pytest.mark.asyncio
     async def test_unknown_tool(self, mock_sandbox: MagicMock, sample_problem: Problem) -> None:
         tool_call = MagicMock()
-        tool_call.function.name = "unknown_tool"
-        tool_call.function.arguments = "{}"
+        tool_call.name = "unknown_tool"
+        tool_call.arguments = "{}"
+        tool_call.call_id = "call_unknown"
+        tool_call.type = "function_call"
 
         config = RolloutConfig()
         result, is_submission, passed = await handle_tool_call(
@@ -275,8 +287,10 @@ class TestHandleToolCall:
         self, mock_sandbox: MagicMock, sample_problem: Problem
     ) -> None:
         tool_call = MagicMock()
-        tool_call.function.name = EXECUTE_CODE_NAME
-        tool_call.function.arguments = "not valid json"
+        tool_call.name = EXECUTE_CODE_NAME
+        tool_call.arguments = "not valid json"
+        tool_call.call_id = "call_invalid"
+        tool_call.type = "function_call"
 
         config = RolloutConfig()
         result, is_submission, passed = await handle_tool_call(
@@ -288,36 +302,79 @@ class TestHandleToolCall:
         assert passed is False
 
 
+def _create_mock_response_with_function_call(
+    name: str, arguments: str, call_id: str, text_content: str = ""
+) -> MagicMock:
+    """Create a mock Responses API response with a function call."""
+    mock_function_call = MagicMock()
+    mock_function_call.type = "function_call"
+    mock_function_call.name = name
+    mock_function_call.arguments = arguments
+    mock_function_call.call_id = call_id
+    mock_function_call.id = f"item_{call_id}"
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = []
+    if text_content:
+        mock_text = MagicMock()
+        mock_text.type = "output_text"
+        mock_text.text = text_content
+        mock_message.content = [mock_text]
+
+    mock_response = MagicMock()
+    mock_response.status = "completed"
+    mock_response.error = None
+    mock_response.output = [mock_message, mock_function_call]
+    mock_response.output_text = text_content
+
+    return mock_response
+
+
+def _create_mock_response_text_only(text_content: str) -> MagicMock:
+    """Create a mock Responses API response with only text (no function calls)."""
+    mock_text = MagicMock()
+    mock_text.type = "output_text"
+    mock_text.text = text_content
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = [mock_text]
+
+    mock_response = MagicMock()
+    mock_response.status = "completed"
+    mock_response.error = None
+    mock_response.output = [mock_message]
+    mock_response.output_text = text_content
+
+    return mock_response
+
+
 class TestRollout:
-    """Tests for the main rollout function."""
+    """Tests for the main rollout function.
+
+    Note: The rollout function now uses the Responses API (client.responses.create)
+    instead of the Chat Completions API. The response format is different:
+    - response.output contains a list of items (messages, function_calls)
+    - function_call items have .name, .arguments, .call_id directly
+    - response.status indicates completion status
+    """
 
     @pytest.mark.asyncio
     async def test_successful_rollout_single_submission(
         self, sample_problem: Problem, mock_sandbox: MagicMock
     ) -> None:
         """Test rollout where agent submits correct solution on first try."""
-        mock_choice = MagicMock()
-        mock_choice.message.content = "I'll submit a solution."
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_123"
-        mock_tool_call.function.name = SUBMIT_SOLUTION_NAME
-        mock_tool_call.function.arguments = json.dumps({"code": "def add(a, b): return a + b"})
-        mock_tool_call.model_dump.return_value = {
-            "id": "call_123",
-            "type": "function",
-            "function": {
-                "name": SUBMIT_SOLUTION_NAME,
-                "arguments": '{"code": "def add(a, b): return a + b"}',
-            },
-        }
-        mock_choice.message.tool_calls = [mock_tool_call]
-
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
+        mock_response = _create_mock_response_with_function_call(
+            name=SUBMIT_SOLUTION_NAME,
+            arguments=json.dumps({"code": "def add(a, b): return a + b"}),
+            call_id="call_123",
+            text_content="I'll submit a solution.",
+        )
 
         with patch("examples.rl_training.art.rollout.AsyncOpenAI") as MockClient:
             mock_client = AsyncMock()
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+            mock_client.responses.create = AsyncMock(return_value=mock_response)
             MockClient.return_value = mock_client
 
             config = RolloutConfig(api_key="test-key")
@@ -333,28 +390,16 @@ class TestRollout:
         self, sample_problem: Problem, failing_sandbox: MagicMock
     ) -> None:
         """Test rollout where agent submits but tests fail."""
-        mock_choice = MagicMock()
-        mock_choice.message.content = "Here's my solution."
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_456"
-        mock_tool_call.function.name = SUBMIT_SOLUTION_NAME
-        mock_tool_call.function.arguments = json.dumps({"code": "def add(a, b): return a - b"})
-        mock_tool_call.model_dump.return_value = {
-            "id": "call_456",
-            "type": "function",
-            "function": {
-                "name": SUBMIT_SOLUTION_NAME,
-                "arguments": '{"code": "def add(a, b): return a - b"}',
-            },
-        }
-        mock_choice.message.tool_calls = [mock_tool_call]
-
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
+        mock_response = _create_mock_response_with_function_call(
+            name=SUBMIT_SOLUTION_NAME,
+            arguments=json.dumps({"code": "def add(a, b): return a - b"}),
+            call_id="call_456",
+            text_content="Here's my solution.",
+        )
 
         with patch("examples.rl_training.art.rollout.AsyncOpenAI") as MockClient:
             mock_client = AsyncMock()
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+            mock_client.responses.create = AsyncMock(return_value=mock_response)
             MockClient.return_value = mock_client
 
             config = RolloutConfig(api_key="test-key")
@@ -368,25 +413,16 @@ class TestRollout:
         self, sample_problem: Problem, mock_sandbox: MagicMock
     ) -> None:
         """Test rollout stops after max attempts without submission."""
-        mock_choice = MagicMock()
-        mock_choice.message.content = "Let me test this."
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_789"
-        mock_tool_call.function.name = EXECUTE_CODE_NAME
-        mock_tool_call.function.arguments = json.dumps({"code": "print('testing')"})
-        mock_tool_call.model_dump.return_value = {
-            "id": "call_789",
-            "type": "function",
-            "function": {"name": EXECUTE_CODE_NAME, "arguments": '{"code": "print(\'testing\')"}'},
-        }
-        mock_choice.message.tool_calls = [mock_tool_call]
-
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
+        mock_response = _create_mock_response_with_function_call(
+            name=EXECUTE_CODE_NAME,
+            arguments=json.dumps({"code": "print('testing')"}),
+            call_id="call_789",
+            text_content="Let me test this.",
+        )
 
         with patch("examples.rl_training.art.rollout.AsyncOpenAI") as MockClient:
             mock_client = AsyncMock()
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+            mock_client.responses.create = AsyncMock(return_value=mock_response)
             MockClient.return_value = mock_client
 
             config = RolloutConfig(api_key="test-key", max_attempts=2)
@@ -399,16 +435,13 @@ class TestRollout:
     @pytest.mark.asyncio
     async def test_no_tool_calls(self, sample_problem: Problem, mock_sandbox: MagicMock) -> None:
         """Test rollout where agent responds without using tools."""
-        mock_choice = MagicMock()
-        mock_choice.message.content = "The solution is def add(a, b): return a + b"
-        mock_choice.message.tool_calls = None
-
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
+        mock_response = _create_mock_response_text_only(
+            "The solution is def add(a, b): return a + b"
+        )
 
         with patch("examples.rl_training.art.rollout.AsyncOpenAI") as MockClient:
             mock_client = AsyncMock()
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+            mock_client.responses.create = AsyncMock(return_value=mock_response)
             MockClient.return_value = mock_client
 
             config = RolloutConfig(api_key="test-key")

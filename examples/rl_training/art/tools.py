@@ -7,9 +7,10 @@ This module defines the tool schemas for the multi-step rollout:
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from openai.types.chat import ChatCompletionToolParam
+from openai.types.responses import FunctionToolParam
 
 EXECUTE_CODE_NAME = "execute_code"
 SUBMIT_SOLUTION_NAME = "submit_solution"
@@ -74,7 +75,9 @@ SUBMIT_SOLUTION_TOOL: ChatCompletionToolParam = {
 ROLLOUT_TOOLS: list[ChatCompletionToolParam] = [EXECUTE_CODE_TOOL, SUBMIT_SOLUTION_TOOL]
 
 
-def to_responses_format(tools: list[ChatCompletionToolParam]) -> list[dict]:
+def to_responses_format(
+    tools: list[ChatCompletionToolParam],
+) -> list[FunctionToolParam]:
     """Convert ChatCompletionToolParam to OpenAI Responses API format.
 
     The Responses API uses a flattened structure with strict mode enabled:
@@ -82,19 +85,20 @@ def to_responses_format(tools: list[ChatCompletionToolParam]) -> list[dict]:
     - strict: True for structured outputs
     - additionalProperties: False in parameters schema
     """
-    return [
-        {
-            "type": "function",
-            "name": tool["function"]["name"],
-            "description": tool["function"].get("description"),
-            "parameters": {
-                **tool["function"]["parameters"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        }
-        for tool in tools
-    ]
+    result: list[FunctionToolParam] = []
+    for tool in tools:
+        func = tool["function"]
+        params: dict[str, Any] = {**func["parameters"], "additionalProperties": False}
+        result.append(
+            FunctionToolParam(
+                type="function",
+                name=func["name"],
+                description=func.get("description"),
+                parameters=params,
+                strict=True,
+            )
+        )
+    return result
 
 
 ROLLOUT_TOOLS_RESPONSES = to_responses_format(ROLLOUT_TOOLS)

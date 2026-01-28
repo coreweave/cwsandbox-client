@@ -1,7 +1,7 @@
 """ART rollout function with Aviato sandbox execution.
 
 This module implements the core rollout function that:
-1. Uses OpenAI-compatible API with tool calling
+1. Uses OpenAI Responses API with tool calling
 2. Executes tools (execute_code, submit_solution) in Aviato sandboxes
 3. Builds an ART Trajectory with the conversation history
 4. Computes binary reward (1.0 if tests pass, 0.0 otherwise)
@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.chat.chat_completion_message_function_tool_call import Function
 from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCall,
 )
+from openai.types.responses import Response, ResponseFunctionToolCall
 
 import art
 
@@ -31,6 +33,7 @@ from .tools import (
     SUBMIT_SOLUTION_NAME,
     ExecuteCodeArgs,
     SubmitSolutionArgs,
+    to_responses_format,
 )
 
 if TYPE_CHECKING:
@@ -172,8 +175,93 @@ async def run_tests_in_sandbox(
         return False, f"Error: {type(e).__name__}: {e}"
 
 
+def _normalize_output_for_input(response: Response) -> list[dict[str, Any]]:
+    """Convert response output items to valid input items for re-feeding.
+
+    The Responses API output items need minor transformation to be valid input:
+    - ResponseOutputMessage: extract content and convert to message format
+    - ResponseFunctionToolCall: pass through (already valid as input)
+    - Other items (refusal, error): convert to message format
+
+    Args:
+        response: The API response object
+
+    Returns:
+        List of input items ready to append to conversation
+    """
+    input_items: list[dict[str, Any]] = []
+
+    for item in response.output:
+        if item.type == "message":
+            content_parts = []
+            for part in item.content:
+                if part.type == "output_text":
+                    content_parts.append({"type": "text", "text": part.text})
+                elif part.type == "refusal":
+                    content_parts.append({"type": "text", "text": f"[Refusal: {part.refusal}]"})
+            if content_parts:
+                input_items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": content_parts,
+                })
+        elif item.type == "function_call":
+            input_items.append({
+                "type": "function_call",
+                "id": item.id,
+                "call_id": item.call_id,
+                "name": item.name,
+                "arguments": item.arguments,
+            })
+
+    return input_items
+
+
+def _response_output_to_choice(response: Response) -> Choice:
+    """Convert Responses API output to a Chat Completions Choice object for ART.
+
+    ART expects Choice objects with ChatCompletionMessage for trajectory building.
+    This function constructs the equivalent Choice from Responses API output.
+
+    Args:
+        response: The API response object
+
+    Returns:
+        Choice object compatible with ART Trajectory
+    """
+    text_content = response.output_text or ""
+
+    tool_calls: list[ChatCompletionMessageToolCall] = []
+    for item in response.output:
+        if item.type == "function_call":
+            tool_calls.append(
+                ChatCompletionMessageToolCall(
+                    id=item.call_id,
+                    type="function",
+                    function=Function(
+                        name=item.name,
+                        arguments=item.arguments,
+                    ),
+                )
+            )
+
+    message = ChatCompletionMessage(
+        role="assistant",
+        content=text_content if text_content else None,
+        tool_calls=cast(Any, tool_calls) if tool_calls else None,
+    )
+
+    finish_reason: Literal["stop", "tool_calls"] = "tool_calls" if tool_calls else "stop"
+
+    return Choice(
+        index=0,
+        message=message,
+        finish_reason=finish_reason,
+    )
+
+
 async def handle_tool_call(
-    tool_call: ChatCompletionMessageToolCall,
+    tool_call: ResponseFunctionToolCall,
     sandbox: Sandbox,
     problem: Problem,
     config: RolloutConfig,
@@ -189,9 +277,12 @@ async def handle_tool_call(
     Returns:
         Tuple of (result_content, is_submission, passed)
     """
-    name = tool_call.function.name
+    name = tool_call.name
+    arguments = tool_call.arguments
+    if not isinstance(arguments, str):
+        return "Error: Tool arguments must be a string", False, False
     try:
-        args = json.loads(tool_call.function.arguments)
+        args = json.loads(arguments)
     except json.JSONDecodeError as e:
         return f"Error: Invalid JSON arguments: {e}", False, False
 
@@ -243,49 +334,62 @@ async def rollout(
         api_key=config.api_key,
     )
 
-    messages: list[ChatCompletionMessageParam] = [
+    input_items: list[dict[str, Any]] = [
+        {"type": "message", "role": "system", "content": build_system_message(problem)},
+        {"type": "message", "role": "user", "content": "Please solve this problem."},
+    ]
+
+    messages_and_choices: list[dict[str, Any] | Choice] = [
         {"role": "system", "content": build_system_message(problem)},
         {"role": "user", "content": "Please solve this problem."},
     ]
-
-    messages_and_choices: list[ChatCompletionMessageParam | Choice] = list(messages)
     tool_call_count = 0
     reward = 0.0
     submitted = False
 
     while tool_call_count < config.max_attempts and not submitted:
-        response = await client.chat.completions.create(
+        response = await client.responses.create(
             model=config.model,
-            messages=messages,
-            tools=ROLLOUT_TOOLS,
+            input=cast(Any, input_items),
+            tools=to_responses_format(ROLLOUT_TOOLS),
             tool_choice="auto",
+            parallel_tool_calls=False,
         )
 
-        choice = response.choices[0]
+        if response.status != "completed":
+            error_msg = response.error.message if response.error else "Unknown error"
+            raise RuntimeError(f"Response not completed: {response.status} - {error_msg}")
+
+        choice = _response_output_to_choice(response)
         messages_and_choices.append(choice)
 
-        assistant_message = choice.message
-        if assistant_message.tool_calls:
-            assistant_msg: ChatCompletionMessageParam = {
-                "role": "assistant",
-                "content": assistant_message.content or "",
-                "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls],
-            }
-            messages.append(assistant_msg)
+        function_calls = [
+            item for item in response.output if item.type == "function_call"
+        ]
 
-            for tool_call in assistant_message.tool_calls:
+        if function_calls:
+            normalized_items = _normalize_output_for_input(response)
+            input_items.extend(normalized_items)
+
+            for tool_call in function_calls:
                 tool_call_count += 1
                 result_content, is_submission, passed = await handle_tool_call(
                     tool_call, sandbox, problem, config
                 )
 
-                tool_response: ChatCompletionMessageParam = {
+                tool_output_item: dict[str, Any] = {
+                    "type": "function_call_output",
+                    "call_id": tool_call.call_id,
+                    "output": result_content,
+                }
+                input_items.append(tool_output_item)
+
+                tool_response_msg: dict[str, Any] = {
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tool_call.call_id,
                     "content": result_content,
                 }
-                messages.append(tool_response)
-                messages_and_choices.append(tool_response)
+                messages_and_choices.append(tool_response_msg)
 
                 if is_submission:
                     submitted = True
@@ -295,8 +399,6 @@ async def rollout(
                 if tool_call_count >= config.max_attempts:
                     break
         else:
-            if assistant_message.content:
-                messages.append({"role": "assistant", "content": assistant_message.content})
             break
 
     trajectory = art.Trajectory(
