@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://coreweave.github.io/aviato-client/api/">
       
       
-        <link rel="prev" href="../guides/swebench/">
+        <link rel="prev" href="../guides/rl-training/">
       
       
       
@@ -954,6 +954,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/rl-training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RL Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1212,6 +1240,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#aviato.Sandbox.execution_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execution_stats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#aviato.Sandbox.run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1415,6 +1454,17 @@
     <span class="md-ellipsis">
       
         sandbox_count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aviato.Session.log_metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_metrics
       
     </span>
   </a>
@@ -2036,6 +2086,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#aviato.Sandbox.execution_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execution_stats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#aviato.Sandbox.run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2239,6 +2300,17 @@
     <span class="md-ellipsis">
       
         sandbox_count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aviato.Session.log_metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_metrics
       
     </span>
   </a>
@@ -3737,6 +3809,110 @@ the sandbox. Useful for network-accessible sandboxes.</p>
 - Sandbox hasn't been started yet
 - Sandbox was obtained via from_id() or list()
 - No ports were exposed</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="aviato.Sandbox.execution_stats" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">execution_stats</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#aviato.Sandbox.execution_stats" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">execution_stats</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Execution statistics for this sandbox.</p>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RETURNS</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]</code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>Dictionary with execution counts:</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]</code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <ul>
+<li>total: Total number of exec() calls</li>
+</ul>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]</code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <ul>
+<li>successes: Commands with returncode=0</li>
+</ul>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]</code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <ul>
+<li>failures: Commands with returncode!=0</li>
+</ul>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]</code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <ul>
+<li>errors: Commands that errored (timeout, cancellation, etc.)</li>
+</ul>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
     </div>
 
@@ -6019,12 +6195,15 @@ Does not include time waiting for sandbox to reach RUNNING status.</p>
 
 
 <a href="#aviato.Session" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            SandboxDefaults
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Session</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">defaults</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            SandboxDefaults
 
 
   
       dataclass
-   (aviato._defaults.SandboxDefaults)" href="#aviato.SandboxDefaults">SandboxDefaults</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+   (aviato._defaults.SandboxDefaults)" href="#aviato.SandboxDefaults">SandboxDefaults</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">report_to</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            list (aviato._session.Session.list)" href="#aviato.Session.list">list</a></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -6038,6 +6217,71 @@ Does not include time waiting for sandbox to reach RUNNING status.</p>
 - You want automatic cleanup of orphaned sandboxes</p>
 
 
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">PARAMETER</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>defaults</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Sandbox configuration defaults to apply to all sandboxes
+created by this session.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><a class="autorefs autorefs-internal" title="            SandboxDefaults
+
+
+  
+      dataclass
+   (aviato._defaults.SandboxDefaults)" href="#aviato.SandboxDefaults">SandboxDefaults</a> | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>report_to</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Controls metrics reporting integrations.
+- None (default): Auto-detect. Logs to wandb if WANDB_API_KEY is set
+  and an active wandb run exists.
+- []: Disable all reporting.
+- ["wandb"]: Explicitly enable wandb reporting.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><a class="autorefs autorefs-internal" title="            list (aviato._session.Session.list)" href="#aviato.Session.list">list</a>[<span title="str">str</span>] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+        <p>Metrics are automatically tracked when exec() completes on any sandbox
+associated with this session. Use log_metrics(step=N) to log metrics
+at specific training steps.</p>
+
+
 <details class="example" open>
   <summary>Example</summary>
   <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span><span class="n">container_image</span><span class="o">=</span><span class="s2">&quot;python:3.11&quot;</span><span class="p">)</span>
@@ -6048,7 +6292,7 @@ Does not include time waiting for sandbox to reach RUNNING status.</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">sb1</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="n">command</span><span class="o">=</span><span class="s2">&quot;sleep&quot;</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;infinity&quot;</span><span class="p">])</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">sb2</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="n">command</span><span class="o">=</span><span class="s2">&quot;sleep&quot;</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;infinity&quot;</span><span class="p">])</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="c1"># Execute commands</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="c1"># Execute commands - metrics tracked automatically</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sb1</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="c1"># Execute functions in sandboxes</span>
@@ -6065,6 +6309,17 @@ Does not include time waiting for sandbox to reach RUNNING status.</p>
 <a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="k">async</span> <span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
 <a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    <span class="n">sb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="n">command</span><span class="o">=</span><span class="s2">&quot;sleep&quot;</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;infinity&quot;</span><span class="p">])</span>
 <a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">])</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="c1"># Explicit wandb reporting with step correlation</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">,</span> <span class="n">report_to</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;wandb&quot;</span><span class="p">])</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>        <span class="n">sb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">sb</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>  <span class="c1"># Metrics tracked automatically</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>        <span class="n">session</span><span class="o">.</span><span class="n">log_metrics</span><span class="p">(</span><span class="n">step</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>  <span class="c1"># Log at training step</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="c1"># Disable all reporting</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">,</span> <span class="n">report_to</span><span class="o">=</span><span class="p">[])</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>    <span class="n">sb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 </code></pre></div>
 </details>
 
@@ -6111,6 +6366,132 @@ Does not include time waiting for sandbox to reach RUNNING status.</p>
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="aviato.Session.log_metrics" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">log_metrics</span>
+
+
+<a href="#aviato.Session.log_metrics" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">log_metrics</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">step</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">reset</span><span class="p">:</span> <span class="n"><span title="bool">bool</span></span> <span class="o">=</span> <span class="kc">True</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="bool">bool</span></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Log accumulated sandbox metrics to wandb.</p>
+<p>Call this during training to correlate sandbox usage with training steps.
+Metrics are automatically tracked when exec() completes, so users only
+need to call log_metrics() for step correlation.</p>
+<p>Metrics are also logged automatically on session close.</p>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">PARAMETER</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>step</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Training step to associate with metrics. If provided, metrics
+are logged at this step number in wandb.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span> | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>reset</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If True (default), reset accumulated metrics after logging.
+Set to False to keep accumulating.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>True</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RETURNS</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="bool">bool</span></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>True if metrics were logged, False if no reporter configured</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="bool">bool</span></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>or no active wandb run.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="example" open>
+  <summary>Example</summary>
+  <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">,</span> <span class="n">report_to</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;wandb&quot;</span><span class="p">])</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        <span class="n">sb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">sb</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>  <span class="c1"># Metrics tracked automatically</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        <span class="n">session</span><span class="o">.</span><span class="n">log_metrics</span><span class="p">(</span><span class="n">step</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>  <span class="c1"># Log at each step</span>
+</code></pre></div>
+</details>
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-function">
 
@@ -7595,7 +7976,16 @@ retrieved lazily.</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">command</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">],</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">stdout</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            StreamReader (aviato._types.StreamReader)" href="#aviato.StreamReader">StreamReader</a></span><span class="p">,</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">stderr</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            StreamReader (aviato._types.StreamReader)" href="#aviato.StreamReader">StreamReader</a></span><span class="p">,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">stats_callback</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            ProcessResult
+
+
+  
+      dataclass
+   (aviato._types.ProcessResult)" href="#aviato.ProcessResult">ProcessResult</a></span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n"><span title="BaseException">BaseException</span></span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span> <span class="kc">None</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="p">]</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -7741,6 +8131,32 @@ completion and returns the full ProcessResult.</p>
                   <span class="doc-param-annotation">
                     <b>TYPE:</b>
                       <code><a class="autorefs autorefs-internal" title="            StreamReader (aviato._types.StreamReader)" href="#aviato.StreamReader">StreamReader</a></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>stats_callback</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Optional callback invoked once on completion
+with (result, None) on success or (None, exception) on error.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="collections.abc.Callable">Callable</span>[[<a class="autorefs autorefs-internal" title="            ProcessResult
+
+
+  
+      dataclass
+   (aviato._types.ProcessResult)" href="#aviato.ProcessResult">ProcessResult</a> | None, <span title="BaseException">BaseException</span> | None], None] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
                   </span>
               </p>
             </td>
