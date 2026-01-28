@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
+# Patch ConnectRPC to ignore unknown protobuf fields (must be before other imports)
+from aviato import _compat as _compat  # noqa: F401
+
 # Import cleanup module to install atexit and signal handlers
 from aviato import _cleanup as _cleanup  # noqa: F401
 from aviato._defaults import SandboxDefaults
