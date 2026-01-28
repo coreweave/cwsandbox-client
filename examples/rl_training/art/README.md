@@ -86,6 +86,10 @@ uv run python -m examples.rl_training.art.train \
 2. **Reward Computation**: Binary reward (1.0 if tests pass, 0.0 otherwise)
 3. **Training Step**: Collected trajectories are grouped and used to train the model via ART backend
 
+## W&B Metrics
+
+When `WANDB_API_KEY` is set, aviato automatically logs sandbox execution metrics (success rate, error rate, exec counts) to your wandb run. See the [W&B Metrics Integration](../../../docs/guides/rl-training.md#wb-metrics-integration) section of the RL Training Guide for details.
+
 ## Further Reading
 
 - [ART Documentation](https://github.com/OpenPipe/ART)

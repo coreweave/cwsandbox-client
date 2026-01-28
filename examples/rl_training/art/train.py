@@ -204,32 +204,38 @@ async def train_step(
     print(f"\n=== Step {step + 1} ===")
     print(f"Collecting trajectories for {len(problems)} problems...")
 
-    groups = await art.gather_trajectory_groups(
-        (
-            collect_trajectory_group(problem, session, config, trajectories_per_problem)
-            for problem in problems
-        ),
-        pbar_desc=f"step {step + 1}",
-        max_exceptions=len(problems),
-    )
+    result = None
+    try:
+        groups = await art.gather_trajectory_groups(
+            (
+                collect_trajectory_group(problem, session, config, trajectories_per_problem)
+                for problem in problems
+            ),
+            pbar_desc=f"step {step + 1}",
+            max_exceptions=len(problems),
+        )
 
-    if not groups:
-        print("Warning: No trajectory groups collected")
-        return
+        if not groups:
+            print("Warning: No trajectory groups collected")
+            return
 
-    total_trajectories = sum(len(g.trajectories) for g in groups)
-    total_reward = sum(
-        sum(t.reward for t in g.trajectories) for g in groups
-    )
-    avg_reward = total_reward / total_trajectories if total_trajectories > 0 else 0
+        total_trajectories = sum(len(g.trajectories) for g in groups)
+        total_reward = sum(
+            sum(t.reward for t in g.trajectories) for g in groups
+        )
+        avg_reward = total_reward / total_trajectories if total_trajectories > 0 else 0
 
-    print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
+        print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
 
-    print("Training...")
-    result = await backend.train(model, groups, learning_rate=learning_rate)
-    print(f"Training complete: step={result.step}, metrics={result.metrics}")
+        print("Training...")
+        result = await backend.train(model, groups, learning_rate=learning_rate)
+        print(f"Training complete: step={result.step}, metrics={result.metrics}")
 
-    await model.log(groups, metrics=result.metrics, step=result.step, split="train")
+        await model.log(groups, metrics=result.metrics, step=result.step, split="train")
+    finally:
+        # Log aviato sandbox execution metrics (success/failure/error rates)
+        log_step = result.step if result and result.step is not None else step
+        session.log_metrics(step=log_step, reset=True)
 
 
 async def main() -> int:
