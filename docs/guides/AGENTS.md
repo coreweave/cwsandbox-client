@@ -15,6 +15,7 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 | `sandbox-config.md` | Configure resources, mounted files, ports, timeouts |
 | `troubleshooting.md` | Debug common issues - sandbox failures, auth errors, timeouts |
 | `environment-variables.md` | Use environment variables in sandboxes |
+| `swebench.md` | Run SWE-bench evaluations with parallel Aviato sandboxes |
 
 ## Key Patterns
 
