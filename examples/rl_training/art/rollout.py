@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from aviato import Sandbox
 
 MAX_TOOL_CALLS = 20
-EXECUTION_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass
@@ -69,14 +68,12 @@ class RolloutConfig:
         base_url: OpenAI-compatible API base URL
         api_key: API key for authentication
         max_attempts: Maximum tool calls before giving up
-        execution_timeout: Timeout for code execution in seconds
     """
 
     model: str = "gpt-4o-mini"
     base_url: str | None = None
     api_key: str | None = None
     max_attempts: int = MAX_TOOL_CALLS
-    execution_timeout: float = EXECUTION_TIMEOUT_SECONDS
 
 
 def build_system_message(problem: Problem) -> str:
@@ -106,23 +103,18 @@ Problem:
 async def execute_code_in_sandbox(
     sandbox: Sandbox,
     code: str,
-    timeout: float = EXECUTION_TIMEOUT_SECONDS,
 ) -> str:
     """Execute code in sandbox and return output or error message.
 
     Args:
         sandbox: Aviato sandbox instance
         code: Python code to execute
-        timeout: Execution timeout in seconds
 
     Returns:
         Output string: stdout on success, error message on failure
     """
     try:
-        process = sandbox.exec(
-            ["python", "-c", code],
-            timeout_seconds=timeout,
-        )
+        process = sandbox.exec(["python", "-c", code])
         result = process.result()
 
         if result.returncode == 0:
@@ -132,8 +124,6 @@ async def execute_code_in_sandbox(
             error = result.stderr.strip() if result.stderr else "(unknown error)"
             return f"Error (exit code {result.returncode}):\n{error}"
 
-    except TimeoutError:
-        return f"Error: Execution timed out after {timeout} seconds"
     except Exception as e:
         return f"Error: {type(e).__name__}: {e}"
 
@@ -143,7 +133,6 @@ async def run_tests_in_sandbox(
     solution_code: str,
     test_code: str,
     test_imports: str = "",
-    timeout: float = EXECUTION_TIMEOUT_SECONDS,
 ) -> tuple[bool, str]:
     """Run solution against test cases in sandbox.
 
@@ -152,7 +141,6 @@ async def run_tests_in_sandbox(
         solution_code: The solution code to test
         test_code: Test code that validates the solution
         test_imports: Optional imports for test code
-        timeout: Execution timeout in seconds
 
     Returns:
         Tuple of (passed: bool, output: str)
@@ -160,10 +148,7 @@ async def run_tests_in_sandbox(
     full_code = f"{test_imports}\n\n{solution_code}\n\n{test_code}"
 
     try:
-        process = sandbox.exec(
-            ["python", "-c", full_code],
-            timeout_seconds=timeout,
-        )
+        process = sandbox.exec(["python", "-c", full_code])
         result = process.result()
 
         if result.returncode == 0:
@@ -173,8 +158,6 @@ async def run_tests_in_sandbox(
             error = result.stderr.strip() if result.stderr else "(unknown error)"
             return False, f"Tests failed (exit code {result.returncode}):\n{error}"
 
-    except TimeoutError:
-        return False, f"Error: Tests timed out after {timeout} seconds"
     except Exception as e:
         return False, f"Error: {type(e).__name__}: {e}"
 
@@ -299,9 +282,7 @@ async def handle_tool_call(
 
     if name == EXECUTE_CODE_NAME:
         typed_args: ExecuteCodeArgs = args
-        result = await execute_code_in_sandbox(
-            sandbox, typed_args["code"], config.execution_timeout
-        )
+        result = await execute_code_in_sandbox(sandbox, typed_args["code"])
         return result, False, False
 
     elif name == SUBMIT_SOLUTION_NAME:
@@ -311,7 +292,6 @@ async def handle_tool_call(
             typed_args_submit["code"],
             problem.test_code,
             problem.test_imports,
-            config.execution_timeout,
         )
         return result, True, passed
 
