@@ -21,5 +21,10 @@ tinker>=0.8.1
 tinker-cookbook>=0.1.0
 uvicorn>=0.35.0
 
+# Pin transformers<5.0.0: openpipe-art 0.5.7 passes BatchEncoding to
+# tinker.ModelInput.from_ints() which expects list[int]. transformers 5.0
+# changed apply_chat_template() to return BatchEncoding by default.
+transformers<5.0.0
+
 # Note: LocalBackend requires GPU and heavy dependencies.
 # Install with: uv pip install "openpipe-art[backend]==0.5.7"
