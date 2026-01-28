@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_BASE_MODEL = "Qwen/Qwen3-8B-Instruct"
+DEFAULT_MODEL = "gpt-4o"
+DEFAULT_BASE_MODEL = "Qwen/Qwen3-8B"
 DEFAULT_NUM_PROBLEMS = 10
 DEFAULT_NUM_STEPS = 5
 DEFAULT_TRAJECTORIES_PER_PROBLEM = 2
@@ -192,7 +192,6 @@ async def generate_trajectory_groups(
 
 async def train_step(
     model: art.TrainableModel,
-    backend: LocalBackend | TinkerBackend,
     problems: list[Problem],
     session: Session,
     config: RolloutConfig,
@@ -204,7 +203,6 @@ async def train_step(
     print(f"\n=== Step {step + 1} ===")
     print(f"Collecting trajectories for {len(problems)} problems...")
 
-    result = None
     try:
         groups = await art.gather_trajectory_groups(
             (
@@ -212,7 +210,7 @@ async def train_step(
                 for problem in problems
             ),
             pbar_desc=f"step {step + 1}",
-            max_exceptions=len(problems),
+            max_exceptions=0,
         )
 
         if not groups:
@@ -228,14 +226,15 @@ async def train_step(
         print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
 
         print("Training...")
-        result = await backend.train(model, groups, learning_rate=learning_rate)
-        print(f"Training complete: step={result.step}, metrics={result.metrics}")
+        await model.train(groups, config=art.TrainConfig(learning_rate=learning_rate))
+        current_step = await model.get_step()
+        print(f"Training complete: step={current_step}")
 
-        await model.log(groups, metrics=result.metrics, step=result.step, split="train")
+        await model.log(groups, split="train")
     finally:
         # Log aviato sandbox execution metrics (success/failure/error rates)
-        log_step = result.step if result and result.step is not None else step
-        session.log_metrics(step=log_step, reset=True)
+        current_step = await model.get_step()
+        session.log_metrics(step=current_step, reset=True)
 
 
 async def main() -> int:
@@ -268,6 +267,9 @@ async def main() -> int:
         name=args.run_name,
         project=args.project,
         base_model=args.base_model,
+        _internal_config=art.dev.InternalModelConfig(
+            tinker_args=art.dev.TinkerArgs(renderer_name="qwen3"),
+        ),
     )
 
     if args.dry_run:
@@ -300,7 +302,6 @@ async def main() -> int:
             for step in range(start_step, args.num_steps):
                 await train_step(
                     model=model,
-                    backend=backend,
                     problems=problems,
                     session=session,
                     config=config,
@@ -309,7 +310,10 @@ async def main() -> int:
                     step=step,
                 )
     finally:
-        await backend.close()
+        try:
+            await backend.close()
+        except RuntimeError:
+            pass  # ART backend.close() has a dictionary iteration bug
 
     print("\nTraining complete!")
     return 0
