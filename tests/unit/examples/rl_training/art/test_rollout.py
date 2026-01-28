@@ -10,6 +10,8 @@ import pytest
 from examples.rl_training.art.rollout import (
     Problem,
     RolloutConfig,
+    _normalize_output_for_input,
+    _response_output_to_choice,
     build_system_message,
     execute_code_in_sandbox,
     handle_tool_call,
@@ -300,6 +302,289 @@ class TestHandleToolCall:
         assert "Invalid JSON" in result
         assert is_submission is False
         assert passed is False
+
+
+class TestNormalizeOutputForInput:
+    """Tests for _normalize_output_for_input() helper.
+
+    This function converts Responses API output items to valid input items
+    for re-feeding to the API in multi-turn conversations.
+    """
+
+    def test_text_message_only(self) -> None:
+        """Test normalizing a message with only text content."""
+        mock_text = MagicMock()
+        mock_text.type = "output_text"
+        mock_text.text = "Hello, I will help you."
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_message.content = [mock_text]
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_message]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "message"
+        assert result[0]["role"] == "assistant"
+        assert result[0]["content"] == [{"type": "text", "text": "Hello, I will help you."}]
+
+    def test_function_call_only(self) -> None:
+        """Test normalizing a function call without accompanying message."""
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.id = "item_call_123"
+        mock_function_call.call_id = "call_123"
+        mock_function_call.name = EXECUTE_CODE_NAME
+        mock_function_call.arguments = '{"code": "print(1)"}'
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_function_call]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "function_call"
+        assert result[0]["id"] == "item_call_123"
+        assert result[0]["call_id"] == "call_123"
+        assert result[0]["name"] == EXECUTE_CODE_NAME
+        assert result[0]["arguments"] == '{"code": "print(1)"}'
+
+    def test_mixed_message_and_function_call(self) -> None:
+        """Test normalizing output with both text message and function call."""
+        mock_text = MagicMock()
+        mock_text.type = "output_text"
+        mock_text.text = "Let me test this code."
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_message.content = [mock_text]
+
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.id = "item_call_456"
+        mock_function_call.call_id = "call_456"
+        mock_function_call.name = EXECUTE_CODE_NAME
+        mock_function_call.arguments = '{"code": "x = 1"}'
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_message, mock_function_call]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 2
+        assert result[0]["type"] == "message"
+        assert result[0]["role"] == "assistant"
+        assert result[1]["type"] == "function_call"
+        assert result[1]["call_id"] == "call_456"
+
+    def test_refusal_content(self) -> None:
+        """Test normalizing a message with refusal content."""
+        mock_refusal = MagicMock()
+        mock_refusal.type = "refusal"
+        mock_refusal.refusal = "I cannot execute harmful code."
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_message.content = [mock_refusal]
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_message]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "message"
+        assert result[0]["role"] == "assistant"
+        assert result[0]["content"] == [
+            {"type": "text", "text": "[Refusal: I cannot execute harmful code.]"}
+        ]
+
+    def test_multiple_text_parts(self) -> None:
+        """Test normalizing a message with multiple text parts."""
+        mock_text1 = MagicMock()
+        mock_text1.type = "output_text"
+        mock_text1.text = "First part."
+
+        mock_text2 = MagicMock()
+        mock_text2.type = "output_text"
+        mock_text2.text = "Second part."
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_message.content = [mock_text1, mock_text2]
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_message]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 1
+        assert len(result[0]["content"]) == 2
+        assert result[0]["content"][0]["text"] == "First part."
+        assert result[0]["content"][1]["text"] == "Second part."
+
+    def test_empty_message_content_skipped(self) -> None:
+        """Test that messages with no recognized content are not added."""
+        mock_unknown = MagicMock()
+        mock_unknown.type = "unknown_type"
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_message.content = [mock_unknown]
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_message]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 0
+
+    def test_multiple_function_calls(self) -> None:
+        """Test normalizing output with multiple function calls."""
+        mock_call1 = MagicMock()
+        mock_call1.type = "function_call"
+        mock_call1.id = "item_call_1"
+        mock_call1.call_id = "call_1"
+        mock_call1.name = EXECUTE_CODE_NAME
+        mock_call1.arguments = '{"code": "x = 1"}'
+
+        mock_call2 = MagicMock()
+        mock_call2.type = "function_call"
+        mock_call2.id = "item_call_2"
+        mock_call2.call_id = "call_2"
+        mock_call2.name = SUBMIT_SOLUTION_NAME
+        mock_call2.arguments = '{"code": "def add(a, b): return a + b"}'
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_call1, mock_call2]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 2
+        assert result[0]["name"] == EXECUTE_CODE_NAME
+        assert result[1]["name"] == SUBMIT_SOLUTION_NAME
+
+
+class TestResponseOutputToChoice:
+    """Tests for _response_output_to_choice() helper.
+
+    This function converts Responses API output to ART-compatible Choice objects.
+    """
+
+    def test_text_only_response(self) -> None:
+        """Test converting response with only text to Choice."""
+        mock_response = MagicMock()
+        mock_response.output_text = "The answer is 42."
+        mock_response.output = []
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert choice.index == 0
+        assert choice.message.role == "assistant"
+        assert choice.message.content == "The answer is 42."
+        assert choice.message.tool_calls is None
+        assert choice.finish_reason == "stop"
+
+    def test_function_call_response(self) -> None:
+        """Test converting response with function call to Choice."""
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.call_id = "call_123"
+        mock_function_call.name = EXECUTE_CODE_NAME
+        mock_function_call.arguments = '{"code": "print(1)"}'
+
+        mock_response = MagicMock()
+        mock_response.output_text = ""
+        mock_response.output = [mock_function_call]
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert choice.index == 0
+        assert choice.message.role == "assistant"
+        assert choice.message.content is None
+        assert choice.finish_reason == "tool_calls"
+        assert len(choice.message.tool_calls) == 1
+        assert choice.message.tool_calls[0].id == "call_123"
+        assert choice.message.tool_calls[0].type == "function"
+        assert choice.message.tool_calls[0].function.name == EXECUTE_CODE_NAME
+        assert choice.message.tool_calls[0].function.arguments == '{"code": "print(1)"}'
+
+    def test_mixed_text_and_function_call(self) -> None:
+        """Test converting response with both text and function call."""
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.call_id = "call_456"
+        mock_function_call.name = SUBMIT_SOLUTION_NAME
+        mock_function_call.arguments = '{"code": "def solve(): pass"}'
+
+        mock_response = MagicMock()
+        mock_response.output_text = "Here is my solution."
+        mock_response.output = [mock_function_call]
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert choice.message.content == "Here is my solution."
+        assert choice.finish_reason == "tool_calls"
+        assert len(choice.message.tool_calls) == 1
+
+    def test_multiple_function_calls(self) -> None:
+        """Test converting response with multiple function calls."""
+        mock_call1 = MagicMock()
+        mock_call1.type = "function_call"
+        mock_call1.call_id = "call_1"
+        mock_call1.name = EXECUTE_CODE_NAME
+        mock_call1.arguments = '{"code": "x = 1"}'
+
+        mock_call2 = MagicMock()
+        mock_call2.type = "function_call"
+        mock_call2.call_id = "call_2"
+        mock_call2.name = EXECUTE_CODE_NAME
+        mock_call2.arguments = '{"code": "y = 2"}'
+
+        mock_response = MagicMock()
+        mock_response.output_text = ""
+        mock_response.output = [mock_call1, mock_call2]
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert choice.finish_reason == "tool_calls"
+        assert len(choice.message.tool_calls) == 2
+        assert choice.message.tool_calls[0].id == "call_1"
+        assert choice.message.tool_calls[1].id == "call_2"
+
+    def test_empty_output_text_treated_as_none(self) -> None:
+        """Test that empty output_text becomes None in message content."""
+        mock_response = MagicMock()
+        mock_response.output_text = ""
+        mock_response.output = []
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert choice.message.content is None
+        assert choice.finish_reason == "stop"
+
+    def test_non_function_call_items_ignored(self) -> None:
+        """Test that non-function_call items are not included in tool_calls."""
+        mock_message = MagicMock()
+        mock_message.type = "message"
+
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.call_id = "call_789"
+        mock_function_call.name = EXECUTE_CODE_NAME
+        mock_function_call.arguments = '{"code": "z = 3"}'
+
+        mock_response = MagicMock()
+        mock_response.output_text = "Some text"
+        mock_response.output = [mock_message, mock_function_call]
+
+        choice = _response_output_to_choice(mock_response)
+
+        assert len(choice.message.tool_calls) == 1
+        assert choice.message.tool_calls[0].id == "call_789"
 
 
 def _create_mock_response_with_function_call(
