@@ -100,9 +100,7 @@ def run_without_wandb(defaults: SandboxDefaults) -> None:
                 print(f"  {key}: {value}")
 
 
-def simulate_training_loop(
-    session: Session, num_steps: int, problems_per_step: int
-) -> None:
+def simulate_training_loop(session: Session, num_steps: int, problems_per_step: int) -> None:
     """Simulate a training loop that creates sandboxes and executes code."""
     print(f"Simulating {num_steps} training steps with {problems_per_step} problems each")
     print("-" * 50)
