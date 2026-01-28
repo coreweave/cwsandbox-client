@@ -907,7 +907,7 @@ class Sandbox:
 
         # Report to session's reporter if available
         if self._session is not None and self._session._reporter is not None:
-            self._session._reporter.record_exec_outcome(outcome)
+            self._session._reporter.record_exec_outcome(outcome, sandbox_id=self._sandbox_id)
 
     def _on_startup_complete(self, startup_seconds: float) -> None:
         """Handle startup completion for stats tracking.

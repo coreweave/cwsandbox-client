@@ -52,12 +52,15 @@ class WandbReporter:
     - aviato/avg_startup_seconds: Average sandbox startup time
     - aviato/min_startup_seconds: Minimum sandbox startup time
     - aviato/max_startup_seconds: Maximum sandbox startup time
+    - aviato/avg_execs_per_sandbox: Average exec() calls per sandbox
+    - aviato/min_execs_per_sandbox: Minimum exec() calls per sandbox
+    - aviato/max_execs_per_sandbox: Maximum exec() calls per sandbox
 
     Example:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
-        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-123")
+        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-123")
         reporter.record_startup_time(2.5)
         reporter.log(step=100)  # Logs metrics to wandb at step 100
     """
@@ -73,6 +76,7 @@ class WandbReporter:
         self._startup_total_seconds: float = 0.0
         self._startup_min_seconds: float | None = None
         self._startup_max_seconds: float | None = None
+        self._exec_per_sandbox: dict[str, int] = {}
 
     def _get_run(self) -> Run | None:
         """Lazily get the active wandb run.
@@ -103,11 +107,12 @@ class WandbReporter:
         """Record that a sandbox was created."""
         self._sandboxes_created += 1
 
-    def record_exec_outcome(self, outcome: ExecOutcome) -> None:
+    def record_exec_outcome(self, outcome: ExecOutcome, sandbox_id: str | None = None) -> None:
         """Record an exec() call outcome.
 
         Args:
             outcome: The outcome classification (SUCCESS, FAILURE, or ERROR).
+            sandbox_id: Optional sandbox ID for per-sandbox tracking.
         """
         self._executions += 1
         if outcome == ExecOutcome.SUCCESS:
@@ -116,6 +121,9 @@ class WandbReporter:
             self._exec_failures += 1
         elif outcome == ExecOutcome.ERROR:
             self._exec_errors += 1
+
+        if sandbox_id is not None:
+            self._exec_per_sandbox[sandbox_id] = self._exec_per_sandbox.get(sandbox_id, 0) + 1
 
     def record_startup_time(self, startup_seconds: float) -> None:
         """Record sandbox startup time.
@@ -155,6 +163,12 @@ class WandbReporter:
             )
             metrics["aviato/min_startup_seconds"] = self._startup_min_seconds
             metrics["aviato/max_startup_seconds"] = self._startup_max_seconds
+
+        if self._exec_per_sandbox:
+            exec_counts = list(self._exec_per_sandbox.values())
+            metrics["aviato/avg_execs_per_sandbox"] = sum(exec_counts) / len(exec_counts)
+            metrics["aviato/min_execs_per_sandbox"] = min(exec_counts)
+            metrics["aviato/max_execs_per_sandbox"] = max(exec_counts)
 
         return metrics
 
@@ -206,6 +220,7 @@ class WandbReporter:
         self._startup_total_seconds = 0.0
         self._startup_min_seconds = None
         self._startup_max_seconds = None
+        self._exec_per_sandbox.clear()
 
     @property
     def has_metrics(self) -> bool:

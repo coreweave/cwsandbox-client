@@ -23,6 +23,7 @@ class TestWandbReporter:
         assert reporter._startup_total_seconds == 0.0
         assert reporter._startup_min_seconds is None
         assert reporter._startup_max_seconds is None
+        assert reporter._exec_per_sandbox == {}
 
     def test_record_sandbox_created_increments_counter(self) -> None:
         """Test record_sandbox_created increments the counter."""
@@ -74,6 +75,31 @@ class TestWandbReporter:
         assert reporter._exec_successes == 0
         assert reporter._exec_failures == 0
         assert reporter._exec_errors == 1
+
+    def test_record_exec_outcome_with_sandbox_id(self) -> None:
+        """Test record_exec_outcome tracks per-sandbox counts."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-2")
+
+        assert reporter._exec_per_sandbox == {"sb-1": 2, "sb-2": 1}
+        assert reporter._executions == 3
+
+    def test_record_exec_outcome_without_sandbox_id_does_not_track(self) -> None:
+        """Test record_exec_outcome without sandbox_id doesn't update per-sandbox."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+
+        assert reporter._exec_per_sandbox == {}
+        assert reporter._executions == 2
 
     def test_record_startup_time_updates_all_stats(self) -> None:
         """Test record_startup_time updates count, total, min, and max."""
@@ -164,14 +190,44 @@ class TestWandbReporter:
         assert "aviato/min_startup_seconds" not in metrics
         assert "aviato/max_startup_seconds" not in metrics
 
+    def test_get_metrics_includes_per_sandbox_stats(self) -> None:
+        """Test get_metrics includes per-sandbox exec stats when tracking enabled."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-2")
+
+        metrics = reporter.get_metrics()
+
+        assert metrics["aviato/avg_execs_per_sandbox"] == pytest.approx(2.0)
+        assert metrics["aviato/min_execs_per_sandbox"] == 1
+        assert metrics["aviato/max_execs_per_sandbox"] == 3
+
+    def test_get_metrics_omits_per_sandbox_stats_when_empty(self) -> None:
+        """Test get_metrics omits per-sandbox stats when no sandbox_id provided."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+
+        metrics = reporter.get_metrics()
+
+        assert "aviato/avg_execs_per_sandbox" not in metrics
+        assert "aviato/min_execs_per_sandbox" not in metrics
+        assert "aviato/max_execs_per_sandbox" not in metrics
+
     def test_reset_clears_metrics(self) -> None:
         """Test reset clears all accumulated metrics."""
         from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
-        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-1")
         reporter.record_exec_outcome(ExecOutcome.ERROR)
         reporter.record_startup_time(5.0)
 
@@ -186,6 +242,7 @@ class TestWandbReporter:
         assert reporter._startup_total_seconds == 0.0
         assert reporter._startup_min_seconds is None
         assert reporter._startup_max_seconds is None
+        assert reporter._exec_per_sandbox == {}
 
     def test_has_metrics_false_when_empty(self) -> None:
         """Test has_metrics returns False with no metrics."""
