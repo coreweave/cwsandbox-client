@@ -40,7 +40,7 @@ def test_sandbox_run_factory_no_defaults() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().result()
+        sandbox.stop(missing_ok=True).result()
 
 
 def test_sandbox_no_defaults_max_lifetime_only() -> None:
@@ -51,7 +51,7 @@ def test_sandbox_no_defaults_max_lifetime_only() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().result()
+        sandbox.stop(missing_ok=True).result()
 
 
 def test_sandbox_no_defaults_tags_only() -> None:
@@ -62,7 +62,7 @@ def test_sandbox_no_defaults_tags_only() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().result()
+        sandbox.stop(missing_ok=True).result()
 
 
 def test_sandbox_no_defaults_sleep_command() -> None:
@@ -72,7 +72,7 @@ def test_sandbox_no_defaults_sleep_command() -> None:
     try:
         assert sandbox.sandbox_id is not None
     finally:
-        sandbox.stop().result()
+        sandbox.stop(missing_ok=True).result()
 
 
 def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
