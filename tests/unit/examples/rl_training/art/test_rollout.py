@@ -467,6 +467,54 @@ class TestNormalizeOutputForInput:
         assert result[0]["name"] == EXECUTE_CODE_NAME
         assert result[1]["name"] == SUBMIT_SOLUTION_NAME
 
+    def test_reasoning_item_preserved(self) -> None:
+        """Test that reasoning items are preserved for Codex models.
+
+        When using reasoning models (gpt-5.x-codex), function_call items must
+        be accompanied by their corresponding reasoning item in multi-turn
+        conversations.
+        """
+        mock_reasoning = MagicMock()
+        mock_reasoning.type = "reasoning"
+        mock_reasoning.id = "rs_abc123"
+        mock_reasoning.summary = None
+
+        mock_function_call = MagicMock()
+        mock_function_call.type = "function_call"
+        mock_function_call.id = "fc_def456"
+        mock_function_call.call_id = "call_789"
+        mock_function_call.name = EXECUTE_CODE_NAME
+        mock_function_call.arguments = '{"code": "print(1)"}'
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_reasoning, mock_function_call]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 2
+        assert result[0]["type"] == "reasoning"
+        assert result[0]["id"] == "rs_abc123"
+        assert result[0]["summary"] is None
+        assert result[1]["type"] == "function_call"
+        assert result[1]["call_id"] == "call_789"
+
+    def test_reasoning_with_summary(self) -> None:
+        """Test reasoning items with summary text are preserved."""
+        mock_reasoning = MagicMock()
+        mock_reasoning.type = "reasoning"
+        mock_reasoning.id = "rs_xyz789"
+        mock_reasoning.summary = [{"type": "summary_text", "text": "Thinking about the problem..."}]
+
+        mock_response = MagicMock()
+        mock_response.output = [mock_reasoning]
+
+        result = _normalize_output_for_input(mock_response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "reasoning"
+        assert result[0]["id"] == "rs_xyz789"
+        assert result[0]["summary"] == [{"type": "summary_text", "text": "Thinking about the problem..."}]
+
 
 class TestResponseOutputToChoice:
     """Tests for _response_output_to_choice() helper.

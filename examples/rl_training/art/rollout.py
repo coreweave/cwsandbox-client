@@ -181,6 +181,7 @@ def _normalize_output_for_input(response: Response) -> list[dict[str, Any]]:
     The Responses API output items need minor transformation to be valid input:
     - ResponseOutputMessage: extract content and convert to message format
     - ResponseFunctionToolCall: pass through (already valid as input)
+    - ResponseReasoningItem: include for reasoning models (required before function_call)
     - Other items (refusal, error): convert to message format
 
     Args:
@@ -205,6 +206,12 @@ def _normalize_output_for_input(response: Response) -> list[dict[str, Any]]:
                     "role": "assistant",
                     "content": content_parts,
                 })
+        elif item.type == "reasoning":
+            input_items.append({
+                "type": "reasoning",
+                "id": item.id,
+                "summary": getattr(item, "summary", None),
+            })
         elif item.type == "function_call":
             input_items.append({
                 "type": "function_call",
