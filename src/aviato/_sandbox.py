@@ -226,6 +226,7 @@ class Sandbox:
             environment_variables
         )
 
+        self._runway_ids: list[str] | None
         if runway_ids is not None:
             self._runway_ids = list(runway_ids)
         elif self._defaults.runway_ids:
@@ -233,6 +234,7 @@ class Sandbox:
         else:
             self._runway_ids = None
 
+        self._tower_ids: list[str] | None
         if tower_ids is not None:
             self._tower_ids = list(tower_ids)
         elif self._defaults.tower_ids:
@@ -926,6 +928,7 @@ class Sandbox:
         self._startup_recorded = True
         startup_seconds = time.monotonic() - self._start_accepted_at
         self._on_startup_complete(startup_seconds)
+
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
