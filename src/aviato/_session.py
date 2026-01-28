@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from aviato._defaults import SandboxDefaults
 from aviato._function import RemoteFunction
+from aviato._integrations import should_auto_report_wandb
 from aviato._loop_manager import _LoopManager
 from aviato._types import OperationRef, Serialization
+from aviato._wandb import WandbReporter
 from aviato.exceptions import SandboxError
 
 if TYPE_CHECKING:
@@ -29,6 +31,15 @@ class Session:
     - Creating multiple sandboxes with shared configuration
     - Executing Python functions in sandboxes
     - You want automatic cleanup of orphaned sandboxes
+
+    Args:
+        defaults: Sandbox configuration defaults to apply to all sandboxes
+            created by this session.
+        report_to: Controls metrics reporting integrations.
+            - None (default): Auto-detect. Logs to wandb if WANDB_API_KEY is set
+              and an active wandb run exists.
+            - []: Disable all reporting.
+            - ["wandb"]: Explicitly enable wandb reporting.
 
     Example:
         ```python
@@ -57,24 +68,110 @@ class Session:
         async with Session(defaults) as session:
             sb = session.sandbox(command="sleep", args=["infinity"])
             result = await sb.exec(["echo", "hello"])
+
+        # Explicit wandb reporting
+        with Session(defaults, report_to=["wandb"]) as session:
+            sb = session.sandbox(...)
+            session.log_metrics(step=100)  # Log at training step 100
+
+        # Disable all reporting
+        with Session(defaults, report_to=[]) as session:
+            sb = session.sandbox(...)
         ```
     """
 
-    def __init__(self, defaults: SandboxDefaults | None = None) -> None:
+    def __init__(
+        self,
+        defaults: SandboxDefaults | None = None,
+        report_to: list[str] | None = None,
+    ) -> None:
         self._defaults = defaults or SandboxDefaults()
         self._sandboxes: dict[int, Sandbox] = {}
         self._closed = False
         self._loop_manager = _LoopManager.get()
         self._loop_manager.register_session(self)
+        self._reporter = self._init_reporter(report_to)
 
     def __repr__(self) -> str:
         status = "closed" if self._closed else "open"
         return f"<Session sandboxes={len(self._sandboxes)} status={status}>"
 
+    def _init_reporter(self, report_to: list[str] | None) -> WandbReporter | None:
+        """Initialize metrics reporter based on report_to configuration.
+
+        Args:
+            report_to: Reporting configuration.
+                - None: Auto-detect (use wandb if credentials and run exist)
+                - []: Disable all reporting
+                - ["wandb"]: Explicit wandb reporting
+
+        Returns:
+            WandbReporter instance if reporting enabled, None otherwise.
+        """
+        if report_to is not None and len(report_to) == 0:
+            return None
+
+        if report_to is None:
+            if should_auto_report_wandb():
+                logger.debug("Auto-detected wandb run, enabling metrics reporting")
+                return WandbReporter()
+            return None
+
+        if "wandb" in report_to:
+            return WandbReporter()
+
+        return None
+
     @property
     def sandbox_count(self) -> int:
         """Number of sandboxes currently tracked by this session."""
         return len(self._sandboxes)
+
+    def log_metrics(self, step: int | None = None, reset: bool = True) -> bool:
+        """Log accumulated sandbox metrics to wandb.
+
+        Call this during training to correlate sandbox usage with training steps.
+        Metrics are automatically logged on session close, but this method
+        allows finer-grained control.
+
+        Args:
+            step: Training step to associate with metrics. If provided, metrics
+                are logged at this step number in wandb.
+            reset: If True (default), reset accumulated metrics after logging.
+                Set to False to keep accumulating.
+
+        Returns:
+            True if metrics were logged, False if no reporter configured
+            or no active wandb run.
+
+        Example:
+            ```python
+            with Session(defaults, report_to=["wandb"]) as session:
+                for step in range(100):
+                    sb = session.sandbox(...)
+                    # ... training logic ...
+                    session.log_metrics(step=step)  # Log at each step
+            ```
+        """
+        if self._reporter is None:
+            return False
+
+        result = self._reporter.log(step=step)
+        if result and reset:
+            self._reporter.reset()
+        return result
+
+    def record_execution(self, success: bool) -> None:
+        """Record an execution result for metrics tracking.
+
+        This method is called automatically when using session-managed sandboxes.
+        Users typically don't need to call this directly.
+
+        Args:
+            success: True if the execution succeeded (returncode 0), False otherwise.
+        """
+        if self._reporter:
+            self._reporter.record_execution(success=success)
 
     def __enter__(self) -> Session:
         """Enter sync context manager."""
@@ -118,6 +215,9 @@ class Session:
             return
 
         self._closed = True
+
+        if self._reporter and self._reporter.has_metrics:
+            self._reporter.log()
 
         if not self._sandboxes:
             return
@@ -235,6 +335,10 @@ class Session:
         )
         self._register_sandbox(sandbox)
         sandbox.start()
+
+        if self._reporter:
+            self._reporter.record_sandbox_created()
+
         return sandbox
 
     def list(

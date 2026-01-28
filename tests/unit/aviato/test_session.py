@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aviato import Sandbox, Session
+from aviato._wandb import WandbReporter
 from tests.unit.aviato.conftest import make_operation_ref, make_process
 
 
@@ -648,3 +649,170 @@ class TestSessionAdopt:
 
         with pytest.raises(ValueError, match="without sandbox_id"):
             session.adopt(sandbox)
+
+
+class TestSessionReportTo:
+    """Tests for Session report_to parameter."""
+
+    def test_report_to_none_without_wandb_run_creates_no_reporter(self) -> None:
+        """Test report_to=None creates no reporter when no wandb run."""
+        with patch("aviato._session.should_auto_report_wandb", return_value=False):
+            session = Session(report_to=None)
+
+        assert session._reporter is None
+
+    def test_report_to_none_with_wandb_run_creates_reporter(self) -> None:
+        """Test report_to=None creates reporter when wandb run exists."""
+        with patch("aviato._session.should_auto_report_wandb", return_value=True):
+            session = Session(report_to=None)
+
+        assert isinstance(session._reporter, WandbReporter)
+
+    def test_report_to_empty_list_disables_reporting(self) -> None:
+        """Test report_to=[] disables reporting."""
+        with patch("aviato._session.should_auto_report_wandb", return_value=True):
+            session = Session(report_to=[])
+
+        assert session._reporter is None
+
+    def test_report_to_wandb_creates_reporter(self) -> None:
+        """Test report_to=['wandb'] creates reporter."""
+        session = Session(report_to=["wandb"])
+
+        assert isinstance(session._reporter, WandbReporter)
+
+
+class TestSessionSandboxMetrics:
+    """Tests for Session sandbox metrics tracking."""
+
+    def test_sandbox_records_creation(self) -> None:
+        """Test session.sandbox() records sandbox creation."""
+        session = Session(report_to=["wandb"])
+
+        with patch.object(Sandbox, "start"):
+            session.sandbox(command="sleep", args=["infinity"])
+
+        assert session._reporter._sandboxes_created == 1
+
+    def test_sandbox_records_multiple_creations(self) -> None:
+        """Test session.sandbox() records multiple sandbox creations."""
+        session = Session(report_to=["wandb"])
+
+        with patch.object(Sandbox, "start"):
+            session.sandbox(command="sleep", args=["infinity"])
+            session.sandbox(command="sleep", args=["infinity"])
+
+        assert session._reporter._sandboxes_created == 2
+
+
+class TestSessionLogMetrics:
+    """Tests for Session.log_metrics method."""
+
+    def test_log_metrics_returns_false_without_reporter(self) -> None:
+        """Test log_metrics returns False when no reporter."""
+        session = Session(report_to=[])
+
+        result = session.log_metrics()
+
+        assert result is False
+
+    def test_log_metrics_calls_reporter_log(self) -> None:
+        """Test log_metrics calls reporter.log."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        session._reporter._run_checked = True
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        result = session.log_metrics(step=100)
+
+        assert result is True
+        mock_run.log.assert_called_once()
+
+    def test_log_metrics_resets_by_default(self) -> None:
+        """Test log_metrics resets metrics by default."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        session._reporter._run_checked = True
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        session.log_metrics(step=100)
+
+        assert session._reporter._sandboxes_created == 0
+
+    def test_log_metrics_preserves_when_reset_false(self) -> None:
+        """Test log_metrics preserves metrics when reset=False."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        session._reporter._run_checked = True
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        session.log_metrics(step=100, reset=False)
+
+        assert session._reporter._sandboxes_created == 1
+
+
+class TestSessionRecordExecution:
+    """Tests for Session.record_execution method."""
+
+    def test_record_execution_success(self) -> None:
+        """Test record_execution with success=True."""
+        session = Session(report_to=["wandb"])
+
+        session.record_execution(success=True)
+
+        assert session._reporter._executions == 1
+        assert session._reporter._successful_executions == 1
+
+    def test_record_execution_failure(self) -> None:
+        """Test record_execution with success=False."""
+        session = Session(report_to=["wandb"])
+
+        session.record_execution(success=False)
+
+        assert session._reporter._executions == 1
+        assert session._reporter._successful_executions == 0
+
+    def test_record_execution_noop_without_reporter(self) -> None:
+        """Test record_execution is noop without reporter."""
+        session = Session(report_to=[])
+
+        session.record_execution(success=True)
+
+
+class TestSessionCloseMetrics:
+    """Tests for Session close with metrics logging."""
+
+    @pytest.mark.asyncio
+    async def test_close_logs_metrics(self) -> None:
+        """Test session close logs accumulated metrics."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        session._reporter._run_checked = True
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        await session._close_async()
+
+        mock_run.log.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_does_not_log_without_metrics(self) -> None:
+        """Test session close does not log when no metrics."""
+        session = Session(report_to=["wandb"])
+        session._reporter._run_checked = True
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        await session._close_async()
+
+        mock_run.log.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_does_not_log_without_reporter(self) -> None:
+        """Test session close works without reporter."""
+        session = Session(report_to=[])
+
+        await session._close_async()

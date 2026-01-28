@@ -227,6 +227,27 @@ Demonstrates:
 
 See [SWE-bench Guide](../docs/guides/swebench.md) for full documentation.
 
+### W&B Metrics Integration (`wandb_integration.py`)
+
+Automatic sandbox metrics logging to Weights & Biases:
+
+```bash
+# With wandb
+export WANDB_API_KEY="your-api-key"
+python examples/wandb_integration.py
+
+# Without wandb (prints metrics to console)
+python examples/wandb_integration.py --no-wandb
+```
+
+Demonstrates:
+- Auto-detection of active wandb runs
+- Explicit opt-in with `report_to=["wandb"]`
+- Using `session.log_metrics(step=N)` at training steps
+- Using `session.record_execution()` for success rate tracking
+
+Metrics logged: `aviato/sandboxes_created`, `aviato/executions`, `aviato/success_rate`
+
 ### RL Training Examples (`rl_training/`)
 
 Examples for reinforcement learning training with code execution rewards:

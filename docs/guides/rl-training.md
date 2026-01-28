@@ -12,6 +12,7 @@ This guide covers using Aviato sandboxes for reinforcement learning training wor
 - [TRL GRPOTrainer Integration](#trl-grpotrainer-integration)
 - [Try it: trl_grpo_integration.py](#try-it-trl_grpo_integrationpy)
 - [Error Handling in Agent Episodes](#error-handling-in-agent-episodes)
+- [W&B Metrics Integration](#wb-metrics-integration)
 - [Monitoring and Debugging](#monitoring-and-debugging)
 - [Multi-step Rollouts with ART](#multi-step-rollouts-with-art)
 
@@ -388,6 +389,81 @@ def execute_tool(sandbox, tool) -> str:
 ```
 
 For reward computation, catch exceptions and return a fallback reward instead of propagating to the training loop.
+
+## W&B Metrics Integration
+
+When using W&B (Weights & Biases) for training, aviato Sessions automatically log sandbox usage metrics to your active wandb run. This provides visibility into how your training uses sandboxes without additional instrumentation.
+
+### Auto-detection
+
+If `WANDB_API_KEY` is set and a wandb run is active (`wandb.run` exists), metrics logging is enabled automatically:
+
+```python
+import wandb
+from aviato import Session, SandboxDefaults
+
+wandb.init(project="my-rl-training")
+
+# Metrics logging enabled automatically
+with Session(defaults) as session:
+    for step in range(num_steps):
+        sandbox = session.sandbox()
+        result = sandbox.exec(["python", "-c", code]).result()
+        session.record_execution(success=result.returncode == 0)
+        session.log_metrics(step=step)
+# Final metrics logged on session close
+```
+
+### Explicit Control
+
+Control metrics reporting with the `report_to` parameter:
+
+```python
+# Explicit opt-in (reports even without active wandb run)
+session = Session(defaults, report_to=["wandb"])
+
+# Disable reporting (even if wandb run exists)
+session = Session(defaults, report_to=[])
+
+# Auto-detect (default behavior)
+session = Session(defaults, report_to=None)
+```
+
+### Metrics
+
+Three metrics are tracked:
+
+| Metric | Description |
+|--------|-------------|
+| `aviato/sandboxes_created` | Total sandboxes created via session |
+| `aviato/executions` | Total exec() calls recorded |
+| `aviato/success_rate` | Fraction of exec() with returncode=0 |
+
+Use `session.record_execution(success=True/False)` to track execution success rates. Call `session.log_metrics(step=N)` to log metrics at specific training steps:
+
+```python
+def training_step(session, model, batch, step: int) -> list[float]:
+    rewards = []
+    for task in batch:
+        sandbox = session.sandbox()
+        result = sandbox.exec(["python", "-c", task["code"]]).result()
+        reward = 1.0 if result.returncode == 0 else 0.0
+        session.record_execution(success=result.returncode == 0)
+        rewards.append(reward)
+        sandbox.stop()
+
+    # Log metrics at this training step
+    session.log_metrics(step=step)
+    return rewards
+```
+
+By default, `log_metrics()` resets the counters after logging. Set `reset=False` to keep accumulating:
+
+```python
+session.log_metrics(step=step, reset=False)  # Keep accumulating
+```
+
+Metrics are also logged automatically when the session closes, so you get final summary metrics even without explicit logging.
 
 ## Monitoring and Debugging
 
