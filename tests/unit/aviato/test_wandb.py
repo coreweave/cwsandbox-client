@@ -218,6 +218,19 @@ class TestWandbReporter:
         reporter.record_startup_time(5.0)
         assert reporter.has_metrics is True
 
+    def test_has_metrics_false_after_reset(self) -> None:
+        """Test has_metrics returns False after reset clears all metrics."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_sandbox_created()
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_startup_time(5.0)
+        assert reporter.has_metrics is True
+
+        reporter.reset()
+        assert reporter.has_metrics is False
+
 
 class TestWandbReporterGetRun:
     """Tests for WandbReporter._get_run method."""
