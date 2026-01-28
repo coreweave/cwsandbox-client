@@ -654,24 +654,20 @@ class TestSessionAdopt:
 class TestSessionReportTo:
     """Tests for Session report_to parameter."""
 
-    def test_report_to_none_without_wandb_run_creates_no_reporter(self) -> None:
-        """Test report_to=None creates no reporter when no wandb run."""
-        with patch("aviato._session.should_auto_report_wandb", return_value=False):
-            session = Session(report_to=None)
+    def test_report_to_none_always_creates_reporter(self) -> None:
+        """Test report_to=None always creates reporter for lazy detection.
 
-        assert session._reporter is None
-
-    def test_report_to_none_with_wandb_run_creates_reporter(self) -> None:
-        """Test report_to=None creates reporter when wandb run exists."""
-        with patch("aviato._session.should_auto_report_wandb", return_value=True):
-            session = Session(report_to=None)
+        The reporter handles lazy detection of wandb.run, so we always create
+        one for auto-detect mode. This ensures metrics aren't lost when
+        wandb.init is called after Session creation.
+        """
+        session = Session(report_to=None)
 
         assert isinstance(session._reporter, WandbReporter)
 
     def test_report_to_empty_list_disables_reporting(self) -> None:
         """Test report_to=[] disables reporting."""
-        with patch("aviato._session.should_auto_report_wandb", return_value=True):
-            session = Session(report_to=[])
+        session = Session(report_to=[])
 
         assert session._reporter is None
 
@@ -680,6 +676,25 @@ class TestSessionReportTo:
         session = Session(report_to=["wandb"])
 
         assert isinstance(session._reporter, WandbReporter)
+
+    def test_lazy_detection_finds_run_after_session_creation(self) -> None:
+        """Test lazy detection: create Session, then wandb.init, then log_metrics.
+
+        This verifies the fix for bd-yrj: Session._init_reporter always creates
+        WandbReporter for auto-detect mode, letting it check lazily for wandb.run.
+        """
+        session = Session(report_to=None)
+        session._reporter.record_sandbox_created()
+
+        mock_run = MagicMock()
+        mock_wandb = MagicMock()
+        mock_wandb.run = mock_run
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            result = session.log_metrics()
+
+        assert result is True
+        mock_run.log.assert_called_once()
 
 
 class TestSessionSandboxMetrics:

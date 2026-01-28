@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from aviato._defaults import SandboxDefaults
 from aviato._function import RemoteFunction
-from aviato._integrations import should_auto_report_wandb
 from aviato._loop_manager import _LoopManager
 from aviato._types import OperationRef, Serialization
 from aviato._wandb import WandbReporter
@@ -107,7 +106,7 @@ class Session:
 
         Args:
             report_to: Reporting configuration.
-                - None: Auto-detect (use wandb if credentials and run exist)
+                - None: Auto-detect (create reporter, let it check for run lazily)
                 - []: Disable all reporting
                 - ["wandb"]: Explicit wandb reporting
 
@@ -118,10 +117,10 @@ class Session:
             return None
 
         if report_to is None:
-            if should_auto_report_wandb():
-                logger.debug("Auto-detected wandb run, enabling metrics reporting")
-                return WandbReporter()
-            return None
+            # Always create reporter for auto-detect mode.
+            # WandbReporter._get_run() checks lazily, so this works even
+            # if wandb.run is created after Session (common with ART).
+            return WandbReporter()
 
         if "wandb" in report_to:
             return WandbReporter()
