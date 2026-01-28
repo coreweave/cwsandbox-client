@@ -111,9 +111,7 @@ class TestShouldAutoReportWandb:
 
         assert should_auto_report_wandb() is False
 
-    def test_returns_false_when_no_active_run(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_false_when_no_active_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test returns False when no active wandb run."""
         from aviato import _integrations
 

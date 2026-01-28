@@ -90,9 +90,7 @@ class TestRolloutToolsResponses:
         assert ROLLOUT_TOOLS_RESPONSES == fresh_conversion
 
     def test_execute_code_schema_shape(self) -> None:
-        execute_tool = next(
-            t for t in ROLLOUT_TOOLS_RESPONSES if t["name"] == EXECUTE_CODE_NAME
-        )
+        execute_tool = next(t for t in ROLLOUT_TOOLS_RESPONSES if t["name"] == EXECUTE_CODE_NAME)
         assert execute_tool == {
             "type": "function",
             "name": "execute_code",
@@ -116,9 +114,7 @@ class TestRolloutToolsResponses:
         }
 
     def test_submit_solution_schema_shape(self) -> None:
-        submit_tool = next(
-            t for t in ROLLOUT_TOOLS_RESPONSES if t["name"] == SUBMIT_SOLUTION_NAME
-        )
+        submit_tool = next(t for t in ROLLOUT_TOOLS_RESPONSES if t["name"] == SUBMIT_SOLUTION_NAME)
         assert submit_tool == {
             "type": "function",
             "name": "submit_solution",

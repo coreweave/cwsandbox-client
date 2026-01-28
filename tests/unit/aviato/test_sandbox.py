@@ -1324,6 +1324,8 @@ class TestSandboxRunwayAndTowerIds:
         with patch.object(Sandbox, "start"):
             sandbox = Sandbox.run(tower_ids=["tower-1"])
             assert sandbox._tower_ids == ["tower-1"]
+
+
 class TestSandboxExecutionStats:
     """Tests for Sandbox.execution_stats property and automatic tracking."""
 

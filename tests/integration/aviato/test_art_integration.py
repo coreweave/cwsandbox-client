@@ -95,9 +95,7 @@ def sample_problems() -> list[Problem]:
             task_id="test_2",
             prompt="Write a function `is_even(n)` that returns True if n is even, False otherwise.",
             test_code=(
-                "assert is_even(2) == True\n"
-                "assert is_even(3) == False\n"
-                "assert is_even(0) == True"
+                "assert is_even(2) == True\nassert is_even(3) == False\nassert is_even(0) == True"
             ),
         ),
     ]
