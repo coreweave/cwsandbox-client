@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gpt-5.1-codex-mini"
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-8B"
 DEFAULT_NUM_PROBLEMS = 10
 DEFAULT_NUM_STEPS = 5

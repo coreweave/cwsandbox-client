@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from aviato import Sandbox
 
 MAX_TOOL_CALLS = 20
+EXECUTION_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass
@@ -70,10 +71,11 @@ class RolloutConfig:
         max_attempts: Maximum tool calls before giving up
     """
 
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5.1-codex-mini"
     base_url: str | None = None
     api_key: str | None = None
     max_attempts: int = MAX_TOOL_CALLS
+    execution_timeout: float = EXECUTION_TIMEOUT_SECONDS
 
 
 def build_system_message(problem: Problem) -> str:
@@ -103,18 +105,20 @@ Problem:
 async def execute_code_in_sandbox(
     sandbox: Sandbox,
     code: str,
+    timeout: float = EXECUTION_TIMEOUT_SECONDS,
 ) -> str:
     """Execute code in sandbox and return output or error message.
 
     Args:
         sandbox: Aviato sandbox instance
         code: Python code to execute
+        timeout: Maximum execution time in seconds
 
     Returns:
         Output string: stdout on success, error message on failure
     """
     try:
-        process = sandbox.exec(["python", "-c", code])
+        process = sandbox.exec(["python", "-c", code], timeout_seconds=timeout)
         result = process.result()
 
         if result.returncode == 0:
@@ -133,6 +137,7 @@ async def run_tests_in_sandbox(
     solution_code: str,
     test_code: str,
     test_imports: str = "",
+    timeout: float = EXECUTION_TIMEOUT_SECONDS,
 ) -> tuple[bool, str]:
     """Run solution against test cases in sandbox.
 
@@ -141,6 +146,7 @@ async def run_tests_in_sandbox(
         solution_code: The solution code to test
         test_code: Test code that validates the solution
         test_imports: Optional imports for test code
+        timeout: Maximum execution time in seconds
 
     Returns:
         Tuple of (passed: bool, output: str)
@@ -148,7 +154,7 @@ async def run_tests_in_sandbox(
     full_code = f"{test_imports}\n\n{solution_code}\n\n{test_code}"
 
     try:
-        process = sandbox.exec(["python", "-c", full_code])
+        process = sandbox.exec(["python", "-c", full_code], timeout_seconds=timeout)
         result = process.result()
 
         if result.returncode == 0:
@@ -282,7 +288,9 @@ async def handle_tool_call(
 
     if name == EXECUTE_CODE_NAME:
         typed_args: ExecuteCodeArgs = args
-        result = await execute_code_in_sandbox(sandbox, typed_args["code"])
+        result = await execute_code_in_sandbox(
+            sandbox, typed_args["code"], config.execution_timeout
+        )
         return result, False, False
 
     elif name == SUBMIT_SOLUTION_NAME:
@@ -292,6 +300,7 @@ async def handle_tool_call(
             typed_args_submit["code"],
             problem.test_code,
             problem.test_imports,
+            config.execution_timeout,
         )
         return result, True, passed
 
