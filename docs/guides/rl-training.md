@@ -446,6 +446,9 @@ Execution metrics are tracked automatically when `exec()` completes:
 | `aviato/exec_errors` | Errors (timeouts, transport failures) |
 | `aviato/success_rate` | Fraction of exec() with returncode=0 |
 | `aviato/error_rate` | Fraction of exec() that errored |
+| `aviato/avg_execs_per_sandbox` | Average exec() calls per sandbox |
+| `aviato/min_execs_per_sandbox` | Minimum exec() calls in any sandbox |
+| `aviato/max_execs_per_sandbox` | Maximum exec() calls in any sandbox |
 
 Tracking is automatic: just call `exec()` on any sandbox associated with a session. Call `session.log_metrics(step=N)` to log at specific training steps:
 
@@ -472,6 +475,28 @@ sandbox = session.sandbox()
 result = sandbox.exec(["echo", "hello"]).result()
 print(sandbox.execution_stats)  # {"total": 1, "successes": 1, "failures": 0, "errors": 0}
 ```
+
+### Per-Sandbox Exec Metrics
+
+When using W&B integration with Sessions, the following per-sandbox metrics are automatically tracked:
+
+| Metric | Description |
+|--------|-------------|
+| `aviato/avg_execs_per_sandbox` | Average exec() calls per sandbox (useful for "tool calls per rollout") |
+| `aviato/min_execs_per_sandbox` | Minimum exec() calls in any sandbox |
+| `aviato/max_execs_per_sandbox` | Maximum exec() calls in any sandbox |
+
+These metrics help understand agent behavior during RL training:
+
+- **High avg_execs_per_sandbox** may indicate verbose agents that make many tool calls per episode
+- **Large variance (max-min)** may indicate inconsistent rollout behavior across episodes
+- **Trends over training steps** show how agent behavior evolves as the policy improves
+
+Example dashboard usage:
+
+- Plot `avg_execs_per_sandbox` vs training step to see tool usage trends over training
+- Alert if `max_execs_per_sandbox` exceeds a threshold (runaway agent making excessive tool calls)
+- Compare min/max spread to detect episodes where agents get stuck in loops vs complete quickly
 
 By default, `log_metrics()` resets the counters after logging. Set `reset=False` to keep accumulating:
 
