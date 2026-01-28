@@ -233,8 +233,10 @@ async def train_step(
         await model.log(groups, split="train")
     finally:
         # Log aviato sandbox execution metrics (success/failure/error rates)
-        current_step = await model.get_step()
-        session.log_metrics(step=current_step, reset=True)
+        # Use post-training step to align with ART's model.log() convention:
+        # step N metrics = data used to train TO step N
+        metric_step = await model.get_step()
+        session.log_metrics(step=metric_step, reset=True)
 
 
 async def main() -> int:

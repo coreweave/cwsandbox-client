@@ -100,7 +100,7 @@ class TestRolloutConfig:
         assert config.model == "gpt-4o-mini"
         assert config.base_url is None
         assert config.api_key is None
-        assert config.max_attempts == 3
+        assert config.max_attempts == 20
         assert config.execution_timeout == 30.0
 
     def test_custom_config(self) -> None:
@@ -513,7 +513,8 @@ class TestNormalizeOutputForInput:
         assert len(result) == 1
         assert result[0]["type"] == "reasoning"
         assert result[0]["id"] == "rs_xyz789"
-        assert result[0]["summary"] == [{"type": "summary_text", "text": "Thinking about the problem..."}]
+        expected_summary = [{"type": "summary_text", "text": "Thinking about the problem..."}]
+        assert result[0]["summary"] == expected_summary
 
 
 class TestResponseOutputToChoice:

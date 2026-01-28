@@ -6,7 +6,7 @@ This module implements the core rollout function that:
 3. Builds an ART Trajectory with the conversation history
 4. Computes binary reward (1.0 if tests pass, 0.0 otherwise)
 
-The rollout loop allows max 3 attempts per problem, with errors
+The rollout loop allows max 20 tool calls per problem, with errors
 returned as tool responses so the agent can observe and retry.
 """
 
@@ -39,7 +39,7 @@ from .tools import (
 if TYPE_CHECKING:
     from aviato import Sandbox
 
-MAX_TOOL_CALLS = 3
+MAX_TOOL_CALLS = 20
 EXECUTION_TIMEOUT_SECONDS = 30.0
 
 
@@ -87,12 +87,16 @@ You have access to two tools:
 1. execute_code: Test your code in an isolated sandbox. Use this to debug.
 2. submit_solution: Submit your final answer. This runs all test cases.
 
-Guidelines:
-- Read the problem carefully before writing code
-- Test your solution with execute_code before submitting
-- Handle edge cases (empty inputs, etc.)
-- You can make up to {MAX_TOOL_CALLS} tool calls total
-- Only submit when confident your solution is correct
+CRITICAL RULES:
+- You MUST use tools to write and test code. NEVER output code as plain text.
+- You MUST call submit_solution before finishing. Every problem requires a submission.
+- Do NOT ask clarifying questions. Make reasonable assumptions and solve the problem.
+- If a term is unfamiliar, implement your best interpretation.
+
+Workflow:
+1. Use execute_code to develop and test your solution
+2. Once tests pass, call submit_solution with your final code
+3. You have up to {MAX_TOOL_CALLS} tool calls total
 
 Problem:
 {problem.prompt}
