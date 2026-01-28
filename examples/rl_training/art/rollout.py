@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from openai import AsyncOpenAI
@@ -78,28 +79,39 @@ class RolloutConfig:
     execution_timeout: float = EXECUTION_TIMEOUT_SECONDS
 
 
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_SYSTEM_PROMPT_TEMPLATE: str | None = None
+
+
+def _load_system_prompt_template() -> str:
+    """Load the system prompt template from file (cached)."""
+    global _SYSTEM_PROMPT_TEMPLATE
+    if _SYSTEM_PROMPT_TEMPLATE is None:
+        prompt_path = _PROMPT_DIR / "system_prompt.md"
+        _SYSTEM_PROMPT_TEMPLATE = prompt_path.read_text()
+    return _SYSTEM_PROMPT_TEMPLATE
+
+
+def _extract_function_name(test_code: str) -> str | None:
+    """Extract the expected function name from test assertions."""
+    import re
+
+    match = re.search(r"assert\s+(\w+)\s*\(", test_code)
+    return match.group(1) if match else None
+
+
 def build_system_message(problem: Problem) -> str:
     """Build the system message with problem context."""
-    return f"""You are a Python programming assistant. Solve the given coding problem.
+    template = _load_system_prompt_template()
+    function_name = _extract_function_name(problem.test_code)
+    function_hint = f"\n\nREQUIRED FUNCTION NAME: `{function_name}`" if function_name else ""
 
-You have access to two tools:
-1. execute_code: Test your code in an isolated sandbox. Use this to debug.
-2. submit_solution: Submit your final answer. This runs all test cases.
-
-CRITICAL RULES:
-- You MUST use tools to write and test code. NEVER output code as plain text.
-- You MUST call submit_solution before finishing. Every problem requires a submission.
-- Do NOT ask clarifying questions. Make reasonable assumptions and solve the problem.
-- If a term is unfamiliar, implement your best interpretation.
-
-Workflow:
-1. Use execute_code to develop and test your solution
-2. Once tests pass, call submit_solution with your final code
-3. You have up to {MAX_TOOL_CALLS} tool calls total
-
-Problem:
-{problem.prompt}
-"""
+    return template.format(
+        max_tool_calls=MAX_TOOL_CALLS,
+        function_hint=function_hint,
+        problem_prompt=problem.prompt,
+        test_code=problem.test_code,
+    )
 
 
 async def execute_code_in_sandbox(
@@ -194,25 +206,31 @@ def _normalize_output_for_input(response: Response) -> list[dict[str, Any]]:
                 elif part.type == "refusal":
                     content_parts.append({"type": "text", "text": f"[Refusal: {part.refusal}]"})
             if content_parts:
-                input_items.append({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": content_parts,
-                })
+                input_items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": content_parts,
+                    }
+                )
         elif item.type == "reasoning":
-            input_items.append({
-                "type": "reasoning",
-                "id": item.id,
-                "summary": getattr(item, "summary", None),
-            })
+            input_items.append(
+                {
+                    "type": "reasoning",
+                    "id": item.id,
+                    "summary": getattr(item, "summary", None),
+                }
+            )
         elif item.type == "function_call":
-            input_items.append({
-                "type": "function_call",
-                "id": item.id,
-                "call_id": item.call_id,
-                "name": item.name,
-                "arguments": item.arguments,
-            })
+            input_items.append(
+                {
+                    "type": "function_call",
+                    "id": item.id,
+                    "call_id": item.call_id,
+                    "name": item.name,
+                    "arguments": item.arguments,
+                }
+            )
 
     return input_items
 
@@ -363,9 +381,7 @@ async def rollout(
         choice = _response_output_to_choice(response)
         messages_and_choices.append(choice)
 
-        function_calls = [
-            item for item in response.output if item.type == "function_call"
-        ]
+        function_calls = [item for item in response.output if item.type == "function_call"]
 
         if function_calls:
             normalized_items = _normalize_output_for_input(response)

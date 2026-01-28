@@ -97,11 +97,11 @@ class TestRolloutConfig:
 
     def test_default_config(self) -> None:
         config = RolloutConfig()
-        assert config.model == "gpt-4o-mini"
+        assert config.model == "gpt-5.1-codex-mini"
         assert config.base_url is None
         assert config.api_key is None
         assert config.max_attempts == 20
-        assert config.execution_timeout == 30.0
+        assert config.execution_timeout == 60.0
 
     def test_custom_config(self) -> None:
         config = RolloutConfig(
