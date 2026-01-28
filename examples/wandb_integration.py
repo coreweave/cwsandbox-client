@@ -3,13 +3,17 @@
 This example demonstrates:
 - Auto-detection of active wandb runs
 - Explicit opt-in and opt-out for metrics reporting
+- Automatic tracking of exec() success/failure/error (no manual calls needed)
 - Using log_metrics() to log at specific training steps
-- Using record_execution() to track success rates
 
 Metrics logged to wandb:
 - aviato/sandboxes_created: Total sandboxes created via session
-- aviato/executions: Total exec() calls recorded
+- aviato/executions: Total exec() calls
+- aviato/exec_successes: Successful executions (returncode=0)
+- aviato/exec_failures: Failed executions (returncode!=0)
+- aviato/exec_errors: Errors (timeouts, transport failures)
 - aviato/success_rate: Fraction of exec() with returncode=0
+- aviato/error_rate: Fraction of exec() that errored
 
 Prerequisites:
 - Set WANDB_API_KEY environment variable
@@ -101,7 +105,11 @@ def run_without_wandb(defaults: SandboxDefaults) -> None:
 
 
 def simulate_training_loop(session: Session, num_steps: int, problems_per_step: int) -> None:
-    """Simulate a training loop that creates sandboxes and executes code."""
+    """Simulate a training loop that creates sandboxes and executes code.
+
+    Exec results are automatically tracked - no manual calls needed.
+    Only call log_metrics(step=N) to correlate with training steps.
+    """
     print(f"Simulating {num_steps} training steps with {problems_per_step} problems each")
     print("-" * 50)
     print()
@@ -129,15 +137,13 @@ def simulate_training_loop(session: Session, num_steps: int, problems_per_step: 
             name, code = code_samples[idx]
 
             with session.sandbox() as sandbox:
+                # Exec results are automatically tracked via sandbox completion callback
                 result = sandbox.exec(
                     ["python", "-c", code],
                     timeout_seconds=5.0,
                 ).result()
 
-                success = result.returncode == 0
-                session.record_execution(success=success)
-
-                if success:
+                if result.returncode == 0:
                     successes += 1
                     status = "PASS"
                 else:
@@ -146,6 +152,7 @@ def simulate_training_loop(session: Session, num_steps: int, problems_per_step: 
 
                 print(f"  [{status}] {name}")
 
+        # Log metrics at this training step for correlation
         session.log_metrics(step=step)
         print(f"  -> Logged metrics at step {step}")
         print()

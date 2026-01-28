@@ -408,8 +408,9 @@ wandb.init(project="my-rl-training")
 with Session(defaults) as session:
     for step in range(num_steps):
         sandbox = session.sandbox()
+        # Exec results are automatically tracked - no manual calls needed
         result = sandbox.exec(["python", "-c", code]).result()
-        session.record_execution(success=result.returncode == 0)
+        # Log metrics at this training step for correlation
         session.log_metrics(step=step)
 # Final metrics logged on session close
 ```
@@ -431,30 +432,42 @@ session = Session(defaults, report_to=None)
 
 ### Metrics
 
-Three metrics are tracked:
+Execution metrics are tracked automatically when `exec()` completes:
 
 | Metric | Description |
 |--------|-------------|
 | `aviato/sandboxes_created` | Total sandboxes created via session |
-| `aviato/executions` | Total exec() calls recorded |
+| `aviato/executions` | Total exec() calls |
+| `aviato/exec_successes` | Successful executions (returncode=0) |
+| `aviato/exec_failures` | Failed executions (returncode!=0) |
+| `aviato/exec_errors` | Errors (timeouts, transport failures) |
 | `aviato/success_rate` | Fraction of exec() with returncode=0 |
+| `aviato/error_rate` | Fraction of exec() that errored |
 
-Use `session.record_execution(success=True/False)` to track execution success rates. Call `session.log_metrics(step=N)` to log metrics at specific training steps:
+Tracking is automatic: just call `exec()` on any sandbox associated with a session. Call `session.log_metrics(step=N)` to log at specific training steps:
 
 ```python
 def training_step(session, model, batch, step: int) -> list[float]:
     rewards = []
     for task in batch:
         sandbox = session.sandbox()
+        # Metrics tracked automatically on exec() completion
         result = sandbox.exec(["python", "-c", task["code"]]).result()
         reward = 1.0 if result.returncode == 0 else 0.0
-        session.record_execution(success=result.returncode == 0)
         rewards.append(reward)
         sandbox.stop()
 
-    # Log metrics at this training step
+    # Log metrics at this training step for correlation
     session.log_metrics(step=step)
     return rewards
+```
+
+You can also access per-sandbox statistics via the `execution_stats` property:
+
+```python
+sandbox = session.sandbox()
+result = sandbox.exec(["echo", "hello"]).result()
+print(sandbox.execution_stats)  # {"total": 1, "successes": 1, "failures": 0, "errors": 0}
 ```
 
 By default, `log_metrics()` resets the counters after logging. Set `reset=False` to keep accumulating:

@@ -16,7 +16,9 @@ class TestWandbReporter:
 
         assert reporter._sandboxes_created == 0
         assert reporter._executions == 0
-        assert reporter._successful_executions == 0
+        assert reporter._exec_successes == 0
+        assert reporter._exec_failures == 0
+        assert reporter._exec_errors == 0
 
     def test_record_sandbox_created_increments_counter(self) -> None:
         """Test record_sandbox_created increments the counter."""
@@ -30,47 +32,69 @@ class TestWandbReporter:
         reporter.record_sandbox_created()
         assert reporter._sandboxes_created == 2
 
-    def test_record_execution_success(self) -> None:
-        """Test record_execution with success=True."""
-        from aviato._wandb import WandbReporter
+    def test_record_exec_outcome_success(self) -> None:
+        """Test record_exec_outcome with SUCCESS."""
+        from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
 
-        reporter.record_execution(success=True)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
 
         assert reporter._executions == 1
-        assert reporter._successful_executions == 1
+        assert reporter._exec_successes == 1
+        assert reporter._exec_failures == 0
+        assert reporter._exec_errors == 0
 
-    def test_record_execution_failure(self) -> None:
-        """Test record_execution with success=False."""
-        from aviato._wandb import WandbReporter
+    def test_record_exec_outcome_failure(self) -> None:
+        """Test record_exec_outcome with FAILURE."""
+        from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
 
-        reporter.record_execution(success=False)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
 
         assert reporter._executions == 1
-        assert reporter._successful_executions == 0
+        assert reporter._exec_successes == 0
+        assert reporter._exec_failures == 1
+        assert reporter._exec_errors == 0
+
+    def test_record_exec_outcome_error(self) -> None:
+        """Test record_exec_outcome with ERROR."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.ERROR)
+
+        assert reporter._executions == 1
+        assert reporter._exec_successes == 0
+        assert reporter._exec_failures == 0
+        assert reporter._exec_errors == 1
 
     def test_get_metrics_returns_correct_values(self) -> None:
         """Test get_metrics returns accumulated values."""
-        from aviato._wandb import WandbReporter
+        from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
         reporter.record_sandbox_created()
         reporter.record_sandbox_created()
-        reporter.record_execution(success=True)
-        reporter.record_execution(success=True)
-        reporter.record_execution(success=False)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.ERROR)
 
         metrics = reporter.get_metrics()
 
         assert metrics["aviato/sandboxes_created"] == 2
-        assert metrics["aviato/executions"] == 3
-        assert metrics["aviato/success_rate"] == pytest.approx(2 / 3)
+        assert metrics["aviato/executions"] == 4
+        assert metrics["aviato/exec_successes"] == 2
+        assert metrics["aviato/exec_failures"] == 1
+        assert metrics["aviato/exec_errors"] == 1
+        assert metrics["aviato/success_rate"] == pytest.approx(2 / 4)
+        assert metrics["aviato/error_rate"] == pytest.approx(1 / 4)
 
-    def test_get_metrics_omits_success_rate_with_no_executions(self) -> None:
-        """Test get_metrics omits success_rate when no executions."""
+    def test_get_metrics_omits_rates_with_no_executions(self) -> None:
+        """Test get_metrics omits rates when no executions."""
         from aviato._wandb import WandbReporter
 
         reporter = WandbReporter()
@@ -80,20 +104,25 @@ class TestWandbReporter:
 
         assert "aviato/sandboxes_created" in metrics
         assert "aviato/success_rate" not in metrics
+        assert "aviato/error_rate" not in metrics
 
     def test_reset_clears_metrics(self) -> None:
         """Test reset clears all accumulated metrics."""
-        from aviato._wandb import WandbReporter
+        from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_execution(success=True)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.ERROR)
 
         reporter.reset()
 
         assert reporter._sandboxes_created == 0
         assert reporter._executions == 0
-        assert reporter._successful_executions == 0
+        assert reporter._exec_successes == 0
+        assert reporter._exec_failures == 0
+        assert reporter._exec_errors == 0
 
     def test_has_metrics_false_when_empty(self) -> None:
         """Test has_metrics returns False with no metrics."""
@@ -112,10 +141,10 @@ class TestWandbReporter:
 
     def test_has_metrics_true_with_executions(self) -> None:
         """Test has_metrics returns True with execution count."""
-        from aviato._wandb import WandbReporter
+        from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
-        reporter.record_execution(success=True)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
         assert reporter.has_metrics is True
 
 

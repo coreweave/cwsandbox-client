@@ -754,32 +754,78 @@ class TestSessionLogMetrics:
         assert session._reporter._sandboxes_created == 1
 
 
-class TestSessionRecordExecution:
-    """Tests for Session.record_execution method."""
+class TestSessionAutoTracking:
+    """Tests for automatic exec tracking via sandbox completion callback."""
 
-    def test_record_execution_success(self) -> None:
-        """Test record_execution with success=True."""
+    def test_auto_tracking_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec completion reports to session's reporter."""
+
         session = Session(report_to=["wandb"])
 
-        session.record_execution(success=True)
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        # Simulate exec completion via the callback
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="", returncode=0)
+        sandbox._on_exec_complete(result, None)
 
         assert session._reporter._executions == 1
-        assert session._reporter._successful_executions == 1
+        assert session._reporter._exec_successes == 1
 
-    def test_record_execution_failure(self) -> None:
-        """Test record_execution with success=False."""
+    def test_auto_tracking_failure_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec failure reports to session's reporter."""
         session = Session(report_to=["wandb"])
 
-        session.record_execution(success=False)
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="error", returncode=1)
+        sandbox._on_exec_complete(result, None)
 
         assert session._reporter._executions == 1
-        assert session._reporter._successful_executions == 0
+        assert session._reporter._exec_successes == 0
+        assert session._reporter._exec_failures == 1
 
-    def test_record_execution_noop_without_reporter(self) -> None:
-        """Test record_execution is noop without reporter."""
+    def test_auto_tracking_error_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec error reports to session's reporter."""
+        from aviato.exceptions import SandboxTimeoutError
+
+        session = Session(report_to=["wandb"])
+
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        sandbox._on_exec_complete(None, SandboxTimeoutError("timeout"))
+
+        assert session._reporter._executions == 1
+        assert session._reporter._exec_errors == 1
+
+    def test_auto_tracking_noop_without_reporter(self) -> None:
+        """Test that sandbox exec completion is noop without reporter."""
         session = Session(report_to=[])
 
-        session.record_execution(success=True)
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="", returncode=0)
+        # Should not raise
+        sandbox._on_exec_complete(result, None)
+
+    def test_auto_tracking_noop_without_session(self) -> None:
+        """Test that sandbox exec completion is noop without session."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="", returncode=0)
+        # Should not raise
+        sandbox._on_exec_complete(result, None)
 
 
 class TestSessionCloseMetrics:

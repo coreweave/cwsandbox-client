@@ -41,6 +41,10 @@ class Session:
             - []: Disable all reporting.
             - ["wandb"]: Explicitly enable wandb reporting.
 
+    Metrics are automatically tracked when exec() completes on any sandbox
+    associated with this session. Use log_metrics(step=N) to log metrics
+    at specific training steps.
+
     Example:
         ```python
         defaults = SandboxDefaults(container_image="python:3.11")
@@ -51,7 +55,7 @@ class Session:
             sb1 = session.sandbox(command="sleep", args=["infinity"])
             sb2 = session.sandbox(command="sleep", args=["infinity"])
 
-            # Execute commands
+            # Execute commands - metrics tracked automatically
             result = sb1.exec(["echo", "hello"]).result()
 
             # Execute functions in sandboxes
@@ -69,10 +73,12 @@ class Session:
             sb = session.sandbox(command="sleep", args=["infinity"])
             result = await sb.exec(["echo", "hello"])
 
-        # Explicit wandb reporting
+        # Explicit wandb reporting with step correlation
         with Session(defaults, report_to=["wandb"]) as session:
-            sb = session.sandbox(...)
-            session.log_metrics(step=100)  # Log at training step 100
+            for step in range(100):
+                sb = session.sandbox(...)
+                result = sb.exec(...).result()  # Metrics tracked automatically
+                session.log_metrics(step=step)  # Log at training step
 
         # Disable all reporting
         with Session(defaults, report_to=[]) as session:
@@ -131,8 +137,10 @@ class Session:
         """Log accumulated sandbox metrics to wandb.
 
         Call this during training to correlate sandbox usage with training steps.
-        Metrics are automatically logged on session close, but this method
-        allows finer-grained control.
+        Metrics are automatically tracked when exec() completes, so users only
+        need to call log_metrics() for step correlation.
+
+        Metrics are also logged automatically on session close.
 
         Args:
             step: Training step to associate with metrics. If provided, metrics
@@ -149,7 +157,7 @@ class Session:
             with Session(defaults, report_to=["wandb"]) as session:
                 for step in range(100):
                     sb = session.sandbox(...)
-                    # ... training logic ...
+                    result = sb.exec(...).result()  # Metrics tracked automatically
                     session.log_metrics(step=step)  # Log at each step
             ```
         """
@@ -160,18 +168,6 @@ class Session:
         if result and reset:
             self._reporter.reset()
         return result
-
-    def record_execution(self, success: bool) -> None:
-        """Record an execution result for metrics tracking.
-
-        This method is called automatically when using session-managed sandboxes.
-        Users typically don't need to call this directly.
-
-        Args:
-            success: True if the execution succeeded (returncode 0), False otherwise.
-        """
-        if self._reporter:
-            self._reporter.record_execution(success=success)
 
     def __enter__(self) -> Session:
         """Enter sync context manager."""

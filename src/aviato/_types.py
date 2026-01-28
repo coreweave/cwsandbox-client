@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
@@ -257,6 +257,7 @@ class Process(OperationRef[ProcessResult]):
         command: list[str],
         stdout: StreamReader,
         stderr: StreamReader,
+        stats_callback: Callable[[ProcessResult | None, BaseException | None], None] | None = None,
     ) -> None:
         """Initialize with a future and stream readers.
 
@@ -265,6 +266,8 @@ class Process(OperationRef[ProcessResult]):
             command: The command being executed.
             stdout: StreamReader for stdout.
             stderr: StreamReader for stderr.
+            stats_callback: Optional callback invoked once on completion
+                with (result, None) on success or (None, exception) on error.
         """
         super().__init__(future)
         self._command = command
@@ -273,6 +276,8 @@ class Process(OperationRef[ProcessResult]):
         self._exception: BaseException | None = None
         self.stdout = stdout
         self.stderr = stderr
+        self._stats_callback = stats_callback
+        self._stats_recorded = False
 
     def poll(self) -> int | None:
         """Check if the process has completed without blocking.
@@ -353,8 +358,28 @@ class Process(OperationRef[ProcessResult]):
             try:
                 self._result = self._future.result(timeout)
                 self._returncode = self._result.returncode
+                self._record_stats(self._result, None)
             except concurrent.futures.TimeoutError:
                 # Do not cache timeouts: allow callers to retry with a longer timeout.
+                # Do NOT record stats for user wait timeouts.
                 raise
             except Exception as e:
                 self._exception = e
+                self._record_stats(None, e)
+
+    def _record_stats(
+        self,
+        result: ProcessResult | None,
+        exception: BaseException | None,
+    ) -> None:
+        """Record stats exactly once via callback.
+
+        Args:
+            result: ProcessResult if execution completed
+            exception: Exception if execution errored
+        """
+        if self._stats_recorded:
+            return
+        self._stats_recorded = True
+        if self._stats_callback is not None:
+            self._stats_callback(result, exception)

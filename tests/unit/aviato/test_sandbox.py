@@ -1324,3 +1324,159 @@ class TestSandboxRunwayAndTowerIds:
         with patch.object(Sandbox, "start"):
             sandbox = Sandbox.run(tower_ids=["tower-1"])
             assert sandbox._tower_ids == ["tower-1"]
+class TestSandboxExecutionStats:
+    """Tests for Sandbox.execution_stats property and automatic tracking."""
+
+    def test_execution_stats_initial_values(self) -> None:
+        """Test execution_stats returns zeros initially."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        stats = sandbox.execution_stats
+
+        assert stats == {
+            "total": 0,
+            "successes": 0,
+            "failures": 0,
+            "errors": 0,
+        }
+
+    def test_execution_stats_tracks_success(self) -> None:
+        """Test execution_stats increments on successful exec."""
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 0
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            process = sandbox.exec(["echo", "hello"])
+            process.result()
+
+        stats = sandbox.execution_stats
+        assert stats["total"] == 1
+        assert stats["successes"] == 1
+        assert stats["failures"] == 0
+        assert stats["errors"] == 0
+
+    def test_execution_stats_tracks_failure(self) -> None:
+        """Test execution_stats increments failure on non-zero returncode."""
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = 1
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            process = sandbox.exec(["failing-cmd"])
+            process.result()
+
+        stats = sandbox.execution_stats
+        assert stats["total"] == 1
+        assert stats["successes"] == 0
+        assert stats["failures"] == 1
+        assert stats["errors"] == 0
+
+    def test_execution_stats_tracks_error(self) -> None:
+        """Test execution_stats increments error on exception."""
+        from aviato.exceptions import SandboxExecutionError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "error"
+            response.error.message = "Connection lost"
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            process = sandbox.exec(["cmd"])
+            with pytest.raises(SandboxExecutionError):
+                process.result()
+
+        stats = sandbox.execution_stats
+        assert stats["total"] == 1
+        assert stats["successes"] == 0
+        assert stats["failures"] == 0
+        assert stats["errors"] == 1
+
+    def test_execution_stats_accumulates_multiple_execs(self) -> None:
+        """Test execution_stats accumulates counts across multiple execs."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._client = MagicMock()
+
+        call_count = [0]
+        exit_codes = [0, 0, 1, 0]
+
+        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
+            response = MagicMock()
+            response.HasField = lambda field: field == "exit"
+            response.exit.exit_code = exit_codes[call_count[0]]
+            call_count[0] += 1
+            yield response
+
+        mock_streaming_client = MagicMock()
+        mock_streaming_client.stream_exec = mock_stream
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch(
+                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
+                return_value=mock_streaming_client,
+            ),
+        ):
+            mock_auth.return_value.headers = {}
+            for _ in range(4):
+                sandbox.exec(["cmd"]).result()
+
+        stats = sandbox.execution_stats
+        assert stats["total"] == 4
+        assert stats["successes"] == 3
+        assert stats["failures"] == 1
+        assert stats["errors"] == 0

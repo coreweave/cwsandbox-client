@@ -11,12 +11,27 @@ active run, never create new runs.
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from wandb.sdk.wandb_run import Run
 
 logger = logging.getLogger(__name__)
+
+
+class ExecOutcome(Enum):
+    """Outcome classification for exec() calls.
+
+    Taxonomy:
+    - SUCCESS: returncode == 0
+    - FAILURE: returncode != 0 (process completed but failed)
+    - ERROR: SandboxTimeoutError, cancellation, transport failures
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    ERROR = "error"
 
 
 class WandbReporter:
@@ -28,13 +43,17 @@ class WandbReporter:
     Metrics tracked:
     - aviato/sandboxes_created: Total sandboxes created via session
     - aviato/executions: Total exec() calls
+    - aviato/exec_successes: Successful executions (returncode=0)
+    - aviato/exec_failures: Failed executions (returncode!=0)
+    - aviato/exec_errors: Errors (timeouts, cancellations, transport)
     - aviato/success_rate: Fraction of exec() with returncode=0
+    - aviato/error_rate: Fraction of exec() that errored
 
     Example:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_execution(success=True)
-        reporter.record_execution(success=False)
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
         reporter.log(step=100)  # Logs metrics to wandb at step 100
     """
 
@@ -43,7 +62,9 @@ class WandbReporter:
         self._run_checked = False
         self._sandboxes_created = 0
         self._executions = 0
-        self._successful_executions = 0
+        self._exec_successes = 0
+        self._exec_failures = 0
+        self._exec_errors = 0
 
     def _get_run(self) -> Run | None:
         """Lazily get the active wandb run.
@@ -75,15 +96,19 @@ class WandbReporter:
         """Record that a sandbox was created."""
         self._sandboxes_created += 1
 
-    def record_execution(self, success: bool) -> None:
-        """Record an exec() call result.
+    def record_exec_outcome(self, outcome: ExecOutcome) -> None:
+        """Record an exec() call outcome.
 
         Args:
-            success: True if returncode was 0, False otherwise.
+            outcome: The outcome classification (SUCCESS, FAILURE, or ERROR).
         """
         self._executions += 1
-        if success:
-            self._successful_executions += 1
+        if outcome == ExecOutcome.SUCCESS:
+            self._exec_successes += 1
+        elif outcome == ExecOutcome.FAILURE:
+            self._exec_failures += 1
+        elif outcome == ExecOutcome.ERROR:
+            self._exec_errors += 1
 
     def get_metrics(self) -> dict[str, Any]:
         """Get current metrics as a dictionary.
@@ -94,12 +119,14 @@ class WandbReporter:
         metrics: dict[str, Any] = {
             "aviato/sandboxes_created": self._sandboxes_created,
             "aviato/executions": self._executions,
+            "aviato/exec_successes": self._exec_successes,
+            "aviato/exec_failures": self._exec_failures,
+            "aviato/exec_errors": self._exec_errors,
         }
 
         if self._executions > 0:
-            metrics["aviato/success_rate"] = (
-                self._successful_executions / self._executions
-            )
+            metrics["aviato/success_rate"] = self._exec_successes / self._executions
+            metrics["aviato/error_rate"] = self._exec_errors / self._executions
 
         return metrics
 
@@ -144,7 +171,9 @@ class WandbReporter:
         """
         self._sandboxes_created = 0
         self._executions = 0
-        self._successful_executions = 0
+        self._exec_successes = 0
+        self._exec_failures = 0
+        self._exec_errors = 0
 
     @property
     def has_metrics(self) -> bool:
