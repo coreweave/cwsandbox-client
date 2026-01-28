@@ -33,6 +33,7 @@ All guides follow these conventions:
 4. Include error handling where relevant
 5. Link to reference docs for parameter details
 6. Use `.result()` consistently for both Process and OperationRef
+7. Update `mkdocs.yml` nav section to include the new guide
 
 ## Relationship to Other Docs
 
