@@ -281,6 +281,10 @@ class Sandbox:
         self._exec_failures = 0
         self._exec_errors = 0
 
+        # Startup timing
+        self._start_accepted_at: float | None = None
+        self._startup_recorded: bool = False
+
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
 
@@ -452,6 +456,8 @@ class Sandbox:
         sandbox._exec_successes = 0
         sandbox._exec_failures = 0
         sandbox._exec_errors = 0
+        sandbox._start_accepted_at = None
+        sandbox._startup_recorded = True  # Discovered sandboxes skip startup recording
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -902,6 +908,24 @@ class Sandbox:
         # Report to session's reporter if available
         if self._session is not None and self._session._reporter is not None:
             self._session._reporter.record_exec_outcome(outcome)
+
+    def _on_startup_complete(self, startup_seconds: float) -> None:
+        """Handle startup completion for stats tracking.
+
+        Called when sandbox reaches RUNNING status.
+        """
+        if self._session is not None and self._session._reporter is not None:
+            self._session._reporter.record_startup_time(startup_seconds)
+
+    def _maybe_record_startup(self) -> None:
+        """Record startup time if not already recorded."""
+        if self._startup_recorded:
+            return
+        if self._start_accepted_at is None:
+            return
+        self._startup_recorded = True
+        startup_seconds = time.monotonic() - self._start_accepted_at
+        self._on_startup_complete(startup_seconds)
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
@@ -1184,6 +1208,7 @@ class Sandbox:
 
             sandbox_id = str(response.sandbox_id)
             self._sandbox_id = sandbox_id
+            self._start_accepted_at = time.monotonic()
             self._status = SandboxStatus.PENDING
             self._status_updated_at = datetime.now(UTC)
             self._service_address = response.service_address or None
@@ -1214,7 +1239,8 @@ class Sandbox:
                 self._started_at = (
                     response.started_at_time.ToDatetime() if response.started_at_time else None
                 )
-                logger.debug("Sandbox %s is running", self._sandbox_id)
+                self._maybe_record_startup()
+                logger.info("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
                 self._status = SandboxStatus.FAILED
                 self._status_updated_at = datetime.now(UTC)
@@ -1295,6 +1321,7 @@ class Sandbox:
                     )
                     return
                 case atc_pb2.SANDBOX_STATUS_RUNNING:
+                    self._maybe_record_startup()
                     await asyncio.sleep(poll_interval)
                     poll_interval = min(
                         poll_interval * DEFAULT_POLL_BACKOFF_FACTOR,
