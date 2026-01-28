@@ -81,4 +81,5 @@ nav:
       - Cleanup Patterns: guides/cleanup-patterns.md
       - Sync vs Async: guides/sync-vs-async.md
       - Troubleshooting: guides/troubleshooting.md
+      - SWE-bench Evaluation: guides/swebench.md
   - API Reference: api/index.md
