@@ -205,6 +205,56 @@ class TestWandbReporterGetRun:
 
         assert result1 is result2
 
+    def test_get_run_rechecks_when_no_run_found(self) -> None:
+        """Test _get_run re-checks for wandb.run until one is found.
+
+        This tests the late wandb.init scenario: Session is created before
+        wandb.init() is called, so the first _get_run() finds no active run.
+        Later, after wandb.init() is called, _get_run() should find the run.
+        """
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+        mock_run = MagicMock()
+        mock_wandb = MagicMock()
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            # First call: no run yet (simulates before wandb.init)
+            mock_wandb.run = None
+            result1 = reporter._get_run()
+            assert result1 is None
+
+            # Second call: run now exists (simulates after wandb.init)
+            mock_wandb.run = mock_run
+            result2 = reporter._get_run()
+            assert result2 is mock_run
+
+    def test_log_finds_run_after_late_wandb_init(self) -> None:
+        """Test log() works after late wandb.init.
+
+        This tests the full scenario: create reporter, call log() (returns False
+        because no run), then wandb.init() is called, then log() (returns True).
+        """
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_sandbox_created()
+
+        mock_run = MagicMock()
+        mock_wandb = MagicMock()
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            # First call: no run (returns False)
+            mock_wandb.run = None
+            result1 = reporter.log()
+            assert result1 is False
+
+            # Second call: run exists (returns True)
+            mock_wandb.run = mock_run
+            result2 = reporter.log()
+            assert result2 is True
+            mock_run.log.assert_called_once()
+
 
 class TestWandbReporterLog:
     """Tests for WandbReporter.log method."""
@@ -214,10 +264,11 @@ class TestWandbReporterLog:
         from aviato._wandb import WandbReporter
 
         reporter = WandbReporter()
-        reporter._run_checked = True
-        reporter._run = None
+        mock_wandb = MagicMock()
+        mock_wandb.run = None
 
-        result = reporter.log()
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            result = reporter.log()
 
         assert result is False
 
@@ -227,7 +278,6 @@ class TestWandbReporterLog:
 
         reporter = WandbReporter()
         mock_run = MagicMock()
-        reporter._run_checked = True
         reporter._run = mock_run
 
         result = reporter.log()
@@ -240,7 +290,6 @@ class TestWandbReporterLog:
 
         reporter = WandbReporter()
         mock_run = MagicMock()
-        reporter._run_checked = True
         reporter._run = mock_run
         reporter.record_sandbox_created()
 
@@ -258,7 +307,6 @@ class TestWandbReporterLog:
 
         reporter = WandbReporter()
         mock_run = MagicMock()
-        reporter._run_checked = True
         reporter._run = mock_run
         reporter.record_sandbox_created()
 
@@ -276,7 +324,6 @@ class TestWandbReporterLog:
         reporter = WandbReporter()
         mock_run = MagicMock()
         mock_run.log.side_effect = Exception("Network error")
-        reporter._run_checked = True
         reporter._run = mock_run
         reporter.record_sandbox_created()
 

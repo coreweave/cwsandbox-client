@@ -59,7 +59,6 @@ class WandbReporter:
 
     def __init__(self) -> None:
         self._run: Run | None = None
-        self._run_checked = False
         self._sandboxes_created = 0
         self._executions = 0
         self._exec_successes = 0
@@ -69,16 +68,15 @@ class WandbReporter:
     def _get_run(self) -> Run | None:
         """Lazily get the active wandb run.
 
-        Only checks for a run once; subsequent calls return the cached result.
-        This avoids repeated wandb imports and run lookups.
+        Re-checks for wandb.run on each call until a run is found.
+        Once found, the run is cached for subsequent calls.
 
         Returns:
             The active wandb.run if one exists, None otherwise.
         """
-        if self._run_checked:
+        if self._run is not None:
             return self._run
 
-        self._run_checked = True
         try:
             import wandb
 
