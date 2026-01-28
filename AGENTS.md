@@ -332,6 +332,8 @@ See `examples/README.md` and `examples/AGENTS.md` for full documentation. For de
 For comprehensive API design details, see `docs/` directory:
 - `docs/guides/` - How-to guides for common tasks
 
+When adding new documentation files to `docs/`, update `mkdocs.yml` nav section to include them.
+
 ### Key Design Decisions
 
 **Thread Safety**: The sync API is designed for **single-threaded use**. Calling `.result()` from multiple threads simultaneously is not supported without external synchronization. Users wanting multi-threaded access should use one sandbox per thread or add their own locking. This is intentional to keep the implementation simple.
