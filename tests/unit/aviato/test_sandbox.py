@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aviato import Sandbox, SandboxDefaults
-from aviato.exceptions import SandboxNotRunningError
+from aviato.exceptions import (
+    SandboxError,
+    SandboxFailedError,
+    SandboxNotRunningError,
+    SandboxTerminatedError,
+    SandboxTimeoutError,
+)
 
 
 class TestSandboxRun:
@@ -1482,6 +1488,216 @@ class TestSandboxExecutionStats:
         assert stats["successes"] == 3
         assert stats["failures"] == 1
         assert stats["errors"] == 0
+
+
+class TestSandboxAwait:
+    """Tests for Sandbox.__await__ async pattern routing."""
+
+    @pytest.mark.asyncio
+    async def test_await_uses_loop_manager_run_async(self) -> None:
+        """Verify __await__ schedules work via _LoopManager.run_async()."""
+        from unittest.mock import patch
+
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        sandbox._sandbox_id = "test-id"
+
+        run_async_calls: list[object] = []
+
+        async def mock_wait() -> None:
+            pass
+
+        def mock_run_async(coro: object) -> MagicMock:
+            run_async_calls.append(coro)
+            future: MagicMock = MagicMock()
+            future.result.return_value = None
+            return future
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", mock_wait),
+            patch.object(sandbox._loop_manager, "run_async", side_effect=mock_run_async),
+        ):
+            # Wrap the future to make it awaitable
+            mock_future = asyncio.get_event_loop().create_future()
+            mock_future.set_result(None)
+
+            with patch("asyncio.wrap_future", return_value=mock_future):
+                await sandbox
+
+        assert len(run_async_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_await_cancellation_propagates_to_future(self) -> None:
+        """Verify cancellation of await propagates to the background future."""
+        import concurrent.futures
+
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        sandbox._sandbox_id = "test-id"
+
+        # Create a real concurrent.futures.Future that we control (never completes)
+        background_future: concurrent.futures.Future[None] = concurrent.futures.Future()
+
+        async def awaitable_sandbox() -> Sandbox:
+            return await sandbox
+
+        with patch.object(sandbox._loop_manager, "run_async", return_value=background_future):
+            # Create task that will await the sandbox
+            task = asyncio.create_task(awaitable_sandbox())
+
+            # Give the task time to start waiting on the future
+            await asyncio.sleep(0.01)
+
+            # Cancel the task
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            # The background future should have been cancelled
+            assert background_future.cancelled()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exception",
+        [
+            pytest.param(
+                SandboxFailedError("Sandbox test-id failed to start"),
+                id="SandboxFailedError",
+            ),
+            pytest.param(
+                SandboxTerminatedError("Sandbox test-id was terminated"),
+                id="SandboxTerminatedError",
+            ),
+            pytest.param(
+                SandboxTimeoutError("Sandbox test-id timed out"),
+                id="SandboxTimeoutError",
+            ),
+        ],
+    )
+    async def test_await_exception_propagation(self, exception: SandboxError) -> None:
+        """Verify exceptions propagate unchanged through __await__."""
+        import concurrent.futures
+
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        sandbox._sandbox_id = "test-id"
+
+        # Create a future that will raise the exception
+        future: concurrent.futures.Future[None] = concurrent.futures.Future()
+        future.set_exception(exception)
+
+        with patch.object(sandbox._loop_manager, "run_async", return_value=future):
+            with pytest.raises(type(exception)) as exc_info:
+                await sandbox
+
+            # Verify the exact exception is propagated
+            assert exc_info.value is exception
+
+    @pytest.mark.asyncio
+    async def test_await_auto_starts_if_not_started(self) -> None:
+        """Verify __await__ starts sandbox if _sandbox_id is None."""
+        import concurrent.futures
+
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        assert sandbox._sandbox_id is None
+
+        start_called = False
+        wait_called = False
+
+        async def mock_start() -> str:
+            nonlocal start_called
+            start_called = True
+            sandbox._sandbox_id = "auto-started-id"
+            return "auto-started-id"
+
+        async def mock_wait() -> None:
+            nonlocal wait_called
+            wait_called = True
+
+        # Create futures for both operations
+        start_future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        start_future.set_result("auto-started-id")
+
+        wait_future: concurrent.futures.Future[None] = concurrent.futures.Future()
+        wait_future.set_result(None)
+
+        call_count = [0]
+
+        def mock_run_async(coro: object) -> concurrent.futures.Future[object]:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call is for _start_async
+                sandbox._sandbox_id = "auto-started-id"
+                return start_future  # type: ignore[return-value]
+            else:
+                # Second call is for _wait_until_running_async
+                return wait_future  # type: ignore[return-value]
+
+        with (
+            patch.object(sandbox, "_start_async", mock_start),
+            patch.object(sandbox, "_wait_until_running_async", mock_wait),
+            patch.object(sandbox._loop_manager, "run_async", side_effect=mock_run_async),
+        ):
+            result = await sandbox
+
+        assert call_count[0] == 2  # Both _start_async and _wait_until_running_async
+        assert result is sandbox
+        assert sandbox._sandbox_id == "auto-started-id"
+
+    @pytest.mark.asyncio
+    async def test_await_skips_start_if_already_started(self) -> None:
+        """Verify __await__ skips start() if sandbox already has an ID."""
+        import concurrent.futures
+
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        sandbox._sandbox_id = "already-started-id"
+
+        wait_future: concurrent.futures.Future[None] = concurrent.futures.Future()
+        wait_future.set_result(None)
+
+        run_async_calls = [0]
+
+        def mock_run_async(coro: object) -> concurrent.futures.Future[None]:
+            run_async_calls[0] += 1
+            return wait_future
+
+        async def mock_wait() -> None:
+            pass
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", mock_wait),
+            patch.object(sandbox._loop_manager, "run_async", side_effect=mock_run_async),
+        ):
+            result = await sandbox
+
+        # Should only call run_async once (for wait), not twice (for start + wait)
+        assert run_async_calls[0] == 1
+        assert result is sandbox
+
+    @pytest.mark.asyncio
+    async def test_client_created_in_loop_manager_context(self, mock_aviato_api_key: str) -> None:
+        """Regression: verify _ensure_client is called from within async context."""
+        sandbox = Sandbox(defaults=SandboxDefaults())
+        sandbox._sandbox_id = "test-id"
+
+        ensure_client_called = False
+        running_loop: asyncio.AbstractEventLoop | None = None
+
+        async def tracking_ensure_client() -> None:
+            nonlocal ensure_client_called, running_loop
+            ensure_client_called = True
+            running_loop = asyncio.get_running_loop()
+
+        # Set up the mock client before the patch
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=MagicMock(sandbox_status=1))
+
+        with patch.object(sandbox, "_ensure_client", tracking_ensure_client):
+            sandbox._client = mock_client
+            await sandbox._get_status_async()
+
+        # Verify _ensure_client was called in async context
+        assert ensure_client_called
+        # running_loop being set confirms we were in an async context
+        assert running_loop is not None
 
 
 class TestSandboxStartupTimeTracking:
