@@ -1480,3 +1480,155 @@ class TestSandboxExecutionStats:
         assert stats["successes"] == 3
         assert stats["failures"] == 1
         assert stats["errors"] == 0
+
+
+class TestSandboxStartupTimeTracking:
+    """Tests for Sandbox startup time tracking."""
+
+    def test_start_async_captures_start_time(self) -> None:
+        """Test _start_async sets _start_accepted_at via time.monotonic()."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch("aviato._sandbox.time.monotonic", return_value=12345.678),
+        ):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            assert sandbox._start_accepted_at is None
+            sandbox.start()
+            assert sandbox._start_accepted_at == 12345.678
+
+    def test_startup_time_recorded_when_running(self) -> None:
+        """Test startup time recorded when RUNNING status reached."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._start_accepted_at = 100.0
+        sandbox._client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_response.tower_id = "tower-1"
+        mock_response.tower_group_id = "group-1"
+        mock_response.runway_id = "runway-1"
+        mock_response.started_at_time = None
+        sandbox._client.get = AsyncMock(return_value=mock_response)
+
+        callback_called = []
+
+        def capture_callback(startup_seconds: float) -> None:
+            callback_called.append(startup_seconds)
+
+        sandbox._on_startup_complete = capture_callback  # type: ignore[method-assign]
+
+        with patch("aviato._sandbox.time.monotonic", return_value=105.5):
+            sandbox.wait()
+
+        assert sandbox._startup_recorded is True
+        assert len(callback_called) == 1
+        assert callback_called[0] == 5.5  # 105.5 - 100.0
+
+    def test_startup_time_recorded_only_once(self) -> None:
+        """Test _startup_recorded flag prevents double recording."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._start_accepted_at = 100.0
+        sandbox._startup_recorded = False
+
+        callback_count = [0]
+
+        def capture_callback(startup_seconds: float) -> None:
+            callback_count[0] += 1
+
+        sandbox._on_startup_complete = capture_callback  # type: ignore[method-assign]
+
+        with patch("aviato._sandbox.time.monotonic", return_value=105.0):
+            sandbox._maybe_record_startup()
+            sandbox._maybe_record_startup()
+            sandbox._maybe_record_startup()
+
+        assert callback_count[0] == 1
+        assert sandbox._startup_recorded is True
+
+    def test_discovered_sandbox_skips_startup_recording(self) -> None:
+        """Test _from_sandbox_info sets _startup_recorded=True."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox._from_sandbox_info(
+            sandbox_id="discovered-id",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=None,
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+            base_url="https://example.com",
+            timeout_seconds=300.0,
+        )
+
+        assert sandbox._startup_recorded is True
+        assert sandbox._start_accepted_at is None
+
+    def test_on_startup_complete_calls_reporter(self) -> None:
+        """Test callback forwards to session reporter."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        mock_session = MagicMock()
+        mock_reporter = MagicMock()
+        mock_session._reporter = mock_reporter
+        sandbox._session = mock_session
+
+        sandbox._on_startup_complete(12.5)
+
+        mock_reporter.record_startup_time.assert_called_once_with(12.5)
+
+    def test_on_startup_complete_noop_without_session(self) -> None:
+        """Test no crash when _session is None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._session = None
+
+        # Should not raise
+        sandbox._on_startup_complete(10.0)
+
+    def test_on_startup_complete_noop_without_reporter(self) -> None:
+        """Test no crash when reporter is None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        mock_session = MagicMock()
+        mock_session._reporter = None
+        sandbox._session = mock_session
+
+        # Should not raise
+        sandbox._on_startup_complete(10.0)
+
+    def test_maybe_record_startup_guards(self) -> None:
+        """Test guards for _startup_recorded and _start_accepted_at."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        callback_count = [0]
+
+        def capture_callback(startup_seconds: float) -> None:
+            callback_count[0] += 1
+
+        sandbox._on_startup_complete = capture_callback  # type: ignore[method-assign]
+
+        # Guard: _startup_recorded=True should skip
+        sandbox._startup_recorded = True
+        sandbox._start_accepted_at = 100.0
+        sandbox._maybe_record_startup()
+        assert callback_count[0] == 0
+
+        # Guard: _start_accepted_at=None should skip
+        sandbox._startup_recorded = False
+        sandbox._start_accepted_at = None
+        sandbox._maybe_record_startup()
+        assert callback_count[0] == 0
+
+        # Both conditions met: should record
+        sandbox._startup_recorded = False
+        sandbox._start_accepted_at = 100.0
+        with patch("aviato._sandbox.time.monotonic", return_value=110.0):
+            sandbox._maybe_record_startup()
+        assert callback_count[0] == 1
