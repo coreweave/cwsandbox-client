@@ -173,9 +173,7 @@ async def collect_trajectory_group(
         finally:
             sandbox.stop().result()
 
-    trajectories = await asyncio.gather(
-        *[single_rollout() for _ in range(num_trajectories)]
-    )
+    trajectories = await asyncio.gather(*[single_rollout() for _ in range(num_trajectories)])
     return art.TrajectoryGroup(trajectories)
 
 
@@ -187,9 +185,7 @@ async def generate_trajectory_groups(
 ) -> AsyncIterator[art.TrajectoryGroup]:
     """Generate trajectory groups for all problems."""
     for problem in problems:
-        yield await collect_trajectory_group(
-            problem, session, config, trajectories_per_problem
-        )
+        yield await collect_trajectory_group(problem, session, config, trajectories_per_problem)
 
 
 async def train_step(
@@ -205,41 +201,37 @@ async def train_step(
     print(f"\n=== Step {step + 1} ===")
     print(f"Collecting trajectories for {len(problems)} problems...")
 
-    # Capture pre-training step for aviato metrics (trajectory collection happens here)
+    # Capture step before trajectory collection
     trajectory_step = await model.get_step()
 
-    try:
-        groups = await art.gather_trajectory_groups(
-            (
-                collect_trajectory_group(problem, session, config, trajectories_per_problem)
-                for problem in problems
-            ),
-            pbar_desc=f"step {step + 1}",
-            max_exceptions=0,
-        )
+    groups = await art.gather_trajectory_groups(
+        (
+            collect_trajectory_group(problem, session, config, trajectories_per_problem)
+            for problem in problems
+        ),
+        pbar_desc=f"step {step + 1}",
+        max_exceptions=0,
+    )
 
-        if not groups:
-            print("Warning: No trajectory groups collected")
-            return
+    if not groups:
+        print("Warning: No trajectory groups collected")
+        return
 
-        total_trajectories = sum(len(g.trajectories) for g in groups)
-        total_reward = sum(
-            sum(t.reward for t in g.trajectories) for g in groups
-        )
-        avg_reward = total_reward / total_trajectories if total_trajectories > 0 else 0
+    total_trajectories = sum(len(g.trajectories) for g in groups)
+    total_reward = sum(sum(t.reward for t in g.trajectories) for g in groups)
+    avg_reward = total_reward / total_trajectories if total_trajectories > 0 else 0
 
-        print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
+    print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
 
-        print("Training...")
-        await model.train(groups, config=art.TrainConfig(learning_rate=learning_rate))
-        current_step = await model.get_step()
-        print(f"Training complete: step={current_step}")
+    # Log aviato metrics BEFORE training (aligns with trajectory collection step)
+    session.log_metrics(step=trajectory_step, reset=True)
 
-        await model.log(groups, split="train")
-    finally:
-        # Log aviato metrics at trajectory collection step (pre-training)
-        # Aligns with trajectory-based train metrics like train/reward
-        session.log_metrics(step=trajectory_step, reset=True)
+    print("Training...")
+    await model.train(groups, config=art.TrainConfig(learning_rate=learning_rate))
+    current_step = await model.get_step()
+    print(f"Training complete: step={current_step}")
+
+    await model.log(groups, split="train")
 
 
 async def main() -> int:
