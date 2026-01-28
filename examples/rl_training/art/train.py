@@ -167,11 +167,11 @@ async def collect_trajectory_group(
 
     async def single_rollout() -> art.Trajectory:
         sandbox = session.sandbox(command="sleep", args=["infinity"])
-        sandbox.wait()
+        await sandbox  # Wait for RUNNING status asynchronously
         try:
             return await rollout(problem, sandbox, config)
         finally:
-            sandbox.stop().result()
+            await sandbox.stop(missing_ok=True)
 
     trajectories = await asyncio.gather(*[single_rollout() for _ in range(num_trajectories)])
     return art.TrajectoryGroup(trajectories)
@@ -294,7 +294,7 @@ async def main() -> int:
 
     print("\nStarting training...")
     try:
-        with Session(sandbox_defaults) as session:
+        async with Session(sandbox_defaults) as session:
             start_step = await model.get_step()
             for step in range(start_step, args.num_steps):
                 await train_step(
