@@ -27,4 +27,21 @@ uv run examples/rl_training/trl_grpo_integration.py
 |--------|-------------|-----|
 | `reward_function.py` | Standalone reward function with toy completions | No |
 | `trl_grpo_integration.py` | TRL GRPOTrainer with sandbox rewards | Recommended |
-| `art/` | Multi-step rollouts on MBPP benchmark | Recommended |
+| `art/` | ART training with Aviato sandboxes | See below |
+
+### ART Training
+
+The `art/` directory contains ART (Agent Reinforcement Trainer) integration:
+
+```bash
+# Install ART dependencies
+uv pip install -r examples/rl_training/art/requirements.txt
+
+# Run training with TinkerBackend (no GPU required)
+uv run python -m examples.rl_training.art.train --backend tinker
+
+# Run training with LocalBackend (requires GPU)
+uv run python -m examples.rl_training.art.train --backend local
+```
+
+See [`art/README.md`](art/README.md) for detailed options and configuration.
