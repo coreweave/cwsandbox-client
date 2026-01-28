@@ -243,10 +243,10 @@ python examples/wandb_integration.py --no-wandb
 Demonstrates:
 - Auto-detection of active wandb runs
 - Explicit opt-in with `report_to=["wandb"]`
+- Automatic exec() tracking (no manual calls needed)
 - Using `session.log_metrics(step=N)` at training steps
-- Using `session.record_execution()` for success rate tracking
 
-Metrics logged: `aviato/sandboxes_created`, `aviato/executions`, `aviato/success_rate`
+Metrics logged: `aviato/sandboxes_created`, `aviato/executions`, `aviato/exec_successes`, `aviato/exec_failures`, `aviato/exec_errors`, `aviato/success_rate`, `aviato/error_rate`
 
 ### RL Training Examples (`rl_training/`)
 
