@@ -69,6 +69,7 @@ class TestSessionSandbox:
             "MODEL_NAME": "gpt2",  # Added
         }
 
+
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
@@ -841,6 +842,25 @@ class TestSessionAutoTracking:
         result = ProcessResult(stdout="", stderr="", returncode=0)
         # Should not raise
         sandbox._on_exec_complete(result, None)
+
+    def test_sandbox_exec_reports_sandbox_id_to_reporter(self) -> None:
+        """Test that sandbox exec completion passes sandbox_id to reporter."""
+        session = Session(report_to=["wandb"])
+
+        with patch.object(Sandbox, "start"):
+            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-sandbox-123"
+
+        # Mock record_exec_outcome to capture the call
+        with patch.object(session._reporter, "record_exec_outcome") as mock_record:
+            from aviato._types import ProcessResult
+
+            result = ProcessResult(stdout="", stderr="", returncode=0)
+            sandbox._on_exec_complete(result, None)
+
+            mock_record.assert_called_once()
+            call_kwargs = mock_record.call_args[1]
+            assert call_kwargs["sandbox_id"] == "test-sandbox-123"
 
 
 class TestSessionCloseMetrics:

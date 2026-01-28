@@ -289,6 +289,157 @@ class TestWandbReporter:
         assert reporter.has_metrics is False
 
 
+class TestWandbReporterPerSandbox:
+    """Tests for per-sandbox exec tracking in WandbReporter."""
+
+    def test_init_creates_empty_per_sandbox_dict(self) -> None:
+        """Test WandbReporter initializes with empty per-sandbox dict."""
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+
+        assert reporter._exec_per_sandbox == {}
+
+    def test_record_exec_outcome_with_sandbox_id(self) -> None:
+        """Test record_exec_outcome tracks per-sandbox count."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-123")
+
+        assert reporter._exec_per_sandbox["sb-123"] == 1
+
+    def test_record_exec_outcome_multiple_sandboxes(self) -> None:
+        """Test record_exec_outcome tracks multiple sandboxes independently."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        # 3 execs for sandbox A
+        for _ in range(3):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+        # 5 execs for sandbox B
+        for _ in range(5):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+        # 8 execs for sandbox C
+        for _ in range(8):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+
+        assert reporter._exec_per_sandbox["sb-a"] == 3
+        assert reporter._exec_per_sandbox["sb-b"] == 5
+        assert reporter._exec_per_sandbox["sb-c"] == 8
+
+    def test_record_exec_outcome_none_sandbox_id_updates_global_only(self) -> None:
+        """Test record_exec_outcome without sandbox_id updates global but not per-sandbox."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id=None)
+
+        assert reporter._executions == 1
+        assert reporter._exec_per_sandbox == {}
+
+    def test_get_metrics_per_sandbox_avg_min_max(self) -> None:
+        """Test get_metrics returns correct avg/min/max for per-sandbox counts."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        # Track 3 sandboxes with exec counts [3, 5, 8]
+        for _ in range(3):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+        for _ in range(5):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+        for _ in range(8):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+
+        metrics = reporter.get_metrics()
+
+        # avg = (3 + 5 + 8) / 3 = 5.33...
+        assert metrics["aviato/avg_execs_per_sandbox"] == pytest.approx(5.33, rel=0.01)
+        assert metrics["aviato/min_execs_per_sandbox"] == 3
+        assert metrics["aviato/max_execs_per_sandbox"] == 8
+
+    def test_get_metrics_single_sandbox(self) -> None:
+        """Test get_metrics with single sandbox has avg=min=max."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        # Track 1 sandbox with 5 execs
+        for _ in range(5):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-only")
+
+        metrics = reporter.get_metrics()
+
+        assert metrics["aviato/avg_execs_per_sandbox"] == 5
+        assert metrics["aviato/min_execs_per_sandbox"] == 5
+        assert metrics["aviato/max_execs_per_sandbox"] == 5
+
+    def test_get_metrics_omits_per_sandbox_when_empty(self) -> None:
+        """Test get_metrics omits per-sandbox keys when no sandbox_id provided."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+
+        metrics = reporter.get_metrics()
+
+        assert "aviato/avg_execs_per_sandbox" not in metrics
+        assert "aviato/min_execs_per_sandbox" not in metrics
+        assert "aviato/max_execs_per_sandbox" not in metrics
+
+    def test_reset_clears_per_sandbox_data(self) -> None:
+        """Test reset clears per-sandbox tracking data."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-2")
+
+        reporter.reset()
+
+        assert reporter._exec_per_sandbox == {}
+
+    def test_per_sandbox_with_different_exec_counts(self) -> None:
+        """Test per-sandbox tracking with varying exec counts."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        # Sandbox A: 1 exec, Sandbox B: 10 execs, Sandbox C: 3 execs
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+        for _ in range(10):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+        for _ in range(3):
+            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+
+        metrics = reporter.get_metrics()
+
+        assert metrics["aviato/min_execs_per_sandbox"] == 1
+        assert metrics["aviato/max_execs_per_sandbox"] == 10
+        # avg = (1 + 10 + 3) / 3 = 4.67
+        assert metrics["aviato/avg_execs_per_sandbox"] == pytest.approx(4.67, rel=0.01)
+
+    def test_per_sandbox_independent_of_outcome_types(self) -> None:
+        """Test per-sandbox count tracks total execs regardless of outcome type."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        # Record different outcome types for same sandbox
+        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-mixed")
+        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-mixed")
+        reporter.record_exec_outcome(ExecOutcome.ERROR, sandbox_id="sb-mixed")
+
+        # Per-sandbox count should be 3 (total, not by outcome)
+        assert reporter._exec_per_sandbox["sb-mixed"] == 3
+
+
 class TestWandbReporterGetRun:
     """Tests for WandbReporter._get_run method."""
 
