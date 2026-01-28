@@ -7,7 +7,7 @@ This script trains language models on MBPP coding problems using:
 - LocalBackend (requires GPU) or TinkerBackend (no GPU) for training
 
 Usage:
-    uv run examples/rl_training/art/train.py --backend tinker --num-problems 10
+    uv run python -m examples.rl_training.art.train --backend tinker --num-problems 10
 
 Environment Variables:
     OPENAI_API_KEY: API key for inference
