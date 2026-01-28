@@ -69,7 +69,7 @@ uv run python -m examples.rl_training.art.train \
 ```
 --backend {local,tinker}   Training backend (default: local)
 --model TEXT               Model for inference (default: gpt-4o-mini)
---base-model TEXT          Base model for training (default: Qwen/Qwen3-8B-Instruct)
+--base-model TEXT          Base model for training (default: Qwen/Qwen3-8B)
 --num-problems INT         Number of MBPP problems (default: 10)
 --num-steps INT            Training steps (default: 5)
 --trajectories-per-problem Number of trajectories per problem (default: 2)

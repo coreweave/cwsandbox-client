@@ -28,11 +28,10 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
+import art
 import pytest
 
-import art
 from aviato import SandboxDefaults, Session
-
 from examples.rl_training.art.rollout import Problem, RolloutConfig, rollout
 
 if TYPE_CHECKING:
@@ -95,7 +94,11 @@ def sample_problems() -> list[Problem]:
         Problem(
             task_id="test_2",
             prompt="Write a function `is_even(n)` that returns True if n is even, False otherwise.",
-            test_code="assert is_even(2) == True\nassert is_even(3) == False\nassert is_even(0) == True",
+            test_code=(
+                "assert is_even(2) == True\n"
+                "assert is_even(3) == False\n"
+                "assert is_even(0) == True"
+            ),
         ),
     ]
 
@@ -196,7 +199,7 @@ class TestTinkerBackendTrainingStep:
 
 @pytest.mark.skipif(
     not os.environ.get("ART_TINKER_API_KEY"),
-    reason="Full pipeline tests require ART_TINKER_API_KEY and pre-configured TinkerBackend adapter",
+    reason="Full pipeline tests require ART_TINKER_API_KEY and TinkerBackend",
 )
 class TestFullPipelineIntegration:
     """Test the full ART + Aviato pipeline end-to-end.
