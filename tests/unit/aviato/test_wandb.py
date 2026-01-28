@@ -19,6 +19,10 @@ class TestWandbReporter:
         assert reporter._exec_successes == 0
         assert reporter._exec_failures == 0
         assert reporter._exec_errors == 0
+        assert reporter._startup_count == 0
+        assert reporter._startup_total_seconds == 0.0
+        assert reporter._startup_min_seconds is None
+        assert reporter._startup_max_seconds is None
 
     def test_record_sandbox_created_increments_counter(self) -> None:
         """Test record_sandbox_created increments the counter."""
@@ -71,6 +75,30 @@ class TestWandbReporter:
         assert reporter._exec_failures == 0
         assert reporter._exec_errors == 1
 
+    def test_record_startup_time_updates_all_stats(self) -> None:
+        """Test record_startup_time updates count, total, min, and max."""
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_startup_time(5.0)
+        assert reporter._startup_count == 1
+        assert reporter._startup_total_seconds == 5.0
+        assert reporter._startup_min_seconds == 5.0
+        assert reporter._startup_max_seconds == 5.0
+
+        reporter.record_startup_time(3.0)
+        assert reporter._startup_count == 2
+        assert reporter._startup_total_seconds == 8.0
+        assert reporter._startup_min_seconds == 3.0
+        assert reporter._startup_max_seconds == 5.0
+
+        reporter.record_startup_time(7.0)
+        assert reporter._startup_count == 3
+        assert reporter._startup_total_seconds == 15.0
+        assert reporter._startup_min_seconds == 3.0
+        assert reporter._startup_max_seconds == 7.0
+
     def test_get_metrics_returns_correct_values(self) -> None:
         """Test get_metrics returns accumulated values."""
         from aviato._wandb import ExecOutcome, WandbReporter
@@ -106,6 +134,36 @@ class TestWandbReporter:
         assert "aviato/success_rate" not in metrics
         assert "aviato/error_rate" not in metrics
 
+    def test_get_metrics_includes_startup_stats(self) -> None:
+        """Test get_metrics includes startup stats when count > 0."""
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_startup_time(2.0)
+        reporter.record_startup_time(4.0)
+        reporter.record_startup_time(6.0)
+
+        metrics = reporter.get_metrics()
+
+        assert metrics["aviato/startup_count"] == 3
+        assert metrics["aviato/avg_startup_seconds"] == pytest.approx(4.0)
+        assert metrics["aviato/min_startup_seconds"] == 2.0
+        assert metrics["aviato/max_startup_seconds"] == 6.0
+
+    def test_get_metrics_omits_startup_stats_when_no_startup(self) -> None:
+        """Test get_metrics omits startup stats when count == 0."""
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_sandbox_created()
+
+        metrics = reporter.get_metrics()
+
+        assert "aviato/startup_count" not in metrics
+        assert "aviato/avg_startup_seconds" not in metrics
+        assert "aviato/min_startup_seconds" not in metrics
+        assert "aviato/max_startup_seconds" not in metrics
+
     def test_reset_clears_metrics(self) -> None:
         """Test reset clears all accumulated metrics."""
         from aviato._wandb import ExecOutcome, WandbReporter
@@ -115,6 +173,7 @@ class TestWandbReporter:
         reporter.record_exec_outcome(ExecOutcome.SUCCESS)
         reporter.record_exec_outcome(ExecOutcome.FAILURE)
         reporter.record_exec_outcome(ExecOutcome.ERROR)
+        reporter.record_startup_time(5.0)
 
         reporter.reset()
 
@@ -123,6 +182,10 @@ class TestWandbReporter:
         assert reporter._exec_successes == 0
         assert reporter._exec_failures == 0
         assert reporter._exec_errors == 0
+        assert reporter._startup_count == 0
+        assert reporter._startup_total_seconds == 0.0
+        assert reporter._startup_min_seconds is None
+        assert reporter._startup_max_seconds is None
 
     def test_has_metrics_false_when_empty(self) -> None:
         """Test has_metrics returns False with no metrics."""
@@ -145,6 +208,14 @@ class TestWandbReporter:
 
         reporter = WandbReporter()
         reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        assert reporter.has_metrics is True
+
+    def test_has_metrics_true_with_startup_times(self) -> None:
+        """Test has_metrics returns True when only startup times recorded."""
+        from aviato._wandb import WandbReporter
+
+        reporter = WandbReporter()
+        reporter.record_startup_time(5.0)
         assert reporter.has_metrics is True
 
 

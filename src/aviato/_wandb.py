@@ -48,12 +48,17 @@ class WandbReporter:
     - aviato/exec_errors: Errors (timeouts, cancellations, transport)
     - aviato/success_rate: Fraction of exec() with returncode=0
     - aviato/error_rate: Fraction of exec() that errored
+    - aviato/startup_count: Number of startup times recorded
+    - aviato/avg_startup_seconds: Average sandbox startup time
+    - aviato/min_startup_seconds: Minimum sandbox startup time
+    - aviato/max_startup_seconds: Maximum sandbox startup time
 
     Example:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
         reporter.record_exec_outcome(ExecOutcome.SUCCESS)
         reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_startup_time(2.5)
         reporter.log(step=100)  # Logs metrics to wandb at step 100
     """
 
@@ -64,6 +69,10 @@ class WandbReporter:
         self._exec_successes = 0
         self._exec_failures = 0
         self._exec_errors = 0
+        self._startup_count: int = 0
+        self._startup_total_seconds: float = 0.0
+        self._startup_min_seconds: float | None = None
+        self._startup_max_seconds: float | None = None
 
     def _get_run(self) -> Run | None:
         """Lazily get the active wandb run.
@@ -108,6 +117,19 @@ class WandbReporter:
         elif outcome == ExecOutcome.ERROR:
             self._exec_errors += 1
 
+    def record_startup_time(self, startup_seconds: float) -> None:
+        """Record sandbox startup time.
+
+        Args:
+            startup_seconds: Time in seconds for sandbox to reach RUNNING state.
+        """
+        self._startup_count += 1
+        self._startup_total_seconds += startup_seconds
+        if self._startup_min_seconds is None or startup_seconds < self._startup_min_seconds:
+            self._startup_min_seconds = startup_seconds
+        if self._startup_max_seconds is None or startup_seconds > self._startup_max_seconds:
+            self._startup_max_seconds = startup_seconds
+
     def get_metrics(self) -> dict[str, Any]:
         """Get current metrics as a dictionary.
 
@@ -125,6 +147,14 @@ class WandbReporter:
         if self._executions > 0:
             metrics["aviato/success_rate"] = self._exec_successes / self._executions
             metrics["aviato/error_rate"] = self._exec_errors / self._executions
+
+        if self._startup_count > 0:
+            metrics["aviato/startup_count"] = self._startup_count
+            metrics["aviato/avg_startup_seconds"] = (
+                self._startup_total_seconds / self._startup_count
+            )
+            metrics["aviato/min_startup_seconds"] = self._startup_min_seconds
+            metrics["aviato/max_startup_seconds"] = self._startup_max_seconds
 
         return metrics
 
@@ -172,8 +202,12 @@ class WandbReporter:
         self._exec_successes = 0
         self._exec_failures = 0
         self._exec_errors = 0
+        self._startup_count = 0
+        self._startup_total_seconds = 0.0
+        self._startup_min_seconds = None
+        self._startup_max_seconds = None
 
     @property
     def has_metrics(self) -> bool:
         """Check if any metrics have been recorded."""
-        return self._sandboxes_created > 0 or self._executions > 0
+        return self._sandboxes_created > 0 or self._executions > 0 or self._startup_count > 0
