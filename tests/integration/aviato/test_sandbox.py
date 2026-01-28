@@ -455,6 +455,86 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
     # (sandbox._stopped should be True, but we can't easily verify this externally)
 
 
+@pytest.mark.asyncio
+async def test_await_sandbox_then_operations(sandbox_defaults: SandboxDefaults) -> None:
+    """Test await sandbox followed by multiple operations.
+
+    Exercises the cross-loop client reuse pattern by explicitly awaiting
+    the sandbox (which waits for RUNNING), then performing multiple
+    follow-up operations that reuse the client.
+    """
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    try:
+        await sandbox  # Wait for RUNNING
+
+        # Multiple follow-up operations exercise client reuse
+        result1 = await sandbox.exec(["echo", "first"])
+        assert result1.returncode == 0
+        assert "first" in result1.stdout
+
+        result2 = await sandbox.exec(["echo", "second"])
+        assert result2.returncode == 0
+        assert "second" in result2.stdout
+
+        # File operations also exercise client reuse
+        await sandbox.write_file("/tmp/test.txt", b"content")
+        data = await sandbox.read_file("/tmp/test.txt")
+        assert data == b"content"
+    finally:
+        await sandbox.stop(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_async_session_with_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """Test async with Session() creating sandboxes.
+
+    Verifies that async context manager works with Session, and that
+    sandboxes created via session.sandbox() work with await pattern.
+    """
+    async with Session(sandbox_defaults) as session:
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+        await sandbox  # Wait for RUNNING
+
+        result = await sandbox.exec(["echo", "from session"])
+        assert result.returncode == 0
+        assert "from session" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_await_auto_starts_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that await sandbox auto-starts if not started.
+
+    Creates a Sandbox without calling start(), then awaits it. The await
+    should trigger auto-start and wait until RUNNING status.
+    """
+    from aviato import SandboxStatus
+
+    # Create sandbox without starting it (Sandbox constructor doesn't auto-start)
+    sandbox = Sandbox(
+        command="sleep",
+        args=["infinity"],
+        defaults=sandbox_defaults,
+    )
+
+    try:
+        # sandbox_id should be None before start
+        assert sandbox._sandbox_id is None
+
+        # await should auto-start then wait for RUNNING
+        await sandbox
+
+        # Now sandbox should be running
+        assert sandbox._sandbox_id is not None
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        # Follow-up operation to verify sandbox works
+        result = await sandbox.exec(["echo", "auto-started"])
+        assert result.returncode == 0
+        assert "auto-started" in result.stdout
+    finally:
+        await sandbox.stop(missing_ok=True)
+
+
 # Infrastructure filtering tests (runway_ids, tower_ids)
 
 
