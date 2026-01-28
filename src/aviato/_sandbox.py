@@ -1418,7 +1418,18 @@ class Sandbox:
         """
 
         async def _await_running() -> Sandbox:
-            await self._wait_until_running_async()
+            # Auto-start if not started (matches __aenter__)
+            if self._sandbox_id is None:
+                start_future = self._loop_manager.run_async(self._start_async())
+                await asyncio.wrap_future(start_future)
+
+            # Wait for RUNNING via _LoopManager
+            wait_future = self._loop_manager.run_async(self._wait_until_running_async())
+            try:
+                await asyncio.wrap_future(wait_future)
+            except asyncio.CancelledError:
+                wait_future.cancel()
+                raise
             return self
 
         return _await_running().__await__()
