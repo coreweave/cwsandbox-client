@@ -451,34 +451,34 @@ def logged_reward(completion: str, step: int) -> float:
 
 The TRL example above uses sandboxes for **single-shot execution**: one sandbox per completion, execute once, return a reward. This works for training models to generate correct code in one attempt.
 
-**Stateful multi-step rollouts** are different: the agent takes multiple actions within a single sandbox, and the sandbox maintains state between actions. The agent can write a file, run it, see the error, edit the file, and try again - all within the same sandbox. Ephemeral execution environments can't do this.
+**Stateful multi-step rollouts** are different: the agent takes multiple actions within a single sandbox, and the sandbox maintains state between actions. The agent can write a file, run it, see the error, edit the file, and try again - all within the same sandbox.
 
-The `examples/rl_training/art/` directory demonstrates this pattern on the MBPP benchmark. When a solution fails, the agent receives error feedback and can modify its approach while the sandbox preserves all prior file changes and environment state.
+The `examples/rl_training/art/` directory demonstrates this pattern on the MBPP benchmark. When a solution fails, the agent receives error feedback and can iterate on its approach.
 
 ### Overview
 
-[ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) is an open-source RL framework by OpenPipe for training multi-step agents using GRPO. This example uses Aviato sandboxes with ART:
+[ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) is an open-source RL framework by OpenPipe for training multi-step agents using GRPO. This example integrates Aviato sandboxes with ART:
 
-- Loads problems from the MBPP benchmark
-- Generates solutions using an LLM (vLLM or OpenAI)
-- Executes solutions in stateful Aviato sandboxes that persist across attempts
-- Computes binary rewards based on test case results
-- Supports multi-step rollouts where the agent iterates on failures
+- Uses the `art` package (`openpipe-art`) for trajectory collection and training
+- Supports two backends: `LocalBackend` (requires GPU) or `TinkerBackend` (no GPU)
+- Executes code via tool calling in Aviato sandboxes
+- Computes binary rewards based on MBPP test case results
 
 ### Prerequisites
 
 | Mode | Requirements |
 |------|-------------|
 | Dry run | CPU only |
-| OpenAI backend | CPU only (inference via API) |
-| vLLM backend | GPU required (A100/H100 recommended) |
+| TinkerBackend | CPU only (training via API) |
+| LocalBackend | GPU required |
 
 Environment variables:
 
 ```bash
 export AVIATO_API_KEY="your-aviato-key"
-export WANDB_API_KEY="your-wandb-key"
-export OPENAI_API_KEY="your-openai-key"  # if using --use-openai
+export OPENAI_API_KEY="your-openai-key"
+export ART_TINKER_API_KEY="your-tinker-key"  # required for --backend=tinker
+export WANDB_API_KEY="your-wandb-key"        # optional, for logging
 ```
 
 ### Installation
@@ -487,84 +487,160 @@ export OPENAI_API_KEY="your-openai-key"  # if using --use-openai
 uv pip install -r examples/rl_training/art/requirements.txt
 ```
 
-Or install individually:
+This installs:
+
+```text
+openpipe-art==0.5.7       # ART framework
+openai==2.15.0            # LLM inference
+datasets==4.5.0           # MBPP loading
+wandb==0.24.0             # Optional logging
+```
+
+For LocalBackend with GPU support, also install:
 
 ```bash
-uv pip install wandb==0.24.0 openai==2.15.0 datasets==4.5.0 transformers==5.0.0
+uv pip install "openpipe-art[backend]==0.5.7"
 ```
 
 ### Running the Example
 
 ```bash
-# Dry run with OpenAI (no training, just rollouts)
-uv run examples/rl_training/art/train.py --use-openai --dry-run
+# Dry run - validate setup without training
+uv run examples/rl_training/art/train.py --dry-run
 
-# Full training with vLLM (start vLLM server first)
-vllm serve Qwen/Qwen2.5-3B-Instruct --port 8000
-uv run examples/rl_training/art/train.py
+# Train with TinkerBackend (no GPU required)
+uv run examples/rl_training/art/train.py --backend tinker --num-problems 10
+
+# Train with LocalBackend (requires GPU)
+uv run examples/rl_training/art/train.py --backend local --num-problems 10
 ```
 
 Expected output:
 
 ```
-Loading MBPP problems...
-Loaded 100 problems
-
-ART Training (job: a1b2c3d4)
-============================================================
+ART Training with Aviato Sandboxes
+========================================
+Backend: tinker
 Model: gpt-4o-mini
-Problems: 100
-Steps: 10
-Batch size: 4
-============================================================
+Base model: Qwen/Qwen3-8B-Instruct
+Problems: 10
+Steps: 5
+Trajectories per problem: 2
+Project: aviato-mbpp
+Run name: train-001
 
-W&B run: https://wandb.ai/your-entity/aviato-rl-demo/runs/abc123
+Loading MBPP problems...
+Loaded 10 problems
 
-Starting training loop...
-------------------------------------------------------------
-  Step 0: reward=0.500, success=50.0% (2/4), time=45.2s
-  Step 1: reward=0.750, success=75.0% (3/4), time=38.1s
-  Step 2: reward=0.500, success=50.0% (2/4), time=42.3s
-  ...
-------------------------------------------------------------
+Creating tinker backend...
+Creating trainable model...
+Registering model with backend...
 
-Training complete!
-  Total trajectories: 40
-  Successful: 22 (55.0%)
-  Steps completed: 10
+Starting training...
+
+=== Step 1 ===
+Collecting trajectories for 10 problems...
+step 1: 100%|██████████| 10/10 [00:45<00:00]
+Collected 20 trajectories, avg reward: 0.35
+Training...
+Training complete: step=1, metrics={'loss': 0.42}
+...
 ```
 
 ### Configuration Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `Qwen/Qwen2.5-3B-Instruct` | Model name for vLLM or OpenAI |
-| `--project` | `aviato-rl-demo` | W&B project name |
-| `--num-steps` | `10` | Number of training steps |
-| `--batch-size` | `4` | Problems per training step |
-| `--max-attempts` | `3` | Max solution attempts per problem |
-| `--dry-run` | `false` | Run rollouts without training |
-| `--use-openai` | `false` | Use OpenAI API instead of vLLM |
+| `--backend` | `local` | Training backend: `local` (GPU) or `tinker` (no GPU) |
+| `--model` | `gpt-4o-mini` | Model for inference |
+| `--base-model` | `Qwen/Qwen3-8B-Instruct` | Base model for training |
+| `--num-problems` | `10` | Number of MBPP problems |
+| `--num-steps` | `5` | Training steps |
+| `--trajectories-per-problem` | `2` | Trajectories collected per problem per step |
+| `--base-url` | `None` | OpenAI-compatible API base URL |
+| `--project` | `aviato-mbpp` | W&B project name |
+| `--run-name` | `train-001` | Training run name |
+| `--learning-rate` | `1e-5` | Learning rate |
+| `--dry-run` | `false` | Validate setup without training |
 
 ### Architecture
 
 ```
 art/
-├── train.py         # Training loop and CLI
-├── rollout.py       # Multi-step sandbox execution
-├── rewards.py       # MBPP loading and reward calculation
-└── types.py         # Trajectory and TrainableModel protocols
+├── train.py         # Training loop, CLI, and ART backend setup
+├── rollout.py       # Multi-step sandbox execution, builds Trajectory
+├── tools.py         # Tool schemas for execute_code and submit_solution
+└── __init__.py
 ```
 
-Each rollout creates a fresh sandbox with `Sandbox.run()`. It writes the solution and test script, runs with a timeout, and captures errors on failure for the next attempt. Cleanup happens via `sandbox.stop()` in a finally block.
-
-Sandboxes are tagged with job ID and problem ID for tracking:
+**Key ART imports:**
 
 ```python
-tags=(
-    "art-rollout",
-    f"job-{job_id}",
-    f"problem-{problem.task_id}",
+import art
+from art.local import LocalBackend
+from art.tinker import TinkerBackend
+
+# Create trainable model
+model = art.TrainableModel(
+    name="train-001",
+    project="aviato-mbpp",
+    base_model="Qwen/Qwen3-8B-Instruct",
+)
+
+# Collect trajectories
+groups = await art.gather_trajectory_groups(
+    (collect_trajectories(problem) for problem in problems),
+    pbar_desc="collecting",
+)
+
+# Train
+result = await backend.train(model, groups, learning_rate=1e-5)
+```
+
+**Rollout returns `art.Trajectory`:**
+
+```python
+from openai.types.chat import ChatCompletionToolParam
+
+trajectory = art.Trajectory(
+    messages_and_choices=messages_and_choices,  # Conversation history
+    tools=ROLLOUT_TOOLS,                        # Tool definitions
+    reward=1.0 if passed else 0.0,              # Binary reward
+    metadata={"task_id": problem.task_id},
+)
+return trajectory.finish()
+```
+
+**Tool-calling pattern:**
+
+The rollout uses OpenAI-compatible tool calling with two tools:
+- `execute_code`: Test code in sandbox, returns stdout/stderr
+- `submit_solution`: Final submission, runs all test cases
+
+```python
+ROLLOUT_TOOLS: list[ChatCompletionToolParam] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_code",
+            "description": "Execute Python code in an isolated sandbox...",
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+                "required": ["code"],
+            },
+        },
+    },
+    # submit_solution tool...
+]
+```
+
+Sandboxes are tagged for tracking:
+
+```python
+sandbox_defaults = SandboxDefaults(
+    container_image="python:3.11",
+    tags=("art-training", args.project, args.run_name),
 )
 ```
 
@@ -578,22 +654,28 @@ MBPP Dataset
 │  TrainingLoop   │
 │  (batch problems)│
 └────────┬────────┘
-         │ parallel
+         │ parallel per problem
          ▼
 ┌─────────────────┐     ┌─────────────────┐
 │    rollout()    │────▶│  Aviato Sandbox │
-│ (multi-step)    │◀────│  (code exec)    │
+│ (tool calling)  │◀────│  (code exec)    │
 └────────┬────────┘     └─────────────────┘
          │
          ▼
 ┌─────────────────┐
-│   Trajectory    │
+│ art.Trajectory  │
 │ (messages+reward)│
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  W&B Logging    │
-│  + Training     │
+│art.TrajectoryGroup│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ backend.train() │
+│ (LocalBackend/  │
+│  TinkerBackend) │
 └─────────────────┘
 ```
