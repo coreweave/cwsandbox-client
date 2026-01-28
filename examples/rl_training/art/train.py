@@ -203,6 +203,9 @@ async def train_step(
     print(f"\n=== Step {step + 1} ===")
     print(f"Collecting trajectories for {len(problems)} problems...")
 
+    # Capture pre-training step for aviato metrics (trajectory collection happens here)
+    trajectory_step = await model.get_step()
+
     try:
         groups = await art.gather_trajectory_groups(
             (
@@ -232,11 +235,9 @@ async def train_step(
 
         await model.log(groups, split="train")
     finally:
-        # Log aviato sandbox execution metrics (success/failure/error rates)
-        # Use post-training step to align with ART's model.log() convention:
-        # step N metrics = data used to train TO step N
-        metric_step = await model.get_step()
-        session.log_metrics(step=metric_step, reset=True)
+        # Log aviato metrics at trajectory collection step (pre-training)
+        # Aligns with trajectory-based train metrics like train/reward
+        session.log_metrics(step=trajectory_step, reset=True)
 
 
 async def main() -> int:
