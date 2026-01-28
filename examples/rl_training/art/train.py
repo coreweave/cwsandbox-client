@@ -150,7 +150,9 @@ def create_backend(backend_type: str) -> LocalBackend | TinkerBackend:
         if not api_key:
             print("Error: ART_TINKER_API_KEY environment variable required for tinker backend")
             sys.exit(1)
-        return TinkerBackend(tinker_api_key=api_key)
+        # Set env var directly to avoid ART's TinkerBackend printing the key to stdout
+        os.environ["TINKER_API_KEY"] = api_key
+        return TinkerBackend()
     else:
         return LocalBackend()
 
