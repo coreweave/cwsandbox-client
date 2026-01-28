@@ -58,3 +58,6 @@ logs/
 
 # Example output files
 examples/output/
+
+# Weights & Biases local runs
+wandb/
