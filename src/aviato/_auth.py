@@ -15,7 +15,9 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from connectrpc.request import RequestContext
 
 from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
 from aviato.exceptions import WandbAuthError
@@ -156,3 +158,36 @@ _AUTH_MODES = [
     _AuthMode(try_auth=_try_aviato_auth),
     _AuthMode(try_auth=_try_wandb_auth),
 ]
+
+
+def create_auth_interceptors() -> list[Any]:
+    """Create interceptors for auth headers based on resolved credentials.
+
+    Resolves authentication credentials using the standard auth resolution
+    order (AVIATO_API_KEY, WANDB_* env vars, ~/.netrc) and creates an
+    interceptor to add those headers to each request.
+
+    Returns:
+        List containing a single interceptor configured with resolved auth
+        headers. Returns list with interceptor even if no auth headers are
+        resolved (empty headers dict).
+    """
+
+    class _AuthHeaderInterceptor:
+        """Interceptor that adds auth headers to every connectrpc request."""
+
+        def __init__(self, headers: dict[str, str]) -> None:
+            self._headers = headers
+
+        async def on_start(self, ctx: RequestContext) -> None:  # type: ignore[type-arg]
+            """Add auth headers when an RPC starts."""
+            request_headers = ctx.request_headers()
+            for key, value in self._headers.items():
+                request_headers[key] = value
+
+        async def on_end(self, token: None, ctx: RequestContext) -> None:  # type: ignore[type-arg]
+            """Called when the RPC ends. No-op for auth headers."""
+            pass
+
+    auth = resolve_auth()
+    return [_AuthHeaderInterceptor(auth.headers)]

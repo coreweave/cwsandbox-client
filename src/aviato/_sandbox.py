@@ -18,6 +18,7 @@ from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2, streaming_connect, streaming_pb2
 from google.protobuf import timestamp_pb2
 
+from aviato._auth import create_auth_interceptors
 from aviato._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
@@ -28,7 +29,6 @@ from aviato._defaults import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     SandboxDefaults,
 )
-from aviato._interceptor import create_auth_interceptors
 from aviato._loop_manager import _LoopManager
 from aviato._types import OperationRef, Process, ProcessResult, StreamReader
 from aviato._wandb import ExecOutcome

@@ -1,7 +1,7 @@
 """Unit tests for aviato._auth module."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -11,6 +11,7 @@ from aviato._auth import (
     _read_api_key_from_netrc,
     _try_aviato_auth,
     _try_wandb_auth,
+    create_auth_interceptors,
     resolve_auth,
 )
 from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
@@ -260,3 +261,95 @@ class TestReadApiKeyFromNetrc:
             result = _read_api_key_from_netrc()
 
         assert result is None
+
+
+class TestCreateAuthInterceptors:
+    """Tests for create_auth_interceptors factory function."""
+
+    def test_creates_interceptor_with_aviato_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test creates interceptor with Aviato API key headers."""
+        monkeypatch.setenv("AVIATO_API_KEY", "test-api-key")
+
+        interceptors = create_auth_interceptors()
+
+        assert len(interceptors) == 1
+        assert interceptors[0]._headers == {"Authorization": "Bearer test-api-key"}
+
+    def test_creates_interceptor_with_wandb_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test creates interceptor with W&B headers."""
+        monkeypatch.delenv("AVIATO_API_KEY", raising=False)
+        monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
+        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_PROJECT_NAME", "my-project")
+
+        interceptors = create_auth_interceptors()
+
+        assert len(interceptors) == 1
+        assert interceptors[0]._headers == {
+            "x-api-key": "wandb-key",
+            "x-entity-id": "my-entity",
+            "x-project-name": "my-project",
+        }
+
+    def test_creates_interceptor_with_empty_headers_when_no_auth(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test creates interceptor with empty headers when no credentials."""
+        monkeypatch.delenv("AVIATO_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+
+        with patch("aviato._auth.Path.home", return_value=tmp_path):
+            interceptors = create_auth_interceptors()
+
+        assert len(interceptors) == 1
+        assert interceptors[0]._headers == {}
+
+    def test_returns_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test returns a list (for use with connectrpc interceptors param)."""
+        monkeypatch.setenv("AVIATO_API_KEY", "test-key")
+
+        result = create_auth_interceptors()
+
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_interceptor_on_start_adds_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test interceptor on_start adds headers to request context."""
+        monkeypatch.setenv("AVIATO_API_KEY", "test-token")
+
+        interceptors = create_auth_interceptors()
+        interceptor = interceptors[0]
+
+        mock_headers: dict[str, str] = {}
+        mock_ctx = MagicMock()
+        mock_ctx.request_headers.return_value = mock_headers
+
+        await interceptor.on_start(mock_ctx)
+
+        assert mock_headers == {"Authorization": "Bearer test-token"}
+
+    @pytest.mark.asyncio
+    async def test_interceptor_on_start_adds_multiple_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test interceptor on_start adds multiple W&B headers."""
+        monkeypatch.delenv("AVIATO_API_KEY", raising=False)
+        monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
+        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_PROJECT_NAME", "my-project")
+
+        interceptors = create_auth_interceptors()
+        interceptor = interceptors[0]
+
+        mock_headers: dict[str, str] = {}
+        mock_ctx = MagicMock()
+        mock_ctx.request_headers.return_value = mock_headers
+
+        await interceptor.on_start(mock_ctx)
+
+        assert mock_headers == {
+            "x-api-key": "wandb-key",
+            "x-entity-id": "my-entity",
+            "x-project-name": "my-project",
+        }
