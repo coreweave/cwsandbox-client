@@ -25,6 +25,7 @@ from aviato._defaults import (
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_STOP_TIMEOUT_BUFFER_SECONDS,
     SandboxDefaults,
 )
 from aviato._interceptor import create_auth_interceptors
@@ -1424,10 +1425,12 @@ class Sandbox:
 
         logger.debug("Stopping sandbox %s", self._sandbox_id)
 
+        max_timeout = int(graceful_shutdown_seconds) + int(DEFAULT_STOP_TIMEOUT_BUFFER_SECONDS)
         request = atc_pb2.StopSandboxRequest(
             sandbox_id=self._sandbox_id,
             graceful_shutdown_seconds=int(graceful_shutdown_seconds),
             snapshot_on_stop=snapshot_on_stop,
+            max_timeout_seconds=max_timeout,
         )
 
         try:
