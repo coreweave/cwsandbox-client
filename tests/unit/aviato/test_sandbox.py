@@ -86,13 +86,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["nonexistent"], check=True)
             with pytest.raises(SandboxExecutionError, match="exit code 127"):
                 process.result()
@@ -125,13 +124,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["failing-cmd"], check=False)
             result = process.result()
 
@@ -165,13 +163,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["echo", "test"])
 
             # Collect all stdout lines by iterating the stream
@@ -204,13 +201,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["failing-cmd"])
             with pytest.raises(SandboxExecutionError, match="Connection lost"):
                 process.result()
@@ -260,13 +256,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls", "-la"], cwd="/app")
             process.result()
 
@@ -295,13 +290,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["echo", "hello"], cwd="/app")
             result = process.result()
 
@@ -335,13 +329,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls"], cwd="/path with spaces/and$special")
             process.result()
 
@@ -378,13 +371,12 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls", "-la"])
             process.result()
 
@@ -457,16 +449,23 @@ class TestSandboxAuth:
     """Tests for Sandbox authentication."""
 
     @pytest.mark.asyncio
-    async def test_sets_auth_header(self, mock_aviato_api_key: str) -> None:
-        """Test Sandbox sets Authorization header from AVIATO_API_KEY."""
+    async def test_uses_auth_interceptors(self, mock_aviato_api_key: str) -> None:
+        """Test Sandbox creates client with auth interceptors."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch("httpx.AsyncClient") as mock_client:
+        with (
+            patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_client_class,
+            patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
+        ):
+            mock_interceptors = [MagicMock()]
+            mock_create_interceptors.return_value = mock_interceptors
+
             await sandbox._ensure_client()
 
-            mock_client.assert_called_once()
-            headers = mock_client.call_args.kwargs["headers"]
-            assert headers["Authorization"] == f"Bearer {mock_aviato_api_key}"
+            mock_create_interceptors.assert_called_once()
+            mock_client_class.assert_called_once()
+            call_kwargs = mock_client_class.call_args.kwargs
+            assert call_kwargs["interceptors"] == mock_interceptors
 
 
 class TestSandboxCleanup:
@@ -874,13 +873,12 @@ class TestSandboxTimeouts:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["sleep", "10"], timeout_seconds=0.1)
             with pytest.raises(SandboxTimeoutError):
                 process.result()
@@ -1366,13 +1364,12 @@ class TestSandboxExecutionStats:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["echo", "hello"])
             process.result()
 
@@ -1400,13 +1397,12 @@ class TestSandboxExecutionStats:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["failing-cmd"])
             process.result()
 
@@ -1435,13 +1431,12 @@ class TestSandboxExecutionStats:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["cmd"])
             with pytest.raises(SandboxExecutionError):
                 process.result()
@@ -1473,13 +1468,12 @@ class TestSandboxExecutionStats:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             for _ in range(4):
                 sandbox.exec(["cmd"]).result()
 
