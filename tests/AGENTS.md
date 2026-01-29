@@ -60,6 +60,57 @@ Set environment variables before running integration tests. A `.env` file in the
 
 **_cleanup tests**: Use `_reset_for_testing()` from `aviato._cleanup` in teardown to restore original signal handlers between tests.
 
+### Async Method Mocking
+
+When mocking async methods in unit tests, use `AsyncMock` from `unittest.mock` to avoid "coroutine never awaited" warnings.
+
+**Why this matters**: Using a raw `async def` function as a mock's `side_effect` creates a coroutine object each time the mock is called. If the test doesn't await that coroutine (e.g., when checking `.called` or inspecting `call_args`), Python warns about the unawaited coroutine. `AsyncMock` handles this correctly by returning an awaitable that resolves to `return_value`.
+
+**Simple mock (no state mutation):**
+
+```python
+from unittest.mock import AsyncMock, patch
+
+mock_wait = AsyncMock(return_value=None)
+with patch.object(obj, "async_method", mock_wait):
+    # ... test code ...
+assert mock_wait.called
+assert mock_wait.call_count == 1
+assert mock_wait.call_args == call(expected_arg)
+```
+
+**Mock with state mutation:**
+
+When you need the mock to mutate state (e.g., update an object attribute), use a regular function as `side_effect`. The `side_effect` runs synchronously when the mock is called, then `AsyncMock` returns its `return_value` as an awaitable.
+
+```python
+def mutate_state() -> None:
+    obj.attribute = "value"
+
+mock_method = AsyncMock(return_value="result", side_effect=mutate_state)
+with patch.object(obj, "async_method", mock_method):
+    result = await obj.async_method()
+    assert obj.attribute == "value"
+    assert result == "result"
+```
+
+**Mock with new_callable:**
+
+Use `new_callable=AsyncMock` when patching and configuring the mock inside the context:
+
+```python
+with patch.object(obj, "async_method", new_callable=AsyncMock) as mock:
+    mock.return_value = "value"
+    result = await obj.async_method()
+    assert result == "value"
+```
+
+**Key points:**
+
+- Use `patch.object()` to patch methods on existing objects - this is cleaner than string-based patches
+- Access `.called`, `.call_count`, `.call_args` for call tracking without awaiting
+- For state mutation, pass a regular (sync) function to `side_effect`; the `return_value` still controls what the awaited result is
+
 ## Integration Tests
 
 Run against real backend - use sparingly to avoid resource consumption.
