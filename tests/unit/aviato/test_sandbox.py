@@ -1502,12 +1502,12 @@ class TestSandboxAwait:
         sandbox._sandbox_id = "test-id"
 
         run_async_calls: list[object] = []
-
-        async def mock_wait() -> None:
-            pass
+        mock_wait = AsyncMock(return_value=None)
 
         def mock_run_async(coro: object) -> MagicMock:
             run_async_calls.append(coro)
+            if hasattr(coro, "close"):
+                coro.close()  # Prevent "coroutine never awaited" warning
             future: MagicMock = MagicMock()
             future.result.return_value = None
             return future
@@ -1599,18 +1599,12 @@ class TestSandboxAwait:
         sandbox = Sandbox(defaults=SandboxDefaults())
         assert sandbox._sandbox_id is None
 
-        start_called = False
-        wait_called = False
-
-        async def mock_start() -> str:
-            nonlocal start_called
-            start_called = True
+        def set_sandbox_id() -> str:
             sandbox._sandbox_id = "auto-started-id"
             return "auto-started-id"
 
-        async def mock_wait() -> None:
-            nonlocal wait_called
-            wait_called = True
+        mock_start = AsyncMock(side_effect=set_sandbox_id)
+        mock_wait = AsyncMock(return_value=None)
 
         # Create futures for both operations
         start_future: concurrent.futures.Future[str] = concurrent.futures.Future()
@@ -1623,6 +1617,8 @@ class TestSandboxAwait:
 
         def mock_run_async(coro: object) -> concurrent.futures.Future[object]:
             call_count[0] += 1
+            if hasattr(coro, "close"):
+                coro.close()  # Prevent "coroutine never awaited" warning
             if call_count[0] == 1:
                 # First call is for _start_async
                 sandbox._sandbox_id = "auto-started-id"
@@ -1657,10 +1653,11 @@ class TestSandboxAwait:
 
         def mock_run_async(coro: object) -> concurrent.futures.Future[None]:
             run_async_calls[0] += 1
+            if hasattr(coro, "close"):
+                coro.close()  # Prevent "coroutine never awaited" warning
             return wait_future
 
-        async def mock_wait() -> None:
-            pass
+        mock_wait = AsyncMock(return_value=None)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", mock_wait),
@@ -1681,16 +1678,18 @@ class TestSandboxAwait:
         ensure_client_called = False
         running_loop: asyncio.AbstractEventLoop | None = None
 
-        async def tracking_ensure_client() -> None:
+        def capture_loop() -> None:
             nonlocal ensure_client_called, running_loop
             ensure_client_called = True
             running_loop = asyncio.get_running_loop()
+
+        mock_ensure_client = AsyncMock(side_effect=capture_loop)
 
         # Set up the mock client before the patch
         mock_client = MagicMock()
         mock_client.get = AsyncMock(return_value=MagicMock(sandbox_status=1))
 
-        with patch.object(sandbox, "_ensure_client", tracking_ensure_client):
+        with patch.object(sandbox, "_ensure_client", mock_ensure_client):
             sandbox._client = mock_client
             await sandbox._get_status_async()
 
