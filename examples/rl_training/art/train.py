@@ -171,7 +171,7 @@ async def collect_trajectory_group(
         try:
             return await rollout(problem, sandbox, config)
         finally:
-            await sandbox.stop(missing_ok=True)
+            await sandbox.stop(missing_ok=True, graceful_shutdown_seconds=60.0)
 
     trajectories = await asyncio.gather(*[single_rollout() for _ in range(num_trajectories)])
     return art.TrajectoryGroup(trajectories)
