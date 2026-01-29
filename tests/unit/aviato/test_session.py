@@ -86,21 +86,20 @@ class TestSessionCleanup:
     @pytest.mark.asyncio
     async def test_close_stops_orphaned_sandboxes(self) -> None:
         """Test session.close() stops sandboxes that weren't manually stopped."""
-        from unittest.mock import AsyncMock
-
         session = Session()
         with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
             sandbox1 = session.sandbox(command="sleep", args=["infinity"])
             sandbox2 = session.sandbox(command="sleep", args=["infinity"])
 
-        # Mock the internal async stop method (close uses _stop_async directly)
-        sandbox1._stop_async = AsyncMock()
-        sandbox2._stop_async = AsyncMock()
+        # Use patch.object with new_callable to properly mock async methods
+        with (
+            patch.object(sandbox1, "_stop_async", new_callable=AsyncMock) as mock1,
+            patch.object(sandbox2, "_stop_async", new_callable=AsyncMock) as mock2,
+        ):
+            await session._close_async()
 
-        await session._close_async()
-
-        sandbox1._stop_async.assert_called_once()
-        sandbox2._stop_async.assert_called_once()
+            mock1.assert_called_once()
+            mock2.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_sandbox_deregisters_on_stop(self) -> None:
@@ -128,8 +127,6 @@ class TestSessionCleanup:
     @pytest.mark.asyncio
     async def test_close_attempts_all_sandboxes_on_partial_failure(self) -> None:
         """Test session.close() attempts to stop all sandboxes even if some fail."""
-        from unittest.mock import AsyncMock
-
         from aviato.exceptions import SandboxError
 
         session = Session()
@@ -138,17 +135,23 @@ class TestSessionCleanup:
             sandbox2 = session.sandbox(command="sleep", args=["infinity"])
             sandbox3 = session.sandbox(command="sleep", args=["infinity"])
 
-        # Mock the internal async stop method (close uses _stop_async directly)
-        sandbox1._stop_async = AsyncMock()
-        sandbox2._stop_async = AsyncMock(side_effect=Exception("Network error"))
-        sandbox3._stop_async = AsyncMock()
+        # Use patch.object with new_callable to properly mock async methods
+        with (
+            patch.object(sandbox1, "_stop_async", new_callable=AsyncMock) as mock1,
+            patch.object(
+                sandbox2,
+                "_stop_async",
+                new_callable=AsyncMock,
+                side_effect=Exception("Network error"),
+            ) as mock2,
+            patch.object(sandbox3, "_stop_async", new_callable=AsyncMock) as mock3,
+        ):
+            with pytest.raises(SandboxError, match="Failed to stop 1 sandbox"):
+                await session._close_async()
 
-        with pytest.raises(SandboxError, match="Failed to stop 1 sandbox"):
-            await session._close_async()
-
-        sandbox1._stop_async.assert_called_once()
-        sandbox2._stop_async.assert_called_once()
-        sandbox3._stop_async.assert_called_once()
+            mock1.assert_called_once()
+            mock2.assert_called_once()
+            mock3.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self) -> None:
