@@ -894,13 +894,13 @@ class TestSandboxKwargsValidation:
             args=["hello"],
             resources={"cpu": "100m", "memory": "128Mi"},
             ports=[{"container_port": 8080}],
-            service={"public": True},
+            network={"ingress_mode": "public"},
             max_timeout_seconds=60,
             environment_variables={"TEST_ENV_VAR": "test-value"},
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
-        assert sandbox._start_kwargs["service"] == {"public": True}
+        assert sandbox._start_kwargs["network"] == {"ingress_mode": "public"}
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 

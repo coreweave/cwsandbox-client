@@ -167,7 +167,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         _session: Session | None = None,
@@ -190,7 +190,7 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration (e.g., {"ingress_mode": "public"})
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -252,8 +252,8 @@ class Sandbox:
             self._start_kwargs["s3_mount"] = s3_mount
         if ports is not None:
             self._start_kwargs["ports"] = ports
-        if service is not None:
-            self._start_kwargs["service"] = service
+        if network is not None:
+            self._start_kwargs["network"] = network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
@@ -304,7 +304,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
@@ -328,7 +328,7 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration (e.g., {"ingress_mode": "public"})
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -371,7 +371,7 @@ class Sandbox:
             mounted_files=mounted_files,
             s3_mount=s3_mount,
             ports=ports,
-            service=service,
+            network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
         )

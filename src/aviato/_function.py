@@ -86,7 +86,7 @@ class RemoteFunction(Generic[P, R]):
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> None:
@@ -104,7 +104,7 @@ class RemoteFunction(Generic[P, R]):
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration (e.g., {"ingress_mode": "public"})
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -133,7 +133,7 @@ class RemoteFunction(Generic[P, R]):
         self._mounted_files = mounted_files
         self._s3_mount = s3_mount
         self._ports = ports
-        self._service = service
+        self._network = network
         self._max_timeout_seconds = max_timeout_seconds
         self._environment_variables = environment_variables
         # Preserve function metadata
@@ -251,8 +251,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["s3_mount"] = self._s3_mount
         if self._ports is not None:
             sandbox_kwargs["ports"] = self._ports
-        if self._service is not None:
-            sandbox_kwargs["service"] = self._service
+        if self._network is not None:
+            sandbox_kwargs["network"] = self._network
         if self._max_timeout_seconds is not None:
             sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
         if self._environment_variables is not None:

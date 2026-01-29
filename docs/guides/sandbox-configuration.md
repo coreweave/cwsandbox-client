@@ -131,14 +131,14 @@ sandbox = Sandbox.run(
 |-------|------|-------------|
 | `container_port` | int | Port inside the sandbox |
 
-## Service
+## Network
 
-Configure network service options:
+Configure network options for public access:
 
 ```python
 sandbox = Sandbox.run(
-    service={
-        "name": "my-service",
+    network={
+        "ingress_mode": "public",
     },
 )
 ```
