@@ -1536,10 +1536,15 @@ class TestSandboxAwait:
         # Create a real concurrent.futures.Future that we control (never completes)
         background_future: concurrent.futures.Future[None] = concurrent.futures.Future()
 
+        def mock_run_async(coro: object) -> concurrent.futures.Future[None]:
+            if hasattr(coro, "close"):
+                coro.close()
+            return background_future
+
         async def awaitable_sandbox() -> Sandbox:
             return await sandbox
 
-        with patch.object(sandbox._loop_manager, "run_async", return_value=background_future):
+        with patch.object(sandbox._loop_manager, "run_async", side_effect=mock_run_async):
             # Create task that will await the sandbox
             task = asyncio.create_task(awaitable_sandbox())
 
@@ -1584,7 +1589,12 @@ class TestSandboxAwait:
         future: concurrent.futures.Future[None] = concurrent.futures.Future()
         future.set_exception(exception)
 
-        with patch.object(sandbox._loop_manager, "run_async", return_value=future):
+        def mock_run_async(coro: object) -> concurrent.futures.Future[None]:
+            if hasattr(coro, "close"):
+                coro.close()
+            return future
+
+        with patch.object(sandbox._loop_manager, "run_async", side_effect=mock_run_async):
             with pytest.raises(type(exception)) as exc_info:
                 await sandbox
 
