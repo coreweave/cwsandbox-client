@@ -547,6 +547,7 @@ class Sandbox:
             address=effective_base_url,
             proto_json=True,
             interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
         )
 
         request_kwargs: dict[str, Any] = {}
@@ -642,6 +643,7 @@ class Sandbox:
             address=effective_base_url,
             proto_json=True,
             interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
         )
 
         try:
@@ -731,11 +733,15 @@ class Sandbox:
         effective_base_url = (
             base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
 
         client = atc_connect.ATCServiceClient(
             address=effective_base_url,
             proto_json=True,
             interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
         )
 
         try:
@@ -1055,6 +1061,7 @@ class Sandbox:
             address=self._base_url,
             proto_json=True,
             interceptors=create_auth_interceptors(),
+            timeout_ms=int(self._request_timeout_seconds * 1000),
         )
         logger.debug("Initialized client for %s", self._base_url)
 
