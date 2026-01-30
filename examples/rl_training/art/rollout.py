@@ -130,8 +130,7 @@ async def execute_code_in_sandbox(
         Output string: stdout on success, error message on failure
     """
     try:
-        process = sandbox.exec(["python", "-c", code], timeout_seconds=timeout)
-        result = process.result()
+        result = await sandbox.exec(["python", "-c", code], timeout_seconds=timeout)
 
         if result.returncode == 0:
             output = result.stdout.strip() if result.stdout else "(no output)"
@@ -166,8 +165,7 @@ async def run_tests_in_sandbox(
     full_code = f"{test_imports}\n\n{solution_code}\n\n{test_code}"
 
     try:
-        process = sandbox.exec(["python", "-c", full_code], timeout_seconds=timeout)
-        result = process.result()
+        result = await sandbox.exec(["python", "-c", full_code], timeout_seconds=timeout)
 
         if result.returncode == 0:
             output = result.stdout.strip() if result.stdout else "All tests passed"
