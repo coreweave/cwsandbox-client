@@ -24,14 +24,14 @@ class ExecOutcome(Enum):
     """Outcome classification for exec() calls.
 
     Taxonomy:
-    - SUCCESS: returncode == 0
-    - FAILURE: returncode != 0 (process completed but failed)
-    - ERROR: SandboxTimeoutError, cancellation, transport failures
+    - COMPLETED_OK: returncode == 0
+    - COMPLETED_NONZERO: returncode != 0 (process completed but returned error)
+    - FAILURE: SandboxTimeoutError, cancellation, transport failures
     """
 
-    SUCCESS = "success"
+    COMPLETED_OK = "completed_ok"
+    COMPLETED_NONZERO = "completed_nonzero"
     FAILURE = "failure"
-    ERROR = "error"
 
 
 class WandbReporter:
@@ -43,11 +43,11 @@ class WandbReporter:
     Metrics tracked:
     - aviato/sandboxes_created: Total sandboxes created via session
     - aviato/executions: Total exec() calls
-    - aviato/exec_successes: Successful executions (returncode=0)
-    - aviato/exec_failures: Failed executions (returncode!=0)
-    - aviato/exec_errors: Errors (timeouts, cancellations, transport)
-    - aviato/success_rate: Fraction of exec() with returncode=0
-    - aviato/error_rate: Fraction of exec() that errored
+    - aviato/exec_completed_ok: Completed executions (returncode=0)
+    - aviato/exec_completed_nonzero: Completed executions (returncode!=0)
+    - aviato/exec_failures: Failed executions (timeouts, cancellations, transport)
+    - aviato/exec_completion_rate: Fraction of exec() that completed (returncode=0)
+    - aviato/exec_failure_rate: Fraction of exec() that failed to complete
     - aviato/startup_count: Number of startup times recorded
     - aviato/avg_startup_seconds: Average sandbox startup time
     - aviato/min_startup_seconds: Minimum sandbox startup time
@@ -59,8 +59,8 @@ class WandbReporter:
     Example:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-123")
-        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-123")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-123")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO, sandbox_id="sb-123")
         reporter.record_startup_time(2.5)
         reporter.log(step=100)  # Logs metrics to wandb at step 100
     """
@@ -69,9 +69,9 @@ class WandbReporter:
         self._run: Run | None = None
         self._sandboxes_created = 0
         self._executions = 0
-        self._exec_successes = 0
+        self._exec_completed_ok = 0
+        self._exec_completed_nonzero = 0
         self._exec_failures = 0
-        self._exec_errors = 0
         self._startup_count: int = 0
         self._startup_total_seconds: float = 0.0
         self._startup_min_seconds: float | None = None
@@ -111,16 +111,16 @@ class WandbReporter:
         """Record an exec() call outcome.
 
         Args:
-            outcome: The outcome classification (SUCCESS, FAILURE, or ERROR).
+            outcome: The outcome classification (COMPLETED_OK, COMPLETED_NONZERO, or FAILURE).
             sandbox_id: Optional sandbox ID for per-sandbox tracking.
         """
         self._executions += 1
-        if outcome == ExecOutcome.SUCCESS:
-            self._exec_successes += 1
+        if outcome == ExecOutcome.COMPLETED_OK:
+            self._exec_completed_ok += 1
+        elif outcome == ExecOutcome.COMPLETED_NONZERO:
+            self._exec_completed_nonzero += 1
         elif outcome == ExecOutcome.FAILURE:
             self._exec_failures += 1
-        elif outcome == ExecOutcome.ERROR:
-            self._exec_errors += 1
 
         if sandbox_id is not None:
             self._exec_per_sandbox[sandbox_id] = self._exec_per_sandbox.get(sandbox_id, 0) + 1
@@ -147,14 +147,14 @@ class WandbReporter:
         metrics: dict[str, Any] = {
             "aviato/sandboxes_created": self._sandboxes_created,
             "aviato/executions": self._executions,
-            "aviato/exec_successes": self._exec_successes,
+            "aviato/exec_completed_ok": self._exec_completed_ok,
+            "aviato/exec_completed_nonzero": self._exec_completed_nonzero,
             "aviato/exec_failures": self._exec_failures,
-            "aviato/exec_errors": self._exec_errors,
         }
 
         if self._executions > 0:
-            metrics["aviato/success_rate"] = self._exec_successes / self._executions
-            metrics["aviato/error_rate"] = self._exec_errors / self._executions
+            metrics["aviato/exec_completion_rate"] = self._exec_completed_ok / self._executions
+            metrics["aviato/exec_failure_rate"] = self._exec_failures / self._executions
 
         if self._startup_count > 0:
             metrics["aviato/startup_count"] = self._startup_count
@@ -213,9 +213,9 @@ class WandbReporter:
         """
         self._sandboxes_created = 0
         self._executions = 0
-        self._exec_successes = 0
+        self._exec_completed_ok = 0
+        self._exec_completed_nonzero = 0
         self._exec_failures = 0
-        self._exec_errors = 0
         self._startup_count = 0
         self._startup_total_seconds = 0.0
         self._startup_min_seconds = None

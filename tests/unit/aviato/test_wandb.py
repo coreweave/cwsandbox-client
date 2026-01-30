@@ -16,9 +16,9 @@ class TestWandbReporter:
 
         assert reporter._sandboxes_created == 0
         assert reporter._executions == 0
-        assert reporter._exec_successes == 0
+        assert reporter._exec_completed_ok == 0
+        assert reporter._exec_completed_nonzero == 0
         assert reporter._exec_failures == 0
-        assert reporter._exec_errors == 0
         assert reporter._startup_count == 0
         assert reporter._startup_total_seconds == 0.0
         assert reporter._startup_min_seconds is None
@@ -37,18 +37,31 @@ class TestWandbReporter:
         reporter.record_sandbox_created()
         assert reporter._sandboxes_created == 2
 
-    def test_record_exec_outcome_success(self) -> None:
-        """Test record_exec_outcome with SUCCESS."""
+    def test_record_exec_outcome_completed_ok(self) -> None:
+        """Test record_exec_outcome with COMPLETED_OK."""
         from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
 
         assert reporter._executions == 1
-        assert reporter._exec_successes == 1
+        assert reporter._exec_completed_ok == 1
+        assert reporter._exec_completed_nonzero == 0
         assert reporter._exec_failures == 0
-        assert reporter._exec_errors == 0
+
+    def test_record_exec_outcome_completed_nonzero(self) -> None:
+        """Test record_exec_outcome with COMPLETED_NONZERO."""
+        from aviato._wandb import ExecOutcome, WandbReporter
+
+        reporter = WandbReporter()
+
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO)
+
+        assert reporter._executions == 1
+        assert reporter._exec_completed_ok == 0
+        assert reporter._exec_completed_nonzero == 1
+        assert reporter._exec_failures == 0
 
     def test_record_exec_outcome_failure(self) -> None:
         """Test record_exec_outcome with FAILURE."""
@@ -59,22 +72,9 @@ class TestWandbReporter:
         reporter.record_exec_outcome(ExecOutcome.FAILURE)
 
         assert reporter._executions == 1
-        assert reporter._exec_successes == 0
+        assert reporter._exec_completed_ok == 0
+        assert reporter._exec_completed_nonzero == 0
         assert reporter._exec_failures == 1
-        assert reporter._exec_errors == 0
-
-    def test_record_exec_outcome_error(self) -> None:
-        """Test record_exec_outcome with ERROR."""
-        from aviato._wandb import ExecOutcome, WandbReporter
-
-        reporter = WandbReporter()
-
-        reporter.record_exec_outcome(ExecOutcome.ERROR)
-
-        assert reporter._executions == 1
-        assert reporter._exec_successes == 0
-        assert reporter._exec_failures == 0
-        assert reporter._exec_errors == 1
 
     def test_record_exec_outcome_with_sandbox_id(self) -> None:
         """Test record_exec_outcome tracks per-sandbox counts."""
@@ -82,9 +82,9 @@ class TestWandbReporter:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-2")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO, sandbox_id="sb-2")
 
         assert reporter._exec_per_sandbox == {"sb-1": 2, "sb-2": 1}
         assert reporter._executions == 3
@@ -95,8 +95,8 @@ class TestWandbReporter:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
-        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO)
 
         assert reporter._exec_per_sandbox == {}
         assert reporter._executions == 2
@@ -132,20 +132,20 @@ class TestWandbReporter:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO)
         reporter.record_exec_outcome(ExecOutcome.FAILURE)
-        reporter.record_exec_outcome(ExecOutcome.ERROR)
 
         metrics = reporter.get_metrics()
 
         assert metrics["aviato/sandboxes_created"] == 2
         assert metrics["aviato/executions"] == 4
-        assert metrics["aviato/exec_successes"] == 2
+        assert metrics["aviato/exec_completed_ok"] == 2
+        assert metrics["aviato/exec_completed_nonzero"] == 1
         assert metrics["aviato/exec_failures"] == 1
-        assert metrics["aviato/exec_errors"] == 1
-        assert metrics["aviato/success_rate"] == pytest.approx(2 / 4)
-        assert metrics["aviato/error_rate"] == pytest.approx(1 / 4)
+        assert metrics["aviato/exec_completion_rate"] == pytest.approx(2 / 4)
+        assert metrics["aviato/exec_failure_rate"] == pytest.approx(1 / 4)
 
     def test_get_metrics_omits_rates_with_no_executions(self) -> None:
         """Test get_metrics omits rates when no executions."""
@@ -157,8 +157,8 @@ class TestWandbReporter:
         metrics = reporter.get_metrics()
 
         assert "aviato/sandboxes_created" in metrics
-        assert "aviato/success_rate" not in metrics
-        assert "aviato/error_rate" not in metrics
+        assert "aviato/exec_completion_rate" not in metrics
+        assert "aviato/exec_failure_rate" not in metrics
 
     def test_get_metrics_includes_startup_stats(self) -> None:
         """Test get_metrics includes startup stats when count > 0."""
@@ -195,10 +195,10 @@ class TestWandbReporter:
         from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-2")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-2")
 
         metrics = reporter.get_metrics()
 
@@ -211,8 +211,8 @@ class TestWandbReporter:
         from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
-        reporter.record_exec_outcome(ExecOutcome.FAILURE)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO)
 
         metrics = reporter.get_metrics()
 
@@ -226,18 +226,18 @@ class TestWandbReporter:
 
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.ERROR)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.FAILURE)
         reporter.record_startup_time(5.0)
 
         reporter.reset()
 
         assert reporter._sandboxes_created == 0
         assert reporter._executions == 0
-        assert reporter._exec_successes == 0
+        assert reporter._exec_completed_ok == 0
+        assert reporter._exec_completed_nonzero == 0
         assert reporter._exec_failures == 0
-        assert reporter._exec_errors == 0
         assert reporter._startup_count == 0
         assert reporter._startup_total_seconds == 0.0
         assert reporter._startup_min_seconds is None
@@ -264,7 +264,7 @@ class TestWandbReporter:
         from aviato._wandb import ExecOutcome, WandbReporter
 
         reporter = WandbReporter()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
         assert reporter.has_metrics is True
 
     def test_has_metrics_true_with_startup_times(self) -> None:
@@ -281,7 +281,7 @@ class TestWandbReporter:
 
         reporter = WandbReporter()
         reporter.record_sandbox_created()
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
         reporter.record_startup_time(5.0)
         assert reporter.has_metrics is True
 
@@ -306,7 +306,7 @@ class TestWandbReporterPerSandbox:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-123")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-123")
 
         assert reporter._exec_per_sandbox["sb-123"] == 1
 
@@ -318,13 +318,13 @@ class TestWandbReporterPerSandbox:
 
         # 3 execs for sandbox A
         for _ in range(3):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-a")
         # 5 execs for sandbox B
         for _ in range(5):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-b")
         # 8 execs for sandbox C
         for _ in range(8):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-c")
 
         assert reporter._exec_per_sandbox["sb-a"] == 3
         assert reporter._exec_per_sandbox["sb-b"] == 5
@@ -336,7 +336,7 @@ class TestWandbReporterPerSandbox:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id=None)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id=None)
 
         assert reporter._executions == 1
         assert reporter._exec_per_sandbox == {}
@@ -349,11 +349,11 @@ class TestWandbReporterPerSandbox:
 
         # Track 3 sandboxes with exec counts [3, 5, 8]
         for _ in range(3):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-a")
         for _ in range(5):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-b")
         for _ in range(8):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-c")
 
         metrics = reporter.get_metrics()
 
@@ -370,7 +370,7 @@ class TestWandbReporterPerSandbox:
 
         # Track 1 sandbox with 5 execs
         for _ in range(5):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-only")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-only")
 
         metrics = reporter.get_metrics()
 
@@ -384,7 +384,7 @@ class TestWandbReporterPerSandbox:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS)
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
 
         metrics = reporter.get_metrics()
 
@@ -398,8 +398,8 @@ class TestWandbReporterPerSandbox:
 
         reporter = WandbReporter()
 
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-1")
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-2")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-1")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-2")
 
         reporter.reset()
 
@@ -412,11 +412,11 @@ class TestWandbReporterPerSandbox:
         reporter = WandbReporter()
 
         # Sandbox A: 1 exec, Sandbox B: 10 execs, Sandbox C: 3 execs
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-a")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-a")
         for _ in range(10):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-b")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-b")
         for _ in range(3):
-            reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-c")
+            reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-c")
 
         metrics = reporter.get_metrics()
 
@@ -432,9 +432,9 @@ class TestWandbReporterPerSandbox:
         reporter = WandbReporter()
 
         # Record different outcome types for same sandbox
-        reporter.record_exec_outcome(ExecOutcome.SUCCESS, sandbox_id="sb-mixed")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-mixed")
+        reporter.record_exec_outcome(ExecOutcome.COMPLETED_NONZERO, sandbox_id="sb-mixed")
         reporter.record_exec_outcome(ExecOutcome.FAILURE, sandbox_id="sb-mixed")
-        reporter.record_exec_outcome(ExecOutcome.ERROR, sandbox_id="sb-mixed")
 
         # Per-sandbox count should be 3 (total, not by outcome)
         assert reporter._exec_per_sandbox["sb-mixed"] == 3

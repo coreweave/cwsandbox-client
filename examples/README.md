@@ -246,7 +246,7 @@ Demonstrates:
 - Automatic exec() tracking (no manual calls needed)
 - Using `session.log_metrics(step=N)` at training steps
 
-Metrics logged: `aviato/sandboxes_created`, `aviato/executions`, `aviato/exec_successes`, `aviato/exec_failures`, `aviato/exec_errors`, `aviato/success_rate`, `aviato/error_rate`
+Metrics logged: `aviato/sandboxes_created`, `aviato/executions`, `aviato/exec_completed_ok`, `aviato/exec_completed_nonzero`, `aviato/exec_failures`, `aviato/exec_completion_rate`, `aviato/exec_failure_rate`
 
 ### RL Training Examples (`rl_training/`)
 

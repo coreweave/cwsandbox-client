@@ -441,11 +441,11 @@ Execution metrics are tracked automatically when `exec()` completes:
 |--------|-------------|
 | `aviato/sandboxes_created` | Total sandboxes created via session |
 | `aviato/executions` | Total exec() calls |
-| `aviato/exec_successes` | Successful executions (returncode=0) |
-| `aviato/exec_failures` | Failed executions (returncode!=0) |
-| `aviato/exec_errors` | Errors (timeouts, transport failures) |
-| `aviato/success_rate` | Fraction of exec() with returncode=0 |
-| `aviato/error_rate` | Fraction of exec() that errored |
+| `aviato/exec_completed_ok` | Completed executions (returncode=0) |
+| `aviato/exec_completed_nonzero` | Completed executions (returncode!=0) |
+| `aviato/exec_failures` | Failed executions (timeouts, transport failures) |
+| `aviato/exec_completion_rate` | Fraction of exec() that completed with returncode=0 |
+| `aviato/exec_failure_rate` | Fraction of exec() that failed to complete |
 | `aviato/avg_execs_per_sandbox` | Average exec() calls per sandbox |
 | `aviato/min_execs_per_sandbox` | Minimum exec() calls in any sandbox |
 | `aviato/max_execs_per_sandbox` | Maximum exec() calls in any sandbox |

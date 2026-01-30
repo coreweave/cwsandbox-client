@@ -791,10 +791,10 @@ class TestSessionAutoTracking:
         sandbox._on_exec_complete(result, None)
 
         assert session._reporter._executions == 1
-        assert session._reporter._exec_successes == 1
+        assert session._reporter._exec_completed_ok == 1
 
-    def test_auto_tracking_failure_reports_to_session_reporter(self) -> None:
-        """Test that sandbox exec failure reports to session's reporter."""
+    def test_auto_tracking_nonzero_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec with nonzero exit reports to session's reporter."""
         session = Session(report_to=["wandb"])
 
         with patch.object(Sandbox, "start"):
@@ -806,11 +806,11 @@ class TestSessionAutoTracking:
         sandbox._on_exec_complete(result, None)
 
         assert session._reporter._executions == 1
-        assert session._reporter._exec_successes == 0
-        assert session._reporter._exec_failures == 1
+        assert session._reporter._exec_completed_ok == 0
+        assert session._reporter._exec_completed_nonzero == 1
 
-    def test_auto_tracking_error_reports_to_session_reporter(self) -> None:
-        """Test that sandbox exec error reports to session's reporter."""
+    def test_auto_tracking_failure_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec failure (timeout) reports to session's reporter."""
         from aviato.exceptions import SandboxTimeoutError
 
         session = Session(report_to=["wandb"])
@@ -821,7 +821,7 @@ class TestSessionAutoTracking:
         sandbox._on_exec_complete(None, SandboxTimeoutError("timeout"))
 
         assert session._reporter._executions == 1
-        assert session._reporter._exec_errors == 1
+        assert session._reporter._exec_failures == 1
 
     def test_auto_tracking_noop_without_reporter(self) -> None:
         """Test that sandbox exec completion is noop without reporter."""

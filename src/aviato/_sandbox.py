@@ -279,9 +279,9 @@ class Sandbox:
 
         # Execution statistics
         self._exec_count = 0
-        self._exec_successes = 0
+        self._exec_completed_ok = 0
+        self._exec_completed_nonzero = 0
         self._exec_failures = 0
-        self._exec_errors = 0
 
         # Startup timing
         self._start_accepted_at: float | None = None
@@ -455,9 +455,9 @@ class Sandbox:
         sandbox._start_kwargs = {}
         sandbox._start_lock = asyncio.Lock()
         sandbox._exec_count = 0
-        sandbox._exec_successes = 0
+        sandbox._exec_completed_ok = 0
+        sandbox._exec_completed_nonzero = 0
         sandbox._exec_failures = 0
-        sandbox._exec_errors = 0
         sandbox._start_accepted_at = None
         sandbox._startup_recorded = True  # Discovered sandboxes skip startup recording
         sandbox._loop_manager = _LoopManager.get()
@@ -847,15 +847,15 @@ class Sandbox:
         Returns:
             Dictionary with execution counts:
             - total: Total number of exec() calls
-            - successes: Commands with returncode=0
-            - failures: Commands with returncode!=0
-            - errors: Commands that errored (timeout, cancellation, etc.)
+            - completed_ok: Commands with returncode=0
+            - completed_nonzero: Commands with returncode!=0
+            - failures: Commands that failed to complete (timeout, cancellation, etc.)
         """
         return {
             "total": self._exec_count,
-            "successes": self._exec_successes,
+            "completed_ok": self._exec_completed_ok,
+            "completed_nonzero": self._exec_completed_nonzero,
             "failures": self._exec_failures,
-            "errors": self._exec_errors,
         }
 
     def _on_exec_complete(
@@ -874,20 +874,20 @@ class Sandbox:
         self._exec_count += 1
 
         if exception is not None:
-            # Errors: SandboxTimeoutError, cancellation, transport failures
-            self._exec_errors += 1
-            outcome = ExecOutcome.ERROR
+            # Failures: SandboxTimeoutError, cancellation, transport failures
+            self._exec_failures += 1
+            outcome = ExecOutcome.FAILURE
         elif result is not None:
             if result.returncode == 0:
-                self._exec_successes += 1
-                outcome = ExecOutcome.SUCCESS
+                self._exec_completed_ok += 1
+                outcome = ExecOutcome.COMPLETED_OK
             else:
-                self._exec_failures += 1
-                outcome = ExecOutcome.FAILURE
+                self._exec_completed_nonzero += 1
+                outcome = ExecOutcome.COMPLETED_NONZERO
         else:
-            # Shouldn't happen, but treat as error
-            self._exec_errors += 1
-            outcome = ExecOutcome.ERROR
+            # Shouldn't happen, but treat as failure
+            self._exec_failures += 1
+            outcome = ExecOutcome.FAILURE
 
         # Report to session's reporter if available
         if self._session is not None and self._session._reporter is not None:

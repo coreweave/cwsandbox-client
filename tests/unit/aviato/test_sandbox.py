@@ -1341,9 +1341,9 @@ class TestSandboxExecutionStats:
 
         assert stats == {
             "total": 0,
-            "successes": 0,
+            "completed_ok": 0,
+            "completed_nonzero": 0,
             "failures": 0,
-            "errors": 0,
         }
 
     def test_execution_stats_tracks_success(self) -> None:
@@ -1375,12 +1375,12 @@ class TestSandboxExecutionStats:
 
         stats = sandbox.execution_stats
         assert stats["total"] == 1
-        assert stats["successes"] == 1
+        assert stats["completed_ok"] == 1
+        assert stats["completed_nonzero"] == 0
         assert stats["failures"] == 0
-        assert stats["errors"] == 0
 
-    def test_execution_stats_tracks_failure(self) -> None:
-        """Test execution_stats increments failure on non-zero returncode."""
+    def test_execution_stats_tracks_nonzero(self) -> None:
+        """Test execution_stats increments completed_nonzero on non-zero returncode."""
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1408,12 +1408,12 @@ class TestSandboxExecutionStats:
 
         stats = sandbox.execution_stats
         assert stats["total"] == 1
-        assert stats["successes"] == 0
-        assert stats["failures"] == 1
-        assert stats["errors"] == 0
+        assert stats["completed_ok"] == 0
+        assert stats["completed_nonzero"] == 1
+        assert stats["failures"] == 0
 
-    def test_execution_stats_tracks_error(self) -> None:
-        """Test execution_stats increments error on exception."""
+    def test_execution_stats_tracks_failure(self) -> None:
+        """Test execution_stats increments failures on exception."""
         from aviato.exceptions import SandboxExecutionError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1443,9 +1443,9 @@ class TestSandboxExecutionStats:
 
         stats = sandbox.execution_stats
         assert stats["total"] == 1
-        assert stats["successes"] == 0
-        assert stats["failures"] == 0
-        assert stats["errors"] == 1
+        assert stats["completed_ok"] == 0
+        assert stats["completed_nonzero"] == 0
+        assert stats["failures"] == 1
 
     def test_execution_stats_accumulates_multiple_execs(self) -> None:
         """Test execution_stats accumulates counts across multiple execs."""
@@ -1479,9 +1479,9 @@ class TestSandboxExecutionStats:
 
         stats = sandbox.execution_stats
         assert stats["total"] == 4
-        assert stats["successes"] == 3
-        assert stats["failures"] == 1
-        assert stats["errors"] == 0
+        assert stats["completed_ok"] == 3
+        assert stats["completed_nonzero"] == 1
+        assert stats["failures"] == 0
 
 
 class TestSandboxAwait:

@@ -9,11 +9,11 @@ This example demonstrates:
 Metrics logged to wandb:
 - aviato/sandboxes_created: Total sandboxes created via session
 - aviato/executions: Total exec() calls
-- aviato/exec_successes: Successful executions (returncode=0)
-- aviato/exec_failures: Failed executions (returncode!=0)
-- aviato/exec_errors: Errors (timeouts, transport failures)
-- aviato/success_rate: Fraction of exec() with returncode=0
-- aviato/error_rate: Fraction of exec() that errored
+- aviato/exec_completed_ok: Completed executions (returncode=0)
+- aviato/exec_completed_nonzero: Completed executions (returncode!=0)
+- aviato/exec_failures: Failed executions (timeouts, transport failures)
+- aviato/exec_completion_rate: Fraction of exec() that completed with returncode=0
+- aviato/exec_failure_rate: Fraction of exec() that failed to complete
 
 Prerequisites:
 - Set WANDB_API_KEY environment variable
