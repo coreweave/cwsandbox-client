@@ -8,7 +8,7 @@ Key patterns demonstrated:
 - Session-based sandbox management for automatic cleanup
 - GRPOTrainer reward_funcs parameter
 - Parallel sandbox creation and execution with session.sandbox().exec()
-- Tagging with training step for tracking
+- Code extraction from model completions
 
 Requirements:
     uv pip install trl==0.27.1 transformers==5.0.0 datasets==4.5.0 torch==2.10.0
@@ -44,12 +44,11 @@ def extract_xml_answer(text: str) -> str:
     return answer.strip()
 
 
-def make_reward_function(session: Session, training_step: int = 0):
-    """Create a reward function with step-based tagging.
+def make_reward_function(session: Session):
+    """Create a reward function for code execution.
 
     Args:
         session: Session for sandbox management
-        training_step: Current training step for sandbox tagging
 
     Returns:
         A reward function compatible with TRL's GRPOTrainer
@@ -235,7 +234,7 @@ def main() -> None:
 
     # Session manages sandbox lifecycle; cleanup happens automatically on exit
     with Session(defaults=defaults) as session:
-        reward_fn = make_reward_function(session, training_step=0)
+        reward_fn = make_reward_function(session)
 
         print("\nSetting up GRPOTrainer...")
         trainer = GRPOTrainer(
