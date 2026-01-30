@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+import pyqwest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2, streaming_connect, streaming_pb2
@@ -1530,10 +1531,15 @@ class Sandbox:
         # Wait for sandbox to be RUNNING before sending exec request
         await self._wait_until_running_async()
 
+        # HTTP/2 required for bidirectional streaming
+        http2_transport = pyqwest.HTTPTransport(http_version=pyqwest.HTTPVersion.HTTP2)
+        http_client = pyqwest.Client(transport=http2_transport)
         streaming_client = streaming_connect.ATCStreamingServiceClient(
             address=self._base_url,
             proto_json=True,
             interceptors=create_auth_interceptors(),
+            http_client=http_client,
+            timeout_ms=int((timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS) * 1000),
         )
 
         # Wrap command with cwd if provided
