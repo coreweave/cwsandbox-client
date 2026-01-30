@@ -13,15 +13,16 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import pyqwest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from coreweave.aviato.v1beta1 import atc_connect, atc_pb2, streaming_connect, streaming_pb2
 from google.protobuf import timestamp_pb2
 
-from aviato._auth import resolve_auth
+from aviato._auth import create_auth_interceptors
 from aviato._defaults import (
     DEFAULT_BASE_URL,
+    DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
@@ -167,7 +168,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         _session: Session | None = None,
@@ -190,7 +191,7 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration (e.g., {"ingress_mode": "public"})
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -225,6 +226,7 @@ class Sandbox:
             environment_variables
         )
 
+        self._runway_ids: list[str] | None
         if runway_ids is not None:
             self._runway_ids = list(runway_ids)
         elif self._defaults.runway_ids:
@@ -232,6 +234,7 @@ class Sandbox:
         else:
             self._runway_ids = None
 
+        self._tower_ids: list[str] | None
         if tower_ids is not None:
             self._tower_ids = list(tower_ids)
         elif self._defaults.tower_ids:
@@ -250,8 +253,8 @@ class Sandbox:
             self._start_kwargs["s3_mount"] = s3_mount
         if ports is not None:
             self._start_kwargs["ports"] = ports
-        if service is not None:
-            self._start_kwargs["service"] = service
+        if network is not None:
+            self._start_kwargs["network"] = network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
@@ -292,7 +295,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        service: dict[str, Any] | None = None,
+        network: dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
@@ -316,7 +319,7 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            service: Service configuration for network access
+            network: Network configuration (e.g., {"ingress_mode": "public"})
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -359,7 +362,7 @@ class Sandbox:
             mounted_files=mounted_files,
             s3_mount=s3_mount,
             ports=ports,
-            service=service,
+            network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
         )
@@ -512,7 +515,6 @@ class Sandbox:
         timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
-        auth = resolve_auth()
         effective_base_url = (
             base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
@@ -524,42 +526,39 @@ class Sandbox:
         if status is not None:
             status_enum = SandboxStatus(status)
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            headers=auth.headers,
-        ) as http_client:
-            client = atc_connect.ATCServiceClient(
-                address=effective_base_url,
-                session=http_client,
-                proto_json=True,
+        client = atc_connect.ATCServiceClient(
+            address=effective_base_url,
+            proto_json=True,
+            interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
+        )
+
+        request_kwargs: dict[str, Any] = {}
+        if tags:
+            request_kwargs["tags"] = tags
+        if status_enum:
+            request_kwargs["status"] = status_enum.to_proto()
+        if runway_ids is not None:
+            request_kwargs["runway_ids"] = runway_ids
+        if tower_ids is not None:
+            request_kwargs["tower_ids"] = tower_ids
+
+        request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+        response = await client.list(request)
+
+        return [
+            cls._from_sandbox_info(
+                sandbox_id=sb.sandbox_id,
+                sandbox_status=sb.sandbox_status,
+                started_at_time=sb.started_at_time,
+                tower_id=sb.tower_id,
+                tower_group_id=sb.tower_group_id,
+                runway_id=sb.runway_id,
+                base_url=effective_base_url,
+                timeout_seconds=timeout,
             )
-
-            request_kwargs: dict[str, Any] = {}
-            if tags:
-                request_kwargs["tags"] = tags
-            if status_enum:
-                request_kwargs["status"] = status_enum.to_proto()
-            if runway_ids is not None:
-                request_kwargs["runway_ids"] = runway_ids
-            if tower_ids is not None:
-                request_kwargs["tower_ids"] = tower_ids
-
-            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
-            response = await client.list(request)
-
-            return [
-                cls._from_sandbox_info(
-                    sandbox_id=sb.sandbox_id,
-                    sandbox_status=sb.sandbox_status,
-                    started_at_time=sb.started_at_time,
-                    tower_id=sb.tower_id,
-                    tower_group_id=sb.tower_group_id,
-                    runway_id=sb.runway_id,
-                    base_url=effective_base_url,
-                    timeout_seconds=timeout,
-                )
-                for sb in response.sandboxes
-            ]
+            for sb in response.sandboxes
+        ]
 
     @classmethod
     def from_id(
@@ -616,7 +615,6 @@ class Sandbox:
         timeout_seconds: float | None = None,
     ) -> Sandbox:
         """Internal async: Attach to an existing sandbox by ID."""
-        auth = resolve_auth()
         effective_base_url = (
             base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
@@ -624,37 +622,34 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            headers=auth.headers,
-        ) as http_client:
-            client = atc_connect.ATCServiceClient(
-                address=effective_base_url,
-                session=http_client,
-                proto_json=True,
-            )
+        client = atc_connect.ATCServiceClient(
+            address=effective_base_url,
+            proto_json=True,
+            interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
+        )
 
-            try:
-                request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
-                response = await client.get(request)
-            except ConnectError as e:
-                if e.code == Code.NOT_FOUND:
-                    raise SandboxNotFoundError(
-                        f"Sandbox '{sandbox_id}' not found",
-                        sandbox_id=sandbox_id,
-                    ) from e
-                raise
+        try:
+            request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+            response = await client.get(request)
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
+                raise SandboxNotFoundError(
+                    f"Sandbox '{sandbox_id}' not found",
+                    sandbox_id=sandbox_id,
+                ) from e
+            raise
 
-            return cls._from_sandbox_info(
-                sandbox_id=response.sandbox_id,
-                sandbox_status=response.sandbox_status,
-                started_at_time=response.started_at_time,
-                tower_id=response.tower_id,
-                tower_group_id=response.tower_group_id,
-                runway_id=response.runway_id,
-                base_url=effective_base_url,
-                timeout_seconds=timeout,
-            )
+        return cls._from_sandbox_info(
+            sandbox_id=response.sandbox_id,
+            sandbox_status=response.sandbox_status,
+            started_at_time=response.started_at_time,
+            tower_id=response.tower_id,
+            tower_group_id=response.tower_group_id,
+            runway_id=response.runway_id,
+            base_url=effective_base_url,
+            timeout_seconds=timeout,
+        )
 
     @classmethod
     def delete(
@@ -718,7 +713,6 @@ class Sandbox:
         missing_ok: bool = False,
     ) -> None:
         """Internal async: Delete a sandbox by ID."""
-        auth = resolve_auth()
         effective_base_url = (
             base_url or os.environ.get("AVIATO_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
@@ -726,31 +720,28 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            headers=auth.headers,
-        ) as http_client:
-            client = atc_connect.ATCServiceClient(
-                address=effective_base_url,
-                session=http_client,
-                proto_json=True,
-            )
+        client = atc_connect.ATCServiceClient(
+            address=effective_base_url,
+            proto_json=True,
+            interceptors=create_auth_interceptors(),
+            timeout_ms=int(timeout * 1000),
+        )
 
-            try:
-                request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
-                response = await client.delete(request)
-            except ConnectError as e:
-                if e.code == Code.NOT_FOUND:
-                    if missing_ok:
-                        return
-                    raise SandboxNotFoundError(
-                        f"Sandbox '{sandbox_id}' not found",
-                        sandbox_id=sandbox_id,
-                    ) from e
-                raise
+        try:
+            request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+            response = await client.delete(request)
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
+                if missing_ok:
+                    return
+                raise SandboxNotFoundError(
+                    f"Sandbox '{sandbox_id}' not found",
+                    sandbox_id=sandbox_id,
+                ) from e
+            raise
 
-            if not response.success:
-                raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
+        if not response.success:
+            raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
 
     @property
     def sandbox_id(self) -> str | None:
@@ -978,26 +969,13 @@ class Sandbox:
         if self._client is not None:
             return
 
-        auth = resolve_auth()
-        logger.debug("Using %s auth strategy", auth.strategy)
-
-        session = httpx.AsyncClient(
-            timeout=httpx.Timeout(self._request_timeout_seconds),
-            headers=auth.headers,
-        )
         self._client = atc_connect.ATCServiceClient(
             address=self._base_url,
-            session=session,
             proto_json=True,
+            interceptors=create_auth_interceptors(),
+            timeout_ms=int(self._request_timeout_seconds * 1000),
         )
         logger.debug("Initialized client for %s", self._base_url)
-
-    async def _close_client(self) -> None:
-        """Close the HTTP client if open."""
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-            logger.debug("Closed client")
 
     async def _poll_until_stable(
         self,
@@ -1337,7 +1315,7 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
     ) -> None:
-        """Internal async: Stop the sandbox and close the client."""
+        """Internal async: Stop the sandbox."""
         if self._stopped:
             logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
             return
@@ -1353,10 +1331,12 @@ class Sandbox:
 
         logger.debug("Stopping sandbox %s", self._sandbox_id)
 
+        max_timeout = int(graceful_shutdown_seconds) + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
         request = atc_pb2.StopSandboxRequest(
             sandbox_id=self._sandbox_id,
             graceful_shutdown_seconds=int(graceful_shutdown_seconds),
             snapshot_on_stop=snapshot_on_stop,
+            max_timeout_seconds=max_timeout,
         )
 
         try:
@@ -1386,7 +1366,6 @@ class Sandbox:
             # is no longer usable either way
             if self._session is not None:
                 self._session._deregister_sandbox(self)
-            await self._close_client()
 
     def stop(
         self,
@@ -1457,141 +1436,139 @@ class Sandbox:
         # Wait for sandbox to be RUNNING before sending exec request
         await self._wait_until_running_async()
 
-        auth = resolve_auth()
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            headers=auth.headers,
-            http2=True,
-        ) as streaming_session:
-            streaming_client = streaming_connect.ATCStreamingServiceClient(
-                address=self._base_url,
-                session=streaming_session,
-                proto_json=True,
-            )
+        # HTTP/2 required for bidirectional streaming
+        http2_transport = pyqwest.HTTPTransport(http_version=pyqwest.HTTPVersion.HTTP2)
+        http_client = pyqwest.Client(transport=http2_transport)
+        streaming_client = streaming_connect.ATCStreamingServiceClient(
+            address=self._base_url,
+            proto_json=True,
+            interceptors=create_auth_interceptors(),
+            http_client=http_client,
+            timeout_ms=int((timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS) * 1000),
+        )
 
-            # Wrap command with cwd if provided
-            rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
+        # Wrap command with cwd if provided
+        rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
 
-            logger.debug(
-                "Executing command (streaming) in sandbox %s: %s",
-                self._sandbox_id,
-                shlex.join(command),
-            )
+        logger.debug(
+            "Executing command (streaming) in sandbox %s: %s",
+            self._sandbox_id,
+            shlex.join(command),
+        )
 
-            stdout_buffer: list[bytes] = []
-            stderr_buffer: list[bytes] = []
-            exit_code: int | None = None
+        stdout_buffer: list[bytes] = []
+        stderr_buffer: list[bytes] = []
+        exit_code: int | None = None
 
-            async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-                """Generate input stream: send init message and return immediately."""
-                yield streaming_pb2.ExecStreamRequest(
-                    init=streaming_pb2.ExecStreamInit(
-                        sandbox_id=self._sandbox_id,
-                        command=rpc_command,
-                    )
+        async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+            """Generate input stream: send init message and return immediately."""
+            yield streaming_pb2.ExecStreamRequest(
+                init=streaming_pb2.ExecStreamInit(
+                    sandbox_id=self._sandbox_id,
+                    command=rpc_command,
                 )
-                # Generator returns immediately - RPC contract does not require staying open
-
-            # Queue decouples httpx iteration from our processing.
-            # Without this, processing suspends the httpx stream and breaks HTTP/2.
-            response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
-                asyncio.Queue()
             )
+            # Generator returns immediately - RPC contract does not require staying open
 
-            async def collect() -> None:
-                """Collect responses from streaming RPC into queue."""
-                try:
-                    async for response in streaming_client.stream_exec(
-                        input_stream(),
-                        timeout_ms=int(timeout * 1000) if timeout is not None else None,
-                    ):
-                        await response_queue.put(response)
-                        if response.HasField("exit") or response.HasField("error"):
-                            return
-                except ConnectError as e:
-                    if e.code == Code.DEADLINE_EXCEEDED:
-                        await response_queue.put(
-                            SandboxTimeoutError(
-                                f"Command {shlex.join(command)} timed out after {timeout}s"
-                            )
-                        )
-                    else:
-                        await response_queue.put(e)
-                except Exception as e:
-                    await response_queue.put(e)
-                finally:
-                    await response_queue.put(None)  # Sentinel
+        # Queue decouples stream iteration from our processing.
+        # Without this, processing suspends the stream and can cause issues.
+        response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
+            asyncio.Queue()
+        )
 
-            task = asyncio.create_task(collect())
+        async def collect() -> None:
+            """Collect responses from streaming RPC into queue."""
             try:
-                while True:
-                    item = await response_queue.get()
-                    if item is None:
-                        break
-                    if isinstance(item, Exception):
-                        raise item
-
-                    response = item
-                    if response.HasField("output"):
-                        data = response.output.data
-                        # Decode as UTF-8 for queue (replacing invalid chars)
-                        text = data.decode("utf-8", errors="replace")
-                        stream_type = response.output.stream_type
-
-                        if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
-                            stdout_buffer.append(data)
-                            await stdout_queue.put(text)
-                        elif stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
-                            stderr_buffer.append(data)
-                            await stderr_queue.put(text)
-                        else:
-                            logger.warning(
-                                "Received output with unexpected stream_type %s, "
-                                "treating as stdout",
-                                stream_type,
-                            )
-                            stdout_buffer.append(data)
-                            await stdout_queue.put(text)
-
-                    elif response.HasField("exit"):
-                        exit_code = response.exit.exit_code
-                        break
-
-                    elif response.HasField("error"):
-                        raise SandboxExecutionError(
-                            f"Exec stream error: {response.error.message}",
+                async for response in streaming_client.stream_exec(
+                    input_stream(),
+                    timeout_ms=int(timeout * 1000) if timeout is not None else None,
+                ):
+                    await response_queue.put(response)
+                    if response.HasField("exit") or response.HasField("error"):
+                        return
+            except ConnectError as e:
+                if e.code == Code.DEADLINE_EXCEEDED:
+                    await response_queue.put(
+                        SandboxTimeoutError(
+                            f"Command {shlex.join(command)} timed out after {timeout}s"
                         )
+                    )
+                else:
+                    await response_queue.put(e)
+            except Exception as e:
+                await response_queue.put(e)
             finally:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-                # Signal end-of-stream
-                await stdout_queue.put(None)
-                await stderr_queue.put(None)
+                await response_queue.put(None)  # Sentinel
 
-            # Combine buffers into final output
-            stdout_bytes = b"".join(stdout_buffer)
-            stderr_bytes = b"".join(stderr_buffer)
-            final_exit_code = exit_code if exit_code is not None else 0
+        task = asyncio.create_task(collect())
+        try:
+            while True:
+                item = await response_queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
 
-            logger.debug("Command completed with exit code %d", final_exit_code)
+                response = item
+                if response.HasField("output"):
+                    data = response.output.data
+                    # Decode as UTF-8 for queue (replacing invalid chars)
+                    text = data.decode("utf-8", errors="replace")
+                    stream_type = response.output.stream_type
 
-            result = ProcessResult(
-                stdout=stdout_bytes.decode("utf-8", errors="replace"),
-                stderr=stderr_bytes.decode("utf-8", errors="replace"),
-                returncode=final_exit_code,
-                stdout_bytes=stdout_bytes,
-                stderr_bytes=stderr_bytes,
-                command=list(command),
+                    if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
+                        stdout_buffer.append(data)
+                        await stdout_queue.put(text)
+                    elif stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                        stderr_buffer.append(data)
+                        await stderr_queue.put(text)
+                    else:
+                        logger.warning(
+                            "Received output with unexpected stream_type %s, treating as stdout",
+                            stream_type,
+                        )
+                        stdout_buffer.append(data)
+                        await stdout_queue.put(text)
+
+                elif response.HasField("exit"):
+                    exit_code = response.exit.exit_code
+                    break
+
+                elif response.HasField("error"):
+                    raise SandboxExecutionError(
+                        f"Exec stream error: {response.error.message}",
+                    )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            # Signal end-of-stream
+            await stdout_queue.put(None)
+            await stderr_queue.put(None)
+
+        # Combine buffers into final output
+        stdout_bytes = b"".join(stdout_buffer)
+        stderr_bytes = b"".join(stderr_buffer)
+        final_exit_code = exit_code if exit_code is not None else 0
+
+        logger.debug("Command completed with exit code %d", final_exit_code)
+
+        result = ProcessResult(
+            stdout=stdout_bytes.decode("utf-8", errors="replace"),
+            stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            returncode=final_exit_code,
+            stdout_bytes=stdout_bytes,
+            stderr_bytes=stderr_bytes,
+            command=list(command),
+        )
+
+        if check and result.returncode != 0:
+            raise SandboxExecutionError(
+                f"Command {shlex.join(command)} failed with exit code {result.returncode}",
+                exec_result=result,
             )
 
-            if check and result.returncode != 0:
-                raise SandboxExecutionError(
-                    f"Command {shlex.join(command)} failed with exit code {result.returncode}",
-                    exec_result=result,
-                )
-
-            return result
+        return result
 
     def exec(
         self,

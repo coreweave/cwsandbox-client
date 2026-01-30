@@ -8,9 +8,11 @@ import pytest
 from aviato._auth import (
     AuthHeaders,
     WandbAuthError,
+    _AuthHeaderInterceptor,
     _read_api_key_from_netrc,
     _try_aviato_auth,
     _try_wandb_auth,
+    create_auth_interceptors,
     resolve_auth,
 )
 from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
@@ -260,3 +262,75 @@ class TestReadApiKeyFromNetrc:
             result = _read_api_key_from_netrc()
 
         assert result is None
+
+
+class TestAuthHeaderInterceptor:
+    """Tests for _AuthHeaderInterceptor class."""
+
+    @pytest.mark.asyncio
+    async def test_on_start_adds_headers(self) -> None:
+        """Test on_start adds headers to request context."""
+        from unittest.mock import MagicMock
+
+        headers = {"Authorization": "Bearer test-token", "x-api-key": "api-key"}
+        interceptor = _AuthHeaderInterceptor(headers)
+
+        mock_ctx = MagicMock()
+        mock_request_headers: dict[str, str] = {}
+        mock_ctx.request_headers.return_value = mock_request_headers
+
+        await interceptor.on_start(mock_ctx)
+
+        assert mock_request_headers == headers
+
+    @pytest.mark.asyncio
+    async def test_on_end_is_noop(self) -> None:
+        """Test on_end does nothing."""
+        from unittest.mock import MagicMock
+
+        interceptor = _AuthHeaderInterceptor({"key": "value"})
+        mock_ctx = MagicMock()
+
+        # Should not raise
+        await interceptor.on_end(None, mock_ctx)
+
+    def test_empty_headers(self) -> None:
+        """Test interceptor works with empty headers."""
+        interceptor = _AuthHeaderInterceptor({})
+        assert interceptor._headers == {}
+
+
+class TestCreateAuthInterceptors:
+    """Tests for create_auth_interceptors function."""
+
+    def test_returns_list_with_single_interceptor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test returns a list with one interceptor."""
+        monkeypatch.setenv("AVIATO_API_KEY", "test-key")
+
+        result = create_auth_interceptors()
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], _AuthHeaderInterceptor)
+
+    def test_interceptor_has_resolved_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test the interceptor contains resolved auth headers."""
+        monkeypatch.setenv("AVIATO_API_KEY", "test-key")
+
+        result = create_auth_interceptors()
+
+        assert result[0]._headers == {"Authorization": "Bearer test-key"}
+
+    def test_returns_interceptor_with_empty_headers_when_no_auth(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test returns interceptor with empty headers when no credentials."""
+        monkeypatch.delenv("AVIATO_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+
+        with patch("aviato._auth.Path.home", return_value=tmp_path):
+            result = create_auth_interceptors()
+
+        assert len(result) == 1
+        assert result[0]._headers == {}
