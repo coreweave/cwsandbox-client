@@ -27,7 +27,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "coreweave-aviato-connectrpc-python==0.6.0.1.20251229201041+75728b022d6d",
+    "coreweave-aviato-connectrpc-python==0.8.1.1.20260120174307+fc9ea111f82b",
+    "httpx>=0.25.0",
+    "protobuf>=6.33.4",
     "pydantic>=2.0.0",
     "h2>=4.0.0",  # Required for HTTP/2 streaming exec
 ]
