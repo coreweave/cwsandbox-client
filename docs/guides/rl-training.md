@@ -353,7 +353,7 @@ Training completed successfully!
 
 **Understanding the output:**
 
-The number of sandboxes varies per step because we only create sandboxes when `extract_code_block()` finds extractable Python code in the model's completion. When the model generates text without recognizable code (no markdown fences like ` ```python `, no `<code>` tags), that completion is skipped and receives a reward of 0.0.
+The number of sandboxes varies per step because we only create sandboxes when `extract_xml_answer()` finds extractable code in the model's completion. When the model generates text without the expected `<answer>...</answer>` tags, that completion is skipped and receives a reward of 0.0.
 
 - `2 sandboxes, 0/2 passed` - Model generated 2 code blocks, both failed execution
 - `1 sandboxes, 0/1 passed, 1 skipped (no code)` - Model generated 1 code block (failed) and 1 text-only completion
@@ -473,7 +473,7 @@ You can also access per-sandbox statistics via the `execution_stats` property:
 ```python
 sandbox = session.sandbox()
 result = sandbox.exec(["echo", "hello"]).result()
-print(sandbox.execution_stats)  # {"total": 1, "successes": 1, "failures": 0, "errors": 0}
+print(sandbox.execution_stats)  # {"total": 1, "completed_ok": 1, "completed_nonzero": 0, "failures": 0}
 ```
 
 ### Per-Sandbox Exec Metrics
@@ -540,7 +540,7 @@ logger = logging.getLogger(__name__)
 # Assumes `session` is created at module level
 
 def logged_reward(completion: str, step: int) -> float:
-    code = extract_code(completion)
+    code = extract_xml_answer(completion)  # Extract code from <answer> tags
 
     sandbox = session.sandbox()
     sandbox.wait()
@@ -658,7 +658,7 @@ ART Training with Aviato Sandboxes
 ========================================
 Backend: tinker
 Model: gpt-5.1-codex-mini
-Base model: Qwen/Qwen3-8B-Instruct
+Base model: Qwen/Qwen3-8B
 Problems: 10
 Steps: 5
 Trajectories per problem: 2
@@ -689,7 +689,7 @@ Training complete: step=1, metrics={'loss': 0.42}
 |------|---------|-------------|
 | `--backend` | `local` | Training backend: `local` (GPU) or `tinker` (no GPU) |
 | `--model` | `gpt-5.1-codex-mini` | Model for inference |
-| `--base-model` | `Qwen/Qwen3-8B-Instruct` | Base model for training |
+| `--base-model` | `Qwen/Qwen3-8B` | Base model for training |
 | `--num-problems` | `10` | Number of MBPP problems |
 | `--num-steps` | `5` | Training steps |
 | `--trajectories-per-problem` | `2` | Trajectories collected per problem per step |
@@ -720,7 +720,7 @@ from art.tinker import TinkerBackend
 model = art.TrainableModel(
     name="train-001",
     project="aviato-mbpp",
-    base_model="Qwen/Qwen3-8B-Instruct",
+    base_model="Qwen/Qwen3-8B",
 )
 
 # Collect trajectories

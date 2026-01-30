@@ -278,7 +278,6 @@ python examples/rl_training/trl_grpo_integration.py
 Demonstrates:
 - GRPOTrainer `reward_funcs` parameter
 - Batch reward computation with parallel sandboxes
-- Step-based tagging for tracking
 - Code extraction from model completions
 
 See `docs/guides/rl-training.md` for comprehensive documentation.
