@@ -383,3 +383,27 @@ class Process(OperationRef[ProcessResult]):
         self._stats_recorded = True
         if self._stats_callback is not None:
             self._stats_callback(result, exception)
+
+    def __await__(self) -> Generator[Any, None, ProcessResult]:
+        """Make this process awaitable with stats recording.
+
+        Overrides OperationRef.__await__ to ensure stats are recorded
+        when the process is awaited in async contexts.
+
+        Returns:
+            Generator that yields the ProcessResult when complete.
+        """
+
+        async def _await_with_stats() -> ProcessResult:
+            try:
+                result = await asyncio.wrap_future(self._future)
+                self._result = result
+                self._returncode = result.returncode
+                self._record_stats(result, None)
+                return result
+            except Exception as e:
+                self._exception = e
+                self._record_stats(None, e)
+                raise
+
+        return _await_with_stats().__await__()
