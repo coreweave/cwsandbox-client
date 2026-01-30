@@ -119,7 +119,7 @@ class Session:
         if report_to is None:
             # Always create reporter for auto-detect mode.
             # WandbReporter._get_run() checks lazily, so this works even
-            # if wandb.run is created after Session (common with ART).
+            # if wandb.run is created after Session (common in training loops).
             return WandbReporter()
 
         if "wandb" in report_to:
