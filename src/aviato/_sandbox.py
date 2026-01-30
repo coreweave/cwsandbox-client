@@ -881,9 +881,19 @@ class Sandbox:
         self._exec_count += 1
 
         if exception is not None:
-            # Failures: SandboxTimeoutError, cancellation, transport failures
-            self._exec_failures += 1
-            outcome = ExecOutcome.FAILURE
+            # SandboxExecutionError from check=True contains the actual result
+            if isinstance(exception, SandboxExecutionError) and exception.exec_result is not None:
+                exec_result = exception.exec_result
+                if exec_result.returncode == 0:
+                    self._exec_completed_ok += 1
+                    outcome = ExecOutcome.COMPLETED_OK
+                else:
+                    self._exec_completed_nonzero += 1
+                    outcome = ExecOutcome.COMPLETED_NONZERO
+            else:
+                # Failures: SandboxTimeoutError, cancellation, transport failures
+                self._exec_failures += 1
+                outcome = ExecOutcome.FAILURE
         elif result is not None:
             if result.returncode == 0:
                 self._exec_completed_ok += 1
