@@ -28,9 +28,9 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
-import art
 import pytest
 
+import art
 from aviato import SandboxDefaults, Session
 from examples.rl_training.art.rollout import Problem, RolloutConfig, rollout
 
