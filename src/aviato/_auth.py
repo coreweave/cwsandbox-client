@@ -160,7 +160,24 @@ _AUTH_MODES = [
 ]
 
 
-def create_auth_interceptors() -> list[Any]:
+class _AuthHeaderInterceptor:
+    """Interceptor that adds auth headers to every connectrpc request."""
+
+    def __init__(self, headers: dict[str, str]) -> None:
+        self._headers = headers
+
+    async def on_start(self, ctx: RequestContext[Any, Any]) -> None:
+        """Add auth headers when an RPC starts."""
+        request_headers = ctx.request_headers()
+        for key, value in self._headers.items():
+            request_headers[key] = value
+
+    async def on_end(self, token: None, ctx: RequestContext[Any, Any]) -> None:
+        """Called when the RPC ends. No-op for auth headers."""
+        pass
+
+
+def create_auth_interceptors() -> list[_AuthHeaderInterceptor]:
     """Create interceptors for auth headers based on resolved credentials.
 
     Resolves authentication credentials using the standard auth resolution
@@ -172,22 +189,5 @@ def create_auth_interceptors() -> list[Any]:
         headers. Returns list with interceptor even if no auth headers are
         resolved (empty headers dict).
     """
-
-    class _AuthHeaderInterceptor:
-        """Interceptor that adds auth headers to every connectrpc request."""
-
-        def __init__(self, headers: dict[str, str]) -> None:
-            self._headers = headers
-
-        async def on_start(self, ctx: RequestContext) -> None:  # type: ignore[type-arg]
-            """Add auth headers when an RPC starts."""
-            request_headers = ctx.request_headers()
-            for key, value in self._headers.items():
-                request_headers[key] = value
-
-        async def on_end(self, token: None, ctx: RequestContext) -> None:  # type: ignore[type-arg]
-            """Called when the RPC ends. No-op for auth headers."""
-            pass
-
     auth = resolve_auth()
     return [_AuthHeaderInterceptor(auth.headers)]
