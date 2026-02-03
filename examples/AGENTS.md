@@ -1,6 +1,6 @@
 # Examples
 
-Runnable example scripts (14 total) demonstrating aviato SDK usage patterns.
+Runnable example scripts demonstrating aviato SDK usage patterns.
 
 ## API Patterns
 
@@ -22,6 +22,7 @@ Runnable example scripts (14 total) demonstrating aviato SDK usage patterns.
 | `cleanup_by_tag.py` | Sync | `def main()` | Tag-based cleanup |
 | `cleanup_old_sandboxes.py` | Sync | `def main()` | Age-based cleanup |
 | `swebench/run_evaluation.py` | Sync | `def main()` | SWE-bench evaluation with parallel sandboxes |
+| `wandb_integration.py` | Sync | `def main()` | W&B metrics integration for sandbox usage tracking |
 
 The `exec()` method returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 
