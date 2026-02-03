@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Generator
+import threading
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
@@ -274,6 +275,8 @@ class Process(OperationRef[ProcessResult]):
         command: list[str],
         stdout: StreamReader,
         stderr: StreamReader,
+        stats_callback: Callable[[ProcessResult | None, BaseException | None], None]
+        | None = None,
     ) -> None:
         """Initialize with a future and stream readers.
 
@@ -282,6 +285,8 @@ class Process(OperationRef[ProcessResult]):
             command: The command being executed.
             stdout: StreamReader for stdout.
             stderr: StreamReader for stderr.
+            stats_callback: Optional callback invoked once when result is available.
+                Called with (result, None) on success or (None, exception) on failure.
         """
         super().__init__(future)
         self._command = command
@@ -290,6 +295,13 @@ class Process(OperationRef[ProcessResult]):
         self._exception: BaseException | None = None
         self.stdout = stdout
         self.stderr = stderr
+        self._stats_callback = stats_callback
+        self._stats_recorded = False
+        self._stats_lock = threading.Lock()
+
+        # Ensure stats are recorded even if user only streams without calling result()
+        if stats_callback is not None:
+            future.add_done_callback(self._on_future_done)
 
     def poll(self) -> int | None:
         """Check if the process has completed without blocking.
@@ -370,8 +382,68 @@ class Process(OperationRef[ProcessResult]):
             try:
                 self._result = self._future.result(timeout)
                 self._returncode = self._result.returncode
+                self._record_stats()
             except concurrent.futures.TimeoutError:
                 # Do not cache timeouts: allow callers to retry with a longer timeout.
                 raise
             except Exception as e:
                 self._exception = e
+                self._record_stats()
+
+    def _record_stats(self) -> None:
+        """Record stats via callback exactly once.
+
+        Thread-safe: uses lock to prevent double-counting when callback
+        and result() race on different threads.
+        """
+        if self._stats_callback is None:
+            return
+
+        with self._stats_lock:
+            if self._stats_recorded:
+                return
+            self._stats_recorded = True
+
+        self._stats_callback(self._result, self._exception)
+
+    def _on_future_done(self, future: concurrent.futures.Future[ProcessResult]) -> None:
+        """Callback invoked when future completes, ensures stats are recorded.
+
+        This handles the case where users only stream stdout/stderr without
+        calling result()/wait()/await.
+        """
+        if self._stats_recorded:
+            return
+
+        try:
+            result = future.result()
+            self._result = result
+            self._returncode = result.returncode
+        except Exception as e:
+            self._exception = e
+
+        self._record_stats()
+
+    def __await__(self) -> Generator[Any, None, ProcessResult]:
+        """Make this process awaitable for async contexts.
+
+        Ensures stats are recorded when awaited in async code, including
+        on failure.
+
+        Returns:
+            Generator that yields the ProcessResult when complete.
+        """
+
+        async def _await_and_record() -> ProcessResult:
+            try:
+                result = await asyncio.wrap_future(self._future)
+                self._result = result
+                self._returncode = result.returncode
+                self._record_stats()
+                return result
+            except Exception as e:
+                self._exception = e
+                self._record_stats()
+                raise
+
+        return _await_and_record().__await__()
