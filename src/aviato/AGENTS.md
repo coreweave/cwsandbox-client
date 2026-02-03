@@ -67,7 +67,7 @@ When adding configuration options that users pass to `Sandbox.run()`, `Session.s
    ```
 
 3. **Update documentation**:
-   - `CLAUDE.md` (root) - SandboxDefaults fields list
+   - `AGENTS.md` (root) - SandboxDefaults fields list
    - `docs/guides/sandbox-configuration.md` - usage examples
 
 4. **Add tests** for:
