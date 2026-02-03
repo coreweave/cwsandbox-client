@@ -55,3 +55,6 @@ CLAUDE.local.md
 
 # Example output logs
 logs/
+
+# Weights & Biases
+wandb/
