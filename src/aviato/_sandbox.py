@@ -31,7 +31,7 @@ from aviato._defaults import (
     SandboxDefaults,
 )
 from aviato._loop_manager import _LoopManager
-from aviato._types import OperationRef, Process, ProcessResult, StreamReader
+from aviato._types import NetworkOptions, OperationRef, Process, ProcessResult, StreamReader
 from aviato.exceptions import (
     SandboxError,
     SandboxExecutionError,
@@ -168,7 +168,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        network: dict[str, Any] | None = None,
+        network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         _session: Session | None = None,
@@ -191,12 +191,19 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            network: Network configuration (e.g., {"ingress_mode": "public"})
+            network: Network configuration (NetworkOptions dataclass)
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
         """
+        if network is not None:
+            if isinstance(network, dict):
+                network = NetworkOptions(**network)
+            elif not isinstance(network, NetworkOptions):
+                raise TypeError(
+                    f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
+                )
 
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
@@ -253,8 +260,10 @@ class Sandbox:
             self._start_kwargs["s3_mount"] = s3_mount
         if ports is not None:
             self._start_kwargs["ports"] = ports
-        if network is not None:
-            self._start_kwargs["network"] = network
+        # Use explicit network or fall back to defaults
+        effective_network = network if network is not None else self._defaults.network
+        if effective_network is not None:
+            self._start_kwargs["network"] = effective_network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
@@ -276,6 +285,8 @@ class Sandbox:
         self._tower_group_id: str | None = None
         self._service_address: str | None = None
         self._exposed_ports: tuple[tuple[int, str], ...] | None = None
+        self._applied_ingress_mode: str | None = None
+        self._applied_egress_mode: str | None = None
 
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
@@ -295,7 +306,7 @@ class Sandbox:
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        network: dict[str, Any] | None = None,
+        network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
@@ -319,7 +330,7 @@ class Sandbox:
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            network: Network configuration (e.g., {"ingress_mode": "public"})
+            network: Network configuration (NetworkOptions dataclass)
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -345,6 +356,14 @@ class Sandbox:
                 result = sb.exec(["echo", "hello"]).result()
             ```
         """
+        if network is not None:
+            if isinstance(network, dict):
+                network = NetworkOptions(**network)
+            elif not isinstance(network, NetworkOptions):
+                raise TypeError(
+                    f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
+                )
+
         command = args[0] if args else None
         cmd_args = list(args[1:]) if len(args) > 1 else None
 
@@ -447,6 +466,9 @@ class Sandbox:
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
+        # TODO: Add applied_ingress_mode/applied_egress_mode once backend adds to GetSandboxResponse
+        sandbox._applied_ingress_mode = None
+        sandbox._applied_egress_mode = None
         return sandbox
 
     @classmethod
@@ -533,32 +555,35 @@ class Sandbox:
             timeout_ms=int(timeout * 1000),
         )
 
-        request_kwargs: dict[str, Any] = {}
-        if tags:
-            request_kwargs["tags"] = tags
-        if status_enum:
-            request_kwargs["status"] = status_enum.to_proto()
-        if runway_ids is not None:
-            request_kwargs["runway_ids"] = runway_ids
-        if tower_ids is not None:
-            request_kwargs["tower_ids"] = tower_ids
+        try:
+            request_kwargs: dict[str, Any] = {}
+            if tags:
+                request_kwargs["tags"] = tags
+            if status_enum:
+                request_kwargs["status"] = status_enum.to_proto()
+            if runway_ids is not None:
+                request_kwargs["runway_ids"] = runway_ids
+            if tower_ids is not None:
+                request_kwargs["tower_ids"] = tower_ids
 
-        request = atc_pb2.ListSandboxesRequest(**request_kwargs)
-        response = await client.list(request)
+            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+            response = await client.list(request)
 
-        return [
-            cls._from_sandbox_info(
-                sandbox_id=sb.sandbox_id,
-                sandbox_status=sb.sandbox_status,
-                started_at_time=sb.started_at_time,
-                tower_id=sb.tower_id,
-                tower_group_id=sb.tower_group_id,
-                runway_id=sb.runway_id,
-                base_url=effective_base_url,
-                timeout_seconds=timeout,
-            )
-            for sb in response.sandboxes
-        ]
+            return [
+                cls._from_sandbox_info(
+                    sandbox_id=sb.sandbox_id,
+                    sandbox_status=sb.sandbox_status,
+                    started_at_time=sb.started_at_time,
+                    tower_id=sb.tower_id,
+                    tower_group_id=sb.tower_group_id,
+                    runway_id=sb.runway_id,
+                    base_url=effective_base_url,
+                    timeout_seconds=timeout,
+                )
+                for sb in response.sandboxes
+            ]
+        finally:
+            await client.close()
 
     @classmethod
     def from_id(
@@ -630,26 +655,29 @@ class Sandbox:
         )
 
         try:
-            request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
-            response = await client.get(request)
-        except ConnectError as e:
-            if e.code == Code.NOT_FOUND:
-                raise SandboxNotFoundError(
-                    f"Sandbox '{sandbox_id}' not found",
-                    sandbox_id=sandbox_id,
-                ) from e
-            raise
+            try:
+                request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+                response = await client.get(request)
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
+                    raise SandboxNotFoundError(
+                        f"Sandbox '{sandbox_id}' not found",
+                        sandbox_id=sandbox_id,
+                    ) from e
+                raise
 
-        return cls._from_sandbox_info(
-            sandbox_id=response.sandbox_id,
-            sandbox_status=response.sandbox_status,
-            started_at_time=response.started_at_time,
-            tower_id=response.tower_id,
-            tower_group_id=response.tower_group_id,
-            runway_id=response.runway_id,
-            base_url=effective_base_url,
-            timeout_seconds=timeout,
-        )
+            return cls._from_sandbox_info(
+                sandbox_id=response.sandbox_id,
+                sandbox_status=response.sandbox_status,
+                started_at_time=response.started_at_time,
+                tower_id=response.tower_id,
+                tower_group_id=response.tower_group_id,
+                runway_id=response.runway_id,
+                base_url=effective_base_url,
+                timeout_seconds=timeout,
+            )
+        finally:
+            await client.close()
 
     @classmethod
     def delete(
@@ -728,20 +756,23 @@ class Sandbox:
         )
 
         try:
-            request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
-            response = await client.delete(request)
-        except ConnectError as e:
-            if e.code == Code.NOT_FOUND:
-                if missing_ok:
-                    return
-                raise SandboxNotFoundError(
-                    f"Sandbox '{sandbox_id}' not found",
-                    sandbox_id=sandbox_id,
-                ) from e
-            raise
+            try:
+                request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+                response = await client.delete(request)
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
+                    if missing_ok:
+                        return
+                    raise SandboxNotFoundError(
+                        f"Sandbox '{sandbox_id}' not found",
+                        sandbox_id=sandbox_id,
+                    ) from e
+                raise
 
-        if not response.success:
-            raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
+            if not response.success:
+                raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
+        finally:
+            await client.close()
 
     @property
     def sandbox_id(self) -> str | None:
@@ -829,6 +860,16 @@ class Sandbox:
         - No ports were exposed
         """
         return self._exposed_ports
+
+    @property
+    def applied_ingress_mode(self) -> str | None:
+        """The ingress mode applied by the backend (set after start)."""
+        return self._applied_ingress_mode
+
+    @property
+    def applied_egress_mode(self) -> str | None:
+        """The egress mode applied by the backend (set after start)."""
+        return self._applied_egress_mode
 
     def __repr__(self) -> str:
         if self._status:
@@ -1082,6 +1123,19 @@ class Sandbox:
 
             request_kwargs.update(self._start_kwargs)
 
+            # Convert NetworkOptions to dict for proto
+            network = request_kwargs.get("network")
+            if network is not None and isinstance(network, NetworkOptions):
+                net_opts = network
+                network_dict: dict[str, Any] = {}
+                if net_opts.ingress_mode is not None:
+                    network_dict["ingress_mode"] = net_opts.ingress_mode
+                if net_opts.exposed_ports is not None:
+                    network_dict["exposed_ports"] = list(net_opts.exposed_ports)
+                if net_opts.egress_mode is not None:
+                    network_dict["egress_mode"] = net_opts.egress_mode
+                request_kwargs["network"] = network_dict
+
             logger.debug("Starting sandbox with image %s", self._container_image)
 
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
@@ -1107,6 +1161,8 @@ class Sandbox:
                 if response.exposed_ports
                 else None
             )
+            self._applied_ingress_mode = response.applied_ingress_mode or None
+            self._applied_egress_mode = response.applied_egress_mode or None
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
@@ -1366,6 +1422,10 @@ class Sandbox:
             # is no longer usable either way
             if self._session is not None:
                 self._session._deregister_sandbox(self)
+            # Close the client to release resources
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
 
     def stop(
         self,
@@ -1545,6 +1605,8 @@ class Sandbox:
             # Signal end-of-stream
             await stdout_queue.put(None)
             await stderr_queue.put(None)
+            # Close streaming client to release resources
+            await streaming_client.close()
 
         # Combine buffers into final output
         stdout_bytes = b"".join(stdout_buffer)

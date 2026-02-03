@@ -61,7 +61,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `mounted_files` - Files to mount into the sandbox
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
-- `service` - Service configuration for network access
+- `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
 
 Class methods:
@@ -101,6 +101,9 @@ Fields (all optional with sensible defaults):
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
 - `runway_ids`, `tower_ids` - Infrastructure filtering (optional tuple of IDs)
+- `resources` - Resource requests (CPU, memory, GPU)
+- `network` - Network configuration via `NetworkOptions`
+- `environment_variables` - Environment variables to inject
 
 Utility methods:
 - `merge_tags(additional)` - Combine default tags with additional tags list
@@ -139,6 +142,32 @@ data = await ref
 - `Process`: Handle for running process with `stdout`/`stderr` StreamReaders. Properties: `returncode` (exit code or None), `command` (list executed). Methods: `poll()`, `wait(timeout)`, `result(timeout)`, `cancel()`. Awaitable in async contexts.
 - `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`.
 - `ProcessResult`: Dataclass with `stdout`, `stderr`, `returncode`, `command`, plus raw byte variants (`stdout_bytes`, `stderr_bytes`).
+
+**`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
+
+Fields:
+- `ingress_mode: str | None` - Inbound traffic mode: `"public"` (internet accessible), `"internal"` (cluster only), etc.
+- `exposed_ports: tuple[int, ...] | None` - Ports to expose (required with `ingress_mode`). Lists are normalized to tuples for immutability.
+- `egress_mode: str | None` - Outbound traffic mode: `"internet"` (full access), `"isolated"` (no external), `"org"` (org-internal only), etc.
+
+Usage:
+```python
+from aviato import NetworkOptions
+
+# Using NetworkOptions (recommended for type safety)
+sandbox = Sandbox.run(
+    network=NetworkOptions(
+        ingress_mode="public",
+        exposed_ports=(8080,),
+        egress_mode="internet",
+    ),
+)
+
+# Using dict (convenient for quick scripts)
+sandbox = Sandbox.run(
+    network={"ingress_mode": "public", "exposed_ports": [8080]},
+)
+```
 
 ### Authentication Flow
 

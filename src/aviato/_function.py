@@ -15,7 +15,7 @@ from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 
 from aviato._defaults import DEFAULT_TEMP_DIR
-from aviato._types import OperationRef, Serialization
+from aviato._types import NetworkOptions, OperationRef, Serialization
 from aviato.exceptions import (
     AsyncFunctionError,
     FunctionSerializationError,
@@ -86,7 +86,7 @@ class RemoteFunction(Generic[P, R]):
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
-        network: dict[str, Any] | None = None,
+        network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> None:
@@ -104,7 +104,7 @@ class RemoteFunction(Generic[P, R]):
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
-            network: Network configuration (e.g., {"ingress_mode": "public"})
+            network: Network configuration (NetworkOptions dataclass)
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -121,6 +121,14 @@ class RemoteFunction(Generic[P, R]):
                 "If you need async behavior, run your async code inside the sync function "
                 "using asyncio.run()."
             )
+
+        if network is not None:
+            if isinstance(network, dict):
+                network = NetworkOptions(**network)
+            elif not isinstance(network, NetworkOptions):
+                raise TypeError(
+                    f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
+                )
 
         self._fn = fn
         self._session = session

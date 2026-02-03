@@ -12,6 +12,7 @@ from aviato._loop_manager import _LoopManager
 from aviato._sandbox import Sandbox, SandboxStatus
 from aviato._session import Session
 from aviato._types import (
+    NetworkOptions,
     OperationRef,
     Process,
     ProcessResult,
@@ -233,6 +234,7 @@ __all__ = [
     "AviatoError",
     "FunctionError",
     "FunctionSerializationError",
+    "NetworkOptions",
     "OperationRef",
     "Process",
     "ProcessResult",

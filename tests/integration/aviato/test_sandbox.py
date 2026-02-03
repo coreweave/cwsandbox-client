@@ -10,7 +10,7 @@ import uuid
 import httpx
 import pytest
 
-from aviato import Sandbox, SandboxDefaults, Session
+from aviato import NetworkOptions, Sandbox, SandboxDefaults, Session
 from tests.integration.aviato.conftest import _SESSION_TAG
 
 
@@ -504,15 +504,46 @@ def test_sandbox_with_empty_runway_and_tower_ids(sandbox_defaults: SandboxDefaul
 # Service address and exposed ports tests
 
 
-def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public=True returns service_address.
+def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with NetworkOptions.
 
-    Creates a sandbox with service={"public": True} and verifies that
+    Creates a sandbox with typed NetworkOptions for network configuration
+    and verifies that applied_* modes are captured from the backend response.
+    """
+    network = NetworkOptions(
+        ingress_mode="public",
+        exposed_ports=(8080,),
+        egress_mode="internet",
+    )
+
+    with Sandbox.run(
+        "sleep", "infinity",
+        defaults=sandbox_defaults,
+        network=network,
+    ) as sandbox:
+        sandbox.wait()
+
+        # Verify applied modes are captured from StartSandboxResponse
+        assert sandbox.applied_ingress_mode is not None
+        assert sandbox.applied_egress_mode is not None
+
+        # Verify service_address is set for public ingress
+        # (may be None depending on infrastructure configuration)
+        if sandbox.service_address is not None:
+            assert ":" in sandbox.service_address or "." in sandbox.service_address
+
+
+def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox with public ingress returns service_address.
+
+    Creates a sandbox with NetworkOptions for public ingress and verifies that
     service_address is populated in the response.
     """
+    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+
     with Sandbox.run(
-        service={"public": True},
         defaults=sandbox_defaults,
+        network=network,
     ) as sandbox:
         sandbox.wait()
 
@@ -528,15 +559,17 @@ def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> No
 
 
 def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public=True and ports returns exposed_ports.
+    """Test sandbox with public ingress and ports returns exposed_ports.
 
-    Creates a sandbox with service={"public": True} and port mappings,
+    Creates a sandbox with NetworkOptions for public ingress and port mappings,
     then verifies exposed_ports is populated.
     """
+    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+
     with Sandbox.run(
-        service={"public": True},
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
+        network=network,
     ) as sandbox:
         sandbox.wait()
 
@@ -559,11 +592,13 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
     Starts a simple HTTP server inside the sandbox and verifies we can
     connect to it from outside using the service_address.
     """
+    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+
     with Sandbox.run(
         "python", "-m", "http.server", "8080",
-        service={"public": True},
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
+        network=network,
     ) as sandbox:
         sandbox.wait()
 

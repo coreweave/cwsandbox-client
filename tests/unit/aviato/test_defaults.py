@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from aviato import SandboxDefaults
+from aviato import NetworkOptions, SandboxDefaults
 
 
 class TestSandboxDefaults:
@@ -37,6 +37,9 @@ class TestSandboxDefaults:
         # Runway/tower IDs should default to None (no filtering)
         assert defaults.runway_ids is None
         assert defaults.tower_ids is None
+
+        # Network should default to None (backend defaults)
+        assert defaults.network is None
 
     def test_defaults_are_immutable(self) -> None:
         """Test SandboxDefaults is frozen/immutable."""
@@ -121,3 +124,23 @@ class TestSandboxDefaults:
             "REGION": "us-west",  # Preserved
             "MODEL": "gpt2",  # Added
         }
+
+    def test_network_can_be_set(self) -> None:
+        """Test network can be set in SandboxDefaults."""
+        network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+        defaults = SandboxDefaults(network=network)
+
+        assert defaults.network is network
+        assert defaults.network.ingress_mode == "public"
+        assert defaults.network.exposed_ports == (8080,)
+
+    def test_with_overrides_network(self) -> None:
+        """Test with_overrides can change network."""
+        network1 = NetworkOptions(egress_mode="internet")
+        network2 = NetworkOptions(egress_mode="isolated")
+        defaults = SandboxDefaults(network=network1)
+
+        new_defaults = defaults.with_overrides(network=network2)
+
+        assert defaults.network is network1  # original unchanged
+        assert new_defaults.network is network2

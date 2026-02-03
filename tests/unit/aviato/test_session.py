@@ -416,6 +416,7 @@ class TestSessionList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
@@ -442,6 +443,7 @@ class TestSessionList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
@@ -475,6 +477,7 @@ class TestSessionList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
@@ -508,6 +511,7 @@ class TestSessionList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
@@ -544,6 +548,7 @@ class TestSessionFromId:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(return_value=mock_response)
 
@@ -575,6 +580,7 @@ class TestSessionFromId:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(return_value=mock_response)
 
@@ -606,6 +612,7 @@ class TestSessionFromId:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(return_value=mock_response)
 

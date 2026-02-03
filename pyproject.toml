@@ -27,7 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "coreweave-aviato-connectrpc-python==0.8.1.1.20260120174307+fc9ea111f82b",
+    "coreweave-aviato-connectrpc-python==0.8.1.1.20260127190035+52171f167253",
     "httpx>=0.25.0",
     "protobuf>=6.33.4",
     "pydantic>=2.0.0",

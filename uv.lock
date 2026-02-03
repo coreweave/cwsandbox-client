@@ -57,7 +57,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coreweave-aviato-connectrpc-python", specifier = "==0.8.1.1.20260120174307+fc9ea111f82b" },
+    { name = "coreweave-aviato-connectrpc-python", specifier = "==0.8.1.1.20260127190035+52171f167253" },
     { name = "h2", specifier = ">=4.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
@@ -244,7 +244,7 @@ wheels = [
 
 [[package]]
 name = "coreweave-aviato-connectrpc-python"
-version = "0.8.1.1.20260120174307+fc9ea111f82b"
+version = "0.8.1.1.20260127190035+52171f167253"
 source = { registry = "https://buf.build/gen/python" }
 dependencies = [
     { name = "connect-python" },
@@ -252,7 +252,7 @@ dependencies = [
     { name = "googleapis-googleapis-connectrpc-python" },
 ]
 wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-connectrpc-python/coreweave_aviato_connectrpc_python-0.8.1.1.20260120174307+fc9ea111f82b-py3-none-any.whl" },
+    { url = "https://buf.build/gen/python/coreweave-aviato-connectrpc-python/coreweave_aviato_connectrpc_python-0.8.1.1.20260127190035+52171f167253-py3-none-any.whl" },
 ]
 
 [[package]]

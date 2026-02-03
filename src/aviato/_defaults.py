@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aviato._types import NetworkOptions
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
@@ -69,6 +72,7 @@ class SandboxDefaults:
     runway_ids: tuple[str, ...] | None = None
     tower_ids: tuple[str, ...] | None = None
     resources: dict[str, Any] | None = None
+    network: NetworkOptions | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:

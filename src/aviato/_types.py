@@ -95,6 +95,23 @@ class Serialization(str, Enum):
     JSON = "json"
 
 
+@dataclass(frozen=True)
+class NetworkOptions:
+    """Network configuration for sandbox ingress/egress."""
+
+    ingress_mode: str | None = None
+    exposed_ports: tuple[int, ...] | None = None
+    egress_mode: str | None = None
+
+    def __post_init__(self) -> None:
+        # Normalize list to tuple for immutability
+        if isinstance(self.exposed_ports, list):
+            object.__setattr__(self, "exposed_ports", tuple(self.exposed_ports))
+        # Normalize empty to None
+        if self.exposed_ports is not None and len(self.exposed_ports) == 0:
+            object.__setattr__(self, "exposed_ports", None)
+
+
 @dataclass
 class ProcessResult:
     """Result from a completed streaming exec operation.

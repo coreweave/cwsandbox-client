@@ -53,6 +53,30 @@ When adding to `_types.py`:
 - Prefer simple dataclass fields for result types (see `ProcessResult`)
 - Export new types via `__init__.py` and `__all__`
 
+### Adding New Configuration Options
+
+When adding configuration options that users pass to `Sandbox.run()`, `Session.sandbox()`, or `@session.function()`:
+
+1. **Add to `SandboxDefaults`** in `_defaults.py` if the option should be shareable across sandboxes. This allows users to set a default value once and have it apply to all sandboxes in a session.
+
+2. **Update `Sandbox.__init__`** to use the default when the explicit parameter is None:
+   ```python
+   effective_value = param if param is not None else self._defaults.param
+   if effective_value is not None:
+       self._start_kwargs["param"] = effective_value
+   ```
+
+3. **Update documentation**:
+   - `CLAUDE.md` (root) - SandboxDefaults fields list
+   - `docs/guides/sandbox-configuration.md` - usage examples
+
+4. **Add tests** for:
+   - Default value in `test_defaults.py`
+   - Sandbox uses defaults when param is None in `test_sandbox.py`
+   - Explicit param overrides defaults in `test_sandbox.py`
+
+**Design principle**: If a configuration option makes sense to share across multiple sandboxes (e.g., resources, network, environment variables), it belongs in `SandboxDefaults`. Per-sandbox-only options (e.g., mounted_files with sandbox-specific content) do not need to be in defaults.
+
 ## Testing Changes
 
 ```bash
