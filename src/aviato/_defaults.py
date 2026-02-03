@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aviato._types import NetworkOptions
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
@@ -20,7 +23,7 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 300.0
 # If not set, the backend controls the default lifetime of the sandboxes
 DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
 
-# Buffer to add to client-side timeout in addition to the supplied exec command's timeout
+# Buffer to add to client-side timeout for exec and stop requests
 DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS: float = 5.0
 
 # Default temp directory used within Sandboxes
@@ -69,6 +72,7 @@ class SandboxDefaults:
     runway_ids: tuple[str, ...] | None = None
     tower_ids: tuple[str, ...] | None = None
     resources: dict[str, Any] | None = None
+    network: NetworkOptions | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:

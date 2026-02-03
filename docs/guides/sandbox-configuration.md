@@ -131,16 +131,57 @@ sandbox = Sandbox.run(
 |-------|------|-------------|
 | `container_port` | int | Port inside the sandbox |
 
-## Service
+## Network
 
-Configure network service options:
+Configure network options using the `NetworkOptions` dataclass or a plain dict:
 
 ```python
+from aviato import NetworkOptions, Sandbox
+
+# Using NetworkOptions
 sandbox = Sandbox.run(
-    service={
-        "name": "my-service",
-    },
+    network=NetworkOptions(
+        ingress_mode="public",
+        exposed_ports=(8080,),
+    ),
 )
+
+# Using dict
+sandbox = Sandbox.run(
+    network={"ingress_mode": "public", "exposed_ports": [8080]},
+)
+```
+
+Both forms are equivalent: dicts are automatically converted to `NetworkOptions` internally.
+
+### NetworkOptions Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ingress_mode` | `str \| None` | Controls inbound traffic: `"public"` (internet accessible), `"internal"` (cluster only), etc. |
+| `exposed_ports` | `tuple[int, ...] \| None` | Ports to expose (required with `ingress_mode`). Pass as tuple `(8080,)` or list `[8080]`. |
+| `egress_mode` | `str \| None` | Controls outbound traffic: `"internet"` (full access), `"isolated"` (no external), `"org"` (org-internal only), etc. |
+
+All fields are optional and default to `None`, which uses backend defaults.
+
+### Setting Network in SandboxDefaults
+
+Set a default network configuration for all sandboxes:
+
+```python
+from aviato import NetworkOptions, SandboxDefaults, Session
+
+defaults = SandboxDefaults(
+    network=NetworkOptions(egress_mode="internet"),
+)
+
+with Session(defaults) as session:
+    # All sandboxes inherit the network config
+    sb1 = session.sandbox()  # Uses egress_mode="internet"
+    sb2 = session.sandbox()  # Uses egress_mode="internet"
+
+    # Override for specific sandbox
+    sb3 = session.sandbox(network=NetworkOptions(egress_mode="user"))
 ```
 
 ## Timeouts
@@ -179,20 +220,18 @@ This is a server-side limit. The sandbox will be terminated when it reaches this
 ## Complete Example
 
 ```python
-from aviato import Sandbox, SandboxDefaults
+from aviato import NetworkOptions, Sandbox, SandboxDefaults
 
 defaults = SandboxDefaults(
     container_image="python:3.11",
     max_lifetime_seconds=1800,  # 30 minutes
     tags=("production", "ml-pipeline"),
+    resources={"cpu": "2000m", "memory": "4Gi"},
+    network=NetworkOptions(egress_mode="internet")
 )
 
 with Sandbox.run(
     defaults=defaults,
-    resources={
-        "cpu": "2000m",
-        "memory": "4Gi",
-    },
     mounted_files=[
         {
             "path": "/app/config.yaml",

@@ -20,11 +20,12 @@ def main() -> None:
     # Use Sandbox.run() with context manager for automatic cleanup
     with Sandbox.run(defaults=defaults) as sandbox:
         print(f"Sandbox started: {sandbox.sandbox_id}")
-        print(f"Running on tower: {sandbox.tower_id}")
 
-        # Check sandbox status
-        status = sandbox.get_status()
-        print(f"Sandbox status: {status}")
+        # Wait for sandbox to be running before accessing tower_id
+        # (tower assignment happens during scheduling, not at creation)
+        sandbox.wait()
+        print(f"Running on tower: {sandbox.tower_id}")
+        print(f"Sandbox status: {sandbox.status}")
 
         # Execute a simple command
         result = sandbox.exec(["echo", "Hello from Aviato sandbox"]).result()

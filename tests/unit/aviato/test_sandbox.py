@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aviato import Sandbox, SandboxDefaults
+from aviato import NetworkOptions, Sandbox, SandboxDefaults
 from aviato.exceptions import SandboxNotRunningError
 
 
@@ -77,16 +77,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["nonexistent"], check=True)
             with pytest.raises(SandboxExecutionError, match="exit code 127"):
                 process.result()
@@ -116,16 +116,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["failing-cmd"], check=False)
             result = process.result()
 
@@ -156,16 +156,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["echo", "test"])
 
             # Collect all stdout lines by iterating the stream
@@ -195,16 +195,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["failing-cmd"])
             with pytest.raises(SandboxExecutionError, match="Connection lost"):
                 process.result()
@@ -251,16 +251,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls", "-la"], cwd="/app")
             process.result()
 
@@ -286,16 +286,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["echo", "hello"], cwd="/app")
             result = process.result()
 
@@ -326,16 +326,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls"], cwd="/path with spaces/and$special")
             process.result()
 
@@ -369,16 +369,16 @@ class TestSandboxExec:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = mock_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["ls", "-la"])
             process.result()
 
@@ -451,16 +451,22 @@ class TestSandboxAuth:
     """Tests for Sandbox authentication."""
 
     @pytest.mark.asyncio
-    async def test_sets_auth_header(self, mock_aviato_api_key: str) -> None:
-        """Test Sandbox sets Authorization header from AVIATO_API_KEY."""
+    async def test_sets_auth_interceptors(self, mock_aviato_api_key: str) -> None:
+        """Test Sandbox uses auth interceptors with create_auth_interceptors."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch("httpx.AsyncClient") as mock_client:
+        with patch(
+            "aviato._sandbox.atc_connect.ATCServiceClient"
+        ) as mock_client_class, patch(
+            "aviato._sandbox.create_auth_interceptors"
+        ) as mock_create_interceptors:
+            mock_create_interceptors.return_value = []
             await sandbox._ensure_client()
 
-            mock_client.assert_called_once()
-            headers = mock_client.call_args.kwargs["headers"]
-            assert headers["Authorization"] == f"Bearer {mock_aviato_api_key}"
+            mock_create_interceptors.assert_called_once()
+            mock_client_class.assert_called_once()
+            call_kwargs = mock_client_class.call_args.kwargs
+            assert "interceptors" in call_kwargs
 
 
 class TestSandboxCleanup:
@@ -865,16 +871,16 @@ class TestSandboxTimeouts:
 
         mock_streaming_client = MagicMock()
         mock_streaming_client.stream_exec = slow_stream
+        mock_streaming_client.close = AsyncMock()
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth") as mock_auth,
+            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
             patch(
                 "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
                 return_value=mock_streaming_client,
             ),
         ):
-            mock_auth.return_value.headers = {}
             process = sandbox.exec(["sleep", "10"], timeout_seconds=0.1)
             with pytest.raises(SandboxTimeoutError):
                 process.result()
@@ -885,18 +891,19 @@ class TestSandboxKwargsValidation:
 
     def test_init_with_valid_kwargs(self) -> None:
         """Test Sandbox.__init__ accepts valid kwargs."""
+        net_opts = NetworkOptions(ingress_mode="public")
         sandbox = Sandbox(
             command="echo",
             args=["hello"],
             resources={"cpu": "100m", "memory": "128Mi"},
             ports=[{"container_port": 8080}],
-            service={"public": True},
+            network=net_opts,
             max_timeout_seconds=60,
             environment_variables={"TEST_ENV_VAR": "test-value"},
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
-        assert sandbox._start_kwargs["service"] == {"public": True}
+        assert sandbox._start_kwargs["network"] == net_opts
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
@@ -967,6 +974,7 @@ class TestSandboxList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
@@ -990,6 +998,7 @@ class TestSandboxList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
@@ -1017,6 +1026,7 @@ class TestSandboxList:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.list = AsyncMock(
                     return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
@@ -1050,6 +1060,7 @@ class TestSandboxFromId:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(return_value=mock_response)
 
@@ -1074,6 +1085,7 @@ class TestSandboxFromId:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(
                     side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
@@ -1099,6 +1111,7 @@ class TestSandboxDeleteClassMethod:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.delete = AsyncMock(return_value=mock_response)
 
@@ -1120,6 +1133,7 @@ class TestSandboxDeleteClassMethod:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.delete = AsyncMock(
                     side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
@@ -1140,6 +1154,7 @@ class TestSandboxDeleteClassMethod:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.delete = AsyncMock(
                     side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
@@ -1259,6 +1274,7 @@ class TestSandboxServiceAddressAndExposedPorts:
 
             with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
                 mock_atc_instance = MagicMock()
+                mock_atc_instance.close = AsyncMock()
                 mock_atc_client.return_value = mock_atc_instance
                 mock_atc_instance.get = AsyncMock(return_value=mock_response)
 
@@ -1324,3 +1340,263 @@ class TestSandboxRunwayAndTowerIds:
         with patch.object(Sandbox, "start"):
             sandbox = Sandbox.run(tower_ids=["tower-1"])
             assert sandbox._tower_ids == ["tower-1"]
+
+
+class TestNetworkOptionsTypeGuard:
+    """Tests for network parameter type guard validation."""
+
+    def test_init_network_none_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts network=None."""
+        sandbox = Sandbox(command="echo", args=["hello"], network=None)
+        assert "network" not in sandbox._start_kwargs
+
+    def test_init_network_options_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts NetworkOptions instance."""
+        net_opts = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+        sandbox = Sandbox(command="echo", args=["hello"], network=net_opts)
+        assert sandbox._start_kwargs["network"] == net_opts
+
+    def test_init_network_dict_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts dict and converts to NetworkOptions."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            network={"ingress_mode": "public", "exposed_ports": [8080]},
+        )
+        # Dict is converted to NetworkOptions
+        net_opts = sandbox._start_kwargs["network"]
+        assert isinstance(net_opts, NetworkOptions)
+        assert net_opts.ingress_mode == "public"
+        assert net_opts.exposed_ports == (8080,)
+
+    def test_init_network_string_raises_type_error(self) -> None:
+        """Test Sandbox.__init__ raises TypeError for string network."""
+        with pytest.raises(TypeError, match="network must be.*got str"):
+            Sandbox(
+                command="echo",
+                args=["hello"],
+                network="public",  # type: ignore[arg-type]
+            )
+
+    def test_run_network_none_accepted(self) -> None:
+        """Test Sandbox.run accepts network=None."""
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run("echo", "hello", network=None)
+            assert "network" not in sandbox._start_kwargs
+
+    def test_run_network_options_accepted(self) -> None:
+        """Test Sandbox.run accepts NetworkOptions instance."""
+        net_opts = NetworkOptions(egress_mode="internet")
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run("echo", "hello", network=net_opts)
+            assert sandbox._start_kwargs["network"] == net_opts
+
+    def test_run_network_dict_accepted(self) -> None:
+        """Test Sandbox.run accepts dict and converts to NetworkOptions."""
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run("echo", "hello", network={"egress_mode": "internet"})
+            net_opts = sandbox._start_kwargs["network"]
+            assert isinstance(net_opts, NetworkOptions)
+            assert net_opts.egress_mode == "internet"
+
+    def test_init_uses_defaults_network_when_not_specified(self) -> None:
+        """Test Sandbox.__init__ uses defaults.network when network is None."""
+        defaults_network = NetworkOptions(ingress_mode="internal", exposed_ports=(9000,))
+        defaults = SandboxDefaults(network=defaults_network)
+        sandbox = Sandbox(command="echo", args=["hello"], defaults=defaults)
+
+        assert sandbox._start_kwargs["network"] is defaults_network
+
+    def test_init_explicit_network_overrides_defaults(self) -> None:
+        """Test explicit network parameter overrides defaults.network."""
+        defaults_network = NetworkOptions(ingress_mode="internal")
+        explicit_network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+        defaults = SandboxDefaults(network=defaults_network)
+
+        sandbox = Sandbox(
+            command="echo", args=["hello"], defaults=defaults, network=explicit_network
+        )
+
+        assert sandbox._start_kwargs["network"] is explicit_network
+
+    def test_run_uses_defaults_network_when_not_specified(self) -> None:
+        """Test Sandbox.run uses defaults.network when network is None."""
+        defaults_network = NetworkOptions(egress_mode="isolated")
+        defaults = SandboxDefaults(network=defaults_network)
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run("echo", "hello", defaults=defaults)
+            assert sandbox._start_kwargs["network"] is defaults_network
+
+
+class TestAppliedNetworkModes:
+    """Tests for applied_ingress_mode and applied_egress_mode attributes."""
+
+    def test_applied_ingress_mode_starts_as_none(self) -> None:
+        """Test applied_ingress_mode is None before start."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.applied_ingress_mode is None
+
+    def test_applied_egress_mode_starts_as_none(self) -> None:
+        """Test applied_egress_mode is None before start."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.applied_egress_mode is None
+
+    def test_applied_modes_captured_from_start_response(self) -> None:
+        """Test applied_* modes are captured from StartSandboxResponse."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = "public"
+        mock_start_response.applied_egress_mode = "internet"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_ingress_mode == "public"
+            assert sandbox.applied_egress_mode == "internet"
+
+    def test_applied_modes_empty_string_mapped_to_none(self) -> None:
+        """Test empty string applied_* modes are mapped to None."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox.applied_ingress_mode is None
+            assert sandbox.applied_egress_mode is None
+
+    def test_applied_modes_preserved_after_get_status(self) -> None:
+        """Test applied_* values are preserved after get_status() refresh."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        # Set up sandbox with applied modes from start
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = "public"
+        mock_start_response.applied_egress_mode = "org"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox.start()
+
+        # Mock get_status call
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+
+        sandbox._client.get = AsyncMock(return_value=mock_get_response)
+
+        sandbox.get_status()
+
+        # Applied modes should be preserved (not overwritten by get_status)
+        assert sandbox.applied_ingress_mode == "public"
+        assert sandbox.applied_egress_mode == "org"
+
+
+class TestNetworkOptionsRequestPayload:
+    """Tests for NetworkOptions conversion to request payload."""
+
+    def test_network_options_converted_to_dict(self) -> None:
+        """Test NetworkOptions is converted to dict in start request."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            network=NetworkOptions(ingress_mode="public", egress_mode="internet"),
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            start_call = sandbox._client.start.call_args[0][0]
+            # Network should be converted to dict in the request
+            assert start_call.network.ingress_mode == "public"
+            assert start_call.network.egress_mode == "internet"
+
+    def test_exposed_ports_tuple_converted_to_list(self) -> None:
+        """Test exposed_ports tuple is converted to list in request."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            network=NetworkOptions(exposed_ports=(8080, 443)),
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            start_call = sandbox._client.start.call_args[0][0]
+            # exposed_ports should be a list in the request
+            assert list(start_call.network.exposed_ports) == [8080, 443]
+
+    def test_none_network_fields_omitted_from_request(self) -> None:
+        """Test None fields in NetworkOptions are omitted from request."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            network=NetworkOptions(ingress_mode="public"),  # Only ingress_mode set
+        )
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            start_call = sandbox._client.start.call_args[0][0]
+            # ingress_mode should be set
+            assert start_call.network.ingress_mode == "public"
+            # egress_mode should be empty (default protobuf value)
+            assert start_call.network.egress_mode == ""
+
+    def test_no_network_option_omits_network_from_request(self) -> None:
+        """Test no network option means network is not in _start_kwargs."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        # network should not be in _start_kwargs
+        assert "network" not in sandbox._start_kwargs
