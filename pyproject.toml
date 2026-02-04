@@ -28,10 +28,12 @@ classifiers = [
 ]
 dependencies = [
     "coreweave-aviato-connectrpc-python==0.8.1.1.20260127190035+52171f167253",
+    "coreweave-aviato-grpc-python==1.76.0.2.20260127190035+52171f167253",
     "httpx>=0.25.0",
     "protobuf>=6.33.4",
     "pydantic>=2.0.0",
     "h2>=4.0.0",  # Required for HTTP/2 streaming exec
+    "grpcio>=1.70.0",  # Required for gRPC channel management
 ]
 
 [project.optional-dependencies]
@@ -44,6 +46,7 @@ dev = [
     "ruff>=0.6.0",
     "mypy>=1.11.0",
     "pre-commit>=3.7.0",
+    "grpc-stubs>=1.53.0",  # Type stubs for grpcio
 ]
 docs = [
     "mkdocs>=1.6.0",
