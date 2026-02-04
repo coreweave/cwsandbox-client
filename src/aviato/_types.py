@@ -254,9 +254,7 @@ class StreamWriter:
 
     QUEUE_SIZE = 16  # ~1MB with 64KB chunks
 
-    def __init__(
-        self, queue: asyncio.Queue[bytes | None], loop_manager: _LoopManager
-    ) -> None:
+    def __init__(self, queue: asyncio.Queue[bytes | None], loop_manager: _LoopManager) -> None:
         """Initialize with a queue and loop manager.
 
         Args:

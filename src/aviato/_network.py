@@ -37,14 +37,10 @@ def parse_grpc_target(base_url: str) -> tuple[str, bool]:
     parsed = urlparse(base_url)
 
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"URL must use http or https scheme, got: {parsed.scheme!r}"
-        )
+        raise ValueError(f"URL must use http or https scheme, got: {parsed.scheme!r}")
 
     if parsed.path and parsed.path != "/":
-        raise ValueError(
-            f"gRPC does not support URL paths, got: {parsed.path!r}"
-        )
+        raise ValueError(f"gRPC does not support URL paths, got: {parsed.path!r}")
 
     is_secure = parsed.scheme == "https"
 

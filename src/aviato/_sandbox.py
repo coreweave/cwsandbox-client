@@ -607,7 +607,9 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(
-            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
+            target,
+            is_secure,
+            create_auth_interceptors(),  # type: ignore[arg-type]
         )
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
@@ -708,7 +710,9 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(
-            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
+            target,
+            is_secure,
+            create_auth_interceptors(),  # type: ignore[arg-type]
         )
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
@@ -717,9 +721,7 @@ class Sandbox:
             try:
                 response = await stub.Get(request, timeout=timeout)
             except grpc.RpcError as e:
-                raise _translate_rpc_error(
-                    e, sandbox_id=sandbox_id, operation="Get sandbox"
-                ) from e
+                raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
 
             return cls._from_sandbox_info(
                 sandbox_id=response.sandbox_id,
@@ -805,7 +807,9 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(
-            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
+            target,
+            is_secure,
+            create_auth_interceptors(),  # type: ignore[arg-type]
         )
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
@@ -943,9 +947,7 @@ class Sandbox:
 
         request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response = await self._stub.Get(
-                request, timeout=self._request_timeout_seconds
-            )
+            response = await self._stub.Get(request, timeout=self._request_timeout_seconds)
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e, sandbox_id=self._sandbox_id, operation="Get status"
@@ -1063,7 +1065,9 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(self._base_url)
         self._channel = create_channel(
-            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
+            target,
+            is_secure,
+            create_auth_interceptors(),  # type: ignore[arg-type]
         )
         self._stub = atc_pb2_grpc.ATCServiceStub(self._channel)  # type: ignore[no-untyped-call]
         logger.debug("Initialized gRPC channel for %s", self._base_url)
@@ -1190,9 +1194,7 @@ class Sandbox:
 
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
             try:
-                response = await self._stub.Start(
-                    request, timeout=self._request_timeout_seconds
-                )
+                response = await self._stub.Start(request, timeout=self._request_timeout_seconds)
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="Start sandbox") from e
 
@@ -1717,9 +1719,7 @@ class Sandbox:
                 await collect_task
             # Signal stdin writer that process has exited (prevents writes to exited process)
             if stdin_writer is not None:
-                stdin_writer.set_exception(
-                    SandboxExecutionError("Process has exited")
-                )
+                stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
             # Signal end-of-stream
             await stdout_queue.put(None)
             await stderr_queue.put(None)
@@ -1875,9 +1875,7 @@ class Sandbox:
         try:
             response = await self._stub.RetrieveFile(request, timeout=timeout)
         except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e, sandbox_id=self._sandbox_id, operation="Read file"
-            ) from e
+            raise _translate_rpc_error(e, sandbox_id=self._sandbox_id, operation="Read file") from e
 
         if not response.success:
             logger.warning("Failed to read file %s from sandbox %s", filepath, self._sandbox_id)

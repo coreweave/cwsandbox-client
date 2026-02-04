@@ -585,13 +585,11 @@ class TestSandboxAuth:
         """Test Sandbox uses auth interceptors with create_auth_interceptors."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch(
-            "aviato._sandbox.create_channel"
-        ) as mock_create_channel, patch(
-            "aviato._sandbox.atc_pb2_grpc.ATCServiceStub"
-        ) as mock_stub_class, patch(
-            "aviato._sandbox.create_auth_interceptors"
-        ) as mock_create_interceptors:
+        with (
+            patch("aviato._sandbox.create_channel") as mock_create_channel,
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub") as mock_stub_class,
+            patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
+        ):
             mock_create_interceptors.return_value = []
             await sandbox._ensure_client()
 
@@ -1121,9 +1119,7 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-        )
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -1149,9 +1145,7 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-        )
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -1205,9 +1199,7 @@ class TestSandboxFromId:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.Get = AsyncMock(
-            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
-        )
+        mock_stub.Get = AsyncMock(side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found"))
 
         with (
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -1772,9 +1764,7 @@ class TestTranslateRpcError:
         from aviato.exceptions import SandboxNotRunningError
 
         error = MockRpcError(grpc.StatusCode.CANCELLED, "cancelled")
-        result = _translate_rpc_error(
-            error, sandbox_id="test-456", operation="Execute command"
-        )
+        result = _translate_rpc_error(error, sandbox_id="test-456", operation="Execute command")
 
         assert isinstance(result, SandboxNotRunningError)
         assert "test-456" in str(result)

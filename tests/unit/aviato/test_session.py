@@ -68,6 +68,7 @@ class TestSessionSandbox:
             "MODEL_NAME": "gpt2",  # Added
         }
 
+
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
@@ -441,9 +442,7 @@ class TestSessionList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-        )
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),

@@ -331,6 +331,7 @@ def test_sandbox_exec_streaming_check_raises(sandbox_defaults: SandboxDefaults) 
             "echo 'output before exit' && exit 42",
         ]
 
+
 def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
     """Test environment variables are passed into the sandbox."""
     defaults = sandbox_defaults.with_overrides(
@@ -351,14 +352,16 @@ def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> Non
                 "LOG_LEVEL": "debug",  # Override session default
             },
         ) as sandbox:
-            result = sandbox.exec([
-                "python",
-                "-c",
-                "import os; "
-                "print(os.environ.get('PROJECT_ID')); "
-                "print(os.environ.get('LOG_LEVEL')); "
-                "print(os.environ.get('MODEL_NAME')); "
-            ]).result()
+            result = sandbox.exec(
+                [
+                    "python",
+                    "-c",
+                    "import os; "
+                    "print(os.environ.get('PROJECT_ID')); "
+                    "print(os.environ.get('LOG_LEVEL')); "
+                    "print(os.environ.get('MODEL_NAME')); ",
+                ]
+            ).result()
 
             assert result.returncode == 0
             lines = result.stdout.strip().split("\n")
@@ -418,6 +421,7 @@ def test_function_environment_variables(sandbox_defaults: SandboxDefaults) -> No
             "version": "v3.0",  # Mutated value
             "log_level": "debug",
         }
+
 
 # Async context manager tests
 
@@ -517,7 +521,8 @@ def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None
     )
 
     with Sandbox.run(
-        "sleep", "infinity",
+        "sleep",
+        "infinity",
         defaults=sandbox_defaults,
         network=network,
     ) as sandbox:
@@ -595,7 +600,10 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
     network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
 
     with Sandbox.run(
-        "python", "-m", "http.server", "8080",
+        "python",
+        "-m",
+        "http.server",
+        "8080",
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
         network=network,
@@ -647,16 +655,16 @@ def test_sandbox_exec_stdin_multiple_writes(sandbox_defaults: SandboxDefaults) -
         assert process.stdin is not None
 
         # Send a script that reads and counts lines
-        script = '''
+        script = """
 echo "line1"
 echo "line2"
 echo "line3"
 exit 0
-'''
+"""
         # Send as multiple writes to test that pattern
-        lines = script.split('\n')
+        lines = script.split("\n")
         for line in lines:
-            process.stdin.write((line + '\n').encode()).result()
+            process.stdin.write((line + "\n").encode()).result()
         process.stdin.close().result()
 
         result = process.result()
@@ -677,7 +685,7 @@ def test_sandbox_exec_stdin_writeline(sandbox_defaults: SandboxDefaults) -> None
 
         process.stdin.writeline('echo "first"').result()
         process.stdin.writeline('echo "second"').result()
-        process.stdin.writeline('exit 0').result()
+        process.stdin.writeline("exit 0").result()
         process.stdin.close().result()
 
         result = process.result()
@@ -719,10 +727,10 @@ def test_sandbox_exec_stdin_python_interactive(sandbox_defaults: SandboxDefaults
         assert process.stdin is not None
 
         # Send a shell script that runs Python
-        script = '''
+        script = """
 python -u -c "result = 2 + 3; print(f'answer={result}')"
 exit 0
-'''
+"""
         process.stdin.write(script.encode()).result()
         process.stdin.close().result()
 
@@ -837,7 +845,7 @@ def test_sandbox_exec_stdin_eof_command(sandbox_defaults: SandboxDefaults) -> No
     properly signals end-of-input.
     """
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        process = sandbox.exec(["sort"], stdin=True)
+        process = sandbox.exec(["sort"], stdin=True, timeout_seconds=60.0)
         assert process.stdin is not None
 
         # Send data as single block for reliability
@@ -894,7 +902,7 @@ def test_sandbox_exec_stdin_with_streaming_output(
     """
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
         # Use sort which waits for all input before producing output
-        process = sandbox.exec(["sort"], stdin=True)
+        process = sandbox.exec(["sort"], stdin=True, timeout_seconds=60.0)
         assert process.stdin is not None
 
         process.stdin.write(b"banana\napple\ncherry\n").result()
@@ -918,7 +926,7 @@ def test_sandbox_exec_stdin_cat_roundtrip(sandbox_defaults: SandboxDefaults) -> 
     output matches input exactly.
     """
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        process = sandbox.exec(["cat"], stdin=True)
+        process = sandbox.exec(["cat"], stdin=True, timeout_seconds=60.0)
         assert process.stdin is not None
 
         process.stdin.write(b"hello world").result()
@@ -935,7 +943,7 @@ def test_sandbox_exec_stdin_cat_multiple_lines(sandbox_defaults: SandboxDefaults
     Verifies that newlines and multiple writes are handled correctly.
     """
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
-        process = sandbox.exec(["cat"], stdin=True)
+        process = sandbox.exec(["cat"], stdin=True, timeout_seconds=60.0)
         assert process.stdin is not None
 
         process.stdin.write(b"line one\n").result()

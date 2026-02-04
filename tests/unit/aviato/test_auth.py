@@ -313,9 +313,7 @@ class TestAuthInterceptor:
 
         result = interceptor._add_metadata(mock_details)
 
-        mock_details._replace.assert_called_once_with(
-            metadata=(("authorization", "Bearer token"),)
-        )
+        mock_details._replace.assert_called_once_with(metadata=(("authorization", "Bearer token"),))
         assert result == "new_details"
 
     @pytest.mark.asyncio
