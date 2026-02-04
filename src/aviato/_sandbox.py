@@ -31,7 +31,14 @@ from aviato._defaults import (
     SandboxDefaults,
 )
 from aviato._loop_manager import _LoopManager
-from aviato._types import NetworkOptions, OperationRef, Process, ProcessResult, StreamReader
+from aviato._types import (
+    NetworkOptions,
+    OperationRef,
+    Process,
+    ProcessResult,
+    StreamReader,
+    StreamWriter,
+)
 from aviato.exceptions import (
     SandboxError,
     SandboxExecutionError,
@@ -1476,12 +1483,16 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
+        stdin_queue: asyncio.Queue[bytes | None] | None = None,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
         Uses bidirectional streaming to receive stdout/stderr as they arrive.
         Buffers output while also pushing to queues for real-time streaming.
         Signals end-of-stream with None sentinel when command completes.
+
+        When stdin_queue is provided, data from it is sent to the process's stdin.
+        None in stdin_queue signals EOF.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
 
@@ -1521,14 +1532,22 @@ class Sandbox:
         exit_code: int | None = None
 
         async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-            """Generate input stream: send init message and return immediately."""
+            """Generate input stream: send init message, then stdin data if enabled."""
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
                     sandbox_id=self._sandbox_id,
                     command=rpc_command,
                 )
             )
-            # Generator returns immediately - RPC contract does not require staying open
+            # If stdin is enabled, yield data from stdin_queue until EOF (None)
+            if stdin_queue is not None:
+                while True:
+                    data = await stdin_queue.get()
+                    if data is None:  # EOF sentinel
+                        break
+                    yield streaming_pb2.ExecStreamRequest(
+                        stdin=streaming_pb2.ExecStreamData(data=data)
+                    )
 
         # Queue decouples stream iteration from our processing.
         # Without this, processing suspends the stream and can cause issues.
@@ -1639,6 +1658,7 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
+        stdin: bool = False,
     ) -> Process:
         """Execute command, return Process immediately.
 
@@ -1653,11 +1673,14 @@ class Sandbox:
             check: If True, raise SandboxExecutionError on non-zero returncode
             timeout_seconds: Timeout for command execution (after sandbox is RUNNING).
                 Does not include time waiting for sandbox to reach RUNNING status.
+            stdin: If True, enable stdin streaming. Process.stdin will be a
+                StreamWriter that can send input to the command. If False (default),
+                stdin is closed immediately and Process.stdin is None.
 
         Returns:
             Process handle with streaming stdout/stderr. Call .result() to block
             for the final ProcessResult, or iterate over .stdout/.stderr for
-            real-time output.
+            real-time output. When stdin=True, Process.stdin is a StreamWriter.
 
         Raises:
             ValueError: If command is empty or cwd is invalid (empty or relative path)
@@ -1678,6 +1701,12 @@ class Sandbox:
                 print(line)
             result = process.result()
 
+            # With stdin streaming
+            process = sb.exec(["cat"], stdin=True)
+            process.stdin.write(b"hello world").result()
+            process.stdin.close().result()
+            result = process.result()
+
             # Async usage
             result = await sb.exec(["echo", "hello"])
             ```
@@ -1691,6 +1720,13 @@ class Sandbox:
         stdout_queue: asyncio.Queue[str | None] = asyncio.Queue()
         stderr_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+        # Stdin queue is bounded to provide backpressure
+        stdin_queue: asyncio.Queue[bytes | None] | None = None
+        stdin_writer: StreamWriter | None = None
+        if stdin:
+            stdin_queue = asyncio.Queue(maxsize=StreamWriter.QUEUE_SIZE)
+            stdin_writer = StreamWriter(stdin_queue, self._loop_manager)
+
         process_future = self._loop_manager.run_async(
             self._exec_streaming_async(
                 command,
@@ -1699,6 +1735,7 @@ class Sandbox:
                 cwd=cwd,
                 check=check,
                 timeout_seconds=timeout_seconds,
+                stdin_queue=stdin_queue,
             )
         )
 
@@ -1707,6 +1744,7 @@ class Sandbox:
             command=list(command),
             stdout=StreamReader(stdout_queue, self._loop_manager),
             stderr=StreamReader(stderr_queue, self._loop_manager),
+            stdin=stdin_writer,
         )
 
     async def _read_file_async(
