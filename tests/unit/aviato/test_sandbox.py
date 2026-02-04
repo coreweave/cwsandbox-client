@@ -1727,3 +1727,119 @@ class TestNetworkOptionsRequestPayload:
 
         # network should not be in _start_kwargs
         assert "network" not in sandbox._start_kwargs
+
+
+class TestTranslateRpcError:
+    """Tests for _translate_rpc_error function."""
+
+    def test_not_found_returns_sandbox_not_found_error(self) -> None:
+        """Test NOT_FOUND status code returns SandboxNotFoundError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
+
+        error = MockRpcError(grpc.StatusCode.NOT_FOUND, "sandbox not found")
+        result = _translate_rpc_error(error, sandbox_id="test-123")
+
+        assert isinstance(result, SandboxNotFoundError)
+        assert result.sandbox_id == "test-123"
+        assert "test-123" in str(result)
+
+    def test_not_found_without_sandbox_id_uses_details(self) -> None:
+        """Test NOT_FOUND without sandbox_id uses error details."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
+
+        error = MockRpcError(grpc.StatusCode.NOT_FOUND, "resource not found")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxNotFoundError)
+        assert "resource not found" in str(result)
+
+    def test_cancelled_returns_sandbox_not_running_error(self) -> None:
+        """Test CANCELLED status code returns SandboxNotRunningError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.CANCELLED, "request cancelled")
+        result = _translate_rpc_error(error, operation="Start sandbox")
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "cancelled" in str(result)
+
+    def test_cancelled_with_sandbox_id_includes_id(self) -> None:
+        """Test CANCELLED with sandbox_id includes ID in message."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.CANCELLED, "cancelled")
+        result = _translate_rpc_error(
+            error, sandbox_id="test-456", operation="Execute command"
+        )
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "test-456" in str(result)
+
+    def test_deadline_exceeded_returns_sandbox_timeout_error(self) -> None:
+        """Test DEADLINE_EXCEEDED status code returns SandboxTimeoutError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxTimeoutError
+
+        error = MockRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "timeout after 30s")
+        result = _translate_rpc_error(error, operation="Execute command")
+
+        assert isinstance(result, SandboxTimeoutError)
+        assert "timed out" in str(result)
+
+    def test_unavailable_returns_sandbox_not_running_error(self) -> None:
+        """Test UNAVAILABLE status code returns SandboxNotRunningError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.UNAVAILABLE, "connection refused")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "unavailable" in str(result).lower()
+
+    def test_permission_denied_returns_auth_error(self) -> None:
+        """Test PERMISSION_DENIED status code returns AviatoAuthenticationError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import AviatoAuthenticationError
+
+        error = MockRpcError(grpc.StatusCode.PERMISSION_DENIED, "access denied")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, AviatoAuthenticationError)
+        assert "denied" in str(result).lower()
+
+    def test_unauthenticated_returns_auth_error(self) -> None:
+        """Test UNAUTHENTICATED status code returns AviatoAuthenticationError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import AviatoAuthenticationError
+
+        error = MockRpcError(grpc.StatusCode.UNAUTHENTICATED, "invalid token")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, AviatoAuthenticationError)
+        assert "authentication" in str(result).lower()
+
+    def test_other_status_returns_sandbox_error(self) -> None:
+        """Test other status codes return generic SandboxError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
+
+        error = MockRpcError(grpc.StatusCode.INTERNAL, "internal error")
+        result = _translate_rpc_error(error, operation="Test operation")
+
+        assert isinstance(result, SandboxError)
+        assert "failed" in str(result)
+
+    def test_empty_details_uses_string_repr(self) -> None:
+        """Test that empty details falls back to str(e)."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
+
+        error = MockRpcError(grpc.StatusCode.INTERNAL, "")
+        result = _translate_rpc_error(error, operation="Test")
+
+        assert isinstance(result, SandboxError)
