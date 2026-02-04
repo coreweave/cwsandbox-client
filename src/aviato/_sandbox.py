@@ -559,7 +559,7 @@ class Sandbox:
         client = atc_connect.ATCServiceClient(
             address=effective_base_url,
             proto_json=True,
-            interceptors=create_auth_interceptors(),
+            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
             timeout_ms=int(timeout * 1000),
         )
 
@@ -658,7 +658,7 @@ class Sandbox:
         client = atc_connect.ATCServiceClient(
             address=effective_base_url,
             proto_json=True,
-            interceptors=create_auth_interceptors(),
+            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
             timeout_ms=int(timeout * 1000),
         )
 
@@ -759,7 +759,7 @@ class Sandbox:
         client = atc_connect.ATCServiceClient(
             address=effective_base_url,
             proto_json=True,
-            interceptors=create_auth_interceptors(),
+            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
             timeout_ms=int(timeout * 1000),
         )
 
@@ -1021,7 +1021,7 @@ class Sandbox:
         self._client = atc_connect.ATCServiceClient(
             address=self._base_url,
             proto_json=True,
-            interceptors=create_auth_interceptors(),
+            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
             timeout_ms=int(self._request_timeout_seconds * 1000),
         )
         logger.debug("Initialized client for %s", self._base_url)
@@ -1514,7 +1514,7 @@ class Sandbox:
         streaming_client = streaming_connect.ATCStreamingServiceClient(
             address=self._base_url,
             proto_json=True,
-            interceptors=create_auth_interceptors(),
+            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
             http_client=http_client,
             timeout_ms=int((timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS) * 1000),
         )
