@@ -277,9 +277,11 @@ done, pending = aviato.wait(procs, timeout=30.0)
 
 ### Backend Communication
 
-Uses ConnectRPC via `coreweave-aviato-connectrpc-python` package. Proto definitions generate `atc_pb2` and `atc_connect` modules.
+Uses gRPC via `coreweave-aviato-grpc-python` and `grpcio` packages. Proto definitions generate `atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, and `streaming_pb2_grpc` modules.
 
-**HTTP/2 requirement**: Streaming exec uses a separate `httpx.AsyncClient` with `http2=True`. ConnectRPC bidirectional streaming requires HTTP/2 - without this setting, the backend returns 505 HTTP Version Not Supported.
+**Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
+
+**Streaming exec**: Uses native gRPC bidirectional streaming with request iterator pattern for proper half-close semantics via iterator completion.
 
 ### Related Repositories
 

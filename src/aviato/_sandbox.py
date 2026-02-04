@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 import grpc
 import grpc.aio
 from coreweave.aviato.v1beta1 import (
-    atc_connect,
     atc_pb2,
     atc_pb2_grpc,
     streaming_pb2,
@@ -323,7 +322,6 @@ class Sandbox:
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
-        self._client: atc_connect.ATCServiceClient | None = None
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
         self._sandbox_id: str | None = None
@@ -514,7 +512,6 @@ class Sandbox:
         sandbox._runway_ids = None
         sandbox._tower_ids = None
         sandbox._environment_variables = {}
-        sandbox._client = None
         sandbox._channel = None
         sandbox._stub = None
         sandbox._stopped = False

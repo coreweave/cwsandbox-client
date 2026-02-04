@@ -27,13 +27,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "coreweave-aviato-connectrpc-python==0.8.1.1.20260127190035+52171f167253",
     "coreweave-aviato-grpc-python==1.76.0.2.20260127190035+52171f167253",
-    "httpx>=0.25.0",
     "protobuf>=6.33.4",
     "pydantic>=2.0.0",
-    "h2>=4.0.0",  # Required for HTTP/2 streaming exec
-    "grpcio>=1.70.0",  # Required for gRPC channel management
+    "grpcio>=1.70.0",
 ]
 
 [project.optional-dependencies]
