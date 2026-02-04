@@ -28,6 +28,7 @@ from aviato._defaults import (
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    STDIN_CHUNK_SIZE,
     SandboxDefaults,
 )
 from aviato._loop_manager import _LoopManager
@@ -1531,23 +1532,58 @@ class Sandbox:
         stderr_buffer: list[bytes] = []
         exit_code: int | None = None
 
+        # Shutdown event signals input_stream to stop when process exits/times out
+        shutdown_event = asyncio.Event()
+
         async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-            """Generate input stream: send init message, then stdin data if enabled."""
+            """Generate input stream: send init message, then stdin data if enabled.
+
+            When stdin streaming is enabled, stays open and consumes from stdin_queue
+            until EOF (None) or shutdown signal. Large writes are chunked to 64KB.
+            """
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
                     sandbox_id=self._sandbox_id,
                     command=rpc_command,
                 )
             )
-            # If stdin is enabled, yield data from stdin_queue until EOF (None)
+            # If stdin is enabled, yield data from stdin_queue until EOF (None) or shutdown
             if stdin_queue is not None:
-                while True:
-                    data = await stdin_queue.get()
-                    if data is None:  # EOF sentinel
+                while not shutdown_event.is_set():
+                    # Wait for either queue data or shutdown signal
+                    get_task = asyncio.create_task(stdin_queue.get())
+                    shutdown_task = asyncio.create_task(shutdown_event.wait())
+                    try:
+                        done, pending = await asyncio.wait(
+                            [get_task, shutdown_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        # Cancel pending tasks
+                        for task in pending:
+                            task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await task
+
+                        # Check if shutdown was triggered
+                        if shutdown_task in done:
+                            break
+
+                        # Process queue data
+                        data = get_task.result()
+                        if data is None:  # EOF sentinel - close stdin
+                            yield streaming_pb2.ExecStreamRequest(
+                                close=streaming_pb2.ExecStreamClose()
+                            )
+                            break
+
+                        # Chunk large data into 64KB pieces
+                        for i in range(0, len(data), STDIN_CHUNK_SIZE):
+                            chunk = data[i : i + STDIN_CHUNK_SIZE]
+                            yield streaming_pb2.ExecStreamRequest(
+                                stdin=streaming_pb2.ExecStreamData(data=chunk)
+                            )
+                    except asyncio.CancelledError:
                         break
-                    yield streaming_pb2.ExecStreamRequest(
-                        stdin=streaming_pb2.ExecStreamData(data=data)
-                    )
 
         # Queue decouples stream iteration from our processing.
         # Without this, processing suspends the stream and can cause issues.
@@ -1618,6 +1654,8 @@ class Sandbox:
                         f"Exec stream error: {response.error.message}",
                     )
         finally:
+            # Signal input_stream to stop consuming stdin queue
+            shutdown_event.set()
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
