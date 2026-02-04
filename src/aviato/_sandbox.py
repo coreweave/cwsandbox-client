@@ -13,13 +13,18 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-import pyqwest
-from connectrpc.code import Code
-from connectrpc.errors import ConnectError
-from coreweave.aviato.v1beta1 import atc_connect, atc_pb2, streaming_connect, streaming_pb2
+import grpc
+import grpc.aio
+from coreweave.aviato.v1beta1 import (
+    atc_connect,
+    atc_pb2,
+    atc_pb2_grpc,
+    streaming_pb2,
+    streaming_pb2_grpc,
+)
 from google.protobuf import timestamp_pb2
 
-from aviato._auth import create_auth_interceptors
+from aviato._auth import create_auth_interceptors, resolve_auth
 from aviato._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
@@ -32,6 +37,7 @@ from aviato._defaults import (
     SandboxDefaults,
 )
 from aviato._loop_manager import _LoopManager
+from aviato._network import create_channel, parse_grpc_target
 from aviato._types import (
     NetworkOptions,
     OperationRef,
@@ -41,6 +47,7 @@ from aviato._types import (
     StreamWriter,
 )
 from aviato.exceptions import (
+    AviatoAuthenticationError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
@@ -121,6 +128,47 @@ def _wrap_command_with_cwd(command: Sequence[str], cwd: str) -> list[str]:
     escaped_cwd = shlex.quote(cwd)
     escaped_command = " ".join(shlex.quote(arg) for arg in command)
     return ["/bin/sh", "-c", f"cd {escaped_cwd} && exec {escaped_command}"]
+
+
+def _translate_rpc_error(
+    e: grpc.RpcError,
+    *,
+    sandbox_id: str | None = None,
+    operation: str = "operation",
+) -> SandboxError | AviatoAuthenticationError:
+    """Translate gRPC RpcError to appropriate Aviato exception.
+
+    Args:
+        e: The gRPC RpcError to translate
+        sandbox_id: Optional sandbox ID for context in error messages
+        operation: Description of the operation that failed
+
+    Returns:
+        An appropriate Aviato exception
+    """
+    code = e.code()
+    details = e.details() or str(e)
+
+    if code == grpc.StatusCode.NOT_FOUND:
+        return SandboxNotFoundError(
+            f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
+            sandbox_id=sandbox_id,
+        )
+    elif code == grpc.StatusCode.CANCELLED:
+        return SandboxNotRunningError(
+            f"{operation} was cancelled"
+            + (f" (sandbox {sandbox_id} connection closed)" if sandbox_id else "")
+        )
+    elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
+        return SandboxTimeoutError(f"{operation} timed out: {details}")
+    elif code == grpc.StatusCode.UNAVAILABLE:
+        return SandboxNotRunningError(f"Service unavailable: {details}")
+    elif code == grpc.StatusCode.PERMISSION_DENIED:
+        return AviatoAuthenticationError(f"Permission denied: {details}")
+    elif code == grpc.StatusCode.UNAUTHENTICATED:
+        return AviatoAuthenticationError(f"Authentication failed: {details}")
+    else:
+        return SandboxError(f"{operation} failed: {details}")
 
 
 class Sandbox:
@@ -276,6 +324,8 @@ class Sandbox:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
 
         self._client: atc_connect.ATCServiceClient | None = None
+        self._channel: grpc.aio.Channel | None = None
+        self._stub: atc_pb2_grpc.ATCServiceStub | None = None
         self._sandbox_id: str | None = None
         self._returncode: int | None = None
         self._tower_id: str | None = None
@@ -465,6 +515,8 @@ class Sandbox:
         sandbox._tower_ids = None
         sandbox._environment_variables = {}
         sandbox._client = None
+        sandbox._channel = None
+        sandbox._stub = None
         sandbox._stopped = False
         sandbox._returncode = None
         sandbox._session = None
@@ -556,12 +608,11 @@ class Sandbox:
         if status is not None:
             status_enum = SandboxStatus(status)
 
-        client = atc_connect.ATCServiceClient(
-            address=effective_base_url,
-            proto_json=True,
-            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
-            timeout_ms=int(timeout * 1000),
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(
+            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
         )
+        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request_kwargs: dict[str, Any] = {}
@@ -575,7 +626,10 @@ class Sandbox:
                 request_kwargs["tower_ids"] = tower_ids
 
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
-            response = await client.list(request)
+            try:
+                response = await stub.List(request, timeout=timeout)
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(e, operation="List sandboxes") from e
 
             return [
                 cls._from_sandbox_info(
@@ -591,7 +645,7 @@ class Sandbox:
                 for sb in response.sandboxes
             ]
         finally:
-            await client.close()
+            await channel.close(grace=None)
 
     @classmethod
     def from_id(
@@ -655,24 +709,20 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
-        client = atc_connect.ATCServiceClient(
-            address=effective_base_url,
-            proto_json=True,
-            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
-            timeout_ms=int(timeout * 1000),
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(
+            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
         )
+        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
+            request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
-                request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
-                response = await client.get(request)
-            except ConnectError as e:
-                if e.code == Code.NOT_FOUND:
-                    raise SandboxNotFoundError(
-                        f"Sandbox '{sandbox_id}' not found",
-                        sandbox_id=sandbox_id,
-                    ) from e
-                raise
+                response = await stub.Get(request, timeout=timeout)
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(
+                    e, sandbox_id=sandbox_id, operation="Get sandbox"
+                ) from e
 
             return cls._from_sandbox_info(
                 sandbox_id=response.sandbox_id,
@@ -685,7 +735,7 @@ class Sandbox:
                 timeout_seconds=timeout,
             )
         finally:
-            await client.close()
+            await channel.close(grace=None)
 
     @classmethod
     def delete(
@@ -756,31 +806,27 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
-        client = atc_connect.ATCServiceClient(
-            address=effective_base_url,
-            proto_json=True,
-            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
-            timeout_ms=int(timeout * 1000),
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(
+            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
         )
+        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
+            request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
-                request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
-                response = await client.delete(request)
-            except ConnectError as e:
-                if e.code == Code.NOT_FOUND:
-                    if missing_ok:
-                        return
-                    raise SandboxNotFoundError(
-                        f"Sandbox '{sandbox_id}' not found",
-                        sandbox_id=sandbox_id,
-                    ) from e
-                raise
+                response = await stub.Delete(request, timeout=timeout)
+            except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                    return
+                raise _translate_rpc_error(
+                    e, sandbox_id=sandbox_id, operation="Delete sandbox"
+                ) from e
 
             if not response.success:
                 raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
         finally:
-            await client.close()
+            await channel.close(grace=None)
 
     @property
     def sandbox_id(self) -> str | None:
@@ -896,17 +942,17 @@ class Sandbox:
             raise SandboxNotRunningError("Sandbox has not been started")
 
         await self._ensure_client()
-        assert self._client is not None
+        assert self._stub is not None
 
         request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response = await self._client.get(request)
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                raise SandboxNotRunningError(
-                    f"Get status was cancelled (sandbox {self._sandbox_id} connection closed)"
-                ) from e
-            raise
+            response = await self._stub.Get(
+                request, timeout=self._request_timeout_seconds
+            )
+        except grpc.RpcError as e:
+            raise _translate_rpc_error(
+                e, sandbox_id=self._sandbox_id, operation="Get status"
+            ) from e
 
         status = SandboxStatus.from_proto(response.sandbox_status)
         self._status = status
@@ -1014,17 +1060,16 @@ class Sandbox:
             )
 
     async def _ensure_client(self) -> None:
-        """Ensure the Connect RPC client is initialized."""
-        if self._client is not None:
+        """Ensure the gRPC channel and stub are initialized."""
+        if self._channel is not None:
             return
 
-        self._client = atc_connect.ATCServiceClient(
-            address=self._base_url,
-            proto_json=True,
-            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
-            timeout_ms=int(self._request_timeout_seconds * 1000),
+        target, is_secure = parse_grpc_target(self._base_url)
+        self._channel = create_channel(
+            target, is_secure, create_auth_interceptors()  # type: ignore[arg-type]
         )
-        logger.debug("Initialized client for %s", self._base_url)
+        self._stub = atc_pb2_grpc.ATCServiceStub(self._channel)  # type: ignore[no-untyped-call]
+        logger.debug("Initialized gRPC channel for %s", self._base_url)
 
     async def _poll_until_stable(
         self,
@@ -1050,13 +1095,13 @@ class Sandbox:
             raise SandboxNotRunningError("No sandbox ID available")
 
         await self._ensure_client()
-        assert self._client is not None
+        assert self._stub is not None
 
         start_time = time.monotonic()
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
 
         while True:
-            if self._stopped or self._client is None:
+            if self._stopped or self._channel is None:
                 raise SandboxNotRunningError(
                     f"Sandbox {self._sandbox_id} was stopped while polling"
                 )
@@ -1067,13 +1112,13 @@ class Sandbox:
 
             request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
-                response = await self._client.get(request)
-            except ConnectError as e:
-                if e.code == Code.CANCELED:
-                    raise SandboxNotRunningError(
-                        f"Sandbox {self._sandbox_id} polling was cancelled (connection closed)"
-                    ) from e
-                raise
+                response: atc_pb2.GetSandboxResponse = await self._stub.Get(
+                    request, timeout=self._request_timeout_seconds
+                )
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(
+                    e, sandbox_id=self._sandbox_id, operation="Poll sandbox status"
+                ) from e
 
             logger.debug(
                 "Sandbox %s status: %s",
@@ -1111,7 +1156,7 @@ class Sandbox:
                 return self._sandbox_id
 
             await self._ensure_client()
-            assert self._client is not None
+            assert self._stub is not None
 
             request_kwargs: dict[str, Any] = {
                 "command": self._command,
@@ -1148,16 +1193,11 @@ class Sandbox:
 
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
             try:
-                response = await self._client.start(request)
-            except ConnectError as e:
-                if e.code == Code.CANCELED:
-                    raise SandboxNotRunningError(
-                        "Sandbox start was cancelled "
-                        "(client connection closed during request). "
-                        "This can occur if the process received a signal "
-                        "or cleanup ran during startup."
-                    ) from e
-                raise
+                response = await self._stub.Start(
+                    request, timeout=self._request_timeout_seconds
+                )
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(e, operation="Start sandbox") from e
 
             sandbox_id = str(response.sandbox_id)
             self._sandbox_id = sandbox_id
@@ -1391,7 +1431,7 @@ class Sandbox:
         self._stopped = True
 
         await self._ensure_client()
-        assert self._client is not None
+        assert self._stub is not None
 
         logger.debug("Stopping sandbox %s", self._sandbox_id)
 
@@ -1405,20 +1445,19 @@ class Sandbox:
 
         try:
             try:
-                response = await self._client.stop(request)
-            except ConnectError as e:
-                if e.code == Code.NOT_FOUND:
-                    if missing_ok:
-                        logger.debug(
-                            "Sandbox %s not found during stop (missing_ok=True)",
-                            self._sandbox_id,
-                        )
-                        return
-                    raise SandboxNotFoundError(
-                        f"Sandbox '{self._sandbox_id}' not found",
-                        sandbox_id=self._sandbox_id,
-                    ) from e
-                raise
+                response = await self._stub.Stop(
+                    request, timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                )
+            except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                    logger.debug(
+                        "Sandbox %s not found during stop (missing_ok=True)",
+                        self._sandbox_id,
+                    )
+                    return
+                raise _translate_rpc_error(
+                    e, sandbox_id=self._sandbox_id, operation="Stop sandbox"
+                ) from e
 
             if response.success:
                 logger.info("Sandbox %s stopped successfully", self._sandbox_id)
@@ -1430,10 +1469,11 @@ class Sandbox:
             # is no longer usable either way
             if self._session is not None:
                 self._session._deregister_sandbox(self)
-            # Close the client to release resources
-            if self._client is not None:
-                await self._client.close()
-                self._client = None
+            # Close the channel to release resources
+            if self._channel is not None:
+                await self._channel.close(grace=None)
+                self._channel = None
+                self._stub = None
 
     def stop(
         self,
@@ -1485,15 +1525,16 @@ class Sandbox:
         check: bool = False,
         timeout_seconds: float | None = None,
         stdin_queue: asyncio.Queue[bytes | None] | None = None,
+        stdin_writer: StreamWriter | None = None,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
-        Uses bidirectional streaming to receive stdout/stderr as they arrive.
+        Uses gRPC bidirectional streaming to receive stdout/stderr as they arrive.
         Buffers output while also pushing to queues for real-time streaming.
         Signals end-of-stream with None sentinel when command completes.
 
         When stdin_queue is provided, data from it is sent to the process's stdin.
-        None in stdin_queue signals EOF.
+        None in stdin_queue signals EOF. Uses done_writing() for proper half-close.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
 
@@ -1508,15 +1549,20 @@ class Sandbox:
         # Wait for sandbox to be RUNNING before sending exec request
         await self._wait_until_running_async()
 
-        # HTTP/2 required for bidirectional streaming
-        http2_transport = pyqwest.HTTPTransport(http_version=pyqwest.HTTPVersion.HTTP2)
-        http_client = pyqwest.Client(transport=http2_transport)
-        streaming_client = streaming_connect.ATCStreamingServiceClient(
-            address=self._base_url,
-            proto_json=True,
-            interceptors=create_auth_interceptors(),  # type: ignore[arg-type]
-            http_client=http_client,
-            timeout_ms=int((timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS) * 1000),
+        # Create gRPC channel (without interceptors - metadata passed directly)
+        target, is_secure = parse_grpc_target(self._base_url)
+        channel = create_channel(target, is_secure)
+
+        # Wait for channel to be ready before making calls
+        await channel.channel_ready()
+
+        stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+
+        # Resolve auth headers and convert to gRPC metadata
+        auth = resolve_auth()
+        # gRPC metadata requires lowercase keys
+        auth_metadata: tuple[tuple[str, str], ...] = tuple(
+            (k.lower(), v) for k, v in auth.headers.items()
         )
 
         # Wrap command with cwd if provided
@@ -1532,22 +1578,25 @@ class Sandbox:
         stderr_buffer: list[bytes] = []
         exit_code: int | None = None
 
-        # Shutdown event signals input_stream to stop when process exits/times out
+        # Shutdown event signals request generator to stop when process exits/times out
         shutdown_event = asyncio.Event()
 
-        async def input_stream() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-            """Generate input stream: send init message, then stdin data if enabled.
+        async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+            """Generate request messages for the bidirectional stream.
 
-            When stdin streaming is enabled, stays open and consumes from stdin_queue
-            until EOF (None) or shutdown signal. Large writes are chunked to 64KB.
+            Yields init message, then stdin data if enabled, then returns.
+            The generator naturally completes when all messages are sent,
+            which signals gRPC to half-close the send direction.
             """
+            # Yield init message first
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
                     sandbox_id=self._sandbox_id,
                     command=rpc_command,
                 )
             )
-            # If stdin is enabled, yield data from stdin_queue until EOF (None) or shutdown
+
+            # If stdin is enabled, yield data from stdin_queue until EOF or shutdown
             if stdin_queue is not None:
                 while not shutdown_event.is_set():
                     # Wait for either queue data or shutdown signal
@@ -1566,7 +1615,7 @@ class Sandbox:
 
                         # Check if shutdown was triggered
                         if shutdown_task in done:
-                            break
+                            return
 
                         # Process queue data
                         data = get_task.result()
@@ -1574,7 +1623,7 @@ class Sandbox:
                             yield streaming_pb2.ExecStreamRequest(
                                 close=streaming_pb2.ExecStreamClose()
                             )
-                            break
+                            return
 
                         # Chunk large data into 64KB pieces
                         for i in range(0, len(data), STDIN_CHUNK_SIZE):
@@ -1583,7 +1632,17 @@ class Sandbox:
                                 stdin=streaming_pb2.ExecStreamData(data=chunk)
                             )
                     except asyncio.CancelledError:
-                        break
+                        return
+
+        # Create the bidirectional streaming call with request iterator
+        call_timeout = timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout else None
+        call: grpc.aio.StreamStreamCall[
+            streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+        ] = stub.StreamExec(
+            request_iterator=request_generator(),
+            timeout=call_timeout,
+            metadata=auth_metadata,
+        )
 
         # Queue decouples stream iteration from our processing.
         # Without this, processing suspends the stream and can cause issues.
@@ -1591,18 +1650,15 @@ class Sandbox:
             asyncio.Queue()
         )
 
-        async def collect() -> None:
-            """Collect responses from streaming RPC into queue."""
+        async def collect_responses() -> None:
+            """Collect responses from gRPC streaming call into queue."""
             try:
-                async for response in streaming_client.stream_exec(
-                    input_stream(),
-                    timeout_ms=int(timeout * 1000) if timeout is not None else None,
-                ):
+                async for response in call:
                     await response_queue.put(response)
                     if response.HasField("exit") or response.HasField("error"):
                         return
-            except ConnectError as e:
-                if e.code == Code.DEADLINE_EXCEEDED:
+            except grpc.aio.AioRpcError as e:
+                if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
                     await response_queue.put(
                         SandboxTimeoutError(
                             f"Command {shlex.join(command)} timed out after {timeout}s"
@@ -1615,7 +1671,9 @@ class Sandbox:
             finally:
                 await response_queue.put(None)  # Sentinel
 
-        task = asyncio.create_task(collect())
+        # Start collector task (sender is handled by gRPC via the request_iterator)
+        collect_task = asyncio.create_task(collect_responses())
+
         try:
             while True:
                 item = await response_queue.get()
@@ -1654,16 +1712,22 @@ class Sandbox:
                         f"Exec stream error: {response.error.message}",
                     )
         finally:
-            # Signal input_stream to stop consuming stdin queue
+            # Signal request generator to stop consuming stdin queue
             shutdown_event.set()
-            task.cancel()
+            # Cancel collector task
+            collect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                await collect_task
+            # Signal stdin writer that process has exited (prevents writes to exited process)
+            if stdin_writer is not None:
+                stdin_writer.set_exception(
+                    SandboxExecutionError("Process has exited")
+                )
             # Signal end-of-stream
             await stdout_queue.put(None)
             await stderr_queue.put(None)
-            # Close streaming client to release resources
-            await streaming_client.close()
+            # Close gRPC channel to release resources
+            await channel.close(grace=None)
 
         # Combine buffers into final output
         stdout_bytes = b"".join(stdout_buffer)
@@ -1774,6 +1838,7 @@ class Sandbox:
                 check=check,
                 timeout_seconds=timeout_seconds,
                 stdin_queue=stdin_queue,
+                stdin_writer=stdin_writer,
             )
         )
 
@@ -1800,7 +1865,7 @@ class Sandbox:
         await self._wait_until_running_async()
 
         await self._ensure_client()
-        assert self._client is not None
+        assert self._stub is not None
 
         logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
 
@@ -1811,16 +1876,11 @@ class Sandbox:
         )
 
         try:
-            response = await asyncio.wait_for(
-                self._client.retrieve_file(request),
-                timeout=timeout,
-            )
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                raise SandboxNotRunningError(
-                    f"Read file was cancelled (sandbox {self._sandbox_id} connection closed)"
-                ) from e
-            raise
+            response = await self._stub.RetrieveFile(request, timeout=timeout)
+        except grpc.RpcError as e:
+            raise _translate_rpc_error(
+                e, sandbox_id=self._sandbox_id, operation="Read file"
+            ) from e
 
         if not response.success:
             logger.warning("Failed to read file %s from sandbox %s", filepath, self._sandbox_id)
@@ -1871,7 +1931,7 @@ class Sandbox:
         await self._wait_until_running_async()
 
         await self._ensure_client()
-        assert self._client is not None
+        assert self._stub is not None
 
         logger.debug(
             "Writing file to sandbox %s: %s (%d bytes)",
@@ -1888,16 +1948,11 @@ class Sandbox:
         )
 
         try:
-            response = await asyncio.wait_for(
-                self._client.add_file(request),
-                timeout=timeout,
-            )
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                raise SandboxNotRunningError(
-                    f"Write file was cancelled (sandbox {self._sandbox_id} connection closed)"
-                ) from e
-            raise
+            response = await self._stub.AddFile(request, timeout=timeout)
+        except grpc.RpcError as e:
+            raise _translate_rpc_error(
+                e, sandbox_id=self._sandbox_id, operation="Write file"
+            ) from e
 
         if not response.success:
             logger.warning("Failed to write file %s to sandbox %s", filepath, self._sandbox_id)

@@ -110,12 +110,13 @@ class TestSessionCleanup:
             sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
 
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.success = True
         mock_response.exit_code = 0
-        sandbox._client.stop = AsyncMock(return_value=mock_response)
-        sandbox._client.close = AsyncMock()
+        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        sandbox._channel.close = AsyncMock()
 
         assert id(sandbox) in session._sandboxes
 
@@ -410,22 +411,22 @@ class TestSessionList:
         defaults = SandboxDefaults(tags=("session-tag",))
         session = Session(defaults)
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await session.list()
 
-                sandboxes = await session.list()
-
-                assert len(sandboxes) == 1
-                assert isinstance(sandboxes[0], Sandbox)
+            assert len(sandboxes) == 1
+            assert isinstance(sandboxes[0], Sandbox)
 
     @pytest.mark.asyncio
     async def test_list_uses_default_tags(self, mock_aviato_api_key: str) -> None:
@@ -437,22 +438,22 @@ class TestSessionList:
         defaults = SandboxDefaults(tags=("session-tag",))
         session = Session(defaults)
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await session.list()
 
-                await session.list()
-
-                call_args = mock_atc_instance.list.call_args[0][0]
-                assert "session-tag" in call_args.tags
+            call_args = mock_stub.List.call_args[0][0]
+            assert "session-tag" in call_args.tags
 
     @pytest.mark.asyncio
     async def test_list_with_adopt_registers_sandboxes(self, mock_aviato_api_key: str) -> None:
@@ -471,22 +472,22 @@ class TestSessionList:
 
         session = Session()
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await session.list(adopt=True)
 
-                sandboxes = await session.list(adopt=True)
-
-                assert session.sandbox_count == 1
-                assert sandboxes[0]._session is session
+            assert session.sandbox_count == 1
+            assert sandboxes[0]._session is session
 
     @pytest.mark.asyncio
     async def test_list_without_adopt_does_not_register(self, mock_aviato_api_key: str) -> None:
@@ -505,21 +506,21 @@ class TestSessionList:
 
         session = Session()
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await session.list(adopt=False)
 
-                await session.list(adopt=False)
-
-                assert session.sandbox_count == 0
+            assert session.sandbox_count == 0
 
 
 class TestSessionFromId:
@@ -542,20 +543,20 @@ class TestSessionFromId:
 
         session = Session()
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await session.from_id("test-123")
 
-                sandbox = await session.from_id("test-123")
-
-                assert isinstance(sandbox, Sandbox)
-                assert sandbox.sandbox_id == "test-123"
+            assert isinstance(sandbox, Sandbox)
+            assert sandbox.sandbox_id == "test-123"
 
     @pytest.mark.asyncio
     async def test_from_id_adopts_by_default(self, mock_aviato_api_key: str) -> None:
@@ -574,20 +575,20 @@ class TestSessionFromId:
 
         session = Session()
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await session.from_id("test-123")
 
-                sandbox = await session.from_id("test-123")
-
-                assert session.sandbox_count == 1
-                assert sandbox._session is session
+            assert session.sandbox_count == 1
+            assert sandbox._session is session
 
     @pytest.mark.asyncio
     async def test_from_id_adopt_false_does_not_register(self, mock_aviato_api_key: str) -> None:
@@ -606,19 +607,19 @@ class TestSessionFromId:
 
         session = Session()
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await session.from_id("test-123", adopt=False)
 
-                await session.from_id("test-123", adopt=False)
-
-                assert session.sandbox_count == 0
+            assert session.sandbox_count == 0
 
 
 class TestSessionAdopt:
