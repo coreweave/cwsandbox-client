@@ -1579,6 +1579,8 @@ class Sandbox:
 
         # Shutdown event signals request generator to stop when process exits/times out
         shutdown_event = asyncio.Event()
+        # Ready event signals that server is ready to receive stdin data
+        ready_event = asyncio.Event()
 
         async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
             """Generate request messages for the bidirectional stream.
@@ -1595,8 +1597,20 @@ class Sandbox:
                 )
             )
 
-            # If stdin is enabled, yield data from stdin_queue until EOF or shutdown
+            # If stdin is enabled, wait for ready signal before sending data
             if stdin_queue is not None:
+                # Wait for ready signal with timeout
+                ready_timeout = min(5.0, timeout) if timeout else 5.0
+                try:
+                    await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
+                except TimeoutError:
+                    # Auto-cleanup on timeout
+                    shutdown_event.set()
+                    raise SandboxTimeoutError(
+                        "stdin ready signal not received within timeout"
+                    ) from None
+
+                # Now safe to send stdin data
                 while not shutdown_event.is_set():
                     # Wait for either queue data or shutdown signal
                     get_task = asyncio.create_task(stdin_queue.get())
@@ -1682,7 +1696,11 @@ class Sandbox:
                     raise item
 
                 response = item
-                if response.HasField("output"):
+                if response.HasField("ready"):
+                    # Server ready to receive stdin data
+                    ready_event.set()
+
+                elif response.HasField("output"):
                     data = response.output.data
                     # Decode as UTF-8 for queue (replacing invalid chars)
                     text = data.decode("utf-8", errors="replace")
@@ -1703,14 +1721,18 @@ class Sandbox:
                         await stdout_queue.put(text)
 
                 elif response.HasField("exit"):
+                    ready_event.set()  # Unblock stdin sender on terminal message
                     exit_code = response.exit.exit_code
                     break
 
                 elif response.HasField("error"):
+                    ready_event.set()  # Unblock stdin sender on terminal message
                     raise SandboxExecutionError(
                         f"Exec stream error: {response.error.message}",
                     )
         finally:
+            # Unblock stdin sender if still waiting for ready signal
+            ready_event.set()
             # Signal request generator to stop consuming stdin queue
             shutdown_event.set()
             # Cancel collector task
