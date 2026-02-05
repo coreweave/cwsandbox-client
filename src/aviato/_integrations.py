@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+from aviato._auth import _read_api_key_from_netrc
+
 
 def is_wandb_available() -> bool:
     """Check if wandb is installed and importable.
@@ -29,12 +31,12 @@ def is_wandb_available() -> bool:
 def has_wandb_credentials() -> bool:
     """Check if W&B API credentials are configured.
 
-    Checks for WANDB_API_KEY environment variable.
+    Checks for WANDB_API_KEY environment variable or ~/.netrc credentials.
 
     Returns:
-        True if WANDB_API_KEY is set, False otherwise
+        True if credentials are available, False otherwise
     """
-    return bool(os.environ.get("WANDB_API_KEY"))
+    return bool(os.environ.get("WANDB_API_KEY") or _read_api_key_from_netrc())
 
 
 def has_active_wandb_run() -> bool:

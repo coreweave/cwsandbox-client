@@ -35,14 +35,22 @@ class TestHasWandbCredentials:
             assert has_wandb_credentials()
 
     def test_returns_false_when_api_key_not_set(self) -> None:
-        """Test returns False when WANDB_API_KEY is not set."""
+        """Test returns False when WANDB_API_KEY is not set and no netrc."""
         with patch.dict("os.environ", {}, clear=True):
-            assert not has_wandb_credentials()
+            with patch("aviato._integrations._read_api_key_from_netrc", return_value=None):
+                assert not has_wandb_credentials()
 
     def test_returns_false_when_api_key_empty(self) -> None:
-        """Test returns False when WANDB_API_KEY is empty."""
+        """Test returns False when WANDB_API_KEY is empty and no netrc."""
         with patch.dict("os.environ", {"WANDB_API_KEY": ""}):
-            assert not has_wandb_credentials()
+            with patch("aviato._integrations._read_api_key_from_netrc", return_value=None):
+                assert not has_wandb_credentials()
+
+    def test_returns_true_when_netrc_credentials_found(self) -> None:
+        """Test returns True when netrc has W&B credentials."""
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("aviato._integrations._read_api_key_from_netrc", return_value="netrc-key"):
+                assert has_wandb_credentials()
 
 
 class TestHasActiveWandbRun:
@@ -95,12 +103,13 @@ class TestShouldAutoReportWandb:
                     assert not should_auto_report_wandb()
 
     def test_returns_false_when_no_credentials(self) -> None:
-        """Test returns False when no API key."""
+        """Test returns False when no API key and no netrc."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
         with patch.dict("sys.modules", {"wandb": mock_wandb}):
             with patch.dict("os.environ", {}, clear=True):
-                assert not should_auto_report_wandb()
+                with patch("aviato._integrations._read_api_key_from_netrc", return_value=None):
+                    assert not should_auto_report_wandb()
 
     def test_returns_false_when_no_active_run(self) -> None:
         """Test returns False when no active run."""

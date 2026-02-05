@@ -447,15 +447,17 @@ class TestLiveWandbIntegration:
             # The API can only see data from finished runs
             run.finish()
 
-            # Allow W&B to sync (API may have delay)
-            time.sleep(3)
-
             # Verify metrics via W&B API
             api = wandb.Api()
             api_run = api.run(f"{entity}/{WANDB_TEST_PROJECT}/{run_id}")
 
-            # Get the run history which contains all logged metrics
-            history = list(api_run.scan_history())
+            # Poll until data appears or timeout (10s max)
+            history: list[dict[str, Any]] = []
+            for _ in range(10):
+                history = list(api_run.scan_history())
+                if len(history) >= 2:
+                    break
+                time.sleep(1)
 
             # We should have at least 2 log calls (one per epoch)
             assert len(history) >= 2, f"Expected at least 2 log entries, got {len(history)}"
