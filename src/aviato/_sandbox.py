@@ -1581,6 +1581,8 @@ class Sandbox:
         shutdown_event = asyncio.Event()
         # Ready event signals that server is ready to receive stdin data
         ready_event = asyncio.Event()
+        # Track exec start time for ready latency measurement (only used when stdin enabled)
+        exec_start_time = time.monotonic()
 
         async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
             """Generate request messages for the bidirectional stream.
@@ -1698,6 +1700,17 @@ class Sandbox:
                 response = item
                 if response.HasField("ready"):
                     # Server ready to receive stdin data
+                    # Log latency only when stdin is enabled (no overhead when stdin=False)
+                    if stdin_queue is not None:
+                        ready_latency = time.monotonic() - exec_start_time
+                        logger.debug(
+                            "stdin ready signal received",
+                            extra={
+                                "sandbox_id": self._sandbox_id,
+                                "ready_latency_ms": ready_latency * 1000,
+                                "ready_at": response.ready.ready_at.ToDatetime().isoformat(),
+                            },
+                        )
                     ready_event.set()
 
                 elif response.HasField("output"):
