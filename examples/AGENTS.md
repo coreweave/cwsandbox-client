@@ -1,6 +1,6 @@
 # Examples
 
-Runnable example scripts (14 total) demonstrating aviato SDK usage patterns.
+Runnable example scripts (15 total) demonstrating aviato SDK usage patterns.
 
 ## API Patterns
 
@@ -11,6 +11,7 @@ Runnable example scripts (14 total) demonstrating aviato SDK usage patterns.
 | `quick_start.py` | Sync | `def main()` | Context manager with exec |
 | `basic_execution.py` | Sync | `def main()` | Context manager pattern with exec, file ops |
 | `streaming_exec.py` | Sync | `def main()` | Real-time stdout iteration |
+| `stdin_streaming.py` | Sync/Async | `def main()` | Stdin streaming with `exec(stdin=True)` |
 | `function_decorator.py` | Sync | `def main()` | Remote function execution with `@session.function()` |
 | `error_handling.py` | Sync | `def main()` | Exception hierarchy: SandboxExecutionError, TimeoutError, NotFoundError |
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
