@@ -1581,6 +1581,8 @@ class Sandbox:
         shutdown_event = asyncio.Event()
         # Ready event signals that server is ready to receive stdin data
         ready_event = asyncio.Event()
+        # Capture exceptions from request_generator (gRPC swallows them otherwise)
+        request_error: Exception | None = None
         # Track exec start time for ready latency measurement (only used when stdin enabled)
         exec_start_time = time.monotonic()
 
@@ -1601,16 +1603,18 @@ class Sandbox:
 
             # If stdin is enabled, wait for ready signal before sending data
             if stdin_queue is not None:
+                nonlocal request_error
                 # Wait for ready signal with timeout
                 ready_timeout = min(5.0, timeout) if timeout else 5.0
                 try:
                     await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
                 except TimeoutError:
-                    # Auto-cleanup on timeout
-                    shutdown_event.set()
-                    raise SandboxTimeoutError(
+                    # Capture error for propagation (gRPC swallows generator exceptions)
+                    request_error = SandboxTimeoutError(
                         "stdin ready signal not received within timeout"
-                    ) from None
+                    )
+                    shutdown_event.set()
+                    raise request_error from None
 
                 # Now safe to send stdin data
                 while not shutdown_event.is_set():
@@ -1760,6 +1764,10 @@ class Sandbox:
             await stderr_queue.put(None)
             # Close gRPC channel to release resources
             await channel.close(grace=None)
+
+        # Propagate any error from request_generator (gRPC swallows generator exceptions)
+        if request_error is not None:
+            raise request_error
 
         # Combine buffers into final output
         stdout_bytes = b"".join(stdout_buffer)
