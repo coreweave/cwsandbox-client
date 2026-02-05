@@ -127,13 +127,25 @@ echo "  uv run --no-sync python ...    # Run scripts without reverting"
 echo "  mise run dev:revert-protos     # Revert to published protos"
 """
 
+[tasks."dev:lint"]
+description = "Lint without syncing (preserves local protos)"
+run = "uv run --no-sync ruff check ."
+
+[tasks."dev:typecheck"]
+description = "Typecheck without syncing (preserves local protos)"
+run = "uv run --no-sync mypy src/"
+
 [tasks."dev:test"]
-description = "Run tests without syncing (preserves local protos)"
-run = "uv run --no-sync pytest"
+description = "Run unit tests without syncing (preserves local protos)"
+run = "uv run --no-sync pytest tests/unit/"
 
 [tasks."dev:test:e2e"]
 description = "Run integration tests without syncing (preserves local protos)"
 run = "uv run --no-sync pytest tests/integration/ -v"
+
+[tasks."dev:check"]
+description = "Run all quality checks without syncing (preserves local protos)"
+depends = ["dev:lint", "dev:typecheck", "dev:test"]
 
 [tasks."dev:revert-protos"]
 description = "Revert to published protos (runs uv sync)"
