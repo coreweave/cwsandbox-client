@@ -455,11 +455,10 @@ class TestSandboxAuth:
         """Test Sandbox uses auth interceptors with create_auth_interceptors."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch(
-            "aviato._sandbox.atc_connect.ATCServiceClient"
-        ) as mock_client_class, patch(
-            "aviato._sandbox.create_auth_interceptors"
-        ) as mock_create_interceptors:
+        with (
+            patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_client_class,
+            patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
+        ):
             mock_create_interceptors.return_value = []
             await sandbox._ensure_client()
 

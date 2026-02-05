@@ -275,8 +275,7 @@ class Process(OperationRef[ProcessResult]):
         command: list[str],
         stdout: StreamReader,
         stderr: StreamReader,
-        stats_callback: Callable[[ProcessResult | None, BaseException | None], None]
-        | None = None,
+        stats_callback: Callable[[ProcessResult | None, BaseException | None], None] | None = None,
     ) -> None:
         """Initialize with a future and stream readers.
 

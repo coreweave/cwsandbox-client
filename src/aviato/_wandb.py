@@ -69,9 +69,7 @@ class WandbReporter:
         """Record that a sandbox was created."""
         self._sandboxes_created += 1
 
-    def record_exec_outcome(
-        self, outcome: ExecOutcome, sandbox_id: str | None = None
-    ) -> None:
+    def record_exec_outcome(self, outcome: ExecOutcome, sandbox_id: str | None = None) -> None:
         """Record the outcome of an exec operation.
 
         Args:
@@ -115,9 +113,7 @@ class WandbReporter:
         }
 
         if self._startup_times:
-            metrics["aviato/avg_startup_time"] = sum(self._startup_times) / len(
-                self._startup_times
-            )
+            metrics["aviato/avg_startup_time"] = sum(self._startup_times) / len(self._startup_times)
 
         return metrics
 

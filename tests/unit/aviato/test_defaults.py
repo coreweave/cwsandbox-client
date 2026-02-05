@@ -114,10 +114,12 @@ class TestSandboxDefaults:
             },
         )
 
-        result = defaults.merge_environment_variables({
-            "LOG_LEVEL": "debug",
-            "MODEL": "gpt2",
-        })
+        result = defaults.merge_environment_variables(
+            {
+                "LOG_LEVEL": "debug",
+                "MODEL": "gpt2",
+            }
+        )
 
         assert result == {
             "LOG_LEVEL": "debug",  # Overridden

@@ -93,9 +93,7 @@ def wandb_test_run(
 class TestMetricCollection:
     """Tests that verify metric collection with mocked wandb."""
 
-    def test_session_tracks_sandbox_creation_count(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_session_tracks_sandbox_creation_count(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that Session tracks sandbox creation count across multiple sandboxes."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -111,9 +109,7 @@ class TestMetricCollection:
                 metrics = session._reporter.get_metrics()
                 assert metrics["aviato/sandboxes_created"] == 3
 
-    def test_exec_success_increments_completed_ok(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_exec_success_increments_completed_ok(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that successful exec (returncode=0) increments completed_ok."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -161,9 +157,7 @@ class TestMetricCollection:
                 assert metrics["aviato/exec_completed_nonzero"] == nonzero_before + 1
                 assert metrics["aviato/exec_failures"] == 0
 
-    def test_exec_error_increments_failures(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_exec_error_increments_failures(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that exec error (exception during exec) increments failures."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -180,9 +174,7 @@ class TestMetricCollection:
                 assert metrics["aviato/exec_completed_nonzero"] == 0
                 assert metrics["aviato/exec_failures"] == 1
 
-    def test_startup_times_recorded_and_averaged(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_startup_times_recorded_and_averaged(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that startup times are recorded and averaged correctly."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -202,9 +194,7 @@ class TestMetricCollection:
 class TestGuardrails:
     """Tests for guardrails that prevent unwanted W&B logging."""
 
-    def test_no_logging_when_no_active_wandb_run(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_no_logging_when_no_active_wandb_run(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test no logging when wandb.run is None."""
         mock_wandb = MagicMock()
         # wandb.run is None (no active run)
@@ -227,9 +217,7 @@ class TestGuardrails:
                 # wandb.log should NOT have been called
                 mock_wandb.log.assert_not_called()
 
-    def test_no_logging_when_report_to_empty(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_no_logging_when_report_to_empty(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test no logging when report_to=[] (explicit opt-out)."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -297,9 +285,7 @@ class TestGuardrails:
 class TestMetricLogging:
     """Tests for the actual W&B logging behavior when enabled."""
 
-    def test_log_metrics_called_on_session_close(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_log_metrics_called_on_session_close(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that metrics are logged automatically on session close."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -319,9 +305,7 @@ class TestMetricLogging:
             assert "aviato/sandboxes_created" in logged_metrics
             assert logged_metrics["aviato/sandboxes_created"] == 1
 
-    def test_log_metrics_with_step(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_log_metrics_with_step(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that step parameter is passed to wandb.log."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
@@ -358,9 +342,7 @@ class TestMetricLogging:
                 logged = session.log_metrics()
                 assert logged is False
 
-    def test_log_metrics_without_reset(
-        self, sandbox_defaults: SandboxDefaults
-    ) -> None:
+    def test_log_metrics_without_reset(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test that log_metrics preserves counters when reset=False."""
         mock_wandb = MagicMock()
         mock_wandb.run = MagicMock()
