@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """A Python client library for Aviato sandboxes."""
 
 from __future__ import annotations

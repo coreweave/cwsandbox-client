@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: BSD-3-Clause
+SPDX-PackageName: aviato-client
+-->
+
 # Aviato Examples
 
 This directory contains example scripts demonstrating how to use the `aviato` package.

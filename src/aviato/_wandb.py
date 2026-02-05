@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """Weights & Biases metrics reporting for sandbox usage tracking.
 
 This module provides metrics collection for sandbox operations, enabling

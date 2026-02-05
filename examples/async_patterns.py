@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-PackageName: aviato-client
+
 """Async patterns with aviato's sync/async hybrid API.
 
 All aviato operations support both sync and async usage:

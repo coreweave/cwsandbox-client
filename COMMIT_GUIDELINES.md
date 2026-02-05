@@ -131,4 +131,6 @@ The footer:
 - **MAY** include references to issues, tickets, or breaking changes
 - **MUST** use `BREAKING CHANGE:` to indicate breaking changes
 - **MAY** include `Closes #123` or `Fixes #456` to link issues
+- **MAY** include attribution to generative agents, e.g. `Co-authored-by:`
+- **MAY** include Linux Kernel-style developer certificate of origin (DCO). `Signed-off-by`
 

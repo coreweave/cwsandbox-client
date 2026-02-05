@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: BSD-3-Clause
+SPDX-PackageName: aviato-client
+-->
+
 # Examples
 
 Runnable example scripts demonstrating aviato SDK usage patterns.

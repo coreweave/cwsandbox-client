@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """Integration tests for W&B metrics collection.
 
 These tests run real sandboxes but mock the wandb SDK to verify

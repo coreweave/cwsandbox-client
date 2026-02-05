@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: BSD-3-Clause
+SPDX-PackageName: aviato-client
+-->
+
 # SWE-bench Evaluation with Aviato
 
 Run SWE-bench evaluations using Aviato's parallel sandbox execution.
