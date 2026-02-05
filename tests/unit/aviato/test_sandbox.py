@@ -455,11 +455,10 @@ class TestSandboxAuth:
         """Test Sandbox uses auth interceptors with create_auth_interceptors."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch(
-            "aviato._sandbox.atc_connect.ATCServiceClient"
-        ) as mock_client_class, patch(
-            "aviato._sandbox.create_auth_interceptors"
-        ) as mock_create_interceptors:
+        with (
+            patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_client_class,
+            patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
+        ):
             mock_create_interceptors.return_value = []
             await sandbox._ensure_client()
 
@@ -1600,3 +1599,195 @@ class TestNetworkOptionsRequestPayload:
 
         # network should not be in _start_kwargs
         assert "network" not in sandbox._start_kwargs
+
+
+class TestSandboxExecutionStats:
+    """Tests for sandbox execution statistics tracking."""
+
+    def test_initial_stats_are_zero(self) -> None:
+        """Test sandbox starts with zeroed exec stats."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox.exec_stats == {
+            "exec_count": 0,
+            "exec_completed_ok": 0,
+            "exec_completed_nonzero": 0,
+            "exec_failures": 0,
+        }
+
+    def test_exec_increments_exec_count(self) -> None:
+        """Test exec() increments exec_count before execution."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+
+        # Mock _exec_streaming_async with MagicMock to avoid creating a real coroutine
+        # that would trigger "coroutine was never awaited" warnings when discarded
+        with patch.object(sandbox, "_exec_streaming_async", new=MagicMock()):
+            with patch.object(sandbox._loop_manager, "run_async", return_value=MagicMock()):
+                sandbox.exec(["echo", "hello"])
+
+                # exec_count should be incremented
+                assert sandbox._exec_count == 1
+
+    def test_on_exec_complete_tracks_success(self) -> None:
+        """Test _on_exec_complete tracks successful completion."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        result = MagicMock()
+        result.returncode = 0
+
+        sandbox._on_exec_complete(result, None)
+
+        assert sandbox._exec_completed_ok == 1
+        assert sandbox._exec_completed_nonzero == 0
+        assert sandbox._exec_failures == 0
+
+    def test_on_exec_complete_tracks_nonzero(self) -> None:
+        """Test _on_exec_complete tracks non-zero exit codes."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        result = MagicMock()
+        result.returncode = 1
+
+        sandbox._on_exec_complete(result, None)
+
+        assert sandbox._exec_completed_ok == 0
+        assert sandbox._exec_completed_nonzero == 1
+        assert sandbox._exec_failures == 0
+
+    def test_on_exec_complete_tracks_failure(self) -> None:
+        """Test _on_exec_complete tracks failures."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        sandbox._on_exec_complete(None, RuntimeError("test error"))
+
+        assert sandbox._exec_completed_ok == 0
+        assert sandbox._exec_completed_nonzero == 0
+        assert sandbox._exec_failures == 1
+
+    def test_on_exec_complete_reports_to_session(self) -> None:
+        """Test _on_exec_complete reports to session reporter."""
+        from aviato._wandb import ExecOutcome
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+
+        mock_session = MagicMock()
+        mock_reporter = MagicMock()
+        mock_session._reporter = mock_reporter
+        sandbox._session = mock_session
+
+        result = MagicMock()
+        result.returncode = 0
+
+        sandbox._on_exec_complete(result, None)
+
+        mock_reporter.record_exec_outcome.assert_called_once_with(
+            ExecOutcome.COMPLETED_OK, "test-id"
+        )
+
+
+class TestSandboxStartupTimeTracking:
+    """Tests for sandbox startup time tracking."""
+
+    def test_initial_startup_tracking_state(self) -> None:
+        """Test sandbox starts with correct initial startup tracking state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox._start_accepted_at is None
+        assert sandbox._startup_recorded is False
+
+    def test_start_sets_start_accepted_at(self) -> None:
+        """Test start() sets _start_accepted_at timestamp."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "test-sandbox-id"
+        mock_start_response.service_address = ""
+        mock_start_response.exposed_ports = []
+        mock_start_response.applied_ingress_mode = ""
+        mock_start_response.applied_egress_mode = ""
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._client = MagicMock()
+            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start()
+
+            assert sandbox._start_accepted_at is not None
+            assert sandbox._start_accepted_at > 0
+
+    def test_from_sandbox_info_marks_startup_recorded(self) -> None:
+        """Test _from_sandbox_info marks startup as already recorded."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+        from google.protobuf import timestamp_pb2
+
+        sandbox = Sandbox._from_sandbox_info(
+            sandbox_id="test-123",
+            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            tower_id="tower-1",
+            tower_group_id="group-1",
+            runway_id="runway-1",
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+
+        assert sandbox._startup_recorded is True
+        assert sandbox._start_accepted_at is None
+
+    def test_wait_records_startup_time_to_session(self) -> None:
+        """Test wait() records startup time to session reporter."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._start_accepted_at = 100.0
+
+        mock_session = MagicMock()
+        mock_reporter = MagicMock()
+        mock_session._reporter = mock_reporter
+        sandbox._session = mock_session
+        sandbox._client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_response.tower_id = "tower-1"
+        mock_response.tower_group_id = None
+        mock_response.runway_id = "runway-1"
+        mock_response.started_at_time = None
+        sandbox._client.get = AsyncMock(return_value=mock_response)
+
+        with patch("time.monotonic", return_value=102.5):
+            sandbox.wait()
+
+        mock_reporter.record_startup_time.assert_called_once()
+        call_args = mock_reporter.record_startup_time.call_args[0]
+        assert call_args[0] == pytest.approx(2.5, rel=0.1)
+
+    def test_startup_time_only_recorded_once(self) -> None:
+        """Test startup time is only recorded once."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._start_accepted_at = 100.0
+        sandbox._startup_recorded = True
+
+        mock_session = MagicMock()
+        mock_reporter = MagicMock()
+        mock_session._reporter = mock_reporter
+        sandbox._session = mock_session
+        sandbox._client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_response.tower_id = "tower-1"
+        mock_response.tower_group_id = None
+        mock_response.runway_id = "runway-1"
+        mock_response.started_at_time = None
+        sandbox._client.get = AsyncMock(return_value=mock_response)
+
+        sandbox.wait()
+
+        mock_reporter.record_startup_time.assert_not_called()

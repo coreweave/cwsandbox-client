@@ -279,6 +279,7 @@ class RemoteFunction(Generic[P, R]):
             **sandbox_kwargs,
         )
         self._session._register_sandbox(sandbox)
+        self._session._reporter.record_sandbox_created()
         await sandbox._start_async()
 
         logger.debug("Sandbox started for function %s", self._fn.__name__)

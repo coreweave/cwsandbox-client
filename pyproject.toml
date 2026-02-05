@@ -44,6 +44,7 @@ dev = [
     "ruff>=0.6.0",
     "mypy>=1.11.0",
     "pre-commit>=3.7.0",
+    "wandb>=0.19.0",
 ]
 docs = [
     "mkdocs>=1.6.0",
@@ -69,6 +70,12 @@ addopts = [
 ]
 asyncio_mode = "auto"
 env_files = [".env"]
+# Suppress deprecation warnings from wandb's internal Sentry integration.
+# These are issues in the wandb package itself (using deprecated Sentry SDK APIs)
+# and will be fixed in a future wandb release.
+filterwarnings = [
+    "ignore::DeprecationWarning:wandb.analytics.sentry",
+]
 
 [tool.coverage.run]
 source = ["src"]
@@ -94,3 +101,8 @@ python_version = "3.11"
 strict = true
 mypy_path = "src"
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "wandb.*"
+ignore_missing_imports = true
+follow_imports = "skip"

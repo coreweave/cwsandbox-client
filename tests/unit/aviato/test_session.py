@@ -68,6 +68,7 @@ class TestSessionSandbox:
             "MODEL_NAME": "gpt2",  # Added
         }
 
+
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
@@ -655,3 +656,131 @@ class TestSessionAdopt:
 
         with pytest.raises(ValueError, match="without sandbox_id"):
             session.adopt(sandbox)
+
+
+class TestSessionReportTo:
+    """Tests for Session report_to parameter."""
+
+    def test_session_creates_reporter(self) -> None:
+        """Test session creates a WandbReporter."""
+        from aviato._wandb import WandbReporter
+
+        session = Session()
+        assert isinstance(session._reporter, WandbReporter)
+
+    def test_session_with_explicit_wandb_report_to(self) -> None:
+        """Test session with explicit wandb in report_to."""
+        session = Session(report_to=["wandb"])
+        assert session._reporter is not None
+
+    def test_session_with_empty_report_to(self) -> None:
+        """Test session with empty report_to disables reporting."""
+        session = Session(report_to=[])
+        assert session._reporter is not None
+
+
+class TestSessionSandboxMetrics:
+    """Tests for Session.sandbox() metrics reporting."""
+
+    def test_sandbox_records_creation(self) -> None:
+        """Test session.sandbox() records sandbox creation in reporter."""
+        session = Session()
+
+        with patch.object(Sandbox, "start"):
+            session.sandbox(command="sleep", args=["infinity"])
+
+        assert session._reporter._sandboxes_created == 1
+
+    def test_multiple_sandboxes_increment_counter(self) -> None:
+        """Test creating multiple sandboxes increments counter."""
+        session = Session()
+
+        with patch.object(Sandbox, "start"):
+            session.sandbox(command="sleep", args=["infinity"])
+            session.sandbox(command="sleep", args=["infinity"])
+            session.sandbox(command="sleep", args=["infinity"])
+
+        assert session._reporter._sandboxes_created == 3
+
+
+class TestSessionLogMetrics:
+    """Tests for Session.log_metrics method."""
+
+    def test_log_metrics_returns_false_when_no_metrics(self) -> None:
+        """Test log_metrics returns False when no metrics recorded."""
+        session = Session()
+        assert not session.log_metrics()
+
+    def test_log_metrics_returns_false_without_wandb(self) -> None:
+        """Test log_metrics returns False when wandb not available."""
+        session = Session()
+        session._reporter.record_sandbox_created()
+
+        with patch.dict("sys.modules", {"wandb": None}):
+            with patch("builtins.__import__", side_effect=ImportError):
+                result = session.log_metrics()
+                assert not result
+
+    def test_log_metrics_calls_reporter_log(self) -> None:
+        """Test log_metrics delegates to reporter.log."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+
+        mock_wandb = MagicMock()
+        mock_wandb.run = MagicMock()
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            result = session.log_metrics(step=42)
+
+            assert result
+            mock_wandb.log.assert_called_once()
+
+
+class TestSessionAutoTracking:
+    """Tests for Session auto-tracking of metrics."""
+
+    def test_auto_detection_with_wandb_available(self) -> None:
+        """Test auto-detection when wandb is available."""
+        with patch("aviato._session.should_auto_report_wandb", return_value=True):
+            session = Session()
+            # Reporter is created regardless
+            assert session._reporter is not None
+
+    def test_auto_detection_without_wandb(self) -> None:
+        """Test auto-detection when wandb is not available."""
+        with patch("aviato._session.should_auto_report_wandb", return_value=False):
+            session = Session()
+            # Reporter is still created, just won't log
+            assert session._reporter is not None
+
+
+class TestSessionCloseMetrics:
+    """Tests for Session close() metrics behavior."""
+
+    @pytest.mark.asyncio
+    async def test_close_logs_remaining_metrics(self) -> None:
+        """Test session.close() logs remaining metrics."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+
+        mock_wandb = MagicMock()
+        mock_wandb.run = MagicMock()
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            await session._close_async()
+
+            mock_wandb.log.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_resets_metrics_after_logging(self) -> None:
+        """Test session.close() resets metrics after logging."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+
+        mock_wandb = MagicMock()
+        mock_wandb.run = MagicMock()
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            await session._close_async()
+
+            assert not session._reporter.has_metrics

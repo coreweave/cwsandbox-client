@@ -331,6 +331,7 @@ def test_sandbox_exec_streaming_check_raises(sandbox_defaults: SandboxDefaults) 
             "echo 'output before exit' && exit 42",
         ]
 
+
 def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
     """Test environment variables are passed into the sandbox."""
     defaults = sandbox_defaults.with_overrides(
@@ -351,14 +352,16 @@ def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> Non
                 "LOG_LEVEL": "debug",  # Override session default
             },
         ) as sandbox:
-            result = sandbox.exec([
-                "python",
-                "-c",
-                "import os; "
-                "print(os.environ.get('PROJECT_ID')); "
-                "print(os.environ.get('LOG_LEVEL')); "
-                "print(os.environ.get('MODEL_NAME')); "
-            ]).result()
+            result = sandbox.exec(
+                [
+                    "python",
+                    "-c",
+                    "import os; "
+                    "print(os.environ.get('PROJECT_ID')); "
+                    "print(os.environ.get('LOG_LEVEL')); "
+                    "print(os.environ.get('MODEL_NAME')); ",
+                ]
+            ).result()
 
             assert result.returncode == 0
             lines = result.stdout.strip().split("\n")
@@ -418,6 +421,7 @@ def test_function_environment_variables(sandbox_defaults: SandboxDefaults) -> No
             "version": "v3.0",  # Mutated value
             "log_level": "debug",
         }
+
 
 # Async context manager tests
 
@@ -517,7 +521,8 @@ def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None
     )
 
     with Sandbox.run(
-        "sleep", "infinity",
+        "sleep",
+        "infinity",
         defaults=sandbox_defaults,
         network=network,
     ) as sandbox:
@@ -595,7 +600,10 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
     network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
 
     with Sandbox.run(
-        "python", "-m", "http.server", "8080",
+        "python",
+        "-m",
+        "http.server",
+        "8080",
         ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
         network=network,

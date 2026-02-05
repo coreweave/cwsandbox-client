@@ -32,6 +32,7 @@ from aviato._defaults import (
 )
 from aviato._loop_manager import _LoopManager
 from aviato._types import NetworkOptions, OperationRef, Process, ProcessResult, StreamReader
+from aviato._wandb import ExecOutcome
 from aviato.exceptions import (
     SandboxError,
     SandboxExecutionError,
@@ -288,6 +289,16 @@ class Sandbox:
         self._applied_ingress_mode: str | None = None
         self._applied_egress_mode: str | None = None
 
+        # Execution statistics for metrics
+        self._exec_count = 0
+        self._exec_completed_ok = 0
+        self._exec_completed_nonzero = 0
+        self._exec_failures = 0
+
+        # Startup timing for metrics
+        self._start_accepted_at: float | None = None
+        self._startup_recorded: bool = False
+
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
 
@@ -469,6 +480,14 @@ class Sandbox:
         # TODO: Add applied_ingress_mode/applied_egress_mode once backend adds to GetSandboxResponse
         sandbox._applied_ingress_mode = None
         sandbox._applied_egress_mode = None
+        # Exec stats for discovered sandboxes
+        sandbox._exec_count = 0
+        sandbox._exec_completed_ok = 0
+        sandbox._exec_completed_nonzero = 0
+        sandbox._exec_failures = 0
+        # Startup already happened for discovered sandboxes
+        sandbox._start_accepted_at = None
+        sandbox._startup_recorded = True
         return sandbox
 
     @classmethod
@@ -871,6 +890,54 @@ class Sandbox:
         """The egress mode applied by the backend (set after start)."""
         return self._applied_egress_mode
 
+    @property
+    def exec_stats(self) -> dict[str, int]:
+        """Execution statistics for this sandbox.
+
+        Returns:
+            Dictionary with execution counts:
+            - exec_count: Total number of exec() calls
+            - exec_completed_ok: Execs that completed with returncode 0
+            - exec_completed_nonzero: Execs that completed with non-zero returncode
+              (when check=False; with check=True, non-zero exits count as failures)
+            - exec_failures: Execs that failed with an exception (including
+              SandboxExecutionError from check=True with non-zero exit)
+        """
+        return {
+            "exec_count": self._exec_count,
+            "exec_completed_ok": self._exec_completed_ok,
+            "exec_completed_nonzero": self._exec_completed_nonzero,
+            "exec_failures": self._exec_failures,
+        }
+
+    def _on_exec_complete(
+        self,
+        result: ProcessResult | None,
+        exception: BaseException | None,
+    ) -> None:
+        """Record exec completion outcome for metrics.
+
+        Args:
+            result: The ProcessResult if execution completed, None on failure
+            exception: The exception if execution failed, None on success
+        """
+        if exception is not None:
+            self._exec_failures += 1
+            outcome = ExecOutcome.FAILURE
+        elif result is not None:
+            if result.returncode == 0:
+                self._exec_completed_ok += 1
+                outcome = ExecOutcome.COMPLETED_OK
+            else:
+                self._exec_completed_nonzero += 1
+                outcome = ExecOutcome.COMPLETED_NONZERO
+        else:
+            return
+
+        # Report to session reporter if available
+        if self._session is not None and hasattr(self._session, "_reporter"):
+            self._session._reporter.record_exec_outcome(outcome, self._sandbox_id)
+
     def __repr__(self) -> str:
         if self._status:
             status_str = self._status.value
@@ -1139,6 +1206,7 @@ class Sandbox:
             logger.debug("Starting sandbox with image %s", self._container_image)
 
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
+            self._start_accepted_at = time.monotonic()
             try:
                 response = await self._client.start(request)
             except ConnectError as e:
@@ -1185,6 +1253,12 @@ class Sandbox:
                 self._started_at = (
                     response.started_at_time.ToDatetime() if response.started_at_time else None
                 )
+                # Record startup time for metrics
+                if not self._startup_recorded and self._start_accepted_at is not None:
+                    startup_time = time.monotonic() - self._start_accepted_at
+                    self._startup_recorded = True
+                    if self._session is not None and hasattr(self._session, "_reporter"):
+                        self._session._reporter.record_startup_time(startup_time)
                 logger.debug("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
                 self._status = SandboxStatus.FAILED
@@ -1686,6 +1760,9 @@ class Sandbox:
             raise ValueError("Command cannot be empty")
         _validate_cwd(cwd)
 
+        # Track exec count for metrics
+        self._exec_count += 1
+
         # Unbounded queues prevent data loss when producer fills queue before consumer iterates.
         # Bounded queues caused race conditions with HTTP/2 stream buffering.
         stdout_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -1707,6 +1784,7 @@ class Sandbox:
             command=list(command),
             stdout=StreamReader(stdout_queue, self._loop_manager),
             stderr=StreamReader(stderr_queue, self._loop_manager),
+            stats_callback=self._on_exec_complete,
         )
 
     async def _read_file_async(
