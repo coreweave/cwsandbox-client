@@ -627,3 +627,399 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
         assert response.status_code == 200
 
 
+# Stdin streaming tests
+
+
+def test_sandbox_exec_stdin_basic(sandbox_defaults: SandboxDefaults) -> None:
+    """Test basic stdin streaming with sh script execution.
+
+    Uses sh to execute commands from stdin, which is a reliable pattern.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        # Send a simple script that echoes and exits
+        script = 'echo "hello world"\nexit 0\n'
+        process.stdin.write(script.encode()).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert "hello world" in result.stdout
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_multiple_writes(sandbox_defaults: SandboxDefaults) -> None:
+    """Test multiple stdin writes before closing.
+
+    Uses sh with a script that echoes each received line.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        # Send a script that reads and counts lines
+        script = """
+echo "line1"
+echo "line2"
+echo "line3"
+exit 0
+"""
+        # Send as multiple writes to test that pattern
+        lines = script.split("\n")
+        for line in lines:
+            process.stdin.write((line + "\n").encode()).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert "line1" in result.stdout
+        assert "line2" in result.stdout
+        assert "line3" in result.stdout
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_writeline(sandbox_defaults: SandboxDefaults) -> None:
+    """Test writeline convenience method.
+
+    Uses sh to execute commands sent via writeline.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        process.stdin.writeline('echo "first"').result()
+        process.stdin.writeline('echo "second"').result()
+        process.stdin.writeline("exit 0").result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert "first" in result.stdout
+        assert "second" in result.stdout
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_large_input(sandbox_defaults: SandboxDefaults) -> None:
+    """Test large stdin input that triggers chunking (>64KB).
+
+    The implementation uses 64KB chunks for stdin writes. This test verifies
+    that data larger than a single chunk is correctly transmitted.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Create 200KB of data to exceed the 64KB chunk size
+        large_data = b"x" * (200 * 1024)
+
+        process = sandbox.exec(["wc", "-c"], stdin=True, timeout_seconds=60.0)
+        assert process.stdin is not None
+
+        process.stdin.write(large_data).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        # wc -c outputs byte count
+        byte_count = int(result.stdout.strip())
+        assert byte_count == len(large_data)
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_python_interactive(sandbox_defaults: SandboxDefaults) -> None:
+    """Test Python script execution via stdin.
+
+    Uses sh to pipe a Python script, which is a reliable pattern.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        # Send a shell script that runs Python
+        script = """
+python -u -c "result = 2 + 3; print(f'answer={result}')"
+exit 0
+"""
+        process.stdin.write(script.encode()).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert "answer=5" in result.stdout
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_shell_interaction(sandbox_defaults: SandboxDefaults) -> None:
+    """Test basic shell interaction pattern via stdin.
+
+    Uses a single multi-command echo to avoid timing issues with separate writes.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Use sh -c with a script to avoid timing issues
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        # Send all commands as a single script to avoid race conditions
+        script = """
+echo "hello"
+echo "world"
+exit 0
+"""
+        process.stdin.write(script.encode()).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert "hello" in result.stdout
+        assert "world" in result.stdout
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_close_idempotent(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that close() is idempotent.
+
+    Verifies calling close() multiple times doesn't raise errors and the
+    stream reports closed status correctly.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        assert not process.stdin.closed
+
+        # Write script and close
+        process.stdin.write(b'echo "test"\nexit 0\n').result()
+        process.stdin.close().result()
+        assert process.stdin.closed
+
+        # Second close should succeed without error
+        process.stdin.close().result()
+        assert process.stdin.closed
+
+        # Third close should also succeed
+        process.stdin.close().result()
+        assert process.stdin.closed
+
+        # Process should complete
+        result = process.result()
+        assert result.returncode == 0
+        assert "test" in result.stdout
+
+
+def test_sandbox_exec_stdin_write_after_close_raises(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test that writing after close raises SandboxExecutionError."""
+    from aviato.exceptions import SandboxExecutionError
+
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        process.stdin.write(b'echo "test"\nexit 0\n').result()
+        process.stdin.close().result()
+
+        with pytest.raises(SandboxExecutionError) as exc_info:
+            process.stdin.write(b"should fail\n").result()
+
+        assert "closed" in str(exc_info.value).lower()
+
+
+def test_sandbox_exec_stdin_disabled_by_default(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test stdin is None when stdin=False (default)."""
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["echo", "hello"])
+        assert process.stdin is None
+
+        result = process.result()
+        assert result.stdout.strip() == "hello"
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_false_explicit(sandbox_defaults: SandboxDefaults) -> None:
+    """Test explicit stdin=False works correctly."""
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["echo", "hello"], stdin=False)
+        assert process.stdin is None
+
+        result = process.result()
+        assert result.stdout.strip() == "hello"
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_eof_command(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that EOF (close) properly terminates stdin-reading commands.
+
+    Uses sort which blocks until EOF is received, verifying that close()
+    properly signals end-of-input.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sort"], stdin=True, timeout_seconds=60.0)
+        assert process.stdin is not None
+
+        # Send data as single block for reliability
+        data = "\n".join([f"line {i}" for i in range(10)]) + "\n"
+        process.stdin.write(data.encode()).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        lines = result.stdout.strip().split("\n")
+        # sort should output all 10 lines in sorted order
+        assert len(lines) == 10
+        # Lines should be sorted alphabetically (line 0, line 1, line 2...)
+        assert lines[0] == "line 0"
+        assert lines[9] == "line 9"
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_binary_data(sandbox_defaults: SandboxDefaults) -> None:
+    """Test binary data transmission via stdin.
+
+    Uses Python to read and report byte count, avoiding timing issues by
+    having Python read all stdin before outputting.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Create binary data with various byte values including high-ASCII
+        # Avoid null bytes which can cause issues with some programs
+        binary_data = bytes([i % 255 + 1 for i in range(1000)])  # 1000 bytes
+
+        # Use Python to read all stdin and report byte count
+        process = sandbox.exec(
+            ["python", "-c", "import sys; data = sys.stdin.buffer.read(); print(len(data))"],
+            stdin=True,
+            timeout_seconds=60.0,
+        )
+        assert process.stdin is not None
+
+        process.stdin.write(binary_data).result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert result.returncode == 0
+
+        byte_count = int(result.stdout.strip())
+        assert byte_count == len(binary_data)
+
+
+def test_sandbox_exec_stdin_with_streaming_output(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test stdin and stdout streaming together.
+
+    Sends input and consumes output in streaming fashion using sort command
+    which waits for EOF before producing output.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Use sort which waits for all input before producing output
+        process = sandbox.exec(["sort"], stdin=True, timeout_seconds=60.0)
+        assert process.stdin is not None
+
+        process.stdin.write(b"banana\napple\ncherry\n").result()
+        process.stdin.close().result()
+
+        # Consume stdout via streaming
+        lines = list(process.stdout)
+        result = process.result()
+
+        # sort produces output with lines in alphabetical order
+        combined = "".join(lines)
+        sorted_lines = combined.strip().split("\n")
+        assert sorted_lines == ["apple", "banana", "cherry"]
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_cat_roundtrip(sandbox_defaults: SandboxDefaults) -> None:
+    """Test stdin roundtrip with cat command as shown in the bead example.
+
+    This is the canonical test case: write input to cat, close stdin, verify
+    output matches input exactly.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["cat"], stdin=True, timeout_seconds=60.0)
+        assert process.stdin is not None
+
+        process.stdin.write(b"hello world").result()
+        process.stdin.close().result()
+
+        result = process.result()
+        assert result.stdout.strip() == "hello world"
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_cat_multiple_lines(sandbox_defaults: SandboxDefaults) -> None:
+    """Test cat with multiple lines of input.
+
+    Verifies that newlines and multiple writes are handled correctly.
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["cat"], stdin=True, timeout_seconds=60.0)
+        assert process.stdin is not None
+
+        process.stdin.write(b"line one\n").result()
+        process.stdin.write(b"line two\n").result()
+        process.stdin.write(b"line three\n").result()
+        process.stdin.close().result()
+
+        result = process.result()
+        lines = result.stdout.strip().split("\n")
+        assert lines == ["line one", "line two", "line three"]
+        assert result.returncode == 0
+
+
+def test_sandbox_exec_stdin_write_to_exited_process(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test behavior when writing to stdin after the process has exited.
+
+    The process exits immediately (exit 0), then we attempt to write to stdin.
+    This is different from write-after-close: here the process terminates
+    before we close stdin.
+    """
+    from aviato.exceptions import SandboxExecutionError
+
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Process exits immediately without reading stdin
+        process = sandbox.exec(["sh", "-c", "exit 0"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        # Wait for process to complete
+        result = process.result()
+        assert result.returncode == 0
+
+        # Now try to write - process is already gone
+        # This should raise or handle gracefully
+        with pytest.raises(SandboxExecutionError):
+            process.stdin.write(b"too late\n").result()
+
+
+def test_sandbox_exec_stdin_timeout(sandbox_defaults: SandboxDefaults) -> None:
+    """Test timeout while stdin is still open.
+
+    Process blocks waiting for stdin but the operation times out before
+    we can close it. Verifies timeout handling works with stdin streaming.
+    """
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # cat blocks waiting for stdin - we don't close it
+        process = sandbox.exec(["cat"], stdin=True, timeout_seconds=2.0)
+        assert process.stdin is not None
+
+        # Don't write anything or close stdin - let it timeout
+        # The exec should timeout waiting for the process to complete
+        with pytest.raises(FuturesTimeoutError):
+            process.result(timeout=3.0)
+
+
+async def test_sandbox_exec_stdin_async(sandbox_defaults: SandboxDefaults) -> None:
+    """Test stdin streaming via the async (await) API.
+
+    Verifies that write(), writeline(), and close() all work as awaitables,
+    and that the Process result can be awaited directly.
+    """
+    async with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        process = sandbox.exec(["sh"], stdin=True, timeout_seconds=30.0)
+        assert process.stdin is not None
+
+        await process.stdin.writeline('echo "from-async"')
+        await process.stdin.writeline("exit 0")
+        await process.stdin.close()
+
+        result = await process
+        assert "from-async" in result.stdout
+        assert result.returncode == 0

@@ -137,6 +137,88 @@ class MockStreamCall:
         return response
 
 
+class MockBidirectionalStreamCall:
+    """Mock gRPC bidirectional streaming call that properly interleaves requests and responses.
+
+    Unlike MockStreamCall, this class simulates true bidirectional streaming where
+    responses are returned immediately while requests are consumed in the background.
+    This is needed for testing stdin ready signal handling where the request generator
+    waits for a ready response before sending stdin data.
+    """
+
+    def __init__(
+        self,
+        responses: Sequence[Any] | None = None,
+        response_generator: Callable[[], AsyncIterator[Any]] | None = None,
+        on_write: Callable[[Any], None] | None = None,
+        error_on_read: Exception | None = None,
+    ) -> None:
+        """Initialize mock bidirectional stream call.
+
+        Args:
+            responses: List of responses to yield.
+            response_generator: Async generator that yields responses (takes priority).
+            on_write: Callback invoked on each request.
+            error_on_read: Exception to raise during iteration.
+        """
+        import asyncio
+
+        self._responses = list(responses) if responses else []
+        self._response_generator = response_generator
+        self._on_write = on_write
+        self._error_on_read = error_on_read
+        self._writes: list[Any] = []
+        self._request_iterator: AsyncIterator[Any] | None = None
+        self._request_task: asyncio.Task[None] | None = None
+        self._iter_index = 0
+        self._request_error: Exception | None = None
+
+    def set_request_iterator(self, iterator: AsyncIterator[Any]) -> None:
+        """Set the request iterator and start consuming it in background."""
+        import asyncio
+
+        self._request_iterator = iterator
+        # Start consuming requests in background - don't block on it
+        self._request_task = asyncio.create_task(self._consume_requests_background())
+
+    async def _consume_requests_background(self) -> None:
+        """Consume requests in background without blocking response iteration."""
+        if self._request_iterator:
+            try:
+                async for request in self._request_iterator:
+                    self._writes.append(request)
+                    if self._on_write:
+                        self._on_write(request)
+            except Exception as e:
+                # Request generator may raise on timeout/cancel - store for debugging
+                self._request_error = e
+
+    async def wait_for_requests(self) -> None:
+        """Wait for all requests to be consumed. Use after process.result()."""
+        import asyncio
+
+        if self._request_task:
+            # Wait for the background task to complete
+            await asyncio.wait_for(self._request_task, timeout=5.0)
+
+    def __aiter__(self) -> "MockBidirectionalStreamCall":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._error_on_read:
+            raise self._error_on_read
+        if self._response_generator:
+            # Use generator if provided
+            if not hasattr(self, "_gen_instance"):
+                self._gen_instance = self._response_generator()
+            return await self._gen_instance.__anext__()
+        if self._iter_index >= len(self._responses):
+            raise StopAsyncIteration
+        response = self._responses[self._iter_index]
+        self._iter_index += 1
+        return response
+
+
 def create_mock_channel_and_stub(
     mock_call: MockStreamCall,
 ) -> tuple[MagicMock, MagicMock]:
@@ -153,6 +235,35 @@ def create_mock_channel_and_stub(
         request_iterator: Any = None, timeout: float | None = None, metadata: Any = None
     ) -> MockStreamCall:
         # Capture the request iterator for processing
+        if request_iterator is not None:
+            mock_call.set_request_iterator(request_iterator)
+        return mock_call
+
+    mock_stub = MagicMock()
+    mock_stub.StreamExec = MagicMock(side_effect=stream_exec_side_effect)
+
+    return mock_channel, mock_stub
+
+
+def create_mock_channel_and_stub_bidirectional(
+    mock_call: MockBidirectionalStreamCall,
+) -> tuple[MagicMock, MagicMock]:
+    """Create mock channel and stub with bidirectional mock call.
+
+    This version uses MockBidirectionalStreamCall which properly
+    interleaves requests and responses for stdin ready signal testing.
+
+    Returns:
+        Tuple of (mock_channel, mock_stub).
+    """
+    mock_channel = MagicMock()
+    mock_channel.close = AsyncMock()
+    mock_channel.channel_ready = AsyncMock()
+
+    def stream_exec_side_effect(
+        request_iterator: Any = None, timeout: float | None = None, metadata: Any = None
+    ) -> MockBidirectionalStreamCall:
+        # Capture the request iterator for background processing
         if request_iterator is not None:
             mock_call.set_request_iterator(request_iterator)
         return mock_call
@@ -2031,3 +2142,269 @@ class TestTranslateRpcError:
         result = _translate_rpc_error(error, operation="Test")
 
         assert isinstance(result, SandboxError)
+
+
+class TestExecStdinReadySignal:
+    """Tests for stdin ready signal handling in exec streaming."""
+
+    def test_exec_stdin_waits_for_ready(self) -> None:
+        """Test stdin data is not sent until ready signal is received.
+
+        This test verifies the timing behavior: stdin data should only be
+        sent after the ready signal is received from the server.
+        """
+        import asyncio
+        import time
+
+        from google.protobuf import timestamp_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Track timing: when was stdin data received relative to ready being sent?
+        ready_sent_time: float | None = None
+        stdin_received_time: float | None = None
+        close_received_time: float | None = None
+
+        # Use event to synchronize: wait for close before sending exit
+        close_event = asyncio.Event()
+
+        def on_write_with_event(request: Any) -> None:
+            nonlocal stdin_received_time, close_received_time
+            if hasattr(request, "stdin") and request.HasField("stdin"):
+                stdin_received_time = time.monotonic()
+            elif hasattr(request, "close") and request.HasField("close"):
+                close_received_time = time.monotonic()
+                close_event.set()
+
+        async def response_generator() -> AsyncIterator[Any]:
+            """Generate responses with proper sequencing like a real server."""
+            nonlocal ready_sent_time
+            # Send ready signal first
+            ready_response = MagicMock()
+            ready_response.HasField = lambda field: field == "ready"
+            ready_response.ready.ready_at = timestamp_pb2.Timestamp(seconds=1234567890)
+            ready_sent_time = time.monotonic()
+            yield ready_response
+
+            # Wait for stdin close before sending exit (like a real server)
+            try:
+                await asyncio.wait_for(close_event.wait(), timeout=5.0)
+            except TimeoutError:
+                pass
+
+            # Send exit after stdin is closed
+            exit_response = MagicMock()
+            exit_response.HasField = lambda field: field == "exit"
+            exit_response.exit.exit_code = 0
+            yield exit_response
+
+        # Use bidirectional mock with response generator - properly interleaves
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=response_generator, on_write=on_write_with_event
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True)
+            assert process.stdin is not None  # stdin=True provides StreamWriter
+
+            # Write data to stdin and close
+            process.stdin.write(b"hello").result()
+            process.stdin.close().result()
+
+            result = process.result()
+            assert result.returncode == 0
+
+        # Verify timing: stdin was received after ready was sent
+        assert ready_sent_time is not None, "Ready signal was never sent"
+        assert stdin_received_time is not None, "Stdin data was never received"
+        assert close_received_time is not None, "Stdin close was never received"
+
+        # Stdin should be sent after ready (with some tolerance for timing)
+        assert (
+            stdin_received_time >= ready_sent_time
+        ), f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+
+    def test_exec_stdin_ready_timeout(self) -> None:
+        """Test SandboxTimeoutError raised when ready signal not received."""
+        from aviato.exceptions import SandboxTimeoutError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Never send ready signal - just hang (simulated by no responses)
+        # The test will timeout waiting for ready
+        mock_call = MockStreamCall(responses=[])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=0.1)
+
+            with pytest.raises(SandboxTimeoutError, match="ready signal"):
+                process.result()
+
+    def test_exec_stdin_error_before_ready(self) -> None:
+        """Test error before ready signal unblocks and propagates error."""
+        from aviato.exceptions import SandboxExecutionError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Error response before ready signal
+        error_response = MagicMock()
+        error_response.HasField = lambda field: field == "error"
+        error_response.error.message = "Process crashed"
+
+        # Use bidirectional mock to allow responses while requests are still being sent
+        mock_call = MockBidirectionalStreamCall(responses=[error_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=5.0)
+
+            # Should not deadlock - error sets ready_event
+            with pytest.raises(SandboxExecutionError, match="Process crashed"):
+                process.result()
+
+    def test_exec_stdin_exit_before_ready(self) -> None:
+        """Test exit before ready signal unblocks and returns result."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Exit response before ready signal (fast-completing process)
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        # Use bidirectional mock to allow responses while requests are still being sent
+        mock_call = MockBidirectionalStreamCall(responses=[exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["true"], stdin=True, timeout_seconds=5.0)
+
+            # Should not deadlock - exit sets ready_event
+            result = process.result()
+            assert result.returncode == 0
+
+    def test_exec_stdin_cancel_unblocks(self) -> None:
+        """Test Process.cancel() unblocks stdin waiting for ready."""
+        import asyncio
+        import concurrent.futures
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Never send ready - simulates hung connection
+        mock_call = MockStreamCall(responses=[])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            # Use longer timeout so cancel is what terminates it
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=30.0)
+
+            # Cancel the process - this should unblock the stdin waiter
+            process.cancel()
+
+            # Result should raise CancelledError or return quickly
+            with pytest.raises((concurrent.futures.CancelledError, asyncio.CancelledError)):
+                process.result(timeout=1.0)
+
+    def test_exec_no_stdin_no_ready_wait(self) -> None:
+        """Test stdin=False does not wait for ready signal."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # No ready signal in responses - just stdout and exit
+        stdout_response = MagicMock()
+        stdout_response.HasField = lambda field: field == "output"
+        stdout_response.output.data = b"hello\n"
+        stdout_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[stdout_response, exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            # stdin=False (default) - should not wait for ready
+            process = sandbox.exec(["echo", "hello"])
+
+            # Should complete without ready signal
+            result = process.result()
+            assert result.returncode == 0
+            assert result.stdout == "hello\n"
+
+            # Verify stdin is None when stdin=False
+            assert process.stdin is None

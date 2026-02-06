@@ -36,6 +36,7 @@ from aviato._defaults import (
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    STDIN_CHUNK_SIZE,
     SandboxDefaults,
 )
 from aviato._loop_manager import _LoopManager
@@ -46,6 +47,7 @@ from aviato._types import (
     Process,
     ProcessResult,
     StreamReader,
+    StreamWriter,
 )
 from aviato._wandb import ExecOutcome
 from aviato.exceptions import (
@@ -1632,12 +1634,17 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
+        stdin_queue: asyncio.Queue[bytes | None] | None = None,
+        stdin_writer: StreamWriter | None = None,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
         Uses gRPC bidirectional streaming to receive stdout/stderr as they arrive.
         Buffers output while also pushing to queues for real-time streaming.
         Signals end-of-stream with None sentinel when command completes.
+
+        When stdin_queue is provided, data from it is sent to the process's stdin.
+        None in stdin_queue signals EOF. Uses done_writing() for proper half-close.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
 
@@ -1675,19 +1682,81 @@ class Sandbox:
         stderr_buffer: list[bytes] = []
         exit_code: int | None = None
 
+        # Shutdown event signals request generator to stop when process exits/times out
+        shutdown_event = asyncio.Event()
+        # Ready event signals that server is ready to receive stdin data
+        ready_event = asyncio.Event()
+        # Capture exceptions from request_generator (gRPC swallows them otherwise)
+        request_error: Exception | None = None
+        # Track exec start time for ready latency measurement (only used when stdin enabled)
+        exec_start_time = time.monotonic()
+
         async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
             """Generate request messages for the bidirectional stream.
 
-            Yields init message then returns. The generator naturally completes
-            when all messages are sent, which signals gRPC to half-close the
-            send direction.
+            Yields init message, then stdin data if enabled, then returns.
+            The generator naturally completes when all messages are sent,
+            which signals gRPC to half-close the send direction.
             """
+            # Yield init message first
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
                     sandbox_id=self._sandbox_id,
                     command=rpc_command,
                 )
             )
+
+            # If stdin is enabled, wait for ready signal before sending data
+            if stdin_queue is not None:
+                nonlocal request_error
+                # Wait for ready signal with timeout
+                ready_timeout = min(5.0, timeout) if timeout is not None else 5.0
+                try:
+                    await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
+                except TimeoutError:
+                    # Capture error for propagation (gRPC swallows generator exceptions)
+                    request_error = SandboxTimeoutError(
+                        "stdin ready signal not received within timeout"
+                    )
+                    shutdown_event.set()
+                    raise request_error from None
+
+                # Now safe to send stdin data
+                while not shutdown_event.is_set():
+                    # Wait for either queue data or shutdown signal
+                    get_task = asyncio.create_task(stdin_queue.get())
+                    shutdown_task = asyncio.create_task(shutdown_event.wait())
+                    try:
+                        done, pending = await asyncio.wait(
+                            [get_task, shutdown_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        # Cancel pending tasks
+                        for task in pending:
+                            task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await task
+
+                        # Check if shutdown was triggered
+                        if shutdown_task in done:
+                            return
+
+                        # Process queue data
+                        data = get_task.result()
+                        if data is None:  # EOF sentinel - close stdin
+                            yield streaming_pb2.ExecStreamRequest(
+                                close=streaming_pb2.ExecStreamClose()
+                            )
+                            return
+
+                        # Chunk large data into 64KB pieces
+                        for i in range(0, len(data), STDIN_CHUNK_SIZE):
+                            chunk = data[i : i + STDIN_CHUNK_SIZE]
+                            yield streaming_pb2.ExecStreamRequest(
+                                stdin=streaming_pb2.ExecStreamData(data=chunk)
+                            )
+                    except asyncio.CancelledError:
+                        return
 
         # Create the bidirectional streaming call with request iterator
         call_timeout = (
@@ -1740,7 +1809,22 @@ class Sandbox:
                     raise item
 
                 response = item
-                if response.HasField("output"):
+                if response.HasField("ready"):
+                    # Server ready to receive stdin data
+                    # Log latency only when stdin is enabled (no overhead when stdin=False)
+                    if stdin_queue is not None:
+                        ready_latency = time.monotonic() - exec_start_time
+                        logger.debug(
+                            "stdin ready signal received",
+                            extra={
+                                "sandbox_id": self._sandbox_id,
+                                "ready_latency_ms": ready_latency * 1000,
+                                "ready_at": response.ready.ready_at.ToDatetime().isoformat(),
+                            },
+                        )
+                    ready_event.set()
+
+                elif response.HasField("output"):
                     data = response.output.data
                     # Decode as UTF-8 for queue (replacing invalid chars)
                     text = data.decode("utf-8", errors="replace")
@@ -1761,21 +1845,34 @@ class Sandbox:
                         await stdout_queue.put(text)
 
                 elif response.HasField("exit"):
+                    ready_event.set()  # Unblock stdin sender on terminal message
                     exit_code = response.exit.exit_code
                     break
 
                 elif response.HasField("error"):
+                    ready_event.set()  # Unblock stdin sender on terminal message
                     raise SandboxExecutionError(
                         f"Exec stream error: {response.error.message}",
                     )
         finally:
+            # Unblock stdin sender if still waiting for ready signal
+            ready_event.set()
+            # Signal request generator to stop consuming stdin queue
+            shutdown_event.set()
             # Cancel collector task
             collect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await collect_task
+            # Signal stdin writer that process has exited (prevents writes to exited process)
+            if stdin_writer is not None:
+                stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
             # Signal end-of-stream
             await stdout_queue.put(None)
             await stderr_queue.put(None)
+
+        # Propagate any error from request_generator (gRPC swallows generator exceptions)
+        if request_error is not None:
+            raise request_error
 
         # Combine buffers into final output
         stdout_bytes = b"".join(stdout_buffer)
@@ -1808,6 +1905,7 @@ class Sandbox:
         cwd: str | None = None,
         check: bool = False,
         timeout_seconds: float | None = None,
+        stdin: bool = False,
     ) -> Process:
         """Execute command, return Process immediately.
 
@@ -1822,11 +1920,14 @@ class Sandbox:
             check: If True, raise SandboxExecutionError on non-zero returncode
             timeout_seconds: Timeout for command execution (after sandbox is RUNNING).
                 Does not include time waiting for sandbox to reach RUNNING status.
+            stdin: If True, enable stdin streaming. Process.stdin will be a
+                StreamWriter that can send input to the command. If False (default),
+                stdin is closed immediately and Process.stdin is None.
 
         Returns:
             Process handle with streaming stdout/stderr. Call .result() to block
             for the final ProcessResult, or iterate over .stdout/.stderr for
-            real-time output.
+            real-time output. When stdin=True, Process.stdin is a StreamWriter.
 
         Raises:
             ValueError: If command is empty or cwd is invalid (empty or relative path)
@@ -1847,6 +1948,12 @@ class Sandbox:
                 print(line)
             result = process.result()
 
+            # With stdin streaming
+            process = sb.exec(["cat"], stdin=True)
+            process.stdin.write(b"hello world").result()
+            process.stdin.close().result()
+            result = process.result()
+
             # Async usage
             result = await sb.exec(["echo", "hello"])
             ```
@@ -1863,6 +1970,13 @@ class Sandbox:
         stdout_queue: asyncio.Queue[str | None] = asyncio.Queue()
         stderr_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+        # Stdin queue is bounded to provide backpressure
+        stdin_queue: asyncio.Queue[bytes | None] | None = None
+        stdin_writer: StreamWriter | None = None
+        if stdin:
+            stdin_queue = asyncio.Queue(maxsize=StreamWriter.QUEUE_SIZE)
+            stdin_writer = StreamWriter(stdin_queue, self._loop_manager)
+
         process_future = self._loop_manager.run_async(
             self._exec_streaming_async(
                 command,
@@ -1871,6 +1985,8 @@ class Sandbox:
                 cwd=cwd,
                 check=check,
                 timeout_seconds=timeout_seconds,
+                stdin_queue=stdin_queue,
+                stdin_writer=stdin_writer,
             )
         )
 
@@ -1879,6 +1995,7 @@ class Sandbox:
             command=list(command),
             stdout=StreamReader(stdout_queue, self._loop_manager),
             stderr=StreamReader(stderr_queue, self._loop_manager),
+            stdin=stdin_writer,
             stats_callback=self._on_exec_complete,
         )
 

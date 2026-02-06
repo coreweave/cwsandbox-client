@@ -18,7 +18,9 @@ from aviato._types import (
     ProcessResult,
     Serialization,
     StreamReader,
+    StreamWriter,
 )
+from aviato.exceptions import SandboxExecutionError
 
 
 class TestOperationRef:
@@ -348,6 +350,317 @@ class TestStreamReader:
         # Further iteration should raise immediately
         with pytest.raises(StopAsyncIteration):
             await reader.__anext__()
+
+
+class TestStreamWriter:
+    """Tests for StreamWriter class."""
+
+    def _create_mock_loop_manager(self) -> MagicMock:
+        """Create a mock _LoopManager for testing."""
+        mock = MagicMock()
+
+        def run_async_impl(coro):
+            """Execute coroutine and return a Future with the result."""
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(coro)
+                future: Future[None] = Future()
+                future.set_result(result)
+                return future
+            finally:
+                loop.close()
+
+        mock.run_async.side_effect = run_async_impl
+        return mock
+
+    def test_write_queues_data_correctly(self) -> None:
+        """Test write() queues bytes data to the underlying queue."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.write(b"hello world")
+        ref.result()
+
+        assert queue.get_nowait() == b"hello world"
+
+    def test_writeline_encodes_and_adds_newline(self) -> None:
+        """Test writeline() encodes text and appends newline."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.writeline("hello")
+        ref.result()
+
+        assert queue.get_nowait() == b"hello\n"
+
+    def test_writeline_custom_encoding(self) -> None:
+        """Test writeline() uses specified encoding."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.writeline("hello", encoding="ascii")
+        ref.result()
+
+        assert queue.get_nowait() == b"hello\n"
+
+    def test_close_sets_closed_property(self) -> None:
+        """Test close() sets the closed property to True."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        assert writer.closed is False
+        ref = writer.close()
+        ref.result()
+        assert writer.closed is True
+
+    def test_multiple_writes_maintain_fifo_order(self) -> None:
+        """Test multiple writes are queued in FIFO order."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.write(b"first").result()
+        writer.write(b"second").result()
+        writer.write(b"third").result()
+
+        assert queue.get_nowait() == b"first"
+        assert queue.get_nowait() == b"second"
+        assert queue.get_nowait() == b"third"
+
+    def test_close_is_idempotent(self) -> None:
+        """Test close() is idempotent - multiple calls are safe."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        # First close
+        ref1 = writer.close()
+        ref1.result()
+        assert writer.closed is True
+
+        # Second close should succeed without error
+        ref2 = writer.close()
+        ref2.result()
+        assert writer.closed is True
+
+        # Only one sentinel should be in queue
+        assert queue.get_nowait() is None
+        assert queue.empty()
+
+    def test_write_after_close_raises_exception(self) -> None:
+        """Test write() after close() raises SandboxExecutionError."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.close().result()
+
+        with pytest.raises(SandboxExecutionError, match="stream is closed"):
+            writer.write(b"data")
+
+    def test_writeline_after_close_raises_exception(self) -> None:
+        """Test writeline() after close() raises SandboxExecutionError."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.close().result()
+
+        with pytest.raises(SandboxExecutionError, match="stream is closed"):
+            writer.writeline("text")
+
+    def test_close_queues_sentinel_after_pending_writes(self) -> None:
+        """Test close() queues EOF sentinel after pending data."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.write(b"data1").result()
+        writer.write(b"data2").result()
+        writer.close().result()
+
+        # Data should come first, then sentinel
+        assert queue.get_nowait() == b"data1"
+        assert queue.get_nowait() == b"data2"
+        assert queue.get_nowait() is None
+
+    def test_set_exception_causes_write_to_fail(self) -> None:
+        """Test write() after set_exception raises SandboxExecutionError."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        original_error = RuntimeError("process exited")
+        writer.set_exception(original_error)
+
+        with pytest.raises(SandboxExecutionError, match="stream has failed") as exc_info:
+            writer.write(b"data")
+
+        # Verify chained exception
+        assert exc_info.value.__cause__ is original_error
+
+    def test_set_exception_causes_writeline_to_fail(self) -> None:
+        """Test writeline() after set_exception raises SandboxExecutionError."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.set_exception(RuntimeError("process died"))
+
+        with pytest.raises(SandboxExecutionError, match="stream has failed"):
+            writer.writeline("text")
+
+    def test_exception_takes_precedence_over_closed(self) -> None:
+        """Test exception is raised even if stream is also closed."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        writer.set_exception(RuntimeError("process error"))
+        writer.close().result()
+
+        # Should raise the exception, not the closed error
+        with pytest.raises(SandboxExecutionError, match="stream has failed"):
+            writer.write(b"data")
+
+    def test_write_returns_operation_ref(self) -> None:
+        """Test write() returns OperationRef[None]."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.write(b"data")
+
+        assert isinstance(ref, OperationRef)
+        result = ref.result()
+        assert result is None
+
+    def test_writeline_returns_operation_ref(self) -> None:
+        """Test writeline() returns OperationRef[None]."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.writeline("text")
+
+        assert isinstance(ref, OperationRef)
+        result = ref.result()
+        assert result is None
+
+    def test_close_returns_operation_ref(self) -> None:
+        """Test close() returns OperationRef[None]."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.close()
+
+        assert isinstance(ref, OperationRef)
+        result = ref.result()
+        assert result is None
+
+    def _create_async_mock_loop_manager(self) -> MagicMock:
+        """Create a mock _LoopManager for async test contexts.
+
+        This mock uses asyncio.get_event_loop() instead of creating a new loop,
+        which is necessary when tests run inside an existing async context.
+        """
+        mock = MagicMock()
+
+        def run_async_impl(coro):
+            """Execute coroutine using running loop and return Future."""
+            loop = asyncio.get_event_loop()
+            task = loop.create_task(coro)
+            future: Future[None] = Future()
+
+            def on_done(t):
+                if t.exception():
+                    future.set_exception(t.exception())
+                else:
+                    future.set_result(t.result())
+
+            task.add_done_callback(on_done)
+            return future
+
+        mock.run_async.side_effect = run_async_impl
+        return mock
+
+    @pytest.mark.asyncio
+    async def test_write_awaitable_in_async_context(self) -> None:
+        """Test write() returns awaitable OperationRef in async context."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_async_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.write(b"async data")
+        result = await ref
+
+        assert result is None
+        assert queue.get_nowait() == b"async data"
+
+    @pytest.mark.asyncio
+    async def test_writeline_awaitable_in_async_context(self) -> None:
+        """Test writeline() returns awaitable OperationRef in async context."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_async_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.writeline("async text")
+        result = await ref
+
+        assert result is None
+        assert queue.get_nowait() == b"async text\n"
+
+    @pytest.mark.asyncio
+    async def test_close_awaitable_in_async_context(self) -> None:
+        """Test close() returns awaitable OperationRef in async context."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_async_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.close()
+        result = await ref
+
+        assert result is None
+        assert writer.closed is True
+
+    def test_queue_size_constant(self) -> None:
+        """Test StreamWriter has expected queue size constant."""
+        assert StreamWriter.QUEUE_SIZE == 16
+
+    def test_closed_property_initially_false(self) -> None:
+        """Test closed property is False before close() is called."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        assert writer.closed is False
+
+    def test_write_empty_bytes(self) -> None:
+        """Test write() handles empty bytes."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.write(b"")
+        ref.result()
+
+        assert queue.get_nowait() == b""
+
+    def test_writeline_empty_string(self) -> None:
+        """Test writeline() handles empty string (still adds newline)."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        writer = StreamWriter(queue, mock_manager)
+
+        ref = writer.writeline("")
+        ref.result()
+
+        assert queue.get_nowait() == b"\n"
 
 
 class TestProcess:

@@ -22,6 +22,7 @@ from aviato._types import (
     ProcessResult,
     Serialization,
     StreamReader,
+    StreamWriter,
 )
 from aviato.exceptions import (
     AsyncFunctionError,
@@ -256,6 +257,7 @@ __all__ = [
     "Serialization",
     "Session",
     "StreamReader",
+    "StreamWriter",
     "Waitable",
     "WandbAuthError",
     "results",
