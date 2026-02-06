@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-PackageName: aviato-client
+
 """Function decorator example using sessions.
 
 This example demonstrates:

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """Shared fixtures for integration tests.
 
 Credentials must be set via environment variables before running tests.

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-PackageName: aviato-client
+
 """Example: Parallel batch processing with progress tracking.
 
 This example shows how to:

@@ -15,9 +15,11 @@ description = "A Python client library for Aviato sandboxes"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 authors = [
-    { name = "CoreWeave" }
+    { name = "CoreWeave, Inc." }
 ]
+license = "Apache-2.0"
 classifiers = [
+    "License :: OSI Approved :: Apache Software License",
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """Cleanup handlers for graceful shutdown of sandboxes.
 
 This module installs atexit and signal handlers to ensure all sandboxes are

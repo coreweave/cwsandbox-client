@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-PackageName: aviato-client
+
 """Example: Reconnect to an existing sandbox by ID.
 
 This example demonstrates using Sandbox.from_id() to attach to a

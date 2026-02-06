@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: Apache-2.0
+SPDX-PackageName: aviato-client
+-->
+
 # Source Code
 
 This directory contains the aviato SDK implementation.

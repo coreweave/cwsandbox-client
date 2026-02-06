@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
 """Integration detection utilities for external services.
 
 This module provides functions to check for the availability and

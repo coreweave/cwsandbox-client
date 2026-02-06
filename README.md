@@ -31,3 +31,7 @@ async with Sandbox.run("sleep", "infinity") as sb:
 See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
 
 For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+- The Aviato Client library is licensed under the Apache-2.0 license.
+- The Aviato Client examples are licensed under the BSD-3-Clause license.
