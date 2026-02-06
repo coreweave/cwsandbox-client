@@ -324,6 +324,8 @@ class Sandbox:
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
+        self._streaming_channel: grpc.aio.Channel | None = None
+        self._streaming_channel_lock = asyncio.Lock()
         self._sandbox_id: str | None = None
         self._returncode: int | None = None
         self._tower_id: str | None = None
@@ -514,6 +516,8 @@ class Sandbox:
         sandbox._environment_variables = {}
         sandbox._channel = None
         sandbox._stub = None
+        sandbox._streaming_channel = None
+        sandbox._streaming_channel_lock = asyncio.Lock()
         sandbox._stopped = False
         sandbox._returncode = None
         sandbox._session = None
@@ -1072,6 +1076,32 @@ class Sandbox:
         self._stub = atc_pb2_grpc.ATCServiceStub(self._channel)  # type: ignore[no-untyped-call]
         logger.debug("Initialized gRPC channel for %s", self._base_url)
 
+    async def _get_or_create_streaming_channel(self) -> grpc.aio.Channel:
+        """Get or create the cached streaming gRPC channel."""
+        if self._streaming_channel is not None:
+            return self._streaming_channel
+
+        async with self._streaming_channel_lock:
+            if self._streaming_channel is not None:
+                return self._streaming_channel
+
+            target, is_secure = parse_grpc_target(self._base_url)
+            channel = create_channel(target, is_secure)
+
+            try:
+                await asyncio.wait_for(
+                    channel.channel_ready(),
+                    timeout=self._request_timeout_seconds,
+                )
+            except TimeoutError:
+                await channel.close(grace=None)
+                raise SandboxTimeoutError(
+                    f"Timed out connecting to streaming service at {target}"
+                ) from None
+
+            self._streaming_channel = channel
+            return channel
+
     async def _poll_until_stable(
         self,
         timeout_seconds: float,
@@ -1468,7 +1498,10 @@ class Sandbox:
             # is no longer usable either way
             if self._session is not None:
                 self._session._deregister_sandbox(self)
-            # Close the channel to release resources
+            # Close channels to release resources
+            if self._streaming_channel is not None:
+                await self._streaming_channel.close(grace=None)
+                self._streaming_channel = None
             if self._channel is not None:
                 await self._channel.close(grace=None)
                 self._channel = None
@@ -1548,13 +1581,7 @@ class Sandbox:
         # Wait for sandbox to be RUNNING before sending exec request
         await self._wait_until_running_async()
 
-        # Create gRPC channel (without interceptors - metadata passed directly)
-        target, is_secure = parse_grpc_target(self._base_url)
-        channel = create_channel(target, is_secure)
-
-        # Wait for channel to be ready before making calls
-        await channel.channel_ready()
-
+        channel = await self._get_or_create_streaming_channel()
         stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
         # Resolve auth headers and convert to gRPC metadata
@@ -1605,7 +1632,7 @@ class Sandbox:
             if stdin_queue is not None:
                 nonlocal request_error
                 # Wait for ready signal with timeout
-                ready_timeout = min(5.0, timeout) if timeout else 5.0
+                ready_timeout = min(5.0, timeout) if timeout is not None else 5.0
                 try:
                     await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
                 except TimeoutError:
@@ -1654,7 +1681,9 @@ class Sandbox:
                         return
 
         # Create the bidirectional streaming call with request iterator
-        call_timeout = timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout else None
+        call_timeout = (
+            timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
+        )
         call: grpc.aio.StreamStreamCall[
             streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
         ] = stub.StreamExec(
@@ -1762,8 +1791,6 @@ class Sandbox:
             # Signal end-of-stream
             await stdout_queue.put(None)
             await stderr_queue.put(None)
-            # Close gRPC channel to release resources
-            await channel.close(grace=None)
 
         # Propagate any error from request_generator (gRPC swallows generator exceptions)
         if request_error is not None:
