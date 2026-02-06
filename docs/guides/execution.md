@@ -57,6 +57,122 @@ Use streaming when you need to:
 - Process output as it arrives
 - Implement progress indicators
 
+## Stdin Streaming
+
+Send input to running commands by enabling stdin with `stdin=True`:
+
+```python
+with Sandbox.run() as sandbox:
+    process = sandbox.exec(["cat"], stdin=True)
+
+    process.stdin.write(b"hello world\n").result()
+    process.stdin.close().result()
+
+    result = process.result()
+    print(result.stdout)  # "hello world\n"
+```
+
+### StreamWriter Methods
+
+When `stdin=True`, `process.stdin` is a `StreamWriter` with three methods:
+
+- **`write(data: bytes)`** - Write raw bytes. Returns `OperationRef[None]`.
+- **`writeline(text: str)`** - Write text with a trailing newline (encodes to UTF-8). Returns `OperationRef[None]`.
+- **`close()`** - Signal EOF. Pending writes complete first. Returns `OperationRef[None]`.
+
+When `stdin=False` (the default), `process.stdin` is `None`.
+
+### Multiple Writes
+
+Send data incrementally before closing:
+
+```python
+process = sandbox.exec(["cat"], stdin=True)
+
+process.stdin.writeline("line 1").result()
+process.stdin.writeline("line 2").result()
+process.stdin.writeline("line 3").result()
+process.stdin.close().result()
+
+result = process.result()
+print(result.stdout)  # "line 1\nline 2\nline 3\n"
+```
+
+### Interactive Python via Stdin
+
+Feed Python code to an interactive interpreter:
+
+```python
+process = sandbox.exec(["python3"], stdin=True)
+
+process.stdin.writeline("x = 40 + 2").result()
+process.stdin.writeline("print(f'answer: {x}')").result()
+process.stdin.close().result()
+
+result = process.result()
+print(result.stdout)  # "answer: 42\n"
+```
+
+### Combining Stdin and Stdout Streaming
+
+Stream output while sending input:
+
+```python
+process = sandbox.exec(["cat"], stdin=True)
+
+# Send input
+process.stdin.writeline("hello").result()
+process.stdin.writeline("world").result()
+process.stdin.close().result()
+
+# Stream output as it arrives
+for line in process.stdout:
+    print(f"[out] {line}", end="")
+
+result = process.result()
+```
+
+### EOF-Dependent Commands
+
+Some commands (like `sort`) read all input before producing output. Close stdin to signal EOF:
+
+```python
+process = sandbox.exec(["sort"], stdin=True)
+
+process.stdin.writeline("banana").result()
+process.stdin.writeline("apple").result()
+process.stdin.writeline("cherry").result()
+process.stdin.close().result()  # sort needs EOF to begin
+
+result = process.result()
+print(result.stdout)  # "apple\nbanana\ncherry\n"
+```
+
+### Async Usage
+
+In async contexts, `await` the OperationRefs directly:
+
+```python
+async with Sandbox.run() as sandbox:
+    process = sandbox.exec(["cat"], stdin=True)
+
+    await process.stdin.write(b"async hello\n")
+    await process.stdin.close()
+
+    result = await process
+    print(result.stdout)  # "async hello\n"
+```
+
+### When to Use stdin=True vs stdin=False
+
+| Scenario | stdin | Reason |
+|----------|-------|--------|
+| Run a command with arguments | `False` | Input comes from args, not stdin |
+| Pipe data into a command | `True` | Command reads from stdin |
+| Interactive interpreter | `True` | Interpreter reads commands from stdin |
+| Process that reads until EOF | `True` | Need `close()` to signal EOF |
+| Fire-and-forget command | `False` | No input needed |
+
 ## Working Directory
 
 Set the working directory with `cwd`:
