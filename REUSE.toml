@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
+version = 1
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2025 CoreWeave, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-PackageName = "aviato-client"
+
+[[annotations]]
+path = "examples/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 CoreWeave, Inc."
+SPDX-License-Identifier = "BSD-3-Clause"
+SPDX-PackageName = "aviato-client"

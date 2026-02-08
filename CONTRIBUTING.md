@@ -81,6 +81,7 @@ Each commit MUST:
 ---
 
 ## License headers
+<!--- REUSE-IgnoreStart -->
 
 Source code should contain an SPDX-style license header, reflecting:
 - Year & Copyright owner
@@ -90,7 +91,7 @@ Source code should contain an SPDX-style license header, reflecting:
 
 This can be partially automated with [FSFe REUSE](https://reuse.software/dev/#tool)
 ```shell
-reuse annotate --license Apache-2.0 --copyright 'CoreWeave, Inc.'  --year 2025 --skip-existing $FILE
+reuse annotate --license Apache-2.0 --copyright 'CoreWeave, Inc.'  --year 2025 --template default_template --skip-existing $FILE
 ```
 
 Blindly adding the headers to every file without review risks assigning the
@@ -102,3 +103,11 @@ contributions!
 - The Aviato Client usage examples (`examples/` directory) are licensed with
   the [BSD-3-Clause license](https://spdx.org/licenses/BSD-3-Clause.html) to encourage usage of the Aviato Client, while
   protecting CoreWeave's trademarks & name.
+
+Licensing state & SPDX bill-of-materials (BOM) can be valiated & generated with:
+```shell
+reuse lint
+reuse spdx
+```
+
+<!--- REUSE-IgnoreEnd -->
