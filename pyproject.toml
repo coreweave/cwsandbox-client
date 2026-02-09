@@ -31,7 +31,7 @@ classifiers = [
 dependencies = [
     # For local dev with backend changes, comment out the pinned version and run:
     #   uv pip install -e ../aviato/gen/python
-    "coreweave-aviato-grpc-python==1.76.0.2.20260127190035+52171f167253",  # Published version
+    "coreweave-aviato-grpc-python==1.78.0.1.20260206190817+b50ca76aa2c3",  # Published version
     "protobuf>=6.33.4",
     "pydantic>=2.0.0",
     "grpcio>=1.70.0",
