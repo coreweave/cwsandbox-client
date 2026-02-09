@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from aviato.exceptions import SandboxExecutionError
+
 if TYPE_CHECKING:
     from aviato._loop_manager import _LoopManager
 
@@ -228,6 +230,140 @@ class StreamReader:
         return line
 
 
+class StreamWriter:
+    """Sync and async writer for streaming input to a process.
+
+    StreamWriter wraps a bounded asyncio.Queue and provides both synchronous and
+    asynchronous write interfaces. This enables streaming input to be sent in
+    both sync and async contexts.
+
+    The stream uses None as a sentinel value to signal end-of-stream (EOF).
+    The queue is bounded (~16 items for ~1MB with 64KB chunks) to provide
+    backpressure.
+
+    Examples:
+        Synchronous write:
+        ```python
+        process.stdin.write(b"data").result()
+        process.stdin.writeline("hello").result()
+        process.stdin.close().result()
+        ```
+
+        Asynchronous write:
+        ```python
+        await process.stdin.write(b"data")
+        await process.stdin.writeline("hello")
+        await process.stdin.close()
+        ```
+    """
+
+    QUEUE_SIZE = 16  # ~1MB with 64KB chunks
+
+    def __init__(self, queue: asyncio.Queue[bytes | None], loop_manager: _LoopManager) -> None:
+        """Initialize with a queue and loop manager.
+
+        Args:
+            queue: The bounded asyncio.Queue to write to.
+            loop_manager: The _LoopManager for executing async operations.
+        """
+        self._queue = queue
+        self._loop_manager = loop_manager
+        self._closed = False
+        self._exception: BaseException | None = None
+
+    @property
+    def closed(self) -> bool:
+        """True if close() has been called."""
+        return self._closed
+
+    def _check_writable(self) -> None:
+        """Check if the stream is writable.
+
+        Raises:
+            SandboxExecutionError: If the stream is closed or has failed.
+        """
+        if self._exception is not None:
+            raise SandboxExecutionError(
+                "Cannot write to stdin: stream has failed"
+            ) from self._exception
+        if self._closed:
+            raise SandboxExecutionError("Cannot write to stdin: stream is closed")
+
+    def write(self, data: bytes) -> OperationRef[None]:
+        """Write raw bytes to the stream.
+
+        Queues the data to be sent to the process stdin. Blocks (via OperationRef.result())
+        if the queue is full, providing backpressure.
+
+        Args:
+            data: The bytes to write.
+
+        Returns:
+            An OperationRef that completes when the data is queued.
+
+        Raises:
+            SandboxExecutionError: If the stream is closed or has failed.
+        """
+        self._check_writable()
+
+        async def _write() -> None:
+            await self._queue.put(data)
+
+        future = self._loop_manager.run_async(_write())
+        return OperationRef(future)
+
+    def writeline(self, text: str, encoding: str = "utf-8") -> OperationRef[None]:
+        """Write a line of text to the stream.
+
+        Encodes the text, appends a newline, and queues it for sending.
+
+        Args:
+            text: The text to write.
+            encoding: The text encoding to use. Defaults to "utf-8".
+
+        Returns:
+            An OperationRef that completes when the data is queued.
+
+        Raises:
+            SandboxExecutionError: If the stream is closed or has failed.
+        """
+        data = (text + "\n").encode(encoding)
+        return self.write(data)
+
+    def close(self) -> OperationRef[None]:
+        """Close the stream, sending EOF sentinel.
+
+        The EOF sentinel is queued at the end, so pending writes complete first.
+        Multiple calls to close() are idempotent and return immediately.
+
+        Returns:
+            An OperationRef that completes when EOF is queued.
+        """
+        if self._closed:
+            # Idempotent: return immediately-completed operation
+            future: concurrent.futures.Future[None] = concurrent.futures.Future()
+            future.set_result(None)
+            return OperationRef(future)
+
+        self._closed = True
+
+        async def _close() -> None:
+            await self._queue.put(None)
+
+        future = self._loop_manager.run_async(_close())
+        return OperationRef(future)
+
+    def set_exception(self, exception: BaseException) -> None:
+        """Store an exception to be raised on subsequent writes.
+
+        Called internally when the stream fails (e.g., process exits).
+
+        Args:
+            exception: The exception to store.
+        """
+        self._exception = exception
+
+
 class Process(OperationRef[ProcessResult]):
     """Handle for a running process with streaming stdout/stderr.
 
@@ -242,6 +378,7 @@ class Process(OperationRef[ProcessResult]):
     Attributes:
         stdout: StreamReader for standard output
         stderr: StreamReader for standard error
+        stdin: StreamWriter for standard input (None if stdin streaming is disabled)
 
     Examples:
         Basic execution with result:
@@ -279,6 +416,7 @@ class Process(OperationRef[ProcessResult]):
         command: list[str],
         stdout: StreamReader,
         stderr: StreamReader,
+        stdin: StreamWriter | None = None,
         stats_callback: Callable[[ProcessResult | None, BaseException | None], None] | None = None,
     ) -> None:
         """Initialize with a future and stream readers.
@@ -288,6 +426,7 @@ class Process(OperationRef[ProcessResult]):
             command: The command being executed.
             stdout: StreamReader for stdout.
             stderr: StreamReader for stderr.
+            stdin: StreamWriter for stdin, or None if stdin streaming is disabled.
             stats_callback: Optional callback invoked once when result is available.
                 Called with (result, None) on success or (None, exception) on failure.
         """
@@ -298,6 +437,7 @@ class Process(OperationRef[ProcessResult]):
         self._exception: BaseException | None = None
         self.stdout = stdout
         self.stderr = stderr
+        self.stdin = stdin
         self._stats_callback = stats_callback
         self._stats_recorded = False
         self._stats_lock = threading.Lock()

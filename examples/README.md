@@ -74,6 +74,22 @@ Demonstrates:
 - Separate stdout/stderr handling
 - Process lifecycle (returncode, poll, wait, result)
 
+### Stdin Streaming (`stdin_streaming.py`)
+
+Send input to interactive commands:
+
+```bash
+python examples/stdin_streaming.py
+```
+
+Demonstrates:
+- Enabling stdin with `exec(stdin=True)`
+- Writing data with `process.stdin.write()`
+- Writing lines with `process.stdin.writeline()`
+- Closing stdin to signal EOF
+- Combining stdin with stdout streaming
+- Async stdin patterns
+
 ### Function Decorator (`function_decorator.py`)
 
 Execute Python functions in sandboxes:

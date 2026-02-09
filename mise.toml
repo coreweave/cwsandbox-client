@@ -89,3 +89,64 @@ run = [
 description = "Run pre-commit hooks"
 run = "uv run pre-commit run --all-files"
 alias = "pc"
+
+# =============================================================================
+# Local Backend Development
+# =============================================================================
+
+[tasks."dev:local-protos"]
+description = "Install locally-generated protos from aviato backend repo"
+run = """
+#!/bin/bash
+set -e
+
+BACKEND_REPO="${AVIATO_BACKEND_PATH:-../aviato}"
+
+if [ ! -d "$BACKEND_REPO" ]; then
+    echo "Error: Backend repo not found at $BACKEND_REPO"
+    echo "Set AVIATO_BACKEND_PATH or ensure ../aviato exists"
+    exit 1
+fi
+
+echo "==> Generating Python protos from $BACKEND_REPO..."
+(cd "$BACKEND_REPO" && make buf-gen-python)
+
+echo "==> Installing local protos into client venv..."
+uv pip install "$BACKEND_REPO/gen/python" --reinstall-package coreweave-aviato-grpc-python --no-deps
+
+echo "==> Verifying installation..."
+VERSION=$(uv pip show coreweave-aviato-grpc-python | grep Version | cut -d' ' -f2)
+echo "Installed: coreweave-aviato-grpc-python==$VERSION"
+
+echo ""
+echo "Done! Local protos installed."
+echo ""
+echo "Usage with local protos:"
+echo "  uv run --no-sync pytest ...    # Run tests without reverting"
+echo "  uv run --no-sync python ...    # Run scripts without reverting"
+echo "  mise run dev:revert-protos     # Revert to published protos"
+"""
+
+[tasks."dev:lint"]
+description = "Lint without syncing (preserves local protos)"
+run = "uv run --no-sync ruff check ."
+
+[tasks."dev:typecheck"]
+description = "Typecheck without syncing (preserves local protos)"
+run = "uv run --no-sync mypy src/"
+
+[tasks."dev:test"]
+description = "Run unit tests without syncing (preserves local protos)"
+run = "uv run --no-sync pytest tests/unit/"
+
+[tasks."dev:test:e2e"]
+description = "Run integration tests without syncing (preserves local protos)"
+run = "uv run --no-sync pytest tests/integration/ -v"
+
+[tasks."dev:check"]
+description = "Run all quality checks without syncing (preserves local protos)"
+depends = ["dev:lint", "dev:typecheck", "dev:test"]
+
+[tasks."dev:revert-protos"]
+description = "Revert to published protos (runs uv sync)"
+run = "uv sync --extra dev"

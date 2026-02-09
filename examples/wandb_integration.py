@@ -16,7 +16,6 @@ Requirements:
 """
 
 import wandb
-
 from aviato import SandboxDefaults, Session
 
 

@@ -4,14 +4,274 @@
 
 """Unit tests for aviato._sandbox module."""
 
-import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Sequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import grpc
+import grpc.aio
 import pytest
 
 from aviato import NetworkOptions, Sandbox, SandboxDefaults
 from aviato.exceptions import SandboxNotRunningError
+
+
+class MockRpcError(grpc.RpcError):
+    """Mock gRPC error for testing."""
+
+    def __init__(self, code: grpc.StatusCode, details: str) -> None:
+        super().__init__()
+        self._code = code
+        self._details = details
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+
+class MockAioRpcError(grpc.aio.AioRpcError):
+    """Mock gRPC async error for testing streaming calls."""
+
+    def __init__(self, code: grpc.StatusCode, details: str = "") -> None:
+        self._code = code
+        self._details = details
+        self._initial_metadata: grpc.aio.Metadata = grpc.aio.Metadata()
+        self._trailing_metadata: grpc.aio.Metadata = grpc.aio.Metadata()
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+    def initial_metadata(self) -> grpc.aio.Metadata:
+        return self._initial_metadata
+
+    def trailing_metadata(self) -> grpc.aio.Metadata:
+        return self._trailing_metadata
+
+
+class MockStreamCall:
+    """Mock gRPC bidirectional streaming call for testing.
+
+    Simulates the gRPC StreamStreamCall interface with write(), done_writing(),
+    and async iteration over responses. Supports both explicit write() pattern
+    and request_iterator pattern.
+    """
+
+    def __init__(
+        self,
+        responses: Sequence[Any] | None = None,
+        response_generator: Callable[[], AsyncIterator[Any]] | None = None,
+        on_write: Callable[[Any], None] | None = None,
+        error_on_read: Exception | None = None,
+    ) -> None:
+        """Initialize mock stream call.
+
+        Args:
+            responses: Fixed list of responses to yield.
+            response_generator: Async generator that yields responses
+                (takes priority over responses).
+            on_write: Callback invoked on each request (from write or iterator).
+            error_on_read: Exception to raise during iteration.
+        """
+        self._responses = list(responses) if responses else []
+        self._response_generator = response_generator
+        self._on_write = on_write
+        self._error_on_read = error_on_read
+        self._writes: list[Any] = []
+        self._done_writing_called = False
+        self._request_iterator: AsyncIterator[Any] | None = None
+
+    def set_request_iterator(self, iterator: AsyncIterator[Any]) -> None:
+        """Set the request iterator for consumption.
+
+        In gRPC, when using request_iterator pattern, the call object
+        internally consumes the iterator. This method allows tests to
+        capture and process the iterator.
+        """
+        self._request_iterator = iterator
+
+    async def consume_requests(self) -> None:
+        """Consume all requests from the iterator and call on_write for each."""
+        if self._request_iterator:
+            async for request in self._request_iterator:
+                self._writes.append(request)
+                if self._on_write:
+                    self._on_write(request)
+
+    async def write(self, request: Any) -> None:
+        """Record write and call optional callback."""
+        self._writes.append(request)
+        if self._on_write:
+            self._on_write(request)
+
+    async def done_writing(self) -> None:
+        """Mark that writing is complete."""
+        self._done_writing_called = True
+
+    def __aiter__(self) -> "MockStreamCall":
+        self._iter_index = 0
+        return self
+
+    async def __anext__(self) -> Any:
+        # If we have a request iterator, consume it first to process requests
+        if self._request_iterator and not hasattr(self, "_requests_consumed"):
+            self._requests_consumed = True
+            await self.consume_requests()
+
+        if self._error_on_read:
+            raise self._error_on_read
+        if self._response_generator:
+            # Use generator if provided
+            if not hasattr(self, "_gen_instance"):
+                self._gen_instance = self._response_generator()
+            return await self._gen_instance.__anext__()
+        # Use fixed responses list
+        if self._iter_index >= len(self._responses):
+            raise StopAsyncIteration
+        response = self._responses[self._iter_index]
+        self._iter_index += 1
+        return response
+
+
+class MockBidirectionalStreamCall:
+    """Mock gRPC bidirectional streaming call that properly interleaves requests and responses.
+
+    Unlike MockStreamCall, this class simulates true bidirectional streaming where
+    responses are returned immediately while requests are consumed in the background.
+    This is needed for testing stdin ready signal handling where the request generator
+    waits for a ready response before sending stdin data.
+    """
+
+    def __init__(
+        self,
+        responses: Sequence[Any] | None = None,
+        response_generator: Callable[[], AsyncIterator[Any]] | None = None,
+        on_write: Callable[[Any], None] | None = None,
+        error_on_read: Exception | None = None,
+    ) -> None:
+        """Initialize mock bidirectional stream call.
+
+        Args:
+            responses: List of responses to yield.
+            response_generator: Async generator that yields responses (takes priority).
+            on_write: Callback invoked on each request.
+            error_on_read: Exception to raise during iteration.
+        """
+        import asyncio
+
+        self._responses = list(responses) if responses else []
+        self._response_generator = response_generator
+        self._on_write = on_write
+        self._error_on_read = error_on_read
+        self._writes: list[Any] = []
+        self._request_iterator: AsyncIterator[Any] | None = None
+        self._request_task: asyncio.Task[None] | None = None
+        self._iter_index = 0
+        self._request_error: Exception | None = None
+
+    def set_request_iterator(self, iterator: AsyncIterator[Any]) -> None:
+        """Set the request iterator and start consuming it in background."""
+        import asyncio
+
+        self._request_iterator = iterator
+        # Start consuming requests in background - don't block on it
+        self._request_task = asyncio.create_task(self._consume_requests_background())
+
+    async def _consume_requests_background(self) -> None:
+        """Consume requests in background without blocking response iteration."""
+        if self._request_iterator:
+            try:
+                async for request in self._request_iterator:
+                    self._writes.append(request)
+                    if self._on_write:
+                        self._on_write(request)
+            except Exception as e:
+                # Request generator may raise on timeout/cancel - store for debugging
+                self._request_error = e
+
+    async def wait_for_requests(self) -> None:
+        """Wait for all requests to be consumed. Use after process.result()."""
+        import asyncio
+
+        if self._request_task:
+            # Wait for the background task to complete
+            await asyncio.wait_for(self._request_task, timeout=5.0)
+
+    def __aiter__(self) -> "MockBidirectionalStreamCall":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._error_on_read:
+            raise self._error_on_read
+        if self._response_generator:
+            # Use generator if provided
+            if not hasattr(self, "_gen_instance"):
+                self._gen_instance = self._response_generator()
+            return await self._gen_instance.__anext__()
+        if self._iter_index >= len(self._responses):
+            raise StopAsyncIteration
+        response = self._responses[self._iter_index]
+        self._iter_index += 1
+        return response
+
+
+def create_mock_channel_and_stub(
+    mock_call: MockStreamCall,
+) -> tuple[MagicMock, MagicMock]:
+    """Create mock channel and stub with the given mock call.
+
+    Returns:
+        Tuple of (mock_channel, mock_stub).
+    """
+    mock_channel = MagicMock()
+    mock_channel.close = AsyncMock()
+    mock_channel.channel_ready = AsyncMock()
+
+    def stream_exec_side_effect(
+        request_iterator: Any = None, timeout: float | None = None, metadata: Any = None
+    ) -> MockStreamCall:
+        # Capture the request iterator for processing
+        if request_iterator is not None:
+            mock_call.set_request_iterator(request_iterator)
+        return mock_call
+
+    mock_stub = MagicMock()
+    mock_stub.StreamExec = MagicMock(side_effect=stream_exec_side_effect)
+
+    return mock_channel, mock_stub
+
+
+def create_mock_channel_and_stub_bidirectional(
+    mock_call: MockBidirectionalStreamCall,
+) -> tuple[MagicMock, MagicMock]:
+    """Create mock channel and stub with bidirectional mock call.
+
+    This version uses MockBidirectionalStreamCall which properly
+    interleaves requests and responses for stdin ready signal testing.
+
+    Returns:
+        Tuple of (mock_channel, mock_stub).
+    """
+    mock_channel = MagicMock()
+    mock_channel.close = AsyncMock()
+    mock_channel.channel_ready = AsyncMock()
+
+    def stream_exec_side_effect(
+        request_iterator: Any = None, timeout: float | None = None, metadata: Any = None
+    ) -> MockBidirectionalStreamCall:
+        # Capture the request iterator for background processing
+        if request_iterator is not None:
+            mock_call.set_request_iterator(request_iterator)
+        return mock_call
+
+    mock_stub = MagicMock()
+    mock_stub.StreamExec = MagicMock(side_effect=stream_exec_side_effect)
+
+    return mock_channel, mock_stub
 
 
 class TestSandboxRun:
@@ -49,8 +309,8 @@ class TestSandboxExec:
         """Test exec with empty command raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         with pytest.raises(ValueError, match="Command cannot be empty"):
             sandbox.exec([])
 
@@ -62,33 +322,30 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        # Mock streaming responses: stderr output, then exit with code 127
-        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
-            # stderr output
-            response = MagicMock()
-            response.HasField = lambda field: field == "output"
-            response.output.data = b"command not found"
-            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
-            yield response
+        # Create mock responses: stderr output, then exit with code 127
+        stderr_response = MagicMock()
+        stderr_response.HasField = lambda field: field == "output"
+        stderr_response.output.data = b"command not found"
+        stderr_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
 
-            # exit with non-zero code
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 127
-            yield response
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 127
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        mock_call = MockStreamCall(responses=[stderr_response, exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["nonexistent"], check=True)
@@ -101,33 +358,30 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        # Mock streaming responses: stderr output, then exit with code 1
-        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
-            # stderr output
-            response = MagicMock()
-            response.HasField = lambda field: field == "output"
-            response.output.data = b"error"
-            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
-            yield response
+        # Create mock responses: stderr output, then exit with code 1
+        stderr_response = MagicMock()
+        stderr_response.HasField = lambda field: field == "output"
+        stderr_response.output.data = b"error"
+        stderr_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR
 
-            # exit with non-zero code
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 1
-            yield response
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 1
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        mock_call = MockStreamCall(responses=[stderr_response, exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["failing-cmd"], check=False)
@@ -141,33 +395,34 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        # Mock streaming responses: multiple stdout chunks, then exit
-        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
-            for chunk in [b"line1\n", b"line2\n", b"line3\n"]:
-                response = MagicMock()
-                response.HasField = lambda field: field == "output"
-                response.output.data = chunk
-                response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
-                yield response
-
-            # exit with code 0
+        # Create mock responses: multiple stdout chunks, then exit
+        responses = []
+        for chunk in [b"line1\n", b"line2\n", b"line3\n"]:
             response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 0
-            yield response
+            response.HasField = lambda field, c=chunk: field == "output"
+            response.output.data = chunk
+            response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+            responses.append(response)
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+        responses.append(exit_response)
+
+        mock_call = MockStreamCall(responses=responses)
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["echo", "test"])
@@ -188,25 +443,25 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        # Mock streaming response: error
-        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
-            response = MagicMock()
-            response.HasField = lambda field: field == "error"
-            response.error.message = "Connection lost"
-            yield response
+        # Create mock response: error
+        error_response = MagicMock()
+        error_response.HasField = lambda field: field == "error"
+        error_response.error.message = "Connection lost"
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        mock_call = MockStreamCall(responses=[error_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["failing-cmd"])
@@ -234,35 +489,29 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         captured_command: list[str] = []
 
-        async def mock_stream(
-            request_iter: AsyncIterator[MagicMock],
-            **kwargs: object,
-        ) -> AsyncIterator[MagicMock]:
-            # Capture the command from the request
-            async for req in request_iter:
-                if hasattr(req, "init"):
-                    captured_command.extend(req.init.command)
-                break
-            # Return exit response
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 0
-            yield response
+        def capture_write(request: Any) -> None:
+            if hasattr(request, "init") and request.init.command:
+                captured_command.extend(request.init.command)
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[exit_response], on_write=capture_write)
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["ls", "-la"], cwd="/app")
@@ -280,24 +529,24 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        async def mock_stream(*args: object, **kwargs: object) -> AsyncIterator[MagicMock]:
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 0
-            yield response
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        mock_call = MockStreamCall(responses=[exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["echo", "hello"], cwd="/app")
@@ -311,33 +560,29 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         captured_command: list[str] = []
 
-        async def mock_stream(
-            request_iter: AsyncIterator[MagicMock],
-            **kwargs: object,
-        ) -> AsyncIterator[MagicMock]:
-            async for req in request_iter:
-                if hasattr(req, "init"):
-                    captured_command.extend(req.init.command)
-                break
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 0
-            yield response
+        def capture_write(request: Any) -> None:
+            if hasattr(request, "init") and request.init.command:
+                captured_command.extend(request.init.command)
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[exit_response], on_write=capture_write)
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["ls"], cwd="/path with spaces/and$special")
@@ -354,33 +599,29 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         captured_command: list[str] = []
 
-        async def mock_stream(
-            request_iter: AsyncIterator[MagicMock],
-            **kwargs: object,
-        ) -> AsyncIterator[MagicMock]:
-            async for req in request_iter:
-                if hasattr(req, "init"):
-                    captured_command.extend(req.init.command)
-                break
-            response = MagicMock()
-            response.HasField = lambda field: field == "exit"
-            response.exit.exit_code = 0
-            yield response
+        def capture_write(request: Any) -> None:
+            if hasattr(request, "init") and request.init.command:
+                captured_command.extend(request.init.command)
 
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = mock_stream
-        mock_streaming_client.close = AsyncMock()
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[exit_response], on_write=capture_write)
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["ls", "-la"])
@@ -460,16 +701,19 @@ class TestSandboxAuth:
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
         with (
-            patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_client_class,
+            patch("aviato._sandbox.create_channel") as mock_create_channel,
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub") as mock_stub_class,
             patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
         ):
             mock_create_interceptors.return_value = []
             await sandbox._ensure_client()
 
             mock_create_interceptors.assert_called_once()
-            mock_client_class.assert_called_once()
-            call_kwargs = mock_client_class.call_args.kwargs
-            assert "interceptors" in call_kwargs
+            mock_create_channel.assert_called_once()
+            # Verify interceptors are passed to create_channel (third arg)
+            call_args = mock_create_channel.call_args
+            assert call_args[0][2] == []  # interceptors arg
+            mock_stub_class.assert_called_once()
 
 
 class TestSandboxCleanup:
@@ -553,11 +797,11 @@ class TestSandboxWait:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_FAILED
-        sandbox._client.get = AsyncMock(return_value=mock_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         with pytest.raises(SandboxFailedError, match="failed"):
             sandbox.wait()
@@ -570,11 +814,11 @@ class TestSandboxWait:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
-        sandbox._client.get = AsyncMock(return_value=mock_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         with pytest.raises(SandboxTerminatedError, match="terminated"):
             sandbox.wait()
@@ -596,11 +840,11 @@ class TestSandboxWaitUntilComplete:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
-        sandbox._client.get = AsyncMock(return_value=mock_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         sandbox.wait_until_complete(raise_on_termination=False)
 
@@ -618,8 +862,9 @@ class TestSandboxStart:
         mock_start_response.sandbox_id = "new-sandbox-id"
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -639,12 +884,13 @@ class TestSandboxStart:
         mock_start_response.sandbox_id = "test-sandbox-id"
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
-            start_call = sandbox._client.start.call_args[0][0]
+            start_call = sandbox._stub.Start.call_args[0][0]
             assert start_call.command == "python"
             assert start_call.args == ["-c", "print('hello')"]
             assert start_call.container_image == "python:3.12"
@@ -653,18 +899,17 @@ class TestSandboxStart:
 
     def test_start_raises_not_running_on_canceled(self) -> None:
         """Test start raises SandboxNotRunningError when request is cancelled."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(
-                side_effect=ConnectError(message="request cancelled", code=Code.CANCELED)
-            )
+        # Create a mock gRPC error
+        mock_error = MockRpcError(grpc.StatusCode.CANCELLED, "request cancelled")
 
-            with pytest.raises(SandboxNotRunningError, match="Sandbox start was cancelled"):
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(side_effect=mock_error)
+
+            with pytest.raises(SandboxNotRunningError, match="was cancelled"):
                 sandbox.start()
 
 
@@ -684,8 +929,9 @@ class TestSandboxWaitForRunning:
         mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_FAILED
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.get = AsyncMock(return_value=mock_get_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
             with pytest.raises(SandboxFailedError, match="failed to start"):
                 sandbox.wait()
@@ -705,8 +951,9 @@ class TestSandboxWaitForRunning:
         mock_get_response.started_at_time = None
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.get = AsyncMock(return_value=mock_get_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
             sandbox.wait()
 
@@ -790,13 +1037,13 @@ class TestSandboxStop:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.success = False
         mock_response.error_message = "backend error"
-        sandbox._client.stop = AsyncMock(return_value=mock_response)
-        sandbox._client.close = AsyncMock()
+        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        sandbox._channel.close = AsyncMock()
 
         with pytest.raises(SandboxError, match="Failed to stop sandbox"):
             sandbox.stop().result()
@@ -815,16 +1062,14 @@ class TestSandboxStop:
 
     def test_stop_missing_ok_true_suppresses_not_found(self) -> None:
         """Test stop(missing_ok=True) suppresses SandboxNotFoundError."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-        sandbox._client.stop = AsyncMock(
-            side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.Stop = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
         )
-        sandbox._client.close = AsyncMock()
+        sandbox._channel.close = AsyncMock()
 
         # Should not raise, returns None
         result = sandbox.stop(missing_ok=True).result()
@@ -832,18 +1077,16 @@ class TestSandboxStop:
 
     def test_stop_missing_ok_false_raises_not_found(self) -> None:
         """Test stop(missing_ok=False) raises SandboxNotFoundError."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         from aviato.exceptions import SandboxNotFoundError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
-        sandbox._client.stop = AsyncMock(
-            side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.Stop = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
         )
-        sandbox._client.close = AsyncMock()
+        sandbox._channel.close = AsyncMock()
 
         with pytest.raises(SandboxNotFoundError):
             sandbox.stop().result()
@@ -854,34 +1097,27 @@ class TestSandboxTimeouts:
 
     def test_exec_respects_timeout_seconds(self) -> None:
         """Test exec() raises SandboxTimeoutError when timeout_seconds is exceeded."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         from aviato.exceptions import SandboxTimeoutError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        async def slow_stream(
-            *args: object, timeout_ms: int | None = None, **kwargs: object
-        ) -> AsyncIterator[MagicMock]:
-            # Simulate server-side timeout behavior: wait for timeout then raise
-            if timeout_ms is not None:
-                await asyncio.sleep(timeout_ms / 1000 + 0.05)  # Slightly exceed timeout
-            raise ConnectError(Code.DEADLINE_EXCEEDED, "deadline exceeded")
-            yield MagicMock()  # Never reached, but needed for generator type
-
-        mock_streaming_client = MagicMock()
-        mock_streaming_client.stream_exec = slow_stream
-        mock_streaming_client.close = AsyncMock()
+        # Mock call that raises DEADLINE_EXCEEDED when iterating
+        mock_call = MockStreamCall(
+            error_on_read=MockAioRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "deadline exceeded")
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.create_auth_interceptors", return_value=[]),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "aviato._sandbox.streaming_connect.ATCStreamingServiceClient",
-                return_value=mock_streaming_client,
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
             ),
         ):
             process = sandbox.exec(["sleep", "10"], timeout_seconds=0.1)
@@ -971,46 +1207,44 @@ class TestSandboxList:
             runway_id="runway-1",
         )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await Sandbox.list(tags=["test-tag"])
 
-                sandboxes = await Sandbox.list(tags=["test-tag"])
-
-                assert len(sandboxes) == 1
-                assert isinstance(sandboxes[0], Sandbox)
-                assert sandboxes[0].sandbox_id == "test-123"
-                assert sandboxes[0].status == "running"
+            assert len(sandboxes) == 1
+            assert isinstance(sandboxes[0], Sandbox)
+            assert sandboxes[0].sandbox_id == "test-123"
+            assert sandboxes[0].status == "running"
 
     @pytest.mark.asyncio
     async def test_list_with_status_filter(self, mock_aviato_api_key: str) -> None:
         """Test list() passes status filter to request."""
         from coreweave.aviato.v1beta1 import atc_pb2
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-                )
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list(status="running")
 
-                await Sandbox.list(status="running")
-
-                call_args = mock_atc_instance.list.call_args[0][0]
-                assert call_args.status == atc_pb2.SANDBOX_STATUS_RUNNING
+            call_args = mock_stub.List.call_args[0][0]
+            assert call_args.status == atc_pb2.SANDBOX_STATUS_RUNNING
 
     @pytest.mark.asyncio
     async def test_list_with_invalid_status_raises(self, mock_aviato_api_key: str) -> None:
@@ -1023,20 +1257,18 @@ class TestSandboxList:
         """Test list() returns empty list when no sandboxes match."""
         from coreweave.aviato.v1beta1 import atc_pb2
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.list = AsyncMock(
-                    return_value=atc_pb2.ListSandboxesResponse(sandboxes=[])
-                )
-
-                sandboxes = await Sandbox.list(tags=["nonexistent"])
-                assert sandboxes == []
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await Sandbox.list(tags=["nonexistent"])
+            assert sandboxes == []
 
 
 class TestSandboxFromId:
@@ -1057,45 +1289,40 @@ class TestSandboxFromId:
             runway_id="runway-1",
         )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("test-123")
 
-                sandbox = await Sandbox.from_id("test-123")
-
-                assert isinstance(sandbox, Sandbox)
-                assert sandbox.sandbox_id == "test-123"
-                assert sandbox.status == "running"
-                assert sandbox.tower_id == "tower-1"
+            assert isinstance(sandbox, Sandbox)
+            assert sandbox.sandbox_id == "test-123"
+            assert sandbox.status == "running"
+            assert sandbox.tower_id == "tower-1"
 
     @pytest.mark.asyncio
     async def test_from_id_raises_not_found(self, mock_aviato_api_key: str) -> None:
         """Test from_id() raises SandboxNotFoundError for non-existent sandbox."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         from aviato.exceptions import SandboxNotFoundError
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found"))
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(
-                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
-                )
-
-                with pytest.raises(SandboxNotFoundError, match="not found"):
-                    await Sandbox.from_id("nonexistent-id")
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(SandboxNotFoundError, match="not found"):
+                await Sandbox.from_id("nonexistent-id")
 
 
 class TestSandboxDeleteClassMethod:
@@ -1108,63 +1335,57 @@ class TestSandboxDeleteClassMethod:
 
         mock_response = atc_pb2.DeleteSandboxResponse(success=True, error_message="")
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.delete = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            result = await Sandbox.delete("test-123")
 
-                result = await Sandbox.delete("test-123")
-
-                assert result is None
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_delete_raises_not_found_by_default(self, mock_aviato_api_key: str) -> None:
         """Test delete() raises SandboxNotFoundError when sandbox doesn't exist."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
-
         from aviato.exceptions import SandboxNotFoundError
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
+        )
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.delete = AsyncMock(
-                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
-                )
-
-                with pytest.raises(SandboxNotFoundError):
-                    await Sandbox.delete("nonexistent-id")
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(SandboxNotFoundError):
+                await Sandbox.delete("nonexistent-id")
 
     @pytest.mark.asyncio
     async def test_delete_missing_ok_suppresses_not_found(self, mock_aviato_api_key: str) -> None:
         """Test delete(missing_ok=True) returns None instead of raising."""
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
+        )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
-
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.delete = AsyncMock(
-                    side_effect=ConnectError(message="Not found", code=Code.NOT_FOUND)
-                )
-
-                result = await Sandbox.delete("nonexistent-id", missing_ok=True)
-                assert result is None
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            result = await Sandbox.delete("nonexistent-id", missing_ok=True)
+            assert result is None
 
 
 class TestSandboxServiceAddressAndExposedPorts:
@@ -1190,8 +1411,9 @@ class TestSandboxServiceAddressAndExposedPorts:
         mock_start_response.exposed_ports = []
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1207,8 +1429,9 @@ class TestSandboxServiceAddressAndExposedPorts:
         mock_start_response.exposed_ports = []
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1232,8 +1455,9 @@ class TestSandboxServiceAddressAndExposedPorts:
         mock_start_response.exposed_ports = [mock_port1, mock_port2]
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1249,8 +1473,9 @@ class TestSandboxServiceAddressAndExposedPorts:
         mock_start_response.exposed_ports = []
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1271,20 +1496,20 @@ class TestSandboxServiceAddressAndExposedPorts:
             runway_id="runway-1",
         )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_instance = AsyncMock()
-            mock_client_class.return_value.__aenter__.return_value = mock_client_instance
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
 
-            with patch("aviato._sandbox.atc_connect.ATCServiceClient") as mock_atc_client:
-                mock_atc_instance = MagicMock()
-                mock_atc_instance.close = AsyncMock()
-                mock_atc_client.return_value = mock_atc_instance
-                mock_atc_instance.get = AsyncMock(return_value=mock_response)
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("test-123")
 
-                sandbox = await Sandbox.from_id("test-123")
-
-                assert sandbox.service_address is None
-                assert sandbox.exposed_ports is None
+            assert sandbox.service_address is None
+            assert sandbox.exposed_ports is None
 
 
 class TestSandboxRunwayAndTowerIds:
@@ -1456,8 +1681,9 @@ class TestAppliedNetworkModes:
         mock_start_response.applied_egress_mode = "internet"
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1476,8 +1702,9 @@ class TestAppliedNetworkModes:
         mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1499,15 +1726,16 @@ class TestAppliedNetworkModes:
         mock_start_response.applied_egress_mode = "org"
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
             sandbox.start()
 
         # Mock get_status call
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
 
-        sandbox._client.get = AsyncMock(return_value=mock_get_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
         sandbox.get_status()
 
@@ -1535,12 +1763,13 @@ class TestNetworkOptionsRequestPayload:
         mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
-            start_call = sandbox._client.start.call_args[0][0]
+            start_call = sandbox._stub.Start.call_args[0][0]
             # Network should be converted to dict in the request
             assert start_call.network.ingress_mode == "public"
             assert start_call.network.egress_mode == "internet"
@@ -1561,12 +1790,13 @@ class TestNetworkOptionsRequestPayload:
         mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
-            start_call = sandbox._client.start.call_args[0][0]
+            start_call = sandbox._stub.Start.call_args[0][0]
             # exposed_ports should be a list in the request
             assert list(start_call.network.exposed_ports) == [8080, 443]
 
@@ -1586,12 +1816,13 @@ class TestNetworkOptionsRequestPayload:
         mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
-            start_call = sandbox._client.start.call_args[0][0]
+            start_call = sandbox._stub.Start.call_args[0][0]
             # ingress_mode should be set
             assert start_call.network.ingress_mode == "public"
             # egress_mode should be empty (default protobuf value)
@@ -1713,8 +1944,8 @@ class TestSandboxStartupTimeTracking:
         mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
-            sandbox._client = MagicMock()
-            sandbox._client.start = AsyncMock(return_value=mock_start_response)
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
             sandbox.start()
 
@@ -1752,7 +1983,8 @@ class TestSandboxStartupTimeTracking:
         mock_reporter = MagicMock()
         mock_session._reporter = mock_reporter
         sandbox._session = mock_session
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
@@ -1760,7 +1992,7 @@ class TestSandboxStartupTimeTracking:
         mock_response.tower_group_id = None
         mock_response.runway_id = "runway-1"
         mock_response.started_at_time = None
-        sandbox._client.get = AsyncMock(return_value=mock_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         with patch("time.monotonic", return_value=102.5):
             sandbox.wait()
@@ -1782,7 +2014,8 @@ class TestSandboxStartupTimeTracking:
         mock_reporter = MagicMock()
         mock_session._reporter = mock_reporter
         sandbox._session = mock_session
-        sandbox._client = MagicMock()
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
@@ -1790,8 +2023,388 @@ class TestSandboxStartupTimeTracking:
         mock_response.tower_group_id = None
         mock_response.runway_id = "runway-1"
         mock_response.started_at_time = None
-        sandbox._client.get = AsyncMock(return_value=mock_response)
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         sandbox.wait()
 
         mock_reporter.record_startup_time.assert_not_called()
+
+
+class TestTranslateRpcError:
+    """Tests for _translate_rpc_error function."""
+
+    def test_not_found_returns_sandbox_not_found_error(self) -> None:
+        """Test NOT_FOUND status code returns SandboxNotFoundError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
+
+        error = MockRpcError(grpc.StatusCode.NOT_FOUND, "sandbox not found")
+        result = _translate_rpc_error(error, sandbox_id="test-123")
+
+        assert isinstance(result, SandboxNotFoundError)
+        assert result.sandbox_id == "test-123"
+        assert "test-123" in str(result)
+
+    def test_not_found_without_sandbox_id_uses_details(self) -> None:
+        """Test NOT_FOUND without sandbox_id uses error details."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
+
+        error = MockRpcError(grpc.StatusCode.NOT_FOUND, "resource not found")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxNotFoundError)
+        assert "resource not found" in str(result)
+
+    def test_cancelled_returns_sandbox_not_running_error(self) -> None:
+        """Test CANCELLED status code returns SandboxNotRunningError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.CANCELLED, "request cancelled")
+        result = _translate_rpc_error(error, operation="Start sandbox")
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "cancelled" in str(result)
+
+    def test_cancelled_with_sandbox_id_includes_id(self) -> None:
+        """Test CANCELLED with sandbox_id includes ID in message."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.CANCELLED, "cancelled")
+        result = _translate_rpc_error(error, sandbox_id="test-456", operation="Execute command")
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "test-456" in str(result)
+
+    def test_deadline_exceeded_returns_sandbox_timeout_error(self) -> None:
+        """Test DEADLINE_EXCEEDED status code returns SandboxTimeoutError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxTimeoutError
+
+        error = MockRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "timeout after 30s")
+        result = _translate_rpc_error(error, operation="Execute command")
+
+        assert isinstance(result, SandboxTimeoutError)
+        assert "timed out" in str(result)
+
+    def test_unavailable_returns_sandbox_not_running_error(self) -> None:
+        """Test UNAVAILABLE status code returns SandboxNotRunningError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotRunningError
+
+        error = MockRpcError(grpc.StatusCode.UNAVAILABLE, "connection refused")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert "unavailable" in str(result).lower()
+
+    def test_permission_denied_returns_auth_error(self) -> None:
+        """Test PERMISSION_DENIED status code returns AviatoAuthenticationError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import AviatoAuthenticationError
+
+        error = MockRpcError(grpc.StatusCode.PERMISSION_DENIED, "access denied")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, AviatoAuthenticationError)
+        assert "denied" in str(result).lower()
+
+    def test_unauthenticated_returns_auth_error(self) -> None:
+        """Test UNAUTHENTICATED status code returns AviatoAuthenticationError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import AviatoAuthenticationError
+
+        error = MockRpcError(grpc.StatusCode.UNAUTHENTICATED, "invalid token")
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, AviatoAuthenticationError)
+        assert "authentication" in str(result).lower()
+
+    def test_other_status_returns_sandbox_error(self) -> None:
+        """Test other status codes return generic SandboxError."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
+
+        error = MockRpcError(grpc.StatusCode.INTERNAL, "internal error")
+        result = _translate_rpc_error(error, operation="Test operation")
+
+        assert isinstance(result, SandboxError)
+        assert "failed" in str(result)
+
+    def test_empty_details_uses_string_repr(self) -> None:
+        """Test that empty details falls back to str(e)."""
+        from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
+
+        error = MockRpcError(grpc.StatusCode.INTERNAL, "")
+        result = _translate_rpc_error(error, operation="Test")
+
+        assert isinstance(result, SandboxError)
+
+
+class TestExecStdinReadySignal:
+    """Tests for stdin ready signal handling in exec streaming."""
+
+    def test_exec_stdin_waits_for_ready(self) -> None:
+        """Test stdin data is not sent until ready signal is received.
+
+        This test verifies the timing behavior: stdin data should only be
+        sent after the ready signal is received from the server.
+        """
+        import asyncio
+        import time
+
+        from google.protobuf import timestamp_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Track timing: when was stdin data received relative to ready being sent?
+        ready_sent_time: float | None = None
+        stdin_received_time: float | None = None
+        close_received_time: float | None = None
+
+        # Use event to synchronize: wait for close before sending exit
+        close_event = asyncio.Event()
+
+        def on_write_with_event(request: Any) -> None:
+            nonlocal stdin_received_time, close_received_time
+            if hasattr(request, "stdin") and request.HasField("stdin"):
+                stdin_received_time = time.monotonic()
+            elif hasattr(request, "close") and request.HasField("close"):
+                close_received_time = time.monotonic()
+                close_event.set()
+
+        async def response_generator() -> AsyncIterator[Any]:
+            """Generate responses with proper sequencing like a real server."""
+            nonlocal ready_sent_time
+            # Send ready signal first
+            ready_response = MagicMock()
+            ready_response.HasField = lambda field: field == "ready"
+            ready_response.ready.ready_at = timestamp_pb2.Timestamp(seconds=1234567890)
+            ready_sent_time = time.monotonic()
+            yield ready_response
+
+            # Wait for stdin close before sending exit (like a real server)
+            try:
+                await asyncio.wait_for(close_event.wait(), timeout=5.0)
+            except TimeoutError:
+                pass
+
+            # Send exit after stdin is closed
+            exit_response = MagicMock()
+            exit_response.HasField = lambda field: field == "exit"
+            exit_response.exit.exit_code = 0
+            yield exit_response
+
+        # Use bidirectional mock with response generator - properly interleaves
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=response_generator, on_write=on_write_with_event
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True)
+            assert process.stdin is not None  # stdin=True provides StreamWriter
+
+            # Write data to stdin and close
+            process.stdin.write(b"hello").result()
+            process.stdin.close().result()
+
+            result = process.result()
+            assert result.returncode == 0
+
+        # Verify timing: stdin was received after ready was sent
+        assert ready_sent_time is not None, "Ready signal was never sent"
+        assert stdin_received_time is not None, "Stdin data was never received"
+        assert close_received_time is not None, "Stdin close was never received"
+
+        # Stdin should be sent after ready (with some tolerance for timing)
+        assert (
+            stdin_received_time >= ready_sent_time
+        ), f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+
+    def test_exec_stdin_ready_timeout(self) -> None:
+        """Test SandboxTimeoutError raised when ready signal not received."""
+        from aviato.exceptions import SandboxTimeoutError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Never send ready signal - just hang (simulated by no responses)
+        # The test will timeout waiting for ready
+        mock_call = MockStreamCall(responses=[])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=0.1)
+
+            with pytest.raises(SandboxTimeoutError, match="ready signal"):
+                process.result()
+
+    def test_exec_stdin_error_before_ready(self) -> None:
+        """Test error before ready signal unblocks and propagates error."""
+        from aviato.exceptions import SandboxExecutionError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Error response before ready signal
+        error_response = MagicMock()
+        error_response.HasField = lambda field: field == "error"
+        error_response.error.message = "Process crashed"
+
+        # Use bidirectional mock to allow responses while requests are still being sent
+        mock_call = MockBidirectionalStreamCall(responses=[error_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=5.0)
+
+            # Should not deadlock - error sets ready_event
+            with pytest.raises(SandboxExecutionError, match="Process crashed"):
+                process.result()
+
+    def test_exec_stdin_exit_before_ready(self) -> None:
+        """Test exit before ready signal unblocks and returns result."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Exit response before ready signal (fast-completing process)
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        # Use bidirectional mock to allow responses while requests are still being sent
+        mock_call = MockBidirectionalStreamCall(responses=[exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["true"], stdin=True, timeout_seconds=5.0)
+
+            # Should not deadlock - exit sets ready_event
+            result = process.result()
+            assert result.returncode == 0
+
+    def test_exec_stdin_cancel_unblocks(self) -> None:
+        """Test Process.cancel() unblocks stdin waiting for ready."""
+        import asyncio
+        import concurrent.futures
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Never send ready - simulates hung connection
+        mock_call = MockStreamCall(responses=[])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            # Use longer timeout so cancel is what terminates it
+            process = sandbox.exec(["cat"], stdin=True, timeout_seconds=30.0)
+
+            # Cancel the process - this should unblock the stdin waiter
+            process.cancel()
+
+            # Result should raise CancelledError or return quickly
+            with pytest.raises((concurrent.futures.CancelledError, asyncio.CancelledError)):
+                process.result(timeout=1.0)
+
+    def test_exec_no_stdin_no_ready_wait(self) -> None:
+        """Test stdin=False does not wait for ready signal."""
+        from coreweave.aviato.v1beta1 import streaming_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # No ready signal in responses - just stdout and exit
+        stdout_response = MagicMock()
+        stdout_response.HasField = lambda field: field == "output"
+        stdout_response.output.data = b"hello\n"
+        stdout_response.output.stream_type = streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[stdout_response, exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            # stdin=False (default) - should not wait for ready
+            process = sandbox.exec(["echo", "hello"])
+
+            # Should complete without ready signal
+            result = process.result()
+            assert result.returncode == 0
+            assert result.stdout == "hello\n"
+
+            # Verify stdin is None when stdin=False
+            assert process.stdin is None
