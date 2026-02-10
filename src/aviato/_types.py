@@ -9,7 +9,7 @@ import concurrent.futures
 import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from aviato.exceptions import SandboxExecutionError
@@ -100,6 +100,20 @@ class Serialization(str, Enum):
 
     PICKLE = "pickle"
     JSON = "json"
+
+
+class ExecOutcome(StrEnum):
+    """Outcome classification for exec() calls.
+
+    Taxonomy:
+    - COMPLETED_OK: returncode == 0
+    - COMPLETED_NONZERO: returncode != 0 (process completed but returned error)
+    - FAILURE: SandboxTimeoutError, cancellation, transport failures
+    """
+
+    COMPLETED_OK = "completed_ok"
+    COMPLETED_NONZERO = "completed_nonzero"
+    FAILURE = "failure"
 
 
 @dataclass(frozen=True)
@@ -537,7 +551,12 @@ class Process(OperationRef[ProcessResult]):
         """Record stats via callback exactly once.
 
         Thread-safe: uses lock to prevent double-counting when callback
-        and result() race on different threads.
+        and result() race on different threads. The callback is invoked
+        inside the lock to guarantee that when the main thread's
+        _record_stats() returns (seeing _stats_recorded=True), the
+        callback has already completed. Without this, a race exists
+        where _on_future_done sets the flag but hasn't called the
+        callback yet, causing result() to return before metrics update.
         """
         if self._stats_callback is None:
             return
@@ -546,8 +565,7 @@ class Process(OperationRef[ProcessResult]):
             if self._stats_recorded:
                 return
             self._stats_recorded = True
-
-        self._stats_callback(self._result, self._exception)
+            self._stats_callback(self._result, self._exception)
 
     def _on_future_done(self, future: concurrent.futures.Future[ProcessResult]) -> None:
         """Callback invoked when future completes, ensures stats are recorded.

@@ -42,6 +42,7 @@ from aviato._defaults import (
 from aviato._loop_manager import _LoopManager
 from aviato._network import create_channel, parse_grpc_target
 from aviato._types import (
+    ExecOutcome,
     NetworkOptions,
     OperationRef,
     Process,
@@ -49,7 +50,6 @@ from aviato._types import (
     StreamReader,
     StreamWriter,
 )
-from aviato._wandb import ExecOutcome
 from aviato.exceptions import (
     AviatoAuthenticationError,
     SandboxError,
@@ -997,9 +997,8 @@ class Sandbox:
         else:
             return
 
-        # Report to session reporter if available
-        if self._session is not None and hasattr(self._session, "_reporter"):
-            self._session._reporter.record_exec_outcome(outcome, self._sandbox_id)
+        if self._session is not None:
+            self._session._record_exec_outcome(outcome, self._sandbox_id)
 
     def __repr__(self) -> str:
         if self._status:
@@ -1338,8 +1337,8 @@ class Sandbox:
                 if not self._startup_recorded and self._start_accepted_at is not None:
                     startup_time = time.monotonic() - self._start_accepted_at
                     self._startup_recorded = True
-                    if self._session is not None and hasattr(self._session, "_reporter"):
-                        self._session._reporter.record_startup_time(startup_time)
+                    if self._session is not None:
+                        self._session._record_startup_time(startup_time)
                 logger.debug("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
                 self._status = SandboxStatus.FAILED

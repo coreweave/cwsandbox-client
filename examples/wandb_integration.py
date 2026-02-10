@@ -2,113 +2,167 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # SPDX-PackageName: aviato-client
 
-"""Weights & Biases metrics integration for sandbox usage tracking.
+"""W&B (Weights & Biases) metrics integration example.
 
-Demonstrates:
-- Automatic W&B metrics reporting during sandbox operations
-- Explicit opt-in/out of W&B reporting via report_to parameter
-- Manual metrics logging at each training step
-- Lazy detection: wandb.init() can happen after Session creation
+This example demonstrates:
+- Auto-detection of active wandb runs
+- Explicit opt-in and opt-out for metrics reporting
+- Automatic tracking of exec() success/failure/error (no manual calls needed)
+- Using log_metrics() to log at specific training steps
 
-Requirements:
-    uv pip install wandb
+Metrics logged to wandb:
+- aviato/sandboxes_created: Total sandboxes created via session
+- aviato/executions: Total exec() calls
+- aviato/exec_completed_ok: Completed executions (returncode=0)
+- aviato/exec_completed_nonzero: Completed executions (returncode!=0)
+- aviato/exec_failures: Failed executions (timeouts, transport failures)
+- aviato/exec_completion_rate: Fraction of exec() that completed with returncode=0
+- aviato/exec_failure_rate: Fraction of exec() that failed to complete
+- aviato/avg_execs_per_sandbox: Average exec() calls per sandbox
+- aviato/min_execs_per_sandbox: Minimum exec() calls in any sandbox
+- aviato/max_execs_per_sandbox: Maximum exec() calls in any sandbox
+
+Prerequisites:
+- Set WANDB_API_KEY environment variable
+- Run wandb.init() before creating a Session to enable auto-detection
+
+Run with wandb:
     export WANDB_API_KEY="your-api-key"
+    uv run examples/wandb_integration.py
+
+Run without wandb (metrics logged to console instead):
+    uv run examples/wandb_integration.py --no-wandb
 """
 
-import wandb
+import argparse
+import sys
+
 from aviato import SandboxDefaults, Session
 
 
 def main() -> None:
-    """Demonstrate W&B integration patterns."""
+    parser = argparse.ArgumentParser(description="W&B metrics integration example")
+    parser.add_argument(
+        "--no-wandb",
+        action="store_true",
+        help="Run without wandb (prints metrics to console)",
+    )
+    args = parser.parse_args()
+
     defaults = SandboxDefaults(
         container_image="python:3.11",
         tags=("example", "wandb-integration"),
     )
 
-    # Pattern 1: Auto-detection (default)
-    # If wandb is installed, WANDB_API_KEY is set, and there's an active run,
-    # metrics are automatically reported to W&B.
-    print("Pattern 1: Auto-detection")
-    wandb.init(project="aviato-examples", name="pattern-1-auto-detection")
+    if args.no_wandb:
+        run_without_wandb(defaults)
+    else:
+        run_with_wandb(defaults)
+
+
+def run_with_wandb(defaults: SandboxDefaults) -> None:
+    """Run with wandb metrics logging."""
+    try:
+        import wandb
+    except ImportError:
+        print("wandb not installed. Run: uv pip install wandb")
+        print("Or use --no-wandb to run without wandb")
+        sys.exit(1)
+
+    print("W&B Metrics Integration Example")
+    print("=" * 50)
+    print()
+
+    wandb.init(
+        project="aviato-examples",
+        name="wandb-integration-demo",
+        tags=["aviato", "example"],
+    )
+    print(f"Initialized wandb run: {wandb.run.name}")
+    print()
+
     with Session(defaults) as session:
-        sb = session.sandbox(command="sleep", args=["infinity"])
-        sb.wait()
+        simulate_training_loop(session, num_steps=3, problems_per_step=3)
 
-        result = sb.exec(["echo", "hello"]).result()
-        print(f"  Output: {result.stdout.strip()}")
-
-        result = sb.exec(["python", "-c", "print(1+1)"]).result()
-        print(f"  Calculation: {result.stdout.strip()}")
-
-        print(f"  Exec stats: {sb.exec_stats}")
     wandb.finish()
+    print()
+    print("Wandb run finished. Check your wandb dashboard for metrics.")
 
-    # Pattern 2: Explicit opt-in
-    # Force W&B reporting even without auto-detection
-    print("\nPattern 2: Explicit W&B opt-in")
-    wandb.init(project="aviato-examples", name="pattern-2-explicit-opt-in")
+
+def run_without_wandb(defaults: SandboxDefaults) -> None:
+    """Run without wandb, printing metrics to console."""
+    print("W&B Metrics Integration Example (no wandb)")
+    print("=" * 50)
+    print()
+    print("Running with report_to=['wandb'] to demonstrate metrics collection.")
+    print("Metrics will be collected but not sent to wandb (no active run).")
+    print()
+
     with Session(defaults, report_to=["wandb"]) as session:
-        sb = session.sandbox(command="sleep", args=["infinity"])
-        sb.wait()
+        simulate_training_loop(session, num_steps=3, problems_per_step=3)
 
-        for step in range(3):
-            result = sb.exec(["echo", f"step {step}"]).result()
-            print(f"  Step {step}: {result.stdout.strip()}")
-
-            logged = session.log_metrics(step=step)
-            print(f"  Metrics logged: {logged}")
-    wandb.finish()
-
-    # Pattern 3: Explicit opt-out
-    # Disable W&B reporting even if auto-detection would enable it
-    print("\nPattern 3: Explicit opt-out (empty report_to)")
-    wandb.init(project="aviato-examples", name="pattern-3-explicit-opt-out")
-    with Session(defaults, report_to=[]) as session:
-        sb = session.sandbox(command="sleep", args=["infinity"])
-        sb.wait()
-
-        result = sb.exec(["echo", "no metrics reported"]).result()
-        print(f"  Output: {result.stdout.strip()}")
-
-        # Metrics are collected but NOT logged (report_to=[])
-        logged = session.log_metrics(step=0)
-        print(f"  Metrics logged: {logged}")
-    wandb.finish()
-
-    # Pattern 4: Lazy detection with training loop wrapper
-    # Session is created BEFORE wandb.init() - detection happens dynamically
-    print("\nPattern 4: Lazy detection (wandb.init inside training loop)")
-    with Session(defaults) as session:
-        train(session)
-
-    print("\nDone!")
+        print()
+        print("Final metrics (would be logged on session close):")
+        metrics = session.get_metrics()
+        for key, value in metrics.items():
+            if isinstance(value, float):
+                print(f"  {key}: {value:.2f}")
+            else:
+                print(f"  {key}: {value}")
 
 
-def train(session: Session) -> None:
-    """Example training loop that initializes wandb after session creation.
+def simulate_training_loop(session: Session, num_steps: int, problems_per_step: int) -> None:
+    """Simulate a training loop that creates sandboxes and executes code.
 
-    This pattern is common when:
-    - Your training framework initializes wandb
-    - You wrap the training call with Session for sandbox support
-    - wandb.init() happens inside the training loop, not before
+    Exec results are automatically tracked - no manual calls needed.
+    Only call log_metrics(step=N) to correlate with training steps.
     """
-    # Initialize wandb here - Session detects it lazily
-    wandb.init(project="aviato-examples", name="pattern-4-lazy-detection")
+    print(f"Simulating {num_steps} training steps with {problems_per_step} problems each")
+    print("-" * 50)
+    print()
 
-    sb = session.sandbox(command="sleep", args=["infinity"])
-    sb.wait()
+    code_samples = [
+        ("add", "print(1 + 2)"),
+        ("syntax_error", "print(1 +"),
+        ("multiply", "print(3 * 4)"),
+        ("divide_by_zero", "print(1 / 0)"),
+        ("string_ops", "print('hello'.upper())"),
+        ("list_comp", "print([x**2 for x in range(5)])"),
+        ("import_error", "import nonexistent_module"),
+        ("dict_ops", "d = {'a': 1}; print(d['a'])"),
+        ("recursion", "def f(): return f(); f()"),
+    ]
 
-    for step in range(3):
-        result = sb.exec(["echo", f"training step {step}"]).result()
-        print(f"  Step {step}: {result.stdout.strip()}")
+    for step in range(num_steps):
+        print(f"Step {step + 1}:")
 
-        # Session detects wandb.run dynamically - works even though
-        # Session was created before wandb.init()
-        logged = session.log_metrics(step=step)
-        print(f"  Metrics logged: {logged}")
+        successes = 0
+        failures = 0
 
-    wandb.finish()
+        for i in range(problems_per_step):
+            idx = (step * problems_per_step + i) % len(code_samples)
+            name, code = code_samples[idx]
+
+            with session.sandbox() as sandbox:
+                # Exec results are automatically tracked via sandbox completion callback
+                result = sandbox.exec(
+                    ["python", "-c", code],
+                    timeout_seconds=5.0,
+                ).result()
+
+                if result.returncode == 0:
+                    successes += 1
+                    status = "PASS"
+                else:
+                    failures += 1
+                    status = "FAIL"
+
+                print(f"  [{status}] {name}")
+
+        # Log metrics at this training step for correlation
+        session.log_metrics(step=step)
+        print(f"  -> Logged metrics at step {step}")
+        print()
 
 
 if __name__ == "__main__":

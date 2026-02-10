@@ -1908,8 +1908,6 @@ class TestSandboxExecutionStats:
         sandbox._sandbox_id = "test-id"
 
         mock_session = MagicMock()
-        mock_reporter = MagicMock()
-        mock_session._reporter = mock_reporter
         sandbox._session = mock_session
 
         result = MagicMock()
@@ -1917,7 +1915,7 @@ class TestSandboxExecutionStats:
 
         sandbox._on_exec_complete(result, None)
 
-        mock_reporter.record_exec_outcome.assert_called_once_with(
+        mock_session._record_exec_outcome.assert_called_once_with(
             ExecOutcome.COMPLETED_OK, "test-id"
         )
 
@@ -1980,8 +1978,6 @@ class TestSandboxStartupTimeTracking:
         sandbox._start_accepted_at = 100.0
 
         mock_session = MagicMock()
-        mock_reporter = MagicMock()
-        mock_session._reporter = mock_reporter
         sandbox._session = mock_session
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
@@ -1997,8 +1993,8 @@ class TestSandboxStartupTimeTracking:
         with patch("time.monotonic", return_value=102.5):
             sandbox.wait()
 
-        mock_reporter.record_startup_time.assert_called_once()
-        call_args = mock_reporter.record_startup_time.call_args[0]
+        mock_session._record_startup_time.assert_called_once()
+        call_args = mock_session._record_startup_time.call_args[0]
         assert call_args[0] == pytest.approx(2.5, rel=0.1)
 
     def test_startup_time_only_recorded_once(self) -> None:
@@ -2011,8 +2007,6 @@ class TestSandboxStartupTimeTracking:
         sandbox._startup_recorded = True
 
         mock_session = MagicMock()
-        mock_reporter = MagicMock()
-        mock_session._reporter = mock_reporter
         sandbox._session = mock_session
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
@@ -2027,7 +2021,7 @@ class TestSandboxStartupTimeTracking:
 
         sandbox.wait()
 
-        mock_reporter.record_startup_time.assert_not_called()
+        mock_session._record_startup_time.assert_not_called()
 
 
 class TestTranslateRpcError:
@@ -2233,9 +2227,9 @@ class TestExecStdinReadySignal:
         assert close_received_time is not None, "Stdin close was never received"
 
         # Stdin should be sent after ready (with some tolerance for timing)
-        assert (
-            stdin_received_time >= ready_sent_time
-        ), f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+        assert stdin_received_time >= ready_sent_time, (
+            f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+        )
 
     def test_exec_stdin_ready_timeout(self) -> None:
         """Test SandboxTimeoutError raised when ready signal not received."""
