@@ -82,4 +82,5 @@ nav:
       - Sync vs Async: guides/sync-vs-async.md
       - Troubleshooting: guides/troubleshooting.md
       - SWE-bench Evaluation: guides/swebench.md
+      - RL Training: guides/rl-training.md
   - API Reference: api/index.md

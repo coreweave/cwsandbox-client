@@ -4,11 +4,11 @@
 
 """W&B (Weights & Biases) metrics integration example.
 
-This example demonstrates:
-- Auto-detection of active wandb runs
-- Explicit opt-in and opt-out for metrics reporting
-- Automatic tracking of exec() success/failure/error (no manual calls needed)
-- Using log_metrics() to log at specific training steps
+Demonstrates:
+- Lazy detection: wandb.init() can happen before or after Session creation,
+  useful for RL training where the Session is created early in the entrypoint
+- Explicit opt-in/opt-out via report_to parameter
+- Automatic exec() tracking and per-step log_metrics()
 
 Metrics logged to wandb:
 - aviato/sandboxes_created: Total sandboxes created via session
@@ -24,7 +24,6 @@ Metrics logged to wandb:
 
 Prerequisites:
 - Set WANDB_API_KEY environment variable
-- Run wandb.init() before creating a Session to enable auto-detection
 
 Run with wandb:
     export WANDB_API_KEY="your-api-key"
@@ -61,7 +60,7 @@ def main() -> None:
 
 
 def run_with_wandb(defaults: SandboxDefaults) -> None:
-    """Run with wandb metrics logging."""
+    """Run with wandb metrics logging (lazy detection pattern)."""
     try:
         import wandb
     except ImportError:
@@ -73,17 +72,17 @@ def run_with_wandb(defaults: SandboxDefaults) -> None:
     print("=" * 50)
     print()
 
-    wandb.init(
-        project="aviato-examples",
-        name="wandb-integration-demo",
-        tags=["aviato", "example"],
-    )
-    print(f"Initialized wandb run: {wandb.run.name}")
-    print()
-
+    # Session created before wandb.init() - lazy detection finds the run later
     with Session(defaults) as session:
-        simulate_training_loop(session, num_steps=3, problems_per_step=3)
+        wandb.init(
+            project="aviato-examples",
+            name="wandb-integration-demo",
+            tags=["aviato", "example"],
+        )
+        print(f"Initialized wandb run: {wandb.run.name}")
+        print()
 
+        simulate_training_loop(session, num_steps=3, problems_per_step=3)
     wandb.finish()
     print()
     print("Wandb run finished. Check your wandb dashboard for metrics.")
