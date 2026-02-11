@@ -340,7 +340,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -376,7 +376,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -415,9 +415,12 @@ class TestSandboxExec:
         mock_call = MockStreamCall(responses=responses)
         mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
 
+        expected_metadata = (("authorization", "Bearer test-key"),)
+        sandbox._auth_metadata = expected_metadata
+
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -435,6 +438,9 @@ class TestSandboxExec:
             result = process.result()
             assert result.stdout == "line1\nline2\nline3\n"
             assert result.returncode == 0
+
+            call_kwargs = mock_stub.StreamExec.call_args[1]
+            assert call_kwargs["metadata"] == expected_metadata
 
     def test_exec_handles_stream_error(self) -> None:
         """Test exec() handles stream errors correctly."""
@@ -456,7 +462,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -506,7 +512,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -541,7 +547,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -577,7 +583,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -616,7 +622,7 @@ class TestSandboxExec:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -696,24 +702,49 @@ class TestSandboxAuth:
     """Tests for Sandbox authentication."""
 
     @pytest.mark.asyncio
-    async def test_sets_auth_interceptors(self, mock_aviato_api_key: str) -> None:
-        """Test Sandbox uses auth interceptors with create_auth_interceptors."""
+    async def test_resolves_auth_metadata(self, mock_aviato_api_key: str) -> None:
+        """Test _ensure_client() resolves auth metadata and stores it."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
         with (
             patch("aviato._sandbox.create_channel") as mock_create_channel,
             patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub") as mock_stub_class,
-            patch("aviato._sandbox.create_auth_interceptors") as mock_create_interceptors,
+            patch("aviato._sandbox.resolve_auth_metadata") as mock_resolve,
         ):
-            mock_create_interceptors.return_value = []
+            mock_resolve.return_value = (("authorization", "Bearer test-api-key"),)
             await sandbox._ensure_client()
 
-            mock_create_interceptors.assert_called_once()
+            mock_resolve.assert_called_once()
             mock_create_channel.assert_called_once()
-            # Verify interceptors are passed to create_channel (third arg)
+            # Verify no interceptors arg passed to create_channel
             call_args = mock_create_channel.call_args
-            assert call_args[0][2] == []  # interceptors arg
+            assert len(call_args[0]) == 2  # only target, is_secure
+            assert sandbox._auth_metadata == (("authorization", "Bearer test-api-key"),)
             mock_stub_class.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_auth_metadata_passed_to_start_rpc(self, mock_aviato_api_key: str) -> None:
+        """Test auth metadata is passed to the Start RPC call."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = (("authorization", "Bearer test-api-key"),)
+
+        await sandbox._start_async()
+
+        mock_stub.Start.assert_called_once()
+        call_kwargs = mock_stub.Start.call_args[1]
+        assert call_kwargs["metadata"] == (("authorization", "Bearer test-api-key"),)
 
 
 class TestSandboxCleanup:
@@ -822,6 +853,108 @@ class TestSandboxWait:
 
         with pytest.raises(SandboxTerminatedError, match="terminated"):
             sandbox.wait()
+
+    def test_wait_auto_starts_unstarted_sandbox(self) -> None:
+        """Test wait() triggers auto-start on unstarted sandbox."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="echo", args=["hello"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "auto-start-wait-id"
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.tower_id = "tower-1"
+        mock_get_response.runway_id = "runway-1"
+        mock_get_response.tower_group_id = None
+        mock_get_response.started_at_time = None
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
+
+            assert sandbox.sandbox_id is None
+            sandbox.wait()
+
+            assert sandbox.sandbox_id == "auto-start-wait-id"
+            sandbox._stub.Start.assert_called_once()
+
+
+class TestSandboxAutoStartFileOps:
+    """Tests for auto-start behavior on read_file and write_file."""
+
+    def test_read_file_auto_starts_unstarted_sandbox(self) -> None:
+        """Test read_file() triggers auto-start on unstarted sandbox."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "auto-start-read-id"
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.tower_id = "tower-1"
+        mock_get_response.runway_id = "runway-1"
+        mock_get_response.tower_group_id = None
+        mock_get_response.started_at_time = None
+
+        mock_read_response = MagicMock()
+        mock_read_response.success = True
+        mock_read_response.file_contents = b"file data"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
+            sandbox._stub.RetrieveFile = AsyncMock(return_value=mock_read_response)
+
+            assert sandbox.sandbox_id is None
+            data = sandbox.read_file("/test.txt").result()
+
+            assert sandbox.sandbox_id == "auto-start-read-id"
+            assert data == b"file data"
+            sandbox._stub.Start.assert_called_once()
+            call_kwargs = sandbox._stub.RetrieveFile.call_args[1]
+            assert "metadata" in call_kwargs
+
+    def test_write_file_auto_starts_unstarted_sandbox(self) -> None:
+        """Test write_file() triggers auto-start on unstarted sandbox."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "auto-start-write-id"
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.tower_id = "tower-1"
+        mock_get_response.runway_id = "runway-1"
+        mock_get_response.tower_group_id = None
+        mock_get_response.started_at_time = None
+
+        mock_write_response = MagicMock()
+        mock_write_response.success = True
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
+            sandbox._stub.AddFile = AsyncMock(return_value=mock_write_response)
+
+            assert sandbox.sandbox_id is None
+            sandbox.write_file("/test.txt", b"hello").result()
+
+            assert sandbox.sandbox_id == "auto-start-write-id"
+            sandbox._stub.Start.assert_called_once()
+            call_kwargs = sandbox._stub.AddFile.call_args[1]
+            assert "metadata" in call_kwargs
 
 
 class TestSandboxWaitUntilComplete:
@@ -1091,6 +1224,46 @@ class TestSandboxStop:
         with pytest.raises(SandboxNotFoundError):
             sandbox.stop().result()
 
+    def test_stop_on_never_started_is_noop(self) -> None:
+        """Test stop() on a never-started sandbox is a no-op."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.sandbox_id is None
+
+        result = sandbox.stop().result()
+        assert result is None
+
+    def test_stop_waits_for_inflight_start(self) -> None:
+        """Test stop() acquires _start_lock and waits for in-flight start()."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        expected_metadata = (("authorization", "Bearer test-key"),)
+        sandbox._auth_metadata = expected_metadata
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "race-sandbox-id"
+
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+
+        mock_stub = MagicMock()
+        mock_stub.Start = AsyncMock(return_value=mock_start_response)
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+            # Start the sandbox first so stop has something to stop
+            sandbox.start().result()
+            assert sandbox.sandbox_id == "race-sandbox-id"
+
+            # Now stop should proceed normally
+            sandbox.stop().result()
+
+        # Assert after the with block since stop() clears _stub
+        mock_stub.Stop.assert_called_once()
+        call_kwargs = mock_stub.Stop.call_args[1]
+        assert call_kwargs["metadata"] == expected_metadata
 
 class TestSandboxTimeouts:
     """Tests for Sandbox timeout behavior."""
@@ -1112,7 +1285,7 @@ class TestSandboxTimeouts:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -1207,6 +1380,7 @@ class TestSandboxList:
             runway_id="runway-1",
         )
 
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
@@ -1215,6 +1389,7 @@ class TestSandboxList:
         )
 
         with (
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
@@ -1225,18 +1400,22 @@ class TestSandboxList:
             assert isinstance(sandboxes[0], Sandbox)
             assert sandboxes[0].sandbox_id == "test-123"
             assert sandboxes[0].status == "running"
+            call_kwargs = mock_stub.List.call_args[1]
+            assert call_kwargs["metadata"] == expected_metadata
 
     @pytest.mark.asyncio
     async def test_list_with_status_filter(self, mock_aviato_api_key: str) -> None:
         """Test list() passes status filter to request."""
         from coreweave.aviato.v1beta1 import atc_pb2
 
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
@@ -1245,6 +1424,8 @@ class TestSandboxList:
 
             call_args = mock_stub.List.call_args[0][0]
             assert call_args.status == atc_pb2.SANDBOX_STATUS_RUNNING
+            call_kwargs = mock_stub.List.call_args[1]
+            assert call_kwargs["metadata"] == expected_metadata
 
     @pytest.mark.asyncio
     async def test_list_with_invalid_status_raises(self, mock_aviato_api_key: str) -> None:
@@ -1289,12 +1470,14 @@ class TestSandboxFromId:
             runway_id="runway-1",
         )
 
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.Get = AsyncMock(return_value=mock_response)
 
         with (
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
@@ -1305,6 +1488,8 @@ class TestSandboxFromId:
             assert sandbox.sandbox_id == "test-123"
             assert sandbox.status == "running"
             assert sandbox.tower_id == "tower-1"
+            call_kwargs = mock_stub.Get.call_args[1]
+            assert call_kwargs["metadata"] == expected_metadata
 
     @pytest.mark.asyncio
     async def test_from_id_raises_not_found(self, mock_aviato_api_key: str) -> None:
@@ -1335,12 +1520,14 @@ class TestSandboxDeleteClassMethod:
 
         mock_response = atc_pb2.DeleteSandboxResponse(success=True, error_message="")
 
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.Delete = AsyncMock(return_value=mock_response)
 
         with (
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
@@ -1348,6 +1535,8 @@ class TestSandboxDeleteClassMethod:
             result = await Sandbox.delete("test-123")
 
             assert result is None
+            call_kwargs = mock_stub.Delete.call_args[1]
+            assert call_kwargs["metadata"] == expected_metadata
 
     @pytest.mark.asyncio
     async def test_delete_raises_not_found_by_default(self, mock_aviato_api_key: str) -> None:
@@ -2203,7 +2392,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -2247,7 +2436,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -2280,7 +2469,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -2312,7 +2501,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -2342,7 +2531,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
@@ -2384,7 +2573,7 @@ class TestExecStdinReadySignal:
 
         with (
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("aviato._sandbox.resolve_auth", return_value=MagicMock(headers={})),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
             patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("aviato._sandbox.create_channel", return_value=mock_channel),
             patch(
