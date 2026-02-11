@@ -38,14 +38,24 @@ with aviato.Session(defaults=defaults) as session:
 
 ### session.sandbox()
 
-Creates and starts a sandbox with session defaults:
+Creates a sandbox with session defaults. The sandbox is not started until first use:
 
 ```python
 with aviato.Session(defaults=defaults) as session:
-    # sandbox() creates AND starts the sandbox
+    # sandbox() returns an unstarted sandbox
     sandbox = session.sandbox()
 
-    # Sandbox is already started, ready to use
+    # Operations auto-start the sandbox on first use
+    result = sandbox.exec(["echo", "hello"]).result()
+```
+
+For explicit control over when the start RPC fires:
+
+```python
+with aviato.Session(defaults=defaults) as session:
+    sandbox = session.sandbox()
+    sandbox.start().result()  # Explicit start
+    sandbox.wait()            # Wait for RUNNING
     result = sandbox.exec(["echo", "hello"]).result()
 ```
 

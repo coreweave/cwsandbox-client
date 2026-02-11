@@ -19,8 +19,7 @@ class TestSessionSandbox:
     def test_sandbox_returns_sandbox(self) -> None:
         """Test session.sandbox returns a Sandbox instance."""
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
 
@@ -35,9 +34,7 @@ class TestSessionSandbox:
             }
         )
         session = Session(defaults)
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert sandbox._environment_variables == {
             "PROJECT_ID": "test-project",
@@ -55,16 +52,14 @@ class TestSessionSandbox:
             }
         )
         session = Session(defaults)
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(
-                command="sleep",
-                args=["infinity"],
-                environment_variables={
-                    "LOG_LEVEL": "debug",  # Override
-                    "MODEL_NAME": "gpt2",  # Add new
-                },
-            )
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            environment_variables={
+                "LOG_LEVEL": "debug",  # Override
+                "MODEL_NAME": "gpt2",  # Add new
+            },
+        )
 
         assert sandbox._environment_variables == {
             "PROJECT_ID": "test-project",  # Inherited
@@ -92,9 +87,8 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox2 = session.sandbox(command="sleep", args=["infinity"])
 
         # Mock the internal async stop method (close uses _stop_async directly)
         sandbox1._stop_async = AsyncMock()
@@ -111,8 +105,7 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock, MagicMock
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
 
         sandbox._channel = MagicMock()
@@ -137,10 +130,9 @@ class TestSessionCleanup:
         from aviato.exceptions import SandboxError
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox3 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox2 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox3 = session.sandbox(command="sleep", args=["infinity"])
 
         # Mock the internal async stop method (close uses _stop_async directly)
         sandbox1._stop_async = AsyncMock()
@@ -180,25 +172,26 @@ class TestSessionSandboxMethod:
 
     def test_sandbox_returns_sandbox(self) -> None:
         """Test session.sandbox() returns a Sandbox instance."""
-        from unittest.mock import patch
-
         session = Session()
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
         assert sandbox._session is session
 
-    def test_sandbox_starts_sandbox(self) -> None:
-        """Test session.sandbox() calls start() on the sandbox."""
-        from unittest.mock import patch
+    def test_sandbox_returns_unstarted(self) -> None:
+        """Test session.sandbox() returns sandbox with no sandbox_id (unstarted)."""
+        session = Session()
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
+        assert sandbox.sandbox_id is None
+
+    def test_sandbox_does_not_make_network_call(self) -> None:
+        """Test session.sandbox() does not call start() or _start_async()."""
         session = Session()
 
         with patch.object(Sandbox, "start") as mock_start:
             session.sandbox(command="sleep", args=["infinity"])
-            mock_start.assert_called_once()
+            mock_start.assert_not_called()
 
     def test_sandbox_raises_if_session_closed(self) -> None:
         """Test session.sandbox() raises SandboxError if session is closed."""
@@ -346,13 +339,12 @@ class TestSessionKwargsValidation:
     def test_sandbox_with_valid_kwargs(self) -> None:
         """Test Session.sandbox accepts valid kwargs."""
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(
-                command="echo",
-                args=["hello"],
-                resources={"cpu": "100m"},
-                ports=[{"container_port": 8080}],
-            )
+        sandbox = session.sandbox(
+            command="echo",
+            args=["hello"],
+            resources={"cpu": "100m"},
+            ports=[{"container_port": 8080}],
+        )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
 
@@ -707,32 +699,72 @@ class TestSessionReportTo:
 class TestSessionSandboxMetrics:
     """Tests for Session.sandbox() metrics reporting."""
 
-    def test_sandbox_records_creation(self) -> None:
-        """Test session.sandbox() records sandbox creation in reporter."""
+    def test_sandbox_construction_records_creation(self) -> None:
+        """Test session.sandbox() records creation metric immediately."""
         session = Session(report_to=["wandb"])
-
-        with patch.object(Sandbox, "start"):
-            session.sandbox(command="sleep", args=["infinity"])
+        session.sandbox(command="sleep", args=["infinity"])
 
         assert session._reporter._sandboxes_created == 1
 
-    def test_multiple_sandboxes_increment_counter(self) -> None:
-        """Test creating multiple sandboxes increments counter."""
+    @pytest.mark.asyncio
+    async def test_start_async_does_not_double_count(self, mock_aviato_api_key: str) -> None:
+        """Test _start_async() does not re-record creation (already counted by sandbox())."""
         session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
-        with patch.object(Sandbox, "start"):
-            session.sandbox(command="sleep", args=["infinity"])
-            session.sandbox(command="sleep", args=["infinity"])
-            session.sandbox(command="sleep", args=["infinity"])
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-123"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
 
-        assert session._reporter._sandboxes_created == 3
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await sandbox._start_async()
+
+        assert session._reporter._sandboxes_created == 1
+
+    @pytest.mark.asyncio
+    async def test_start_async_repeated_calls_no_extra_count(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test repeated _start_async() calls do not inflate creation count."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-123"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await sandbox._start_async()
+            await sandbox._start_async()
+
+        assert session._reporter._sandboxes_created == 1
 
     def test_sandbox_noop_without_reporter(self) -> None:
         """Test session.sandbox() works without reporter (report_to=[])."""
         session = Session(report_to=[])
-
-        with patch.object(Sandbox, "start"):
-            sb = session.sandbox(command="sleep", args=["infinity"])
+        sb = session.sandbox(command="sleep", args=["infinity"])
 
         assert sb is not None
         assert session._reporter is None
@@ -802,9 +834,7 @@ class TestSessionAutoTracking:
     def test_auto_tracking_reports_to_session_reporter(self) -> None:
         """Test that sandbox exec completion reports to session's reporter."""
         session = Session(report_to=["wandb"])
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         from aviato._types import ProcessResult
 
@@ -817,9 +847,7 @@ class TestSessionAutoTracking:
     def test_auto_tracking_nonzero_returncode(self) -> None:
         """Test that nonzero returncode reports COMPLETED_NONZERO to reporter."""
         session = Session(report_to=["wandb"])
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         from aviato._types import ProcessResult
 
@@ -834,9 +862,7 @@ class TestSessionAutoTracking:
     def test_auto_tracking_exception_reports_failure(self) -> None:
         """Test that exception reports FAILURE to reporter."""
         session = Session(report_to=["wandb"])
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         sandbox._on_exec_complete(None, Exception("fail"))
 
@@ -848,9 +874,7 @@ class TestSessionAutoTracking:
     def test_auto_tracking_noop_without_reporter(self) -> None:
         """Test that sandbox exec completion is noop without reporter."""
         session = Session(report_to=[])
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         from aviato._types import ProcessResult
 

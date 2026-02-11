@@ -460,7 +460,7 @@ class Sandbox:
             environment_variables=environment_variables,
         )
         logger.debug("Creating sandbox with command: %s", command)
-        sandbox.start()
+        sandbox.start().result()
         return sandbox
 
     @classmethod
@@ -1057,7 +1057,7 @@ class Sandbox:
         If sandbox not started, starts it. Returns self for use in with statement.
         """
         if self._sandbox_id is None:
-            self.start()
+            self.start().result()
         return self
 
     def __exit__(
@@ -1244,6 +1244,11 @@ class Sandbox:
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
             )
 
+    async def _ensure_started_async(self) -> None:
+        """Ensure sandbox has been started, starting it if needed."""
+        if self._sandbox_id is None:
+            await self._start_async()
+
     async def _start_async(self) -> str:
         """Internal async: Send StartSandbox to backend, return sandbox_id.
 
@@ -1255,6 +1260,8 @@ class Sandbox:
         async with self._start_lock:
             if self._sandbox_id is not None:
                 return self._sandbox_id
+            if self._stopped:
+                raise SandboxNotRunningError("Sandbox has been stopped")
 
             await self._ensure_client()
             assert self._stub is not None
@@ -1319,6 +1326,7 @@ class Sandbox:
 
     async def _wait_until_running_async(self, timeout: float | None = None) -> None:
         """Internal async: Poll until sandbox reaches RUNNING status."""
+        await self._ensure_started_async()
         effective_timeout = timeout if timeout is not None else self._request_timeout_seconds
         response = await self._poll_until_stable(
             effective_timeout,
@@ -1370,6 +1378,7 @@ class Sandbox:
         raise_on_termination: bool = True,
     ) -> None:
         """Internal async: Poll until sandbox reaches terminal state."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -1430,20 +1439,29 @@ class Sandbox:
 
     # Lifecycle methods
 
-    def start(self) -> None:
-        """Send StartSandbox to backend, return once accepted.
+    def start(self) -> OperationRef[None]:
+        """Send StartSandbox to backend, return OperationRef immediately.
 
         Does NOT wait for RUNNING status. Use wait() to block until ready.
+        Call .result() to block until the start request is accepted.
+
+        Returns:
+            OperationRef[None]: Use .result() to block until backend accepts.
 
         Example:
             ```python
             sandbox = Sandbox(command="sleep", args=["infinity"])
-            sandbox.start()
+            sandbox.start().result()
             print(f"Started sandbox: {sandbox.sandbox_id}")
             sandbox.wait()  # Block until RUNNING
             ```
         """
-        self._loop_manager.run_sync(self._start_async())
+
+        async def _start_and_discard() -> None:
+            await self._start_async()
+
+        future = self._loop_manager.run_async(_start_and_discard())
+        return OperationRef(future)
 
     def wait(self, timeout: float | None = None) -> Sandbox:
         """Block until sandbox reaches RUNNING or a terminal state.
@@ -1506,6 +1524,9 @@ class Sandbox:
     def __await__(self) -> Generator[Any, None, Sandbox]:
         """Make sandbox awaitable - await sandbox waits until RUNNING.
 
+        Routes through _loop_manager to avoid cross-event-loop issues.
+        Auto-starts if not already started.
+
         Example:
             ```python
             sb = Sandbox.run("sleep", "infinity")
@@ -1515,10 +1536,12 @@ class Sandbox:
         """
 
         async def _await_running() -> Sandbox:
+            await self._ensure_started_async()
             await self._wait_until_running_async()
             return self
 
-        return _await_running().__await__()
+        future = self._loop_manager.run_async(_await_running())
+        return asyncio.wrap_future(future).__await__()
 
     async def _stop_async(
         self,
@@ -1528,15 +1551,16 @@ class Sandbox:
         missing_ok: bool = False,
     ) -> None:
         """Internal async: Stop the sandbox."""
-        if self._stopped:
-            logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
-            return
-
-        if self._sandbox_id is None:
-            logger.debug("stop() called on sandbox that was never started")
-            return
-
-        self._stopped = True
+        # Acquire _start_lock to wait for any in-flight start() to complete
+        async with self._start_lock:
+            if self._stopped:
+                logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
+                return
+            if self._sandbox_id is None:
+                logger.debug("stop() called on sandbox that was never started")
+                self._stopped = True
+                return
+            self._stopped = True
 
         await self._ensure_client()
         assert self._stub is not None
@@ -1654,6 +1678,7 @@ class Sandbox:
         if not command:
             raise ValueError("Command cannot be empty")
 
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -2004,6 +2029,7 @@ class Sandbox:
         timeout: float,
     ) -> bytes:
         """Internal async: Read a file from the sandbox filesystem."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -2070,6 +2096,7 @@ class Sandbox:
         timeout: float,
     ) -> None:
         """Internal async: Write a file to the sandbox filesystem."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:

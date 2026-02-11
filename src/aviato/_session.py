@@ -54,7 +54,7 @@ class Session:
 
         # Sync context manager
         with Session(defaults) as session:
-            # Create and start sandboxes with session defaults
+            # Create sandboxes with session defaults (auto-start on first operation)
             sb1 = session.sandbox(command="sleep", args=["infinity"])
             sb2 = session.sandbox(command="sleep", args=["infinity"])
 
@@ -318,11 +318,11 @@ class Session:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
     ) -> Sandbox:
-        """Create and start a sandbox with session defaults, return immediately.
+        """Create an unstarted sandbox with session defaults.
 
-        This is the recommended way to create sandboxes in the sync API.
-        The sandbox is created and started, returning immediately once the
-        backend accepts the start request (does NOT wait for RUNNING status).
+        Returns immediately without any network calls. The sandbox
+        auto-starts on first operation (exec, read_file, write_file,
+        wait), or can be started explicitly with start().result().
 
         Args:
             command: Command to run in sandbox
@@ -342,7 +342,7 @@ class Session:
                 Use for non-sensitive config only.
 
         Returns:
-            A started Sandbox instance. Use .wait() to block until RUNNING.
+            An unstarted Sandbox registered with the session.
 
         Raises:
             SandboxError: If the session has been closed.
@@ -350,9 +350,15 @@ class Session:
         Example:
             ```python
             with Session(defaults) as session:
+                # Auto-start: sandbox starts on first exec()
                 sb = session.sandbox(command="sleep", args=["infinity"])
-                sb.wait()  # Optional: block until RUNNING
                 result = sb.exec(["echo", "hello"]).result()
+
+                # Explicit start for control over timing
+                sb2 = session.sandbox(command="sleep", args=["infinity"])
+                sb2.start().result()
+                sb2.wait()
+                result = sb2.exec(["echo", "hello"]).result()
             ```
         """
         if self._closed:
@@ -389,7 +395,6 @@ class Session:
             _session=self,
         )
         self._register_sandbox(sandbox)
-        sandbox.start()
         self._record_sandbox_created()
 
         return sandbox

@@ -42,7 +42,7 @@ async with Sandbox.run("sleep", "infinity") as sb:
 
 Key methods:
 - `run(*args, **kwargs)`: Create and start sandbox, return immediately. Accepts advanced configuration kwargs (see below).
-- `start()`: Send start request, return once backend accepts
+- `start()`: Send start request, return `OperationRef[None]`. Call `.result()` to block until backend accepts.
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Block until terminal state (COMPLETED, FAILED, TERMINATED). Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
@@ -73,7 +73,7 @@ Class methods:
 **`Session`** (`_session.py`): Manages multiple sandboxes with shared defaults. Supports both sync and async context managers for the hybrid API.
 
 Key methods:
-- `session.sandbox(command, args, **kwargs)` - create and start sandbox with session defaults. Accepts advanced configuration kwargs.
+- `session.sandbox(command, args, **kwargs)` - create an unstarted sandbox with session defaults. Auto-starts on first operation (exec, read_file, write_file, wait). Accepts advanced configuration kwargs.
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup

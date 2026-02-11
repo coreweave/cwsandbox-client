@@ -4,6 +4,8 @@
 
 """Unit tests for aviato._sandbox module."""
 
+import asyncio
+import concurrent.futures
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -279,31 +281,78 @@ class TestSandboxRun:
 
     def test_run_uses_defaults_without_args(self) -> None:
         """Test Sandbox.run uses default command when no args provided."""
-        with patch.object(Sandbox, "start") as mock_start:
+        mock_ref = MagicMock()
+        mock_ref.result = MagicMock(return_value=None)
+        with patch.object(Sandbox, "start", return_value=mock_ref) as mock_start:
             sandbox = Sandbox.run()
             mock_start.assert_called_once()
+            mock_ref.result.assert_called_once()
             # Default command is "tail" with args ["-f", "/dev/null"]
             assert sandbox._command == "tail"
             assert sandbox._args == ["-f", "/dev/null"]
 
     def test_run_calls_start(self) -> None:
-        """Test Sandbox.run calls start() on the sandbox."""
-        with patch.object(Sandbox, "start") as mock_start:
+        """Test Sandbox.run calls start().result() on the sandbox."""
+        mock_ref = MagicMock()
+        mock_ref.result = MagicMock(return_value=None)
+        with patch.object(Sandbox, "start", return_value=mock_ref) as mock_start:
             Sandbox.run("echo", "hello", "world")
             mock_start.assert_called_once()
+            mock_ref.result.assert_called_once()
+
+    def test_run_has_sandbox_id_after_return(self) -> None:
+        """Test Sandbox.run() has sandbox_id set after return."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "run-sandbox-id"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+            sandbox.start().result()
+
+            assert sandbox.sandbox_id == "run-sandbox-id"
 
 
 class TestSandboxExec:
     """Tests for Sandbox.exec method."""
 
-    def test_exec_without_start_raises_error(self) -> None:
-        """Test exec raises SandboxNotRunningError before start."""
+    def test_exec_without_start_auto_starts(self) -> None:
+        """Test exec auto-starts sandbox via _ensure_started_async."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
-        # exec() returns Process immediately, error occurs when result() is called
-        process = sandbox.exec(["echo", "test"])
-        with pytest.raises(SandboxNotRunningError, match="No sandbox is running"):
-            process.result()
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "auto-start-id"
+
+        exit_response = MagicMock()
+        exit_response.HasField = lambda field: field == "exit"
+        exit_response.exit.exit_code = 0
+
+        mock_call = MockStreamCall(responses=[exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+            process = sandbox.exec(["echo", "test"])
+            result = process.result()
+            assert result.returncode == 0
+            assert sandbox.sandbox_id == "auto-start-id"
 
     def test_exec_empty_command_raises_error(self) -> None:
         """Test exec with empty command raises ValueError."""
@@ -780,19 +829,22 @@ class TestSandboxCleanup:
 
     def test_sync_context_manager_calls_stop_on_exit(self) -> None:
         """Test sync context manager calls stop() when exiting if sandbox was started."""
+        import concurrent.futures
+
         from aviato import OperationRef
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         stop_called = False
 
-        def mock_start() -> None:
+        def mock_start() -> OperationRef[None]:
             sandbox._sandbox_id = "test-sandbox-id"
+            future: concurrent.futures.Future[None] = concurrent.futures.Future()
+            future.set_result(None)
+            return OperationRef(future)
 
         def mock_stop(**kwargs: object) -> OperationRef[bool]:
             nonlocal stop_called
             stop_called = True
-            import concurrent.futures
-
             future: concurrent.futures.Future[bool] = concurrent.futures.Future()
             future.set_result(True)
             return OperationRef(future)
@@ -804,6 +856,35 @@ class TestSandboxCleanup:
             pass
 
         assert stop_called
+
+    def test_enter_starts_if_not_started(self) -> None:
+        """Test __enter__ starts sandbox if not already started."""
+        import concurrent.futures
+
+        from aviato import OperationRef
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        start_called = False
+
+        def mock_start() -> OperationRef[None]:
+            nonlocal start_called
+            start_called = True
+            sandbox._sandbox_id = "enter-sandbox-id"
+            future: concurrent.futures.Future[None] = concurrent.futures.Future()
+            future.set_result(None)
+            return OperationRef(future)
+
+        def mock_stop(**kwargs: object) -> OperationRef[None]:
+            future: concurrent.futures.Future[None] = concurrent.futures.Future()
+            future.set_result(None)
+            return OperationRef(future)
+
+        sandbox.start = mock_start  # type: ignore[method-assign]
+        sandbox.stop = mock_stop  # type: ignore[method-assign]
+
+        with sandbox:
+            assert start_called
+            assert sandbox.sandbox_id == "enter-sandbox-id"
 
 
 class TestSandboxGetStatus:
@@ -960,12 +1041,28 @@ class TestSandboxAutoStartFileOps:
 class TestSandboxWaitUntilComplete:
     """Tests for Sandbox.wait_until_complete method."""
 
-    def test_wait_until_complete_raises_without_start(self) -> None:
-        """Test wait_until_complete raises SandboxNotRunningError if not started."""
-        sandbox = Sandbox(command="sleep", args=["infinity"])
+    def test_wait_until_complete_auto_starts(self) -> None:
+        """Test wait_until_complete auto-starts via _ensure_started_async."""
+        from coreweave.aviato.v1beta1 import atc_pb2
 
-        with pytest.raises(SandboxNotRunningError, match="No sandbox is running"):
+        sandbox = Sandbox(command="echo", args=["hello"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "auto-start-complete-id"
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_COMPLETED
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+            sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
+
             sandbox.wait_until_complete()
+
+            assert sandbox.sandbox_id == "auto-start-complete-id"
+            assert sandbox.returncode == 0
 
     def test_wait_until_complete_no_raise_on_terminated_when_disabled(self) -> None:
         """Test wait_until_complete returns normally when raise_on_termination=False."""
@@ -987,6 +1084,25 @@ class TestSandboxWaitUntilComplete:
 class TestSandboxStart:
     """Tests for Sandbox.start method."""
 
+    def test_start_returns_operation_ref(self) -> None:
+        """Test start returns OperationRef[None]."""
+        from aviato import OperationRef
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "new-sandbox-id"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+            ref = sandbox.start()
+            assert isinstance(ref, OperationRef)
+            result = ref.result()
+            assert result is None
+
     def test_start_sets_sandbox_id(self) -> None:
         """Test start sets the sandbox ID (does NOT wait for RUNNING)."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -999,7 +1115,7 @@ class TestSandboxStart:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.sandbox_id == "new-sandbox-id"
 
@@ -1021,7 +1137,7 @@ class TestSandboxStart:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             start_call = sandbox._stub.Start.call_args[0][0]
             assert start_call.command == "python"
@@ -1043,7 +1159,7 @@ class TestSandboxStart:
             sandbox._stub.Start = AsyncMock(side_effect=mock_error)
 
             with pytest.raises(SandboxNotRunningError, match="was cancelled"):
-                sandbox.start()
+                sandbox.start().result()
 
 
 class TestSandboxWaitForRunning:
@@ -1264,6 +1380,7 @@ class TestSandboxStop:
         mock_stub.Stop.assert_called_once()
         call_kwargs = mock_stub.Stop.call_args[1]
         assert call_kwargs["metadata"] == expected_metadata
+
 
 class TestSandboxTimeouts:
     """Tests for Sandbox timeout behavior."""
@@ -1604,7 +1721,7 @@ class TestSandboxServiceAddressAndExposedPorts:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.service_address == "166.19.9.70:8080"
 
@@ -1622,7 +1739,7 @@ class TestSandboxServiceAddressAndExposedPorts:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.service_address is None
 
@@ -1648,7 +1765,7 @@ class TestSandboxServiceAddressAndExposedPorts:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.exposed_ports == ((8080, "http"), (22, "ssh"))
 
@@ -1666,7 +1783,7 @@ class TestSandboxServiceAddressAndExposedPorts:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.exposed_ports is None
 
@@ -1874,7 +1991,7 @@ class TestAppliedNetworkModes:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.applied_ingress_mode == "public"
             assert sandbox.applied_egress_mode == "internet"
@@ -1895,7 +2012,7 @@ class TestAppliedNetworkModes:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox.applied_ingress_mode is None
             assert sandbox.applied_egress_mode is None
@@ -1918,7 +2035,7 @@ class TestAppliedNetworkModes:
             sandbox._channel = MagicMock()
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
-            sandbox.start()
+            sandbox.start().result()
 
         # Mock get_status call
         mock_get_response = MagicMock()
@@ -1956,7 +2073,7 @@ class TestNetworkOptionsRequestPayload:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             start_call = sandbox._stub.Start.call_args[0][0]
             # Network should be converted to dict in the request
@@ -1983,7 +2100,7 @@ class TestNetworkOptionsRequestPayload:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             start_call = sandbox._stub.Start.call_args[0][0]
             # exposed_ports should be a list in the request
@@ -2009,7 +2126,7 @@ class TestNetworkOptionsRequestPayload:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             start_call = sandbox._stub.Start.call_args[0][0]
             # ingress_mode should be set
@@ -2134,7 +2251,7 @@ class TestSandboxStartupTimeTracking:
             sandbox._stub = MagicMock()
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
 
-            sandbox.start()
+            sandbox.start().result()
 
             assert sandbox._start_accepted_at is not None
             assert sandbox._start_accepted_at > 0
@@ -2591,3 +2708,201 @@ class TestExecStdinReadySignal:
 
             # Verify stdin is None when stdin=False
             assert process.stdin is None
+
+
+class TestCrossLoopRegression:
+    """Regression tests for cross-event-loop bug.
+
+    The sync/async hybrid API uses a background daemon thread (Loop B via _LoopManager)
+    for all gRPC operations. Results bridge back to the caller's loop (Loop A) via
+    asyncio.wrap_future(). If any entrypoint submits work directly to Loop A instead
+    of routing through _LoopManager, it causes RuntimeError when nest_asyncio is not
+    installed (or a subtle deadlock when it is).
+
+    Key invariant: all gRPC operations go through _loop_manager.run_async(), results
+    bridge back via asyncio.wrap_future().
+    """
+
+    def test_await_sandbox_routes_through_loop_manager(self) -> None:
+        """Verify __await__ routes through _loop_manager, not the caller's loop."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+
+        async def do_await() -> Sandbox:
+            return await sandbox
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_ensure_started_async", new_callable=AsyncMock):
+                with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        result = loop.run_until_complete(do_await())
+                        assert result is sandbox
+                        mock_run_async.assert_called_once()
+                    finally:
+                        loop.close()
+
+    def test_aenter_routes_through_loop_manager(self) -> None:
+        """Verify __aenter__ routes through _loop_manager for unstarted sandbox."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox._sandbox_id is None
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_start_async", new_callable=AsyncMock):
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(sandbox.__aenter__())
+                    assert result is sandbox
+                    mock_run_async.assert_called_once()
+                finally:
+                    loop.close()
+
+    def test_aenter_skips_start_when_already_started(self) -> None:
+        """Verify __aenter__ skips _loop_manager when sandbox already has an ID."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "already-started"
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(sandbox.__aenter__())
+                assert result is sandbox
+                mock_run_async.assert_not_called()
+            finally:
+                loop.close()
+
+    def test_start_routes_through_loop_manager(self) -> None:
+        """Verify start() routes through _loop_manager.run_async."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "cross-loop-id"
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+                sandbox._channel = MagicMock()
+                sandbox._stub = MagicMock()
+                sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+                ref = sandbox.start()
+                ref.result()
+
+                mock_run_async.assert_called_once()
+
+    def test_operation_ref_await_uses_wrap_future(self) -> None:
+        """Verify OperationRef.__await__ uses asyncio.wrap_future for cross-loop safety."""
+        from aviato import OperationRef
+
+        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future.set_result("test-value")
+        ref = OperationRef(future)
+
+        async def do_await() -> str:
+            return await ref
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(do_await())
+            assert result == "test-value"
+        finally:
+            loop.close()
+
+    def test_dual_loop_sandbox_await(self) -> None:
+        """Deterministic dual-loop test: create on one loop, await on another.
+
+        This is the core regression test. The bug manifested when:
+        1. Sandbox created on Loop A (or no loop)
+        2. Awaited on Loop B (different from _LoopManager's background loop)
+        3. If __await__ submitted work to Loop B directly, it would fail
+
+        The fix routes through _LoopManager.run_async() which always submits
+        to the background daemon loop, making the caller's loop irrelevant.
+        """
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "dual-loop-id"
+
+        async def do_await() -> Sandbox:
+            return await sandbox
+
+        with patch.object(sandbox, "_ensure_started_async", new_callable=AsyncMock):
+            with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                # Await on a fresh event loop (simulates different caller context)
+                loop_a = asyncio.new_event_loop()
+                try:
+                    result = loop_a.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop_a.close()
+
+                # Await on yet another fresh loop (simulates Jupyter cell re-execution)
+                loop_b = asyncio.new_event_loop()
+                try:
+                    result = loop_b.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop_b.close()
+
+    def test_dual_loop_aenter_aexit(self) -> None:
+        """Create sandbox on one loop, use async context manager on another."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "dual-loop-ctx-id"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+            # Start on Loop A (sync)
+            sandbox.start().result()
+            assert sandbox.sandbox_id == "dual-loop-ctx-id"
+
+            # Use async context manager on Loop B
+            async def use_async_ctx() -> Sandbox:
+                async with sandbox as sb:
+                    return sb
+
+            with patch.object(sandbox, "_stop_async", new_callable=AsyncMock):
+                loop_b = asyncio.new_event_loop()
+                try:
+                    result = loop_b.run_until_complete(use_async_ctx())
+                    assert result is sandbox
+                finally:
+                    loop_b.close()
+
+    def test_start_then_await_on_different_loop(self) -> None:
+        """Call start() synchronously, then await the sandbox on a different loop."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_start_response = MagicMock()
+        mock_start_response.sandbox_id = "start-then-await-id"
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
+
+            # Start synchronously (uses _loop_manager internally)
+            sandbox.start().result()
+            assert sandbox.sandbox_id == "start-then-await-id"
+
+            # Now await on a completely different loop
+            async def do_await() -> Sandbox:
+                return await sandbox
+
+            with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop.close()
