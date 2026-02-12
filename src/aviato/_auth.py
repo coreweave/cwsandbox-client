@@ -19,10 +19,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
-
-import grpc
-import grpc.aio
+from typing import Literal
 
 from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
 from aviato.exceptions import WandbAuthError
@@ -72,6 +69,19 @@ def resolve_auth() -> AuthHeaders:
 
     logger.debug("No authentication credentials found")
     return AuthHeaders(headers={}, strategy="none")
+
+
+def resolve_auth_metadata() -> tuple[tuple[str, str], ...]:
+    """Resolve authentication credentials and return as gRPC metadata tuples.
+
+    Convenience wrapper around resolve_auth() that returns metadata in the
+    format expected by gRPC calls (lowercase key-value tuples).
+
+    Returns:
+        Tuple of (key, value) pairs suitable for gRPC metadata parameter
+    """
+    auth = resolve_auth()
+    return tuple((k.lower(), v) for k, v in auth.headers.items())
 
 
 def _try_aviato_auth() -> AuthHeaders | None:
@@ -163,87 +173,3 @@ _AUTH_MODES = [
     _AuthMode(try_auth=_try_aviato_auth),
     _AuthMode(try_auth=_try_wandb_auth),
 ]
-
-
-class AuthInterceptor(
-    grpc.aio.UnaryUnaryClientInterceptor,  # type: ignore[type-arg]
-    grpc.aio.StreamStreamClientInterceptor,  # type: ignore[type-arg]
-):
-    """gRPC interceptor that adds auth headers to every RPC call.
-
-    Implements both UnaryUnaryClientInterceptor and StreamStreamClientInterceptor
-    to handle both unary and bidirectional streaming calls.
-
-    Note: gRPC requires metadata keys to be lowercase. This interceptor
-    normalizes all header keys to lowercase on initialization.
-    """
-
-    def __init__(self, headers: dict[str, str]) -> None:
-        """Initialize the interceptor with auth headers.
-
-        Args:
-            headers: Dict of header name to value. Keys are normalized to lowercase.
-        """
-        # gRPC requires lowercase metadata keys
-        self._metadata: tuple[tuple[str, str], ...] = tuple(
-            (k.lower(), v) for k, v in headers.items()
-        )
-
-    def _add_metadata(
-        self, client_call_details: grpc.aio.ClientCallDetails
-    ) -> grpc.aio.ClientCallDetails:
-        """Create new ClientCallDetails with auth metadata added.
-
-        Args:
-            client_call_details: Original call details
-
-        Returns:
-            New ClientCallDetails with auth metadata merged
-        """
-        existing = client_call_details.metadata or ()
-        merged = tuple(existing) + self._metadata
-        # ClientCallDetails is a NamedTuple at runtime with _replace method
-        return client_call_details._replace(metadata=merged)  # type: ignore[attr-defined, no-any-return]
-
-    async def intercept_unary_unary(
-        self,
-        continuation: Callable[
-            [grpc.aio.ClientCallDetails, Any],
-            grpc.aio.UnaryUnaryCall[Any, Any],
-        ],
-        client_call_details: grpc.aio.ClientCallDetails,
-        request: Any,
-    ) -> Any:
-        """Intercept unary-unary calls to add auth metadata."""
-        new_details = self._add_metadata(client_call_details)
-        return await continuation(new_details, request)
-
-    async def intercept_stream_stream(
-        self,
-        continuation: Callable[
-            [grpc.aio.ClientCallDetails, Any],
-            grpc.aio.StreamStreamCall[Any, Any],
-        ],
-        client_call_details: grpc.aio.ClientCallDetails,
-        request_iterator: Any,
-    ) -> grpc.aio.StreamStreamCall[Any, Any]:
-        """Intercept stream-stream calls to add auth metadata."""
-        new_details = self._add_metadata(client_call_details)
-        # StreamStreamCall is not awaitable - return it directly
-        return continuation(new_details, request_iterator)
-
-
-def create_auth_interceptors() -> list[AuthInterceptor]:
-    """Create gRPC interceptors for auth headers based on resolved credentials.
-
-    Resolves authentication credentials using the standard auth resolution
-    order (AVIATO_API_KEY, WANDB_* env vars, ~/.netrc) and creates an
-    interceptor to add those headers to each request.
-
-    Returns:
-        List containing a single AuthInterceptor configured with resolved auth
-        headers. Returns list with interceptor even if no auth headers are
-        resolved (empty headers dict).
-    """
-    auth = resolve_auth()
-    return [AuthInterceptor(auth.headers)]

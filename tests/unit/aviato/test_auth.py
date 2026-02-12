@@ -11,13 +11,12 @@ import pytest
 
 from aviato._auth import (
     AuthHeaders,
-    AuthInterceptor,
     WandbAuthError,
     _read_api_key_from_netrc,
     _try_aviato_auth,
     _try_wandb_auth,
-    create_auth_interceptors,
     resolve_auth,
+    resolve_auth_metadata,
 )
 from aviato._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
 
@@ -268,140 +267,38 @@ class TestReadApiKeyFromNetrc:
         assert result is None
 
 
-class TestAuthInterceptor:
-    """Tests for AuthInterceptor class."""
+class TestResolveAuthMetadata:
+    """Tests for resolve_auth_metadata function."""
 
-    def test_lowercases_header_keys(self) -> None:
-        """Test that header keys are normalized to lowercase."""
-        headers = {"Authorization": "Bearer token", "X-Api-Key": "key"}
-        interceptor = AuthInterceptor(headers)
-
-        assert interceptor._metadata == (
-            ("authorization", "Bearer token"),
-            ("x-api-key", "key"),
-        )
-
-    def test_empty_headers(self) -> None:
-        """Test interceptor works with empty headers."""
-        interceptor = AuthInterceptor({})
-        assert interceptor._metadata == ()
-
-    def test_add_metadata_merges_with_existing(self) -> None:
-        """Test _add_metadata merges auth metadata with existing metadata."""
-        from unittest.mock import MagicMock
-
-        headers = {"authorization": "Bearer token"}
-        interceptor = AuthInterceptor(headers)
-
-        mock_details = MagicMock()
-        mock_details.metadata = (("x-existing", "value"),)
-        mock_details._replace = MagicMock(return_value="new_details")
-
-        result = interceptor._add_metadata(mock_details)
-
-        mock_details._replace.assert_called_once_with(
-            metadata=(("x-existing", "value"), ("authorization", "Bearer token"))
-        )
-        assert result == "new_details"
-
-    def test_add_metadata_handles_none_existing(self) -> None:
-        """Test _add_metadata handles None existing metadata."""
-        from unittest.mock import MagicMock
-
-        headers = {"authorization": "Bearer token"}
-        interceptor = AuthInterceptor(headers)
-
-        mock_details = MagicMock()
-        mock_details.metadata = None
-        mock_details._replace = MagicMock(return_value="new_details")
-
-        result = interceptor._add_metadata(mock_details)
-
-        mock_details._replace.assert_called_once_with(metadata=(("authorization", "Bearer token"),))
-        assert result == "new_details"
-
-    @pytest.mark.asyncio
-    async def test_intercept_unary_unary_adds_metadata(self) -> None:
-        """Test intercept_unary_unary adds auth metadata to calls."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        headers = {"authorization": "Bearer test-token"}
-        interceptor = AuthInterceptor(headers)
-
-        mock_call_details = MagicMock()
-        mock_call_details.metadata = None
-        new_details = MagicMock()
-        mock_call_details._replace = MagicMock(return_value=new_details)
-
-        mock_request = MagicMock()
-        mock_response = MagicMock()
-        mock_continuation = AsyncMock(return_value=mock_response)
-
-        result = await interceptor.intercept_unary_unary(
-            mock_continuation, mock_call_details, mock_request
-        )
-
-        mock_continuation.assert_called_once_with(new_details, mock_request)
-        assert result == mock_response
-
-    @pytest.mark.asyncio
-    async def test_intercept_stream_stream_adds_metadata(self) -> None:
-        """Test intercept_stream_stream adds auth metadata to calls."""
-        from unittest.mock import MagicMock
-
-        headers = {"authorization": "Bearer test-token"}
-        interceptor = AuthInterceptor(headers)
-
-        mock_call_details = MagicMock()
-        mock_call_details.metadata = None
-        new_details = MagicMock()
-        mock_call_details._replace = MagicMock(return_value=new_details)
-
-        mock_request_iterator = MagicMock()
-        mock_stream_call = MagicMock()
-        # StreamStreamCall is not awaitable - continuation returns it directly
-        mock_continuation = MagicMock(return_value=mock_stream_call)
-
-        result = await interceptor.intercept_stream_stream(
-            mock_continuation, mock_call_details, mock_request_iterator
-        )
-
-        mock_continuation.assert_called_once_with(new_details, mock_request_iterator)
-        assert result == mock_stream_call
-
-
-class TestCreateAuthInterceptors:
-    """Tests for create_auth_interceptors function."""
-
-    def test_returns_list_with_single_interceptor(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test returns a list with one interceptor."""
+    def test_returns_lowercased_metadata_tuples(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test returns metadata with lowercase keys as tuples."""
         monkeypatch.setenv("AVIATO_API_KEY", "test-key")
 
-        result = create_auth_interceptors()
+        result = resolve_auth_metadata()
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], AuthInterceptor)
+        assert result == (("authorization", "Bearer test-key"),)
 
-    def test_interceptor_has_resolved_metadata(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test the interceptor contains resolved auth metadata with lowercase keys."""
-        monkeypatch.setenv("AVIATO_API_KEY", "test-key")
-
-        result = create_auth_interceptors()
-
-        # Keys should be lowercased for gRPC
-        assert result[0]._metadata == (("authorization", "Bearer test-key"),)
-
-    def test_returns_interceptor_with_empty_metadata_when_no_auth(
+    def test_returns_empty_tuple_when_no_auth(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Test returns interceptor with empty metadata when no credentials."""
+        """Test returns empty tuple when no credentials found."""
         monkeypatch.delenv("AVIATO_API_KEY", raising=False)
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
         monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
 
         with patch("aviato._auth.Path.home", return_value=tmp_path):
-            result = create_auth_interceptors()
+            result = resolve_auth_metadata()
 
-        assert len(result) == 1
-        assert result[0]._metadata == ()
+        assert result == ()
+
+    def test_wandb_metadata_has_correct_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test W&B metadata contains all expected keys."""
+        monkeypatch.delenv("AVIATO_API_KEY", raising=False)
+        monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
+        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.delenv("WANDB_PROJECT_NAME", raising=False)
+
+        result = resolve_auth_metadata()
+
+        keys = {k for k, v in result}
+        assert keys == {"x-api-key", "x-entity-id", "x-project-name"}

@@ -20,10 +20,10 @@ def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
     with Sandbox.session(sandbox_defaults) as session:
         sandbox = session.sandbox(command="sleep", args=["infinity"])
 
-        assert sandbox.sandbox_id is not None
-
+        # sandbox_id is assigned on first operation (deferred-start)
         result = sandbox.exec(["echo", "from session"]).result()
         assert result.returncode == 0
+        assert sandbox.sandbox_id is not None
 
 
 def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
@@ -128,6 +128,7 @@ def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefault
     """Test session.close() stops sandboxes that weren't manually stopped."""
     with Sandbox.session(sandbox_defaults) as session:
         sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox.wait()  # trigger auto-start so sandbox has an ID to stop
 
         assert sandbox.sandbox_id is not None
         assert session.sandbox_count == 1
@@ -176,12 +177,12 @@ async def test_session_async_context_manager(sandbox_defaults: SandboxDefaults) 
     async with Session(sandbox_defaults) as session:
         # Create sandbox through session
         sandbox = session.sandbox(command="sleep", args=["infinity"])
-        assert sandbox.sandbox_id is not None
 
-        # Use await pattern (not .result())
+        # Use await pattern (not .result()) - first exec triggers auto-start
         result = await sandbox.exec(["echo", "async session"])
         assert result.returncode == 0
         assert result.stdout.strip() == "async session"
+        assert sandbox.sandbox_id is not None
 
         # Verify session.list() works with await
         sandboxes = await session.list()

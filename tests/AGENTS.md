@@ -66,6 +66,8 @@ Set environment variables before running integration tests. A `.env` file in the
 
 **_cleanup tests**: Use `_reset_for_testing()` from `aviato._cleanup` in teardown to restore original signal handlers between tests.
 
+**Wandb/reporter tests**: Session reporter tests use `report_to=["wandb"]` for explicit opt-in or `report_to=[]` for disabled. To test wandb logging, set `session._reporter._run = mock_run` directly rather than mocking `wandb.log`, since the reporter calls `run.log()` on its cached run instance.
+
 ## Integration Tests
 
 Run against real backend - use sparingly to avoid resource consumption.
@@ -103,7 +105,8 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 | `test_function.py` | RemoteFunction class, decorator, .remote(), .map(), .local() |
 | `test_loop_manager.py` | _LoopManager singleton, run_sync, run_async |
 | `test_sandbox.py` | Sandbox class, status handling, exec, file ops |
-| `test_session.py` | Session class, sandbox management, context managers |
+| `test_session.py` | Session class, sandbox management, context managers, reporter lifecycle |
+| `test_wandb.py` | WandbReporter metrics, per-sandbox tracking, lazy run detection |
 | `test_types.py` | OperationRef, ProcessResult, Process, StreamReader |
 | `test_utilities.py` | aviato.result(), aviato.wait() utilities |
 

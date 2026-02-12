@@ -19,8 +19,7 @@ class TestSessionSandbox:
     def test_sandbox_returns_sandbox(self) -> None:
         """Test session.sandbox returns a Sandbox instance."""
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
 
@@ -35,9 +34,7 @@ class TestSessionSandbox:
             }
         )
         session = Session(defaults)
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert sandbox._environment_variables == {
             "PROJECT_ID": "test-project",
@@ -55,16 +52,14 @@ class TestSessionSandbox:
             }
         )
         session = Session(defaults)
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(
-                command="sleep",
-                args=["infinity"],
-                environment_variables={
-                    "LOG_LEVEL": "debug",  # Override
-                    "MODEL_NAME": "gpt2",  # Add new
-                },
-            )
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            environment_variables={
+                "LOG_LEVEL": "debug",  # Override
+                "MODEL_NAME": "gpt2",  # Add new
+            },
+        )
 
         assert sandbox._environment_variables == {
             "PROJECT_ID": "test-project",  # Inherited
@@ -92,9 +87,8 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox2 = session.sandbox(command="sleep", args=["infinity"])
 
         # Mock the internal async stop method (close uses _stop_async directly)
         sandbox1._stop_async = AsyncMock()
@@ -111,8 +105,7 @@ class TestSessionCleanup:
         from unittest.mock import AsyncMock, MagicMock
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
 
         sandbox._channel = MagicMock()
@@ -137,10 +130,9 @@ class TestSessionCleanup:
         from aviato.exceptions import SandboxError
 
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox1 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox2 = session.sandbox(command="sleep", args=["infinity"])
-            sandbox3 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox1 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox2 = session.sandbox(command="sleep", args=["infinity"])
+        sandbox3 = session.sandbox(command="sleep", args=["infinity"])
 
         # Mock the internal async stop method (close uses _stop_async directly)
         sandbox1._stop_async = AsyncMock()
@@ -180,25 +172,26 @@ class TestSessionSandboxMethod:
 
     def test_sandbox_returns_sandbox(self) -> None:
         """Test session.sandbox() returns a Sandbox instance."""
-        from unittest.mock import patch
-
         session = Session()
-
-        with patch.object(Sandbox, "start"):
-            sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
         assert sandbox._session is session
 
-    def test_sandbox_starts_sandbox(self) -> None:
-        """Test session.sandbox() calls start() on the sandbox."""
-        from unittest.mock import patch
+    def test_sandbox_returns_unstarted(self) -> None:
+        """Test session.sandbox() returns sandbox with no sandbox_id (unstarted)."""
+        session = Session()
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
+        assert sandbox.sandbox_id is None
+
+    def test_sandbox_does_not_make_network_call(self) -> None:
+        """Test session.sandbox() does not call start() or _start_async()."""
         session = Session()
 
         with patch.object(Sandbox, "start") as mock_start:
             session.sandbox(command="sleep", args=["infinity"])
-            mock_start.assert_called_once()
+            mock_start.assert_not_called()
 
     def test_sandbox_raises_if_session_closed(self) -> None:
         """Test session.sandbox() raises SandboxError if session is closed."""
@@ -346,13 +339,12 @@ class TestSessionKwargsValidation:
     def test_sandbox_with_valid_kwargs(self) -> None:
         """Test Session.sandbox accepts valid kwargs."""
         session = Session()
-        with patch.object(Sandbox, "start"):  # Mock start to avoid network calls
-            sandbox = session.sandbox(
-                command="echo",
-                args=["hello"],
-                resources={"cpu": "100m"},
-                ports=[{"container_port": 8080}],
-            )
+        sandbox = session.sandbox(
+            command="echo",
+            args=["hello"],
+            resources={"cpu": "100m"},
+            ports=[{"container_port": 8080}],
+        )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
 
@@ -664,97 +656,230 @@ class TestSessionAdopt:
 class TestSessionReportTo:
     """Tests for Session report_to parameter."""
 
-    def test_session_creates_reporter(self) -> None:
-        """Test session creates a WandbReporter."""
+    def test_report_to_none_always_creates_reporter(self) -> None:
+        """Test report_to=None always creates reporter for lazy detection."""
         from aviato._wandb import WandbReporter
 
-        session = Session()
+        session = Session(report_to=None)
         assert isinstance(session._reporter, WandbReporter)
 
-    def test_session_with_explicit_wandb_report_to(self) -> None:
-        """Test session with explicit wandb in report_to."""
-        session = Session(report_to=["wandb"])
-        assert session._reporter is not None
-
-    def test_session_with_empty_report_to(self) -> None:
-        """Test session with empty report_to disables reporting."""
+    def test_report_to_empty_list_disables_reporting(self) -> None:
+        """Test report_to=[] disables reporting."""
         session = Session(report_to=[])
-        assert session._reporter is not None
+        assert session._reporter is None
+
+    def test_report_to_wandb_creates_reporter(self) -> None:
+        """Test report_to=['wandb'] creates reporter."""
+        from aviato._wandb import WandbReporter
+
+        session = Session(report_to=["wandb"])
+        assert isinstance(session._reporter, WandbReporter)
+
+    def test_report_to_non_wandb_disables_reporting(self) -> None:
+        """Test report_to with unrecognized values disables reporting."""
+        session = Session(report_to=["other"])
+        assert session._reporter is None
+
+    def test_lazy_detection_finds_run_after_session_creation(self) -> None:
+        """Test lazy detection: create Session, then wandb.init, then log_metrics."""
+        session = Session(report_to=None)
+        session._reporter.record_sandbox_created()
+
+        mock_run = MagicMock()
+        mock_wandb = MagicMock()
+        mock_wandb.run = mock_run
+
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            result = session.log_metrics()
+
+        assert result is True
+        mock_run.log.assert_called_once()
 
 
 class TestSessionSandboxMetrics:
     """Tests for Session.sandbox() metrics reporting."""
 
-    def test_sandbox_records_creation(self) -> None:
-        """Test session.sandbox() records sandbox creation in reporter."""
-        session = Session()
-
-        with patch.object(Sandbox, "start"):
-            session.sandbox(command="sleep", args=["infinity"])
+    def test_sandbox_construction_records_creation(self) -> None:
+        """Test session.sandbox() records creation metric immediately."""
+        session = Session(report_to=["wandb"])
+        session.sandbox(command="sleep", args=["infinity"])
 
         assert session._reporter._sandboxes_created == 1
 
-    def test_multiple_sandboxes_increment_counter(self) -> None:
-        """Test creating multiple sandboxes increments counter."""
-        session = Session()
+    @pytest.mark.asyncio
+    async def test_start_async_does_not_double_count(self, mock_aviato_api_key: str) -> None:
+        """Test _start_async() does not re-record creation (already counted by sandbox())."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
-        with patch.object(Sandbox, "start"):
-            session.sandbox(command="sleep", args=["infinity"])
-            session.sandbox(command="sleep", args=["infinity"])
-            session.sandbox(command="sleep", args=["infinity"])
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-123"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
 
-        assert session._reporter._sandboxes_created == 3
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await sandbox._start_async()
+
+        assert session._reporter._sandboxes_created == 1
+
+    @pytest.mark.asyncio
+    async def test_start_async_repeated_calls_no_extra_count(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test repeated _start_async() calls do not inflate creation count."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-123"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await sandbox._start_async()
+            await sandbox._start_async()
+
+        assert session._reporter._sandboxes_created == 1
+
+    def test_sandbox_noop_without_reporter(self) -> None:
+        """Test session.sandbox() works without reporter (report_to=[])."""
+        session = Session(report_to=[])
+        sb = session.sandbox(command="sleep", args=["infinity"])
+
+        assert sb is not None
+        assert session._reporter is None
 
 
 class TestSessionLogMetrics:
     """Tests for Session.log_metrics method."""
 
-    def test_log_metrics_returns_false_when_no_metrics(self) -> None:
-        """Test log_metrics returns False when no metrics recorded."""
-        session = Session()
-        assert not session.log_metrics()
-
-    def test_log_metrics_returns_false_without_wandb(self) -> None:
-        """Test log_metrics returns False when wandb not available."""
-        session = Session()
-        session._reporter.record_sandbox_created()
-
-        with patch.dict("sys.modules", {"wandb": None}):
-            with patch("builtins.__import__", side_effect=ImportError):
-                result = session.log_metrics()
-                assert not result
+    def test_log_metrics_returns_false_without_reporter(self) -> None:
+        """Test log_metrics returns False when no reporter."""
+        session = Session(report_to=[])
+        result = session.log_metrics()
+        assert result is False
 
     def test_log_metrics_calls_reporter_log(self) -> None:
         """Test log_metrics delegates to reporter.log."""
         session = Session(report_to=["wandb"])
         session._reporter.record_sandbox_created()
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        result = session.log_metrics(step=42)
+
+        assert result is True
+        mock_run.log.assert_called_once()
+
+    def test_log_metrics_resets_by_default(self) -> None:
+        """Test log_metrics resets metrics by default."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        session.log_metrics(step=100)
+
+        assert session._reporter._sandboxes_created == 0
+
+    def test_log_metrics_preserves_when_reset_false(self) -> None:
+        """Test log_metrics preserves metrics when reset=False."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        session.log_metrics(step=100, reset=False)
+
+        assert session._reporter._sandboxes_created == 1
+
+    def test_log_metrics_preserves_on_failed_log(self) -> None:
+        """Test log_metrics preserves metrics when log() returns False (no run)."""
+        session = Session(report_to=["wandb"])
+        session._reporter.record_sandbox_created()
 
         mock_wandb = MagicMock()
-        mock_wandb.run = MagicMock()
+        mock_wandb.run = None
 
         with patch.dict("sys.modules", {"wandb": mock_wandb}):
-            result = session.log_metrics(step=42)
+            result = session.log_metrics(step=100)
 
-            assert result
-            mock_wandb.log.assert_called_once()
+        assert result is False
+        assert session._reporter._sandboxes_created == 1
 
 
 class TestSessionAutoTracking:
-    """Tests for Session auto-tracking of metrics."""
+    """Tests for automatic exec tracking via sandbox completion callback."""
 
-    def test_auto_detection_with_wandb_available(self) -> None:
-        """Test auto-detection when wandb is available."""
-        with patch("aviato._session.should_auto_report_wandb", return_value=True):
-            session = Session()
-            # Reporter is created regardless
-            assert session._reporter is not None
+    def test_auto_tracking_reports_to_session_reporter(self) -> None:
+        """Test that sandbox exec completion reports to session's reporter."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
 
-    def test_auto_detection_without_wandb(self) -> None:
-        """Test auto-detection when wandb is not available."""
-        with patch("aviato._session.should_auto_report_wandb", return_value=False):
-            session = Session()
-            # Reporter is still created, just won't log
-            assert session._reporter is not None
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="", returncode=0)
+        sandbox._on_exec_complete(result, None)
+
+        assert session._reporter._executions == 1
+        assert session._reporter._exec_completed_ok == 1
+
+    def test_auto_tracking_nonzero_returncode(self) -> None:
+        """Test that nonzero returncode reports COMPLETED_NONZERO to reporter."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="error", returncode=1)
+        sandbox._on_exec_complete(result, None)
+
+        assert session._reporter._executions == 1
+        assert session._reporter._exec_completed_nonzero == 1
+        assert session._reporter._exec_completed_ok == 0
+        assert session._reporter._exec_failures == 0
+
+    def test_auto_tracking_exception_reports_failure(self) -> None:
+        """Test that exception reports FAILURE to reporter."""
+        session = Session(report_to=["wandb"])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        sandbox._on_exec_complete(None, Exception("fail"))
+
+        assert session._reporter._executions == 1
+        assert session._reporter._exec_failures == 1
+        assert session._reporter._exec_completed_ok == 0
+        assert session._reporter._exec_completed_nonzero == 0
+
+    def test_auto_tracking_noop_without_reporter(self) -> None:
+        """Test that sandbox exec completion is noop without reporter."""
+        session = Session(report_to=[])
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        from aviato._types import ProcessResult
+
+        result = ProcessResult(stdout="", stderr="", returncode=0)
+        sandbox._on_exec_complete(result, None)
 
 
 class TestSessionCloseMetrics:
@@ -765,25 +890,80 @@ class TestSessionCloseMetrics:
         """Test session.close() logs remaining metrics."""
         session = Session(report_to=["wandb"])
         session._reporter.record_sandbox_created()
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
 
-        mock_wandb = MagicMock()
-        mock_wandb.run = MagicMock()
+        await session._close_async()
 
-        with patch.dict("sys.modules", {"wandb": mock_wandb}):
-            await session._close_async()
-
-            mock_wandb.log.assert_called_once()
+        mock_run.log.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_close_resets_metrics_after_logging(self) -> None:
-        """Test session.close() resets metrics after logging."""
+    async def test_close_does_not_log_without_metrics(self) -> None:
+        """Test session close does not log when no metrics."""
+        session = Session(report_to=["wandb"])
+        mock_run = MagicMock()
+        session._reporter._run = mock_run
+
+        await session._close_async()
+
+        mock_run.log.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_preserves_metrics_on_failed_log(self) -> None:
+        """Test session close preserves metrics when log() fails (no run)."""
         session = Session(report_to=["wandb"])
         session._reporter.record_sandbox_created()
 
         mock_wandb = MagicMock()
-        mock_wandb.run = MagicMock()
+        mock_wandb.run = None
 
         with patch.dict("sys.modules", {"wandb": mock_wandb}):
             await session._close_async()
 
-            assert not session._reporter.has_metrics
+        assert session._reporter._sandboxes_created == 1
+
+    @pytest.mark.asyncio
+    async def test_close_does_not_log_without_reporter(self) -> None:
+        """Test session close works without reporter."""
+        session = Session(report_to=[])
+
+        await session._close_async()
+
+
+class TestSessionGetMetrics:
+    """Tests for Session.get_metrics method."""
+
+    def test_get_metrics_returns_empty_without_reporter(self) -> None:
+        """Test get_metrics returns empty dict when report_to=[]."""
+        session = Session(report_to=[])
+        assert session.get_metrics() == {}
+
+    def test_get_metrics_delegates_to_reporter(self) -> None:
+        """Test get_metrics returns reporter metrics after recording."""
+        from aviato._wandb import WandbReporter
+
+        session = Session(report_to=["wandb"])
+        assert isinstance(session._reporter, WandbReporter)
+
+        session._reporter.record_sandbox_created()
+        session._reporter.record_sandbox_created()
+
+        metrics = session.get_metrics()
+        assert metrics["aviato/sandboxes_created"] == 2
+        assert metrics["aviato/executions"] == 0
+
+
+class TestSessionInitReporterWarning:
+    """Tests for Session._init_reporter warning on mixed report_to values."""
+
+    def test_mixed_report_to_creates_reporter_and_warns(self) -> None:
+        """Test report_to with wandb + unsupported creates reporter and logs warning."""
+        from aviato._wandb import WandbReporter
+
+        with patch("aviato._session.logger") as mock_logger:
+            session = Session(report_to=["wandb", "unsupported"])
+
+        assert isinstance(session._reporter, WandbReporter)
+        mock_logger.warning.assert_called_once()
+        warning_args = mock_logger.warning.call_args[0]
+        assert "unsupported" in str(warning_args)

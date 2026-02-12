@@ -192,7 +192,7 @@ class TestMetricCollection:
 
                 metrics = session._reporter.get_metrics()
                 # Average of 2.0, 4.0, 6.0 = 4.0
-                assert metrics["aviato/avg_startup_time"] == 4.0
+                assert metrics["aviato/avg_startup_seconds"] == 4.0
 
 
 class TestGuardrails:
@@ -214,12 +214,9 @@ class TestGuardrails:
                 metrics = session._reporter.get_metrics()
                 assert metrics["aviato/sandboxes_created"] == 1
 
-                # Try to log - should return False
+                # Try to log - should return False (no active run)
                 logged = session._reporter.log()
                 assert logged is False
-
-                # wandb.log should NOT have been called
-                mock_wandb.log.assert_not_called()
 
     def test_no_logging_when_report_to_empty(self, sandbox_defaults: SandboxDefaults) -> None:
         """Test no logging when report_to=[] (explicit opt-out)."""
@@ -236,32 +233,36 @@ class TestGuardrails:
                 logged = session.log_metrics()
                 assert logged is False
 
-                # wandb.log should NOT have been called
-                mock_wandb.log.assert_not_called()
+                # wandb.run.log should NOT have been called
+                mock_wandb.run.log.assert_not_called()
 
     def test_metrics_collected_even_when_not_logging(
         self, sandbox_defaults: SandboxDefaults
     ) -> None:
-        """Test that metrics ARE collected even when not logging (for later retrieval)."""
-        # Note: Not mocking wandb here - we want to test the actual reporter behavior
-        # even without wandb being available or logging being enabled
+        """Test that metrics ARE collected even when no wandb run is active."""
+        mock_wandb = MagicMock()
+        mock_wandb.run = None  # No active run - log() returns False
 
-        with Session(sandbox_defaults, report_to=[]) as session:
-            # Create sandboxes
-            session.sandbox()
-            session.sandbox()
+        with patch.dict("sys.modules", {"wandb": mock_wandb}):
+            with Session(sandbox_defaults, report_to=["wandb"]) as session:
+                # Create sandboxes
+                session.sandbox()
+                session.sandbox()
 
-            # Manually record exec outcomes and startup times
-            session._reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
-            session._reporter.record_startup_time(1.5)
+                # Manually record exec outcomes and startup times
+                session._reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK)
+                session._reporter.record_startup_time(1.5)
 
-            # Verify metrics were collected for later retrieval
-            assert session._reporter.has_metrics
-            metrics = session._reporter.get_metrics()
+                # Verify metrics were collected for later retrieval
+                assert session._reporter.has_metrics
+                metrics = session._reporter.get_metrics()
 
-            assert metrics["aviato/sandboxes_created"] == 2
-            assert metrics["aviato/exec_completed_ok"] == 1
-            assert metrics["aviato/avg_startup_time"] == 1.5
+                assert metrics["aviato/sandboxes_created"] == 2
+                assert metrics["aviato/exec_completed_ok"] == 1
+                assert metrics["aviato/avg_startup_seconds"] == 1.5
+
+                # But logging returns False since no active run
+                assert session._reporter.log() is False
 
     def test_log_metrics_disabled_when_report_to_not_wandb(
         self, sandbox_defaults: SandboxDefaults
@@ -271,19 +272,19 @@ class TestGuardrails:
         mock_wandb.run = MagicMock()
 
         with patch.dict("sys.modules", {"wandb": mock_wandb}):
-            # report_to with some other value (not wandb)
+            # report_to with some other value (not wandb) - reporter is None
             with Session(sandbox_defaults, report_to=["other"]) as session:
                 session.sandbox()
 
-                # Verify metrics ARE collected
-                assert session._reporter.has_metrics
+                # No reporter means no metrics collection
+                assert session.get_metrics() == {}
 
-                # But log_metrics should return False (wandb not in report_to)
+                # log_metrics should return False (no reporter)
                 logged = session.log_metrics()
                 assert logged is False
 
-                # wandb.log should NOT have been called via Session
-                mock_wandb.log.assert_not_called()
+                # wandb.run.log should NOT have been called
+                mock_wandb.run.log.assert_not_called()
 
 
 class TestMetricLogging:
@@ -301,9 +302,9 @@ class TestMetricLogging:
                 # Don't call log_metrics manually - let session close do it
                 pass
 
-            # wandb.log should have been called on session close
-            mock_wandb.log.assert_called_once()
-            call_args = mock_wandb.log.call_args
+            # Reporter calls run.log(), not wandb.log()
+            mock_wandb.run.log.assert_called_once()
+            call_args = mock_wandb.run.log.call_args
             logged_metrics = call_args[0][0]
 
             assert "aviato/sandboxes_created" in logged_metrics
@@ -322,9 +323,9 @@ class TestMetricLogging:
                 logged = session.log_metrics(step=42)
                 assert logged is True
 
-                # Verify step was passed
-                mock_wandb.log.assert_called()
-                call_kwargs = mock_wandb.log.call_args[1]
+                # Reporter calls run.log(), not wandb.log()
+                mock_wandb.run.log.assert_called()
+                call_kwargs = mock_wandb.run.log.call_args[1]
                 assert call_kwargs["step"] == 42
 
     def test_log_metrics_resets_counters_by_default(
@@ -364,7 +365,7 @@ class TestMetricLogging:
                 assert logged is True
 
                 # Both calls should have the same count
-                assert mock_wandb.log.call_count == 2
+                assert mock_wandb.run.log.call_count == 2
 
 
 class TestLiveWandbIntegration:

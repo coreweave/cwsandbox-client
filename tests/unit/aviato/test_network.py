@@ -104,7 +104,6 @@ class TestCreateChannel:
         mock_secure_channel.assert_called_once_with(
             "atc.example.com:443",
             mock_creds,
-            interceptors=None,
         )
         assert result is mock_channel
 
@@ -116,65 +115,5 @@ class TestCreateChannel:
 
         result = create_channel("localhost:50051", is_secure=False)
 
-        mock_insecure_channel.assert_called_once_with(
-            "localhost:50051",
-            interceptors=None,
-        )
+        mock_insecure_channel.assert_called_once_with("localhost:50051")
         assert result is mock_channel
-
-    @patch("aviato._network.grpc.aio.secure_channel")
-    @patch("aviato._network.grpc.ssl_channel_credentials")
-    def test_secure_channel_with_interceptors(
-        self,
-        mock_ssl_creds: MagicMock,
-        mock_secure_channel: MagicMock,
-    ) -> None:
-        """Test creating a secure channel with interceptors."""
-        mock_creds = MagicMock()
-        mock_ssl_creds.return_value = mock_creds
-        interceptor1 = MagicMock()
-        interceptor2 = MagicMock()
-
-        create_channel(
-            "atc.example.com:443",
-            is_secure=True,
-            interceptors=[interceptor1, interceptor2],
-        )
-
-        mock_secure_channel.assert_called_once_with(
-            "atc.example.com:443",
-            mock_creds,
-            interceptors=[interceptor1, interceptor2],
-        )
-
-    @patch("aviato._network.grpc.aio.insecure_channel")
-    def test_insecure_channel_with_interceptors(
-        self,
-        mock_insecure_channel: MagicMock,
-    ) -> None:
-        """Test creating an insecure channel with interceptors."""
-        interceptor = MagicMock()
-
-        create_channel(
-            "localhost:50051",
-            is_secure=False,
-            interceptors=[interceptor],
-        )
-
-        mock_insecure_channel.assert_called_once_with(
-            "localhost:50051",
-            interceptors=[interceptor],
-        )
-
-    @patch("aviato._network.grpc.aio.insecure_channel")
-    def test_empty_interceptors_list(
-        self,
-        mock_insecure_channel: MagicMock,
-    ) -> None:
-        """Test that empty interceptors list passes None."""
-        create_channel("localhost:50051", is_secure=False, interceptors=[])
-
-        mock_insecure_channel.assert_called_once_with(
-            "localhost:50051",
-            interceptors=None,
-        )

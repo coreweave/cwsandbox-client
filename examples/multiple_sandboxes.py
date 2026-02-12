@@ -21,15 +21,12 @@ def main() -> None:
     )
 
     with Sandbox.session(defaults) as session:
-        # Create and start multiple sandboxes
+        # Create multiple sandboxes (unstarted until first operation)
         sb1 = session.sandbox(tags=["example", "multi", "sb1"])
         sb2 = session.sandbox(tags=["example", "multi", "sb2"])
 
-        print(f"Sandbox 1: {sb1.sandbox_id}")
-        print(f"Sandbox 2: {sb2.sandbox_id}")
-
         # Run commands in parallel using fire-then-collect pattern
-        # Fire: start both executions
+        # Fire: start both executions (auto-starts sandboxes on first exec)
         p1 = sb1.exec(["sh", "-c", "echo sandbox1 && sleep 0.2 && uname -s"])
         p2 = sb2.exec(["sh", "-c", "echo sandbox2 && sleep 0.1 && uname -s"])
 
@@ -40,8 +37,8 @@ def main() -> None:
         sb1_text = r1.stdout.strip().replace("\n", " | ")
         sb2_text = r2.stdout.strip().replace("\n", " | ")
 
-        print(f"sb1: {sb1_text}")
-        print(f"sb2: {sb2_text}")
+        print(f"sb1 ({sb1.sandbox_id}): {sb1_text}")
+        print(f"sb2 ({sb2.sandbox_id}): {sb2_text}")
 
     # Sandboxes are automatically stopped when session exits
 

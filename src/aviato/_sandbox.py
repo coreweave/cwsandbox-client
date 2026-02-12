@@ -27,7 +27,7 @@ from coreweave.aviato.v1beta1 import (
 )
 from google.protobuf import timestamp_pb2
 
-from aviato._auth import create_auth_interceptors, resolve_auth
+from aviato._auth import resolve_auth_metadata
 from aviato._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
@@ -42,6 +42,7 @@ from aviato._defaults import (
 from aviato._loop_manager import _LoopManager
 from aviato._network import create_channel, parse_grpc_target
 from aviato._types import (
+    ExecOutcome,
     NetworkOptions,
     OperationRef,
     Process,
@@ -49,7 +50,6 @@ from aviato._types import (
     StreamReader,
     StreamWriter,
 )
-from aviato._wandb import ExecOutcome
 from aviato.exceptions import (
     AviatoAuthenticationError,
     SandboxError,
@@ -329,6 +329,7 @@ class Sandbox:
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
+        self._auth_metadata: tuple[tuple[str, str], ...] = ()
         self._streaming_channel: grpc.aio.Channel | None = None
         self._streaming_channel_lock = asyncio.Lock()
         self._sandbox_id: str | None = None
@@ -459,7 +460,7 @@ class Sandbox:
             environment_variables=environment_variables,
         )
         logger.debug("Creating sandbox with command: %s", command)
-        sandbox.start()
+        sandbox.start().result()
         return sandbox
 
     @classmethod
@@ -531,6 +532,7 @@ class Sandbox:
         sandbox._environment_variables = {}
         sandbox._channel = None
         sandbox._stub = None
+        sandbox._auth_metadata = ()
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
         sandbox._stopped = False
@@ -632,12 +634,10 @@ class Sandbox:
         if status is not None:
             status_enum = SandboxStatus(status)
 
+        auth_metadata = resolve_auth_metadata()
+
         target, is_secure = parse_grpc_target(effective_base_url)
-        channel = create_channel(
-            target,
-            is_secure,
-            create_auth_interceptors(),  # type: ignore[arg-type]
-        )
+        channel = create_channel(target, is_secure)
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
@@ -653,7 +653,7 @@ class Sandbox:
 
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
             try:
-                response = await stub.List(request, timeout=timeout)
+                response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="List sandboxes") from e
 
@@ -735,18 +735,16 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
+        auth_metadata = resolve_auth_metadata()
+
         target, is_secure = parse_grpc_target(effective_base_url)
-        channel = create_channel(
-            target,
-            is_secure,
-            create_auth_interceptors(),  # type: ignore[arg-type]
-        )
+        channel = create_channel(target, is_secure)
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Get(request, timeout=timeout)
+                response = await stub.Get(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
 
@@ -832,18 +830,16 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
+        auth_metadata = resolve_auth_metadata()
+
         target, is_secure = parse_grpc_target(effective_base_url)
-        channel = create_channel(
-            target,
-            is_secure,
-            create_auth_interceptors(),  # type: ignore[arg-type]
-        )
+        channel = create_channel(target, is_secure)
         stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Delete(request, timeout=timeout)
+                response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
                     return
@@ -997,9 +993,8 @@ class Sandbox:
         else:
             return
 
-        # Report to session reporter if available
-        if self._session is not None and hasattr(self._session, "_reporter"):
-            self._session._reporter.record_exec_outcome(outcome, self._sandbox_id)
+        if self._session is not None:
+            self._session._record_exec_outcome(outcome, self._sandbox_id)
 
     def __repr__(self) -> str:
         if self._status:
@@ -1022,7 +1017,9 @@ class Sandbox:
 
         request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response = await self._stub.Get(request, timeout=self._request_timeout_seconds)
+            response = await self._stub.Get(
+                request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
+            )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e, sandbox_id=self._sandbox_id, operation="Get status"
@@ -1060,7 +1057,7 @@ class Sandbox:
         If sandbox not started, starts it. Returns self for use in with statement.
         """
         if self._sandbox_id is None:
-            self.start()
+            self.start().result()
         return self
 
     def __exit__(
@@ -1138,13 +1135,13 @@ class Sandbox:
         if self._channel is not None:
             return
 
+        auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(self._base_url)
-        self._channel = create_channel(
-            target,
-            is_secure,
-            create_auth_interceptors(),  # type: ignore[arg-type]
-        )
-        self._stub = atc_pb2_grpc.ATCServiceStub(self._channel)  # type: ignore[no-untyped-call]
+        channel = create_channel(target, is_secure)
+        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        self._channel = channel
+        self._stub = stub
+        self._auth_metadata = auth_metadata
         logger.debug("Initialized gRPC channel for %s", self._base_url)
 
     async def _get_or_create_streaming_channel(self) -> grpc.aio.Channel:
@@ -1215,7 +1212,9 @@ class Sandbox:
             request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
                 response: atc_pb2.GetSandboxResponse = await self._stub.Get(
-                    request, timeout=self._request_timeout_seconds
+                    request,
+                    timeout=self._request_timeout_seconds,
+                    metadata=self._auth_metadata,
                 )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(
@@ -1245,6 +1244,11 @@ class Sandbox:
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
             )
 
+    async def _ensure_started_async(self) -> None:
+        """Ensure sandbox has been started, starting it if needed."""
+        if self._sandbox_id is None:
+            await self._start_async()
+
     async def _start_async(self) -> str:
         """Internal async: Send StartSandbox to backend, return sandbox_id.
 
@@ -1256,6 +1260,8 @@ class Sandbox:
         async with self._start_lock:
             if self._sandbox_id is not None:
                 return self._sandbox_id
+            if self._stopped:
+                raise SandboxNotRunningError("Sandbox has been stopped")
 
             await self._ensure_client()
             assert self._stub is not None
@@ -1296,7 +1302,9 @@ class Sandbox:
             request = atc_pb2.StartSandboxRequest(**request_kwargs)
             self._start_accepted_at = time.monotonic()
             try:
-                response = await self._stub.Start(request, timeout=self._request_timeout_seconds)
+                response = await self._stub.Start(
+                    request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
+                )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="Start sandbox") from e
 
@@ -1318,6 +1326,7 @@ class Sandbox:
 
     async def _wait_until_running_async(self, timeout: float | None = None) -> None:
         """Internal async: Poll until sandbox reaches RUNNING status."""
+        await self._ensure_started_async()
         effective_timeout = timeout if timeout is not None else self._request_timeout_seconds
         response = await self._poll_until_stable(
             effective_timeout,
@@ -1338,8 +1347,8 @@ class Sandbox:
                 if not self._startup_recorded and self._start_accepted_at is not None:
                     startup_time = time.monotonic() - self._start_accepted_at
                     self._startup_recorded = True
-                    if self._session is not None and hasattr(self._session, "_reporter"):
-                        self._session._reporter.record_startup_time(startup_time)
+                    if self._session is not None:
+                        self._session._record_startup_time(startup_time)
                 logger.debug("Sandbox %s is running", self._sandbox_id)
             case atc_pb2.SANDBOX_STATUS_FAILED:
                 self._status = SandboxStatus.FAILED
@@ -1369,6 +1378,7 @@ class Sandbox:
         raise_on_termination: bool = True,
     ) -> None:
         """Internal async: Poll until sandbox reaches terminal state."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -1429,20 +1439,29 @@ class Sandbox:
 
     # Lifecycle methods
 
-    def start(self) -> None:
-        """Send StartSandbox to backend, return once accepted.
+    def start(self) -> OperationRef[None]:
+        """Send StartSandbox to backend, return OperationRef immediately.
 
         Does NOT wait for RUNNING status. Use wait() to block until ready.
+        Call .result() to block until the start request is accepted.
+
+        Returns:
+            OperationRef[None]: Use .result() to block until backend accepts.
 
         Example:
             ```python
             sandbox = Sandbox(command="sleep", args=["infinity"])
-            sandbox.start()
+            sandbox.start().result()
             print(f"Started sandbox: {sandbox.sandbox_id}")
             sandbox.wait()  # Block until RUNNING
             ```
         """
-        self._loop_manager.run_sync(self._start_async())
+
+        async def _start_and_discard() -> None:
+            await self._start_async()
+
+        future = self._loop_manager.run_async(_start_and_discard())
+        return OperationRef(future)
 
     def wait(self, timeout: float | None = None) -> Sandbox:
         """Block until sandbox reaches RUNNING or a terminal state.
@@ -1505,6 +1524,9 @@ class Sandbox:
     def __await__(self) -> Generator[Any, None, Sandbox]:
         """Make sandbox awaitable - await sandbox waits until RUNNING.
 
+        Routes through _loop_manager to avoid cross-event-loop issues.
+        Auto-starts if not already started.
+
         Example:
             ```python
             sb = Sandbox.run("sleep", "infinity")
@@ -1514,10 +1536,12 @@ class Sandbox:
         """
 
         async def _await_running() -> Sandbox:
+            await self._ensure_started_async()
             await self._wait_until_running_async()
             return self
 
-        return _await_running().__await__()
+        future = self._loop_manager.run_async(_await_running())
+        return asyncio.wrap_future(future).__await__()
 
     async def _stop_async(
         self,
@@ -1527,15 +1551,16 @@ class Sandbox:
         missing_ok: bool = False,
     ) -> None:
         """Internal async: Stop the sandbox."""
-        if self._stopped:
-            logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
-            return
-
-        if self._sandbox_id is None:
-            logger.debug("stop() called on sandbox that was never started")
-            return
-
-        self._stopped = True
+        # Acquire _start_lock to wait for any in-flight start() to complete
+        async with self._start_lock:
+            if self._stopped:
+                logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
+                return
+            if self._sandbox_id is None:
+                logger.debug("stop() called on sandbox that was never started")
+                self._stopped = True
+                return
+            self._stopped = True
 
         await self._ensure_client()
         assert self._stub is not None
@@ -1553,7 +1578,9 @@ class Sandbox:
         try:
             try:
                 response = await self._stub.Stop(
-                    request, timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                    request,
+                    timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+                    metadata=self._auth_metadata,
                 )
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
@@ -1651,6 +1678,7 @@ class Sandbox:
         if not command:
             raise ValueError("Command cannot be empty")
 
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -1659,15 +1687,11 @@ class Sandbox:
         # Wait for sandbox to be RUNNING before sending exec request
         await self._wait_until_running_async()
 
+        await self._ensure_client()
         channel = await self._get_or_create_streaming_channel()
         stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
-        # Resolve auth headers and convert to gRPC metadata
-        auth = resolve_auth()
-        # gRPC metadata requires lowercase keys
-        auth_metadata: tuple[tuple[str, str], ...] = tuple(
-            (k.lower(), v) for k, v in auth.headers.items()
-        )
+        auth_metadata = self._auth_metadata
 
         # Wrap command with cwd if provided
         rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
@@ -2005,6 +2029,7 @@ class Sandbox:
         timeout: float,
     ) -> bytes:
         """Internal async: Read a file from the sandbox filesystem."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -2025,7 +2050,9 @@ class Sandbox:
         )
 
         try:
-            response = await self._stub.RetrieveFile(request, timeout=timeout)
+            response = await self._stub.RetrieveFile(
+                request, timeout=timeout, metadata=self._auth_metadata
+            )
         except grpc.RpcError as e:
             raise _translate_rpc_error(e, sandbox_id=self._sandbox_id, operation="Read file") from e
 
@@ -2069,6 +2096,7 @@ class Sandbox:
         timeout: float,
     ) -> None:
         """Internal async: Write a file to the sandbox filesystem."""
+        await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
@@ -2095,7 +2123,9 @@ class Sandbox:
         )
 
         try:
-            response = await self._stub.AddFile(request, timeout=timeout)
+            response = await self._stub.AddFile(
+                request, timeout=timeout, metadata=self._auth_metadata
+            )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e, sandbox_id=self._sandbox_id, operation="Write file"

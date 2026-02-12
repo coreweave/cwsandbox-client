@@ -1,0 +1,31 @@
+# ART: Agent Reinforcement Trainer dependencies
+#
+# Install aviato from source first:
+#   uv pip install -e .
+
+# ART framework for multi-step agent training
+openpipe-art==0.5.7
+
+# LLM inference (for OpenAI-compatible backends)
+openai==2.15.0
+
+# Dataset loading
+datasets==4.5.0
+
+# Optional: W&B logging
+wandb==0.24.0
+
+# TinkerBackend dependencies (no GPU required)
+fastapi>=0.128.0
+tinker>=0.8.1
+tinker-cookbook>=0.1.0
+uvicorn>=0.35.0
+setproctitle>=1.3.0  # Required by mp_actors (transitive dep of art.tinker)
+
+# Pin transformers<5.0.0: openpipe-art 0.5.7 passes BatchEncoding to
+# tinker.ModelInput.from_ints() which expects list[int]. transformers 5.0
+# changed apply_chat_template() to return BatchEncoding by default.
+transformers<5.0.0
+
+# Note: LocalBackend requires GPU and heavy dependencies.
+# Install with: uv pip install "openpipe-art[backend]==0.5.7"

@@ -14,14 +14,10 @@ Generated SDK imports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import grpc
 import grpc.aio
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 def parse_grpc_target(base_url: str) -> tuple[str, bool]:
@@ -64,29 +60,18 @@ def parse_grpc_target(base_url: str) -> tuple[str, bool]:
 def create_channel(
     target: str,
     is_secure: bool,
-    interceptors: Sequence[grpc.aio.ClientInterceptor] | None = None,
 ) -> grpc.aio.Channel:
     """Create a gRPC async channel.
 
     Args:
         target: gRPC target in "host:port" format
         is_secure: If True, use TLS; if False, use insecure channel
-        interceptors: Optional sequence of client interceptors
 
     Returns:
         An async gRPC channel
     """
-    interceptor_list = list(interceptors) if interceptors else None
-
     if is_secure:
         credentials = grpc.ssl_channel_credentials()
-        return grpc.aio.secure_channel(
-            target,
-            credentials,
-            interceptors=interceptor_list,
-        )
+        return grpc.aio.secure_channel(target, credentials)
     else:
-        return grpc.aio.insecure_channel(
-            target,
-            interceptors=interceptor_list,
-        )
+        return grpc.aio.insecure_channel(target)
