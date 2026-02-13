@@ -343,6 +343,14 @@ class Sandbox:
         self._stopped = False
         self._start_lock = asyncio.Lock()
 
+        # Shared polling task for _wait_until_running_async deduplication
+        self._running_task: asyncio.Task[None] | None = None
+        self._running_lock = asyncio.Lock()
+
+        # Shared polling task for _wait_until_complete_async deduplication
+        self._complete_task: asyncio.Task[SandboxStatus] | None = None
+        self._complete_lock = asyncio.Lock()
+
         self._status: SandboxStatus | None = None
         self._status_updated_at: datetime | None = None
         self._started_at: datetime | None = None
@@ -541,6 +549,10 @@ class Sandbox:
         sandbox._defaults = SandboxDefaults()
         sandbox._start_kwargs = {}
         sandbox._start_lock = asyncio.Lock()
+        sandbox._running_task = None
+        sandbox._running_lock = asyncio.Lock()
+        sandbox._complete_task = None
+        sandbox._complete_lock = asyncio.Lock()
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -1172,17 +1184,18 @@ class Sandbox:
 
     async def _poll_until_stable(
         self,
-        timeout_seconds: float,
-        timeout_message: str,
+        timeout_seconds: float | None = None,
+        timeout_message: str = "",
     ) -> atc_pb2.GetSandboxResponse:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
         COMPLETED, FAILED, TERMINATED, or UNSPECIFIED). Transient states
-        like CREATING, PENDING, and PAUSED are polled through. Raises on timeout.
+        like CREATING, PENDING, and PAUSED are polled through.
 
         Args:
-            timeout_seconds: Maximum time to wait
+            timeout_seconds: Maximum time to wait, or None for no timeout
+                (relies on external cancellation via stop() or asyncio.wait_for).
             timeout_message: Message for SandboxTimeoutError if timeout occurs
 
         Returns:
@@ -1205,9 +1218,10 @@ class Sandbox:
                     f"Sandbox {self._sandbox_id} was stopped while polling"
                 )
 
-            elapsed = time.monotonic() - start_time
-            if elapsed > timeout_seconds:
-                raise SandboxTimeoutError(timeout_message)
+            if timeout_seconds is not None:
+                elapsed = time.monotonic() - start_time
+                if elapsed > timeout_seconds:
+                    raise SandboxTimeoutError(timeout_message)
 
             request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
@@ -1324,14 +1338,20 @@ class Sandbox:
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
 
-    async def _wait_until_running_async(self, timeout: float | None = None) -> None:
-        """Internal async: Poll until sandbox reaches RUNNING status."""
-        await self._ensure_started_async()
-        effective_timeout = timeout if timeout is not None else self._request_timeout_seconds
-        response = await self._poll_until_stable(
-            effective_timeout,
-            f"Sandbox {self._sandbox_id} did not become ready within {effective_timeout}s",
-        )
+    async def _do_poll_running(self) -> None:
+        """Poll until sandbox reaches a stable state and update instance fields.
+
+        Used as the body of the shared _running_task so multiple concurrent
+        waiters share a single polling loop instead of each hitting the API.
+        Polls indefinitely, relying on external cancellation via stop() for
+        termination. Per-waiter timeouts allow individual waiters to give up
+        without killing the shared poll (asyncio.shield protects the task).
+
+        Raises directly on FAILED/TERMINATED so all waiters see the same
+        exception. This differs from _do_poll_complete which returns
+        SandboxStatus for per-waiter raise_on_termination control.
+        """
+        response = await self._poll_until_stable()
 
         match response.sandbox_status:
             case atc_pb2.SANDBOX_STATUS_RUNNING:
@@ -1343,7 +1363,6 @@ class Sandbox:
                 self._started_at = (
                     response.started_at_time.ToDatetime() if response.started_at_time else None
                 )
-                # Record startup time for metrics
                 if not self._startup_recorded and self._start_accepted_at is not None:
                     startup_time = time.monotonic() - self._start_accepted_at
                     self._startup_recorded = True
@@ -1359,8 +1378,6 @@ class Sandbox:
                 self._status_updated_at = datetime.now(UTC)
                 raise SandboxTerminatedError(f"Sandbox {self._sandbox_id} was terminated")
             case atc_pb2.SANDBOX_STATUS_COMPLETED | atc_pb2.SANDBOX_STATUS_UNSPECIFIED:
-                # COMPLETED: finished successfully
-                # UNSPECIFIED: sandbox already cleaned up
                 self._tower_id = response.tower_id or None
                 self._tower_group_id = response.tower_group_id or None
                 self._runway_id = response.runway_id or None
@@ -1371,13 +1388,141 @@ class Sandbox:
                 )
                 self._returncode = 0
                 logger.info("Sandbox %s completed during startup", self._sandbox_id)
+            case _:
+                raise SandboxError(f"Unexpected sandbox status: {response.sandbox_status}")
+
+    def _on_poll_task_done(self, task: asyncio.Task[None]) -> None:
+        """Callback when _running_task completes.
+
+        Retrieves and logs exceptions to prevent 'Task exception was never
+        retrieved' warnings. Always clears the task reference so future
+        waiters start a fresh poll instead of seeing a stale completed task.
+        """
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.debug(
+                "Polling task for sandbox %s failed: %s",
+                self._sandbox_id,
+                exc,
+            )
+        if self._running_task is task:
+            self._running_task = None
+
+    async def _wait_until_running_async(self, timeout: float | None = None) -> None:
+        """Internal async: Wait until sandbox reaches RUNNING status.
+
+        Multiple concurrent callers share a single polling task to avoid
+        redundant GetSandbox API calls. asyncio.shield() prevents one
+        caller's cancellation/timeout from killing the poll for others.
+        """
+        if self._stopped:
+            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+        if self._status == SandboxStatus.RUNNING:
+            return
+
+        await self._ensure_started_async()
+        effective_timeout = timeout if timeout is not None else self._request_timeout_seconds
+
+        async with self._running_lock:
+            if self._stopped:
+                raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+            # Re-check after lock acquisition: another coroutine may have
+            # completed polling between our first check and acquiring the lock.
+            if self._status == SandboxStatus.RUNNING:  # type: ignore[comparison-overlap]
+                return
+            if self._running_task is None:
+                self._running_task = asyncio.create_task(self._do_poll_running())
+                self._running_task.add_done_callback(self._on_poll_task_done)
+            task = self._running_task
+
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=effective_timeout)
+        except TimeoutError:
+            raise SandboxTimeoutError(
+                f"Sandbox {self._sandbox_id} did not become ready within {effective_timeout}s"
+            ) from None
+        except asyncio.CancelledError:
+            if self._stopped:
+                raise SandboxNotRunningError(
+                    f"Sandbox {self._sandbox_id} has been stopped"
+                ) from None
+            raise
+
+    async def _do_poll_complete(self) -> SandboxStatus:
+        """Poll until sandbox reaches terminal state and return the status.
+
+        Used as the body of the shared _complete_task so multiple concurrent
+        waiters share a single polling loop instead of each hitting the API.
+        Returns SandboxStatus instead of raising, so each waiter can apply
+        its own raise_on_termination policy. Since all waiters share a single
+        shielded task, raising here would force all to see the same exception,
+        preventing per-waiter raise_on_termination control.
+
+        Polls indefinitely, relying on external cancellation via stop() for
+        termination. Per-waiter timeouts allow individual waiters to give up
+        without killing the shared poll (asyncio.shield protects the task).
+        """
+        assert self._sandbox_id is not None
+        sandbox_id = self._sandbox_id
+        poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        while True:
+            response = await self._poll_until_stable()
+
+            match response.sandbox_status:
+                case atc_pb2.SANDBOX_STATUS_COMPLETED | atc_pb2.SANDBOX_STATUS_UNSPECIFIED:
+                    self._status = SandboxStatus.COMPLETED
+                    self._status_updated_at = datetime.now(UTC)
+                    self._returncode = 0
+                    logger.info("Sandbox %s completed", sandbox_id)
+                    return SandboxStatus.COMPLETED
+                case atc_pb2.SANDBOX_STATUS_FAILED:
+                    self._status = SandboxStatus.FAILED
+                    self._status_updated_at = datetime.now(UTC)
+                    return SandboxStatus.FAILED
+                case atc_pb2.SANDBOX_STATUS_TERMINATED:
+                    self._status = SandboxStatus.TERMINATED
+                    self._status_updated_at = datetime.now(UTC)
+                    self._returncode = None
+                    logger.info("Sandbox %s was terminated", sandbox_id)
+                    return SandboxStatus.TERMINATED
+                case atc_pb2.SANDBOX_STATUS_RUNNING:
+                    await asyncio.sleep(poll_interval)
+                    poll_interval = min(
+                        poll_interval * DEFAULT_POLL_BACKOFF_FACTOR,
+                        DEFAULT_MAX_POLL_INTERVAL_SECONDS,
+                    )
+                    continue
+                case _:
+                    raise SandboxError(f"Unexpected sandbox status: {response.sandbox_status}")
+
+    def _on_complete_task_done(self, task: asyncio.Task[SandboxStatus]) -> None:
+        """Callback when _complete_task completes.
+
+        Retrieves and logs exceptions to prevent 'Task exception was never
+        retrieved' warnings. Always clears the task reference so future
+        waiters start a fresh poll instead of seeing a stale completed task.
+        """
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.debug(
+                "Complete-polling task for sandbox %s failed: %s",
+                self._sandbox_id,
+                exc,
+            )
+        if self._complete_task is task:
+            self._complete_task = None
 
     async def _wait_until_complete_async(
         self,
         timeout: float | None = None,
         raise_on_termination: bool = True,
     ) -> None:
-        """Internal async: Poll until sandbox reaches terminal state."""
+        """Internal async: Poll until sandbox reaches terminal state.
+
+        Multiple concurrent callers share a single polling task to avoid
+        redundant GetSandbox API calls. asyncio.shield() prevents one
+        caller's cancellation/timeout from killing the poll for others.
+        """
         await self._ensure_started_async()
         if self._stopped:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
@@ -1388,54 +1533,31 @@ class Sandbox:
             return
 
         effective_timeout = timeout if timeout is not None else self._request_timeout_seconds
-        start_time = time.monotonic()
-        poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
 
-        while True:
-            elapsed = time.monotonic() - start_time
-            remaining = effective_timeout - elapsed
-            if remaining <= 0:
-                raise SandboxTimeoutError(f"Timed out waiting for sandbox {self._sandbox_id}")
+        async with self._complete_lock:
+            if self._stopped:
+                raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+            if self._returncode is not None:
+                return
+            if self._complete_task is None:
+                self._complete_task = asyncio.create_task(self._do_poll_complete())
+                self._complete_task.add_done_callback(self._on_complete_task_done)
+            task = self._complete_task
 
-            response = await self._poll_until_stable(
-                remaining,
-                f"Timed out waiting for sandbox {self._sandbox_id}",
-            )
+        sandbox_id = self._sandbox_id
+        try:
+            status = await asyncio.wait_for(asyncio.shield(task), timeout=effective_timeout)
+        except TimeoutError:
+            raise SandboxTimeoutError(f"Timed out waiting for sandbox {sandbox_id}") from None
+        except asyncio.CancelledError:
+            if self._stopped:
+                raise SandboxNotRunningError(f"Sandbox {sandbox_id} has been stopped") from None
+            raise
 
-            match response.sandbox_status:
-                case atc_pb2.SANDBOX_STATUS_COMPLETED:
-                    self._status = SandboxStatus.COMPLETED
-                    self._status_updated_at = datetime.now(UTC)
-                    self._returncode = 0
-                    logger.info("Sandbox %s completed", self._sandbox_id)
-                    return
-                case atc_pb2.SANDBOX_STATUS_FAILED:
-                    self._status = SandboxStatus.FAILED
-                    self._status_updated_at = datetime.now(UTC)
-                    raise SandboxFailedError(f"Sandbox {self._sandbox_id} failed")
-                case atc_pb2.SANDBOX_STATUS_TERMINATED:
-                    self._status = SandboxStatus.TERMINATED
-                    self._status_updated_at = datetime.now(UTC)
-                    self._returncode = None
-                    logger.info("Sandbox %s was terminated", self._sandbox_id)
-                    if raise_on_termination:
-                        raise SandboxTerminatedError(f"Sandbox {self._sandbox_id} was terminated")
-                    return
-                case atc_pb2.SANDBOX_STATUS_UNSPECIFIED:
-                    self._status = SandboxStatus.COMPLETED
-                    self._status_updated_at = datetime.now(UTC)
-                    self._returncode = 0
-                    logger.info(
-                        "Sandbox %s status unspecified (assuming completed)",
-                        self._sandbox_id,
-                    )
-                    return
-                case atc_pb2.SANDBOX_STATUS_RUNNING:
-                    await asyncio.sleep(poll_interval)
-                    poll_interval = min(
-                        poll_interval * DEFAULT_POLL_BACKOFF_FACTOR,
-                        DEFAULT_MAX_POLL_INTERVAL_SECONDS,
-                    )
+        if status == SandboxStatus.FAILED:
+            raise SandboxFailedError(f"Sandbox {sandbox_id} failed")
+        if status == SandboxStatus.TERMINATED and raise_on_termination:
+            raise SandboxTerminatedError(f"Sandbox {sandbox_id} was terminated")
 
     # Lifecycle methods
 
@@ -1561,6 +1683,14 @@ class Sandbox:
                 self._stopped = True
                 return
             self._stopped = True
+
+        # Cancel the shared polling tasks so waiters get CancelledError
+        if self._running_task is not None and not self._running_task.done():
+            self._running_task.cancel()
+            self._running_task = None
+        if self._complete_task is not None and not self._complete_task.done():
+            self._complete_task.cancel()
+            self._complete_task = None
 
         await self._ensure_client()
         assert self._stub is not None
