@@ -51,7 +51,7 @@ functionality like output streaming, and is also awaitable for async codebases.
 - `sandbox.write_file()` - Write file contents (returns OperationRef)
 - `sandbox.stop()` - Stop sandbox (returns OperationRef)
 - `sandbox.wait()` - Wait until RUNNING status
-- `sandbox.wait_until_complete()` - Wait until terminal status
+- `sandbox.wait_until_complete()` - Wait until terminal status (returns OperationRef)
 - `sandbox.get_status()` - Fetch fresh status
 - `session.list()` - Query sandboxes matching session tags (returns OperationRef)
 - `session.from_id()` - Attach and optionally adopt by ID (returns OperationRef)

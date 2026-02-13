@@ -1493,10 +1493,11 @@ class Sandbox:
         timeout: float | None = None,
         *,
         raise_on_termination: bool = True,
-    ) -> Sandbox:
-        """Block until sandbox reaches terminal state (COMPLETED/FAILED/TERMINATED).
+    ) -> OperationRef[Sandbox]:
+        """Wait until sandbox reaches terminal state (COMPLETED/FAILED/TERMINATED).
 
-        After this returns successfully, returncode will be available.
+        Returns an OperationRef that resolves when the sandbox reaches a terminal state.
+        After resolving, returncode will be available.
 
         Args:
             timeout: Maximum seconds to wait. None means use default timeout.
@@ -1504,7 +1505,7 @@ class Sandbox:
                 if sandbox was terminated externally.
 
         Returns:
-            Self for method chaining.
+            OperationRef[Sandbox]: Use .result() to block or await in async contexts.
 
         Raises:
             SandboxTimeoutError: If timeout expires
@@ -1514,12 +1515,17 @@ class Sandbox:
         Example:
             ```python
             sb = Sandbox.run("python", "-c", "print('done')")
-            sb.wait_until_complete()
+            sb.wait_until_complete().result()
             print(f"Exit code: {sb.returncode}")
             ```
         """
-        self._loop_manager.run_sync(self._wait_until_complete_async(timeout, raise_on_termination))
-        return self
+
+        async def _wait() -> Sandbox:
+            await self._wait_until_complete_async(timeout, raise_on_termination)
+            return self
+
+        future = self._loop_manager.run_async(_wait())
+        return OperationRef(future)
 
     def __await__(self) -> Generator[Any, None, Sandbox]:
         """Make sandbox awaitable - await sandbox waits until RUNNING.

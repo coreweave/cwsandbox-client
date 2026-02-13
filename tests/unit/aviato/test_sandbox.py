@@ -1059,7 +1059,7 @@ class TestSandboxWaitUntilComplete:
             sandbox._stub.Start = AsyncMock(return_value=mock_start_response)
             sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
-            sandbox.wait_until_complete()
+            sandbox.wait_until_complete().result()
 
             assert sandbox.sandbox_id == "auto-start-complete-id"
             assert sandbox.returncode == 0
@@ -1076,7 +1076,7 @@ class TestSandboxWaitUntilComplete:
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
-        sandbox.wait_until_complete(raise_on_termination=False)
+        sandbox.wait_until_complete(raise_on_termination=False).result()
 
         assert sandbox.returncode is None
 
