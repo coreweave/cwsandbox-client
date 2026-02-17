@@ -374,6 +374,32 @@ When adding new documentation files to `docs/`, update `mkdocs.yml` nav section 
 
 **Single Internal Implementation**: There is one async implementation internally. The sync/async flexibility comes from how users consume results (`.result()` vs `await`), not from duplicate code paths.
 
+## License Headers
+
+All new files MUST include an SPDX license header. See [CONTRIBUTING.md](CONTRIBUTING.md) for full policy.
+
+**License by directory:**
+- Everything: `Apache-2.0`
+- `examples/`: `BSD-3-Clause`
+
+**Python files** (`.py`):
+```python
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+```
+
+**Markdown files** (`.md`):
+```html
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: Apache-2.0
+SPDX-PackageName: aviato-client
+-->
+```
+
+Use `BSD-3-Clause` instead for files under `examples/`. Validate with `reuse lint`.
+
 ## Temporary File Conventions
 
 When creating temporary analysis or planning documents, use these filename suffixes to ensure they are gitignored:
