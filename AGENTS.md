@@ -44,7 +44,7 @@ Key methods:
 - `run(*args, **kwargs)`: Create and start sandbox, return immediately. Accepts advanced configuration kwargs (see below).
 - `start()`: Send start request, return `OperationRef[None]`. Call `.result()` to block until backend accepts.
 - `wait()`: Block until RUNNING status, returns self for chaining
-- `wait_until_complete(timeout=None, raise_on_termination=True)`: Block until terminal state (COMPLETED, FAILED, TERMINATED). Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
+- `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
