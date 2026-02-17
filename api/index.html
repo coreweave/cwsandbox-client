@@ -5715,13 +5715,14 @@ Call .result() to block until the start request is accepted.</p>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">timeout</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">*</span><span class="p">,</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">raise_on_termination</span><span class="p">:</span> <span class="n"><span title="bool">bool</span></span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (aviato._sandbox.Sandbox)" href="#aviato.Sandbox">Sandbox</a></span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            OperationRef (aviato._types.OperationRef)" href="#aviato.OperationRef">OperationRef</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (aviato._sandbox.Sandbox)" href="#aviato.Sandbox">Sandbox</a></span><span class="p">]</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
-        <p>Block until sandbox reaches terminal state (COMPLETED/FAILED/TERMINATED).</p>
-<p>After this returns successfully, returncode will be available.</p>
+        <p>Wait until sandbox reaches terminal state (COMPLETED/FAILED/TERMINATED).</p>
+<p>Returns an OperationRef that resolves when the sandbox reaches a terminal state.
+After resolving, returncode will be available.</p>
 
 
 <table>
@@ -5788,12 +5789,12 @@ if sandbox was terminated externally.</p>
           <tr class="doc-section-item">
             <td>
                 <span class="doc-returns-annotation">
-                    <code><a class="autorefs autorefs-internal" title="            Sandbox (aviato._sandbox.Sandbox)" href="#aviato.Sandbox">Sandbox</a></code>
+                    <code><a class="autorefs autorefs-internal" title="            OperationRef (aviato._types.OperationRef)" href="#aviato.OperationRef">OperationRef</a>[<a class="autorefs autorefs-internal" title="            Sandbox (aviato._sandbox.Sandbox)" href="#aviato.Sandbox">Sandbox</a>]</code>
                 </span>
             </td>
             <td class="doc-returns-details">
               <div class="doc-md-description">
-                <p>Self for method chaining.</p>
+                <p>OperationRef[Sandbox]: Use .result() to block or await in async contexts.</p>
               </div>
             </td>
           </tr>
@@ -5852,7 +5853,7 @@ if sandbox was terminated externally.</p>
 <details class="example" open>
   <summary>Example</summary>
   <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">sb</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;print(&#39;done&#39;)&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">sb</span><span class="o">.</span><span class="n">wait_until_complete</span><span class="p">()</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">sb</span><span class="o">.</span><span class="n">wait_until_complete</span><span class="p">()</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exit code: </span><span class="si">{</span><span class="n">sb</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 </details>
