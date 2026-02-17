@@ -6,6 +6,7 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 
 | Guide | Task |
 |-------|------|
+| `sandbox-lifecycle.md` | Understand sandbox states, creation, starting, waiting, and stopping |
 | `execution.md` | Run commands with `exec()` - buffered and streaming modes |
 | `file-operations.md` | Read and write files in sandboxes |
 | `sessions.md` | Manage multiple sandboxes with shared configuration |
