@@ -163,12 +163,13 @@ def run_instance(
             max_timeout_seconds=timeout,
             tags=[f"swebench-{run_id}", instance_id],
         )
-        sandbox_id = sandbox.sandbox_id
-        logger.info(f"[{instance_id}] Created sandbox: {sandbox_id}")
 
         model_patch = pred.get("model_patch")
         patch_diff = str(model_patch) if model_patch is not None else ""
         sandbox.write_file("/tmp/patch.diff", patch_diff.encode("utf-8")).result()
+
+        sandbox_id = sandbox.sandbox_id
+        logger.info(f"[{instance_id}] Created sandbox: {sandbox_id}")
 
         apply_output, returncode = run_in_sandbox(
             sandbox, "git apply -v /tmp/patch.diff", timeout_seconds=60
