@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: aviato-client
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────
+  # Job 1: Version bump, tag, GitHub Release, build
+  # ──────────────────────────────────────────────────
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    outputs:
+      released: ${{ steps.bump-version.outputs.released }}
+      version: ${{ steps.bump-version.outputs.version }}
+      tag: ${{ steps.bump-version.outputs.tag }}
+
+    steps:
+      - name: Generate token for release helper
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.CW_PYTHON_RELEASE_HELPER_APPID }}
+          private-key: ${{ secrets.CW_PYTHON_RELEASE_HELPER_APP_KEY }}
+          owner: coreweave
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Configure git
+        run: |
+          git config --local user.email "github-actions@github.com"
+          git config --local user.name "cw-python-release-helper"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install project
+        run: uv sync --all-extras
+
+      - name: Bump version
+        id: bump-version
+        run: uv run semantic-release version
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Publish to GitHub Release
+        if: steps.bump-version.outputs.released == 'true'
+        run: uv run semantic-release publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload dists
+        if: steps.bump-version.outputs.released == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  # ──────────────────────────────────────────────────
+  # Job 2: Publish to Cloudsmith (isolated OIDC scope)
+  # ──────────────────────────────────────────────────
+  publish-cloudsmith:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Get GitHub OIDC Token
+        id: oidc-github-token
+        uses: coreweave/actions/tools/oidc/github-token@get-oidc-github-token-v1.0.0
+        with:
+          audience: "${{ github.server_url }}/${{ github.repository_owner }}"
+
+      - name: Get Cloudsmith API Token
+        uses: coreweave/actions/tools/oidc/cloudsmith-token@get-cloudsmith-api-token-v1.0.0
+        with:
+          oidc-token: "${{ steps.oidc-github-token.outputs.id_token_audience }}"
+          cloudsmith-service-slug: "${{ vars.CLOUDSMITH_SERVICE }}"
+
+      - name: Download dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Publish to Cloudsmith
+        env:
+          UV_PUBLISH_USERNAME: "${{ vars.CLOUDSMITH_SERVICE }}"
+          UV_PUBLISH_PASSWORD: "${{ env.CLOUDSMITH_API_TOKEN }}"
+        run: uv publish --publish-url https://python.cloudsmith.io/coreweave/aviato-client/
