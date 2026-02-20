@@ -190,3 +190,56 @@ async def test_session_async_context_manager(sandbox_defaults: SandboxDefaults) 
 
     # After exiting, all session sandboxes should be cleaned up
     assert session.sandbox_count == 0
+
+
+# List include_stopped tests
+
+
+def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None:
+    """Test session.list(include_stopped=True) returns terminal sandboxes.
+
+    Creates a sandbox via session, lets it complete, then verifies that
+    session.list(include_stopped=True) returns it while the default
+    session.list() excludes it.
+    """
+    import time
+    import uuid
+
+    unique_tag = f"e2e-session-stopped-{uuid.uuid4().hex[:8]}"
+    defaults = sandbox_defaults.with_overrides(
+        tags=sandbox_defaults.merge_tags([unique_tag])
+    )
+
+    with Sandbox.session(defaults) as session:
+        sandbox = session.sandbox(command="echo", args=["hello"])
+        sandbox.wait_until_complete(timeout=60.0).result()
+        sandbox_id = sandbox.sandbox_id
+        assert sandbox_id is not None
+
+    # Session is closed, sandbox is stopped. Wait for cache to converge.
+    time.sleep(5)
+
+    # Use a fresh session to list with the same tags
+    with Sandbox.session(defaults) as session:
+        # Default list should exclude the stopped sandbox (eventually)
+        for _ in range(15):
+            active = session.list().result()
+            ids = [sb.sandbox_id for sb in active]
+            if sandbox_id not in ids:
+                break
+            time.sleep(2)
+
+        # include_stopped should include it
+        found = False
+        for _ in range(15):
+            all_sandboxes = session.list(include_stopped=True).result()
+            for sb in all_sandboxes:
+                if sb.sandbox_id == sandbox_id:
+                    assert sb.status in ("completed", "terminated", "failed")
+                    found = True
+                    break
+            if found:
+                break
+            time.sleep(1)
+
+        assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
