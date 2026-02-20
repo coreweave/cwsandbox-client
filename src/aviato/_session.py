@@ -406,6 +406,7 @@ class Session:
         status: str | None = None,
         runway_ids: builtins.list[str] | None = None,
         tower_ids: builtins.list[str] | None = None,
+        include_stopped: bool = False,
         adopt: bool = False,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List sandboxes, optionally adopting them into this session.
@@ -414,11 +415,17 @@ class Session:
         This makes it easy to find sandboxes created by this session or
         a previous run with the same defaults.
 
+        By default, only active (non-terminal) sandboxes are returned. Set
+        ``include_stopped=True`` to also include terminal sandboxes (completed,
+        failed, terminated) from persistent storage.
+
         Args:
             tags: Additional tags to filter by (merged with session's default tags)
             status: Filter by status
             runway_ids: Filter by runway IDs (defaults to session's runway_ids if set)
             tower_ids: Filter by tower IDs (defaults to session's tower_ids if set)
+            include_stopped: If True, include terminal sandboxes (completed,
+                failed, terminated) from persistent storage. Defaults to False.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
 
@@ -438,6 +445,9 @@ class Session:
                 # Can add additional filters
                 running = session.list(status="running").result()
 
+                # Include stopped sandboxes for cleanup or audit
+                all_sandboxes = session.list(include_stopped=True).result()
+
             # Async usage
             async with Session(defaults) as session:
                 orphans = await session.list(adopt=True)
@@ -449,6 +459,7 @@ class Session:
                 status=status,
                 runway_ids=runway_ids,
                 tower_ids=tower_ids,
+                include_stopped=include_stopped,
                 adopt=adopt,
             )
         )
@@ -461,6 +472,7 @@ class Session:
         status: str | None = None,
         runway_ids: builtins.list[str] | None = None,
         tower_ids: builtins.list[str] | None = None,
+        include_stopped: bool = False,
         adopt: bool = False,
     ) -> builtins.list[Sandbox]:
         """Internal async: List sandboxes, optionally adopting them into this session."""
@@ -488,6 +500,7 @@ class Session:
             status=status,
             runway_ids=effective_runway_ids,
             tower_ids=effective_tower_ids,
+            include_stopped=include_stopped,
             base_url=self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
         )

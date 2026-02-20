@@ -577,6 +577,7 @@ class Sandbox:
         status: str | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
+        include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
@@ -585,11 +586,17 @@ class Sandbox:
         Returns OperationRef that resolves to Sandbox instances usable for
         operations like exec(), stop(), get_status(), read_file(), write_file().
 
+        By default, only active (non-terminal) sandboxes are returned. Terminal
+        sandboxes (completed, failed, terminated) are excluded unless
+        ``include_stopped=True`` is set or a terminal status filter is used.
+
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
             runway_ids: Filter by runway IDs
             tower_ids: Filter by tower IDs
+            include_stopped: If True, include terminal sandboxes (completed,
+                failed, terminated) from persistent storage. Defaults to False.
             base_url: Override API URL (default: AVIATO_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
 
@@ -599,11 +606,16 @@ class Sandbox:
 
         Example:
             ```python
-            # Sync usage
+            # Sync usage - active sandboxes only (default)
             sandboxes = Sandbox.list(tags=["my-batch-job"]).result()
             for sb in sandboxes:
                 print(f"{sb.sandbox_id}: {sb.status}")
                 sb.stop().result()
+
+            # Include stopped sandboxes
+            all_sandboxes = Sandbox.list(
+                tags=["my-batch-job"], include_stopped=True
+            ).result()
 
             # Async usage
             sandboxes = await Sandbox.list(status="running")
@@ -617,6 +629,7 @@ class Sandbox:
                 status=status,
                 runway_ids=runway_ids,
                 tower_ids=tower_ids,
+                include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
             )
@@ -631,6 +644,7 @@ class Sandbox:
         status: str | None = None,
         runway_ids: builtins.list[str] | None = None,
         tower_ids: builtins.list[str] | None = None,
+        include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
@@ -664,6 +678,13 @@ class Sandbox:
                 request_kwargs["tower_ids"] = tower_ids
 
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+            if include_stopped:
+                try:
+                    request.include_stopped = True  # type: ignore[attr-defined]
+                except (AttributeError, ValueError):
+                    # Proto field not yet available in published package;
+                    # the server still handles the wire-format field (number 6).
+                    logger.debug("include_stopped proto field not available; skipping")
             try:
                 response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:

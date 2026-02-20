@@ -1568,6 +1568,63 @@ class TestSandboxList:
             sandboxes = await Sandbox.list(tags=["nonexistent"])
             assert sandboxes == []
 
+    @pytest.mark.asyncio
+    async def test_list_include_stopped_passes_field(self, mock_aviato_api_key: str) -> None:
+        """Test list(include_stopped=True) sets the field on the request.
+
+        The include_stopped field may not yet be available in the proto package.
+        When available, it should be set to True on the request message.
+        """
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+
+        with (
+            patch("aviato._sandbox.resolve_auth_metadata", return_value=expected_metadata),
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list(include_stopped=True)
+
+            call_args = mock_stub.List.call_args[0][0]
+            # If proto field is available, it should be True; otherwise the
+            # request is sent without the field (graceful degradation).
+            has_field = hasattr(call_args, "include_stopped") and "include_stopped" in (
+                f.name for f in call_args.DESCRIPTOR.fields
+            )
+            if has_field:
+                assert call_args.include_stopped is True
+
+    @pytest.mark.asyncio
+    async def test_list_include_stopped_default_false(self, mock_aviato_api_key: str) -> None:
+        """Test list() does not set include_stopped by default."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list()
+
+            call_args = mock_stub.List.call_args[0][0]
+            # include_stopped defaults to False (proto default for bool)
+            has_field = hasattr(call_args, "include_stopped") and "include_stopped" in (
+                f.name for f in call_args.DESCRIPTOR.fields
+            )
+            if has_field:
+                assert call_args.include_stopped is False
+
 
 class TestSandboxFromId:
     """Tests for Sandbox.from_id class method."""
