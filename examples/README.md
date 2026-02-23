@@ -220,6 +220,26 @@ Demonstrates:
 - Using `Sandbox.list(tags=...)` to find sandboxes
 - Parallel cleanup with fire-then-collect pattern
 
+### List Stopped Sandboxes (`list_stopped_sandboxes.py`)
+
+List sandboxes including stopped (terminal) ones:
+
+```bash
+# List only active sandboxes (default)
+python examples/list_stopped_sandboxes.py
+
+# Include stopped sandboxes
+python examples/list_stopped_sandboxes.py --include-stopped
+
+# Filter by tag
+python examples/list_stopped_sandboxes.py --include-stopped --tag my-batch-job
+```
+
+Demonstrates:
+- Using `Sandbox.list(include_stopped=True)` to include terminal sandboxes
+- Using `session.list(include_stopped=True)` with session tags
+- Comparing active-only vs all-sandboxes results
+
 ### Cleanup Old Sandboxes (`cleanup_old_sandboxes.py`)
 
 Clean up sandboxes older than a threshold:

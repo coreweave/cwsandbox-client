@@ -588,7 +588,8 @@ class Sandbox:
 
         By default, only active (non-terminal) sandboxes are returned. Terminal
         sandboxes (completed, failed, terminated) are excluded unless
-        ``include_stopped=True`` is set or a terminal status filter is used.
+        ``include_stopped=True`` is set. Some backend versions also include
+        terminal sandboxes when filtering by a terminal status.
 
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
@@ -677,14 +678,9 @@ class Sandbox:
             if tower_ids is not None:
                 request_kwargs["tower_ids"] = tower_ids
 
-            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
             if include_stopped:
-                try:
-                    request.include_stopped = True  # type: ignore[attr-defined]
-                except (AttributeError, ValueError):
-                    # Proto field not yet available in published package;
-                    # the server still handles the wire-format field (number 6).
-                    logger.debug("include_stopped proto field not available; skipping")
+                request_kwargs["include_stopped"] = True
+            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
             try:
                 response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:

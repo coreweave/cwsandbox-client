@@ -539,11 +539,7 @@ class TestSessionList:
             await session.list(include_stopped=True)
 
             call_args = mock_stub.List.call_args[0][0]
-            has_field = hasattr(call_args, "include_stopped") and "include_stopped" in (
-                f.name for f in call_args.DESCRIPTOR.fields
-            )
-            if has_field:
-                assert call_args.include_stopped is True
+            assert call_args.include_stopped is True
 
 
 class TestSessionFromId:
