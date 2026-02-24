@@ -1025,7 +1025,7 @@ async def test_sandbox_exec_stdin_async(sandbox_defaults: SandboxDefaults) -> No
         assert result.returncode == 0
 
 
-# List and Get endpoint tests (DB-backed persistence)
+# List and Get endpoint tests
 
 
 def test_sandbox_list_excludes_stopped_by_default(sandbox_defaults: SandboxDefaults) -> None:
@@ -1045,7 +1045,7 @@ def test_sandbox_list_excludes_stopped_by_default(sandbox_defaults: SandboxDefau
     sandbox.wait_until_complete(timeout=60.0).result()
 
     # Default list should exclude the stopped sandbox.
-    # Poll until the cache converges (may take a few seconds in multi-ATC).
+    # Poll until the status propagates (may take a few seconds).
     for _ in range(15):
         sandboxes = Sandbox.list(tags=[unique_tag]).result()
         ids = [sb.sandbox_id for sb in sandboxes]
@@ -1072,9 +1072,8 @@ def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
     sandbox.wait_until_complete(timeout=60.0).result()
 
     # With include_stopped=True, the sandbox should appear.
-    # The DB record may reflect a stale status (e.g. "creating") captured
-    # before the sandbox reached its terminal state, so we only assert the
-    # sandbox is returned — not a specific status.
+    # The status may not yet reflect the final terminal state, so we only
+    # assert the sandbox is returned — not a specific status.
     found = False
     for _ in range(15):
         sandboxes = Sandbox.list(tags=[unique_tag], include_stopped=True).result()
@@ -1092,7 +1091,7 @@ def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
 def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
     """Test that listing with a terminal status filter returns stopped sandboxes.
 
-    The backend queries the DB when a terminal status filter is used,
+    A terminal status filter automatically widens the search,
     even without include_stopped=True.
     """
     unique_tag = f"e2e-status-filter-{uuid.uuid4().hex[:8]}"
@@ -1121,11 +1120,10 @@ def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
 
 
 def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> None:
-    """Test that from_id() returns stopped sandboxes from the DB.
+    """Test that from_id() returns stopped sandboxes.
 
-    Previously, Get on a stopped sandbox returned NOT_FOUND once the cache
-    entry was deleted. Now the backend falls back to the DB and returns the
-    historical record with terminal status.
+    Previously, Get on a stopped sandbox returned NOT_FOUND. Now the
+    backend returns the historical record with terminal status.
     """
     sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults)
     sandbox_id = sandbox.sandbox_id
@@ -1134,11 +1132,11 @@ def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> N
     # Wait for sandbox to reach terminal state
     sandbox.wait_until_complete(timeout=60.0).result()
 
-    # Wait for cache to clear (stop deletes cache entry)
+    # Wait for the stopped status to propagate.
     time.sleep(5)
 
-    # from_id should now return the sandbox from DB fallback.
-    # The backend may return UNSPECIFIED for the DB record's status.
+    # from_id should still return the sandbox after it has stopped.
+    # The backend may return UNSPECIFIED for the stopped sandbox's status.
     recovered = Sandbox.from_id(sandbox_id).result()
     assert recovered.sandbox_id == sandbox_id
     assert recovered.status in ("completed", "terminated", "failed", "unspecified")

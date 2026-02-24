@@ -214,7 +214,7 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
         sandbox_id = sandbox.sandbox_id
         assert sandbox_id is not None
 
-    # Session is closed, sandbox is stopped. Wait for cache to converge.
+    # Session is closed, sandbox is stopped. Wait for the status to propagate.
     time.sleep(5)
 
     # Use a fresh session to list with the same tags
@@ -228,8 +228,8 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
             time.sleep(2)
 
         # include_stopped should include it.
-        # The DB record may reflect a stale status, so we only assert the
-        # sandbox is returned — not a specific status.
+        # The status may not yet reflect the final terminal state, so we only
+        # assert the sandbox is returned — not a specific status.
         found = False
         for _ in range(15):
             all_sandboxes = session.list(include_stopped=True).result()
@@ -247,7 +247,7 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
 def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
     """Test that session.list with a terminal status filter returns stopped sandboxes.
 
-    The backend queries the DB when a terminal status filter is used,
+    A terminal status filter automatically widens the search,
     even without include_stopped=True.
 
     The sandbox is created outside the session context manager to avoid

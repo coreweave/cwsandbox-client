@@ -66,8 +66,8 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them from persistent storage.
-- `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes (the backend falls back to the DB for stopped sandboxes).
+- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
+- `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 
 **`Session`** (`_session.py`): Manages multiple sandboxes with shared defaults. Supports both sync and async context managers for the hybrid API.
@@ -77,7 +77,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes from persistent storage.
+- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
