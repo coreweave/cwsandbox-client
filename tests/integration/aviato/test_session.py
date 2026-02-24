@@ -206,9 +206,7 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
     import uuid
 
     unique_tag = f"e2e-session-stopped-{uuid.uuid4().hex[:8]}"
-    defaults = sandbox_defaults.with_overrides(
-        tags=sandbox_defaults.merge_tags([unique_tag])
-    )
+    defaults = sandbox_defaults.with_overrides(tags=sandbox_defaults.merge_tags([unique_tag]))
 
     with Sandbox.session(defaults) as session:
         sandbox = session.sandbox(command="echo", args=["hello"])
@@ -260,9 +258,7 @@ def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
     import uuid
 
     unique_tag = f"e2e-session-status-filter-{uuid.uuid4().hex[:8]}"
-    defaults = sandbox_defaults.with_overrides(
-        tags=sandbox_defaults.merge_tags([unique_tag])
-    )
+    defaults = sandbox_defaults.with_overrides(tags=sandbox_defaults.merge_tags([unique_tag]))
 
     # Create sandbox directly (not via session) so it reaches COMPLETED
     # without being stopped by session cleanup.
@@ -285,6 +281,4 @@ def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
                 break
             time.sleep(1)
 
-        assert found, (
-            f"Sandbox {sandbox_id} not found with status='completed' filter via session"
-        )
+        assert found, f"Sandbox {sandbox_id} not found with status='completed' filter via session"
