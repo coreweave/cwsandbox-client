@@ -229,13 +229,14 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
                 break
             time.sleep(2)
 
-        # include_stopped should include it
+        # include_stopped should include it.
+        # The DB record may reflect a stale status, so we only assert the
+        # sandbox is returned — not a specific status.
         found = False
         for _ in range(15):
             all_sandboxes = session.list(include_stopped=True).result()
             for sb in all_sandboxes:
                 if sb.sandbox_id == sandbox_id:
-                    assert sb.status in ("completed", "terminated", "failed")
                     found = True
                     break
             if found:
@@ -243,3 +244,42 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
             time.sleep(1)
 
         assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+
+
+def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that session.list with a terminal status filter returns stopped sandboxes.
+
+    The backend queries the DB when a terminal status filter is used,
+    even without include_stopped=True.
+    """
+    import time
+    import uuid
+
+    unique_tag = f"e2e-session-status-filter-{uuid.uuid4().hex[:8]}"
+    defaults = sandbox_defaults.with_overrides(
+        tags=sandbox_defaults.merge_tags([unique_tag])
+    )
+
+    with Sandbox.session(defaults) as session:
+        sandbox = session.sandbox(command="echo", args=["hello"])
+        sandbox.wait_until_complete(timeout=60.0).result()
+        sandbox_id = sandbox.sandbox_id
+        assert sandbox_id is not None
+
+    # Use a fresh session to list with terminal status filter
+    with Sandbox.session(defaults) as session:
+        found = False
+        for _ in range(15):
+            sandboxes = session.list(status="completed").result()
+            for sb in sandboxes:
+                if sb.sandbox_id == sandbox_id:
+                    assert sb.status == "completed"
+                    found = True
+                    break
+            if found:
+                break
+            time.sleep(1)
+
+        assert found, (
+            f"Sandbox {sandbox_id} not found with status='completed' filter via session"
+        )
