@@ -21,6 +21,7 @@ except ImportError as e:
 from aviato.cli.exec import exec_command
 from aviato.cli.list import list_sandboxes
 from aviato.cli.logs import logs
+from aviato.cli.shell import shell
 
 
 @click.group()
@@ -32,3 +33,4 @@ def cli() -> None:
 cli.add_command(exec_command, "exec")
 cli.add_command(list_sandboxes)
 cli.add_command(logs)
+cli.add_command(shell)
