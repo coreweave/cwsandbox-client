@@ -174,6 +174,7 @@ class StreamReader:
     consumed in both sync and async contexts.
 
     The stream uses None as a sentinel value to signal end-of-stream.
+    Exception instances in the queue are re-raised to the consumer.
 
     Examples:
         Synchronous iteration:
@@ -189,11 +190,15 @@ class StreamReader:
         ```
     """
 
-    def __init__(self, queue: asyncio.Queue[str | None], loop_manager: _LoopManager) -> None:
+    def __init__(
+        self, queue: asyncio.Queue[str | Exception | None], loop_manager: _LoopManager
+    ) -> None:
         """Initialize with a queue and loop manager.
 
         Args:
-            queue: The asyncio.Queue to read from.
+            queue: The asyncio.Queue to read from. Supports string items,
+                None as end-of-stream sentinel, and Exception instances
+                which are re-raised to the consumer.
             loop_manager: The _LoopManager for executing async operations.
         """
         self._queue = queue
@@ -208,19 +213,22 @@ class StreamReader:
         """Get next item from stream (blocking).
 
         Returns:
-            The next string from the stream.
+            The next line from the stream.
 
         Raises:
-            StopIteration: When the stream is exhausted.
+            StopIteration: When the stream is exhausted (None sentinel).
+            Exception: Re-raised if an Exception instance is in the queue.
         """
         if self._exhausted:
             raise StopIteration
-
-        line = self._loop_manager.run_sync(self._queue.get())
-        if line is None:  # Sentinel for end-of-stream
+        item = self._loop_manager.run_sync(self._queue.get())
+        if item is None:
             self._exhausted = True
             raise StopIteration
-        return line
+        if isinstance(item, Exception):
+            self._exhausted = True
+            raise item
+        return item
 
     def __aiter__(self) -> StreamReader:
         """Return self as async iterator for async iteration."""
@@ -230,18 +238,22 @@ class StreamReader:
         """Get next item from stream (async).
 
         Returns:
-            The next string from the stream.
+            The next line from the stream.
 
         Raises:
-            StopAsyncIteration: When the stream is exhausted.
+            StopAsyncIteration: When the stream is exhausted (None sentinel).
+            Exception: Re-raised if an Exception instance is in the queue.
         """
         if self._exhausted:
             raise StopAsyncIteration
-        line = await self._queue.get()
-        if line is None:  # Sentinel for end-of-stream
+        item = await self._queue.get()
+        if item is None:
             self._exhausted = True
             raise StopAsyncIteration
-        return line
+        if isinstance(item, Exception):
+            self._exhausted = True
+            raise item
+        return item
 
 
 class StreamWriter:
