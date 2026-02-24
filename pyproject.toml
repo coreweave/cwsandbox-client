@@ -10,7 +10,7 @@ url = "https://buf.build/gen/python"
 
 [project]
 name = "aviato"
-version = "0.1.1"
+version = "0.2.0"
 description = "A Python client library for Aviato sandboxes"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
