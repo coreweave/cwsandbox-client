@@ -586,10 +586,11 @@ class Sandbox:
         Returns OperationRef that resolves to Sandbox instances usable for
         operations like exec(), stop(), get_status(), read_file(), write_file().
 
-        By default, only active (non-terminal) sandboxes are returned. Terminal
-        sandboxes (completed, failed, terminated) are excluded unless
-        ``include_stopped=True`` is set. Some backend versions also include
-        terminal sandboxes when filtering by a terminal status.
+        By default, only active (non-terminal) sandboxes are returned.
+        Set ``include_stopped=True`` to widen the search to include terminal
+        sandboxes (completed, failed, terminated) from persistent storage.
+        A terminal status filter (e.g. ``status="completed"``) also widens
+        the search automatically.
 
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)

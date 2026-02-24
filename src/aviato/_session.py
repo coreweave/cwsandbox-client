@@ -415,9 +415,11 @@ class Session:
         This makes it easy to find sandboxes created by this session or
         a previous run with the same defaults.
 
-        By default, only active (non-terminal) sandboxes are returned. Set
-        ``include_stopped=True`` to also include terminal sandboxes (completed,
-        failed, terminated) from persistent storage.
+        By default, only active (non-terminal) sandboxes are returned.
+        Set ``include_stopped=True`` to widen the search to include terminal
+        sandboxes (completed, failed, terminated) from persistent storage.
+        A terminal status filter (e.g. ``status="completed"``) also widens
+        the search automatically.
 
         Args:
             tags: Additional tags to filter by (merged with session's default tags)

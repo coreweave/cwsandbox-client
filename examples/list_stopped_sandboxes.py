@@ -16,75 +16,107 @@ This is useful for:
 - Verifying that sandboxes completed successfully
 
 Usage:
-    # List only active sandboxes (default)
-    uv run examples/list_stopped_sandboxes.py
+    # First, create some sandboxes that will complete immediately
+    uv run examples/list_stopped_sandboxes.py --create
 
-    # Include stopped sandboxes
-    uv run examples/list_stopped_sandboxes.py --include-stopped
+    # Then list them (active only by default)
+    uv run examples/list_stopped_sandboxes.py --list
 
-    # Filter by tag
-    uv run examples/list_stopped_sandboxes.py --include-stopped --tag my-batch-job
+    # Include stopped sandboxes to see the completed ones
+    uv run examples/list_stopped_sandboxes.py --list --include-stopped
 """
 
 import argparse
 
 from aviato import Sandbox, SandboxDefaults, Session
 
+TAG = "list-stopped-example"
 
-def list_with_sandbox_api(tags: list[str] | None, include_stopped: bool) -> None:
-    """List sandboxes using the Sandbox class method."""
+
+def create_sandboxes(count: int) -> None:
+    """Create sandboxes that complete immediately."""
+    print(f"Creating {count} sandboxes with tag '{TAG}'...")
+
+    sandboxes = [
+        Sandbox.run("echo", f"hello-{i}", tags=[TAG, f"instance-{i}"])
+        for i in range(count)
+    ]
+
+    for sb in sandboxes:
+        print(f"  Created: {sb.sandbox_id}")
+
+    print("\nWaiting for sandboxes to complete...")
+    for sb in sandboxes:
+        sb.wait_until_complete(timeout=60.0).result()
+        print(f"  Completed: {sb.sandbox_id}")
+
+    print(f"\nAll {count} sandboxes completed.")
+    print("Run with --list --include-stopped to see them.")
+
+
+def list_sandboxes(include_stopped: bool) -> None:
+    """List sandboxes using both Sandbox and Session APIs."""
+    label = "active + stopped" if include_stopped else "active only"
+    print(f"Listing sandboxes ({label})\n")
+
+    # Sandbox.list() - direct class method
     print("=== Sandbox.list() ===")
-    sandboxes = Sandbox.list(tags=tags, include_stopped=include_stopped).result()
+    sandboxes = Sandbox.list(tags=[TAG], include_stopped=include_stopped).result()
 
     if not sandboxes:
         print("  No sandboxes found.")
-        return
+    else:
+        for sb in sandboxes:
+            print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
+        print(f"\n  Total: {len(sandboxes)} sandbox(es)")
 
-    for sb in sandboxes:
-        print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
+    # Session.list() - auto-filters by session tags
+    defaults = SandboxDefaults(tags=(TAG,))
 
-    print(f"\n  Total: {len(sandboxes)} sandbox(es)")
-
-
-def list_with_session_api(tags: list[str] | None, include_stopped: bool) -> None:
-    """List sandboxes using the Session API (auto-filters by session tags)."""
-    session_tags = tags or ["list-stopped-example"]
-    defaults = SandboxDefaults(tags=tuple(session_tags))
-
-    print(f"\n=== Session.list(tags={session_tags}) ===")
+    print("\n=== Session.list() ===")
     with Session(defaults) as session:
         sandboxes = session.list(include_stopped=include_stopped).result()
 
         if not sandboxes:
             print("  No sandboxes found for session tags.")
-            return
-
-        for sb in sandboxes:
-            print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
-
-        print(f"\n  Total: {len(sandboxes)} sandbox(es)")
+        else:
+            for sb in sandboxes:
+                print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
+            print(f"\n  Total: {len(sandboxes)} sandbox(es)")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="List sandboxes including stopped ones")
+    parser.add_argument(
+        "--create",
+        action="store_true",
+        help="Create sandboxes that complete immediately",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_sandboxes",
+        help="List sandboxes",
+    )
     parser.add_argument(
         "--include-stopped",
         action="store_true",
         help="Include terminal sandboxes (completed, failed, terminated)",
     )
     parser.add_argument(
-        "--tag",
-        action="append",
-        dest="tags",
-        help="Filter by tag (can be repeated)",
+        "--count",
+        type=int,
+        default=3,
+        help="Number of sandboxes to create (default: 3)",
     )
     args = parser.parse_args()
 
-    label = "active + stopped" if args.include_stopped else "active only"
-    print(f"Listing sandboxes ({label})\n")
-
-    list_with_sandbox_api(args.tags, args.include_stopped)
-    list_with_session_api(args.tags, args.include_stopped)
+    if args.create:
+        create_sandboxes(args.count)
+    elif args.list_sandboxes:
+        list_sandboxes(args.include_stopped)
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

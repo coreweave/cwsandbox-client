@@ -225,17 +225,18 @@ Demonstrates:
 List sandboxes including stopped (terminal) ones:
 
 ```bash
-# List only active sandboxes (default)
-python examples/list_stopped_sandboxes.py
+# Create some sandboxes that complete immediately
+python examples/list_stopped_sandboxes.py --create
 
-# Include stopped sandboxes
-python examples/list_stopped_sandboxes.py --include-stopped
+# List active sandboxes only (default)
+python examples/list_stopped_sandboxes.py --list
 
-# Filter by tag
-python examples/list_stopped_sandboxes.py --include-stopped --tag my-batch-job
+# Include stopped sandboxes to see completed ones
+python examples/list_stopped_sandboxes.py --list --include-stopped
 ```
 
 Demonstrates:
+- Creating sandboxes that complete immediately for testing
 - Using `Sandbox.list(include_stopped=True)` to include terminal sandboxes
 - Using `session.list(include_stopped=True)` with session tags
 - Comparing active-only vs all-sandboxes results
