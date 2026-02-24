@@ -2729,9 +2729,9 @@ class TestExecStdinReadySignal:
         assert close_received_time is not None, "Stdin close was never received"
 
         # Stdin should be sent after ready (with some tolerance for timing)
-        assert (
-            stdin_received_time >= ready_sent_time
-        ), f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+        assert stdin_received_time >= ready_sent_time, (
+            f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
+        )
 
     def test_exec_stdin_ready_timeout(self) -> None:
         """Test SandboxTimeoutError raised when ready signal not received."""
