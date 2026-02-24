@@ -38,8 +38,7 @@ def create_sandboxes(count: int) -> None:
     print(f"Creating {count} sandboxes with tag '{TAG}'...")
 
     sandboxes = [
-        Sandbox.run("echo", f"hello-{i}", tags=[TAG, f"instance-{i}"])
-        for i in range(count)
+        Sandbox.run("echo", f"hello-{i}", tags=[TAG, f"instance-{i}"]) for i in range(count)
     ]
 
     for sb in sandboxes:
