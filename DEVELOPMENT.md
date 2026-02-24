@@ -150,6 +150,7 @@ aviato --help                              # Show available commands
 aviato --version                           # Show SDK version
 aviato list                                # List sandboxes
 aviato list --status running --tag dev     # Filter sandboxes
+aviato exec <sandbox-id> echo hello        # Run a command in a sandbox
 ```
 
 You can also invoke it as a Python module:

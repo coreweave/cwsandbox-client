@@ -301,6 +301,18 @@ for p in pending:
     print(p.result().stdout)
 ```
 
+## CLI
+
+The `aviato exec` command runs a one-off command in a sandbox from the terminal:
+
+```bash
+aviato exec <sandbox-id> echo hello
+aviato exec <sandbox-id> --cwd /app ls -la
+aviato exec <sandbox-id> --timeout 30 python script.py
+```
+
+Exits with the command's return code.
+
 ## Process Control
 
 The `Process` object provides methods for monitoring and control:

@@ -18,6 +18,7 @@ except ImportError as e:
         "aviato CLI requires the 'cli' extra. Install it with:  pip install aviato[cli]"
     ) from e
 
+from aviato.cli.exec import exec_command
 from aviato.cli.list import list_sandboxes
 
 
@@ -27,4 +28,5 @@ def cli() -> None:
     """Aviato sandbox CLI."""
 
 
+cli.add_command(exec_command, "exec")
 cli.add_command(list_sandboxes)

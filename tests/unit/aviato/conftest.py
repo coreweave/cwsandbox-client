@@ -18,6 +18,9 @@ from aviato._types import Process, ProcessResult, StreamReader
 
 T = TypeVar("T")
 
+# Event loops created by _make_reader, closed after each test.
+_test_loops: list[asyncio.AbstractEventLoop] = []
+
 # Environment variables that affect authentication behavior.
 # These are cleared before each test to ensure isolation.
 AUTH_ENV_VARS = (
@@ -40,6 +43,14 @@ def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for var in AUTH_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_test_loops() -> None:
+    """Close event loops created by _make_reader after each test."""
+    yield  # type: ignore[misc]
+    while _test_loops:
+        _test_loops.pop().close()
 
 
 @pytest.fixture
@@ -119,8 +130,18 @@ def make_process(
     if stderr:
         stderr_queue.put_nowait(None)  # Sentinel
 
-    mock_lm = MagicMock()
-    stdout_reader = StreamReader(stdout_queue, mock_lm)
-    stderr_reader = StreamReader(stderr_queue, mock_lm)
+    # Each StreamReader gets its own mock _LoopManager with a dedicated event
+    # loop so that run_sync actually executes the asyncio.Queue.get() coroutine.
+    # Separate loops are needed because the CLI drains stdout and stderr on
+    # different threads; a shared loop would hit "already running" errors.
+    def _make_reader(queue: asyncio.Queue[str | None]) -> StreamReader[str]:
+        loop = asyncio.new_event_loop()
+        _test_loops.append(loop)
+        lm = MagicMock()
+        lm.run_sync.side_effect = loop.run_until_complete
+        return StreamReader(queue, lm)
+
+    stdout_reader = _make_reader(stdout_queue)
+    stderr_reader = _make_reader(stderr_queue)
 
     return Process(future, command or [], stdout_reader, stderr_reader)

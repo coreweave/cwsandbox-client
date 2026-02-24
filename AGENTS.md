@@ -296,9 +296,12 @@ Commands:
 
 | Command | File | Description |
 |---------|------|-------------|
+| `aviato exec` | `cli/exec.py` | Execute a command in a sandbox (`--cwd`, `--timeout`) |
 | `aviato list` | `cli/list.py` | List sandboxes with optional filters (`--status`, `--tag`, `--runway-id`, `--tower-id`) |
 
 ```bash
+aviato exec <sandbox-id> echo hello             # Run a command
+aviato exec <sandbox-id> --cwd /app ls -la     # Run with working directory
 aviato list                                    # List all sandboxes
 aviato list --status running --tag my-project  # Filter by status and tag
 ```
