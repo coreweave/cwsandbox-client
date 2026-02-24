@@ -316,6 +316,7 @@ class TestApplySandboxInfo:
         new_state = sb._apply_sandbox_info(info, source="poll")
         assert isinstance(new_state, _Terminal)
         assert new_state.status == SandboxStatus.FAILED
+        assert new_state.returncode is None
 
     def test_running_to_terminated(self) -> None:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
@@ -325,6 +326,7 @@ class TestApplySandboxInfo:
         new_state = sb._apply_sandbox_info(info)
         assert isinstance(new_state, _Terminal)
         assert new_state.status == SandboxStatus.TERMINATED
+        assert new_state.returncode is None
 
     # Guards: terminal and cancelled states never regress
 
@@ -367,15 +369,26 @@ class TestApplySandboxInfo:
         assert isinstance(new_state, _Starting)
         assert new_state.sandbox_id == "sb-new"
 
-    def test_construct_source_omits_returncode(self) -> None:
+    def test_query_source_omits_returncode(self) -> None:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.COMPLETED),
             returncode=99,
         )
-        new_state = sb._apply_sandbox_info(info, source="construct")
+        new_state = sb._apply_sandbox_info(info, source="query")
         assert isinstance(new_state, _Terminal)
         assert new_state.returncode is None
+
+    def test_poll_unspecified_maps_to_completed(self) -> None:
+        sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
+        info = _make_proto_info(
+            sandbox_status=_proto_status(SandboxStatus.UNSPECIFIED),
+            returncode=0,
+        )
+        new_state = sb._apply_sandbox_info(info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.status == SandboxStatus.COMPLETED
+        assert new_state.returncode == 0
 
     def test_empty_strings_normalize_to_none(self) -> None:
         sb = self._make_sandbox(_Starting(sandbox_id="sb-1"))
@@ -395,6 +408,84 @@ class TestApplySandboxInfo:
 # ---------------------------------------------------------------------------
 # _from_sandbox_info state marking
 # ---------------------------------------------------------------------------
+
+
+class TestFromSandboxInfoState:
+    """Verify _from_sandbox_info produces the correct _state."""
+
+    def test_running_sandbox_has_running_state(self) -> None:
+        info = _make_proto_info(
+            sandbox_id="sb-1",
+            sandbox_status=_proto_status(SandboxStatus.RUNNING),
+            tower_id="tower-1",
+        )
+        from aviato import Sandbox
+
+        sb = Sandbox._from_sandbox_info(
+            info, base_url="https://api.example.com", timeout_seconds=300.0
+        )
+        assert isinstance(sb._state, _Running)
+        assert sb._state.sandbox_id == "sb-1"
+        assert sb._state.tower_id == "tower-1"
+
+    def test_paused_sandbox_has_running_state(self) -> None:
+        info = _make_proto_info(
+            sandbox_id="sb-1",
+            sandbox_status=_proto_status(SandboxStatus.PAUSED),
+        )
+        from aviato import Sandbox
+
+        sb = Sandbox._from_sandbox_info(
+            info, base_url="https://api.example.com", timeout_seconds=300.0
+        )
+        assert isinstance(sb._state, _Running)
+        assert sb._state.status == SandboxStatus.PAUSED
+
+    @pytest.mark.parametrize(
+        "terminal_status",
+        [SandboxStatus.COMPLETED, SandboxStatus.FAILED, SandboxStatus.TERMINATED],
+    )
+    def test_terminal_sandbox_has_terminal_state(self, terminal_status: SandboxStatus) -> None:
+        info = _make_proto_info(
+            sandbox_id="sb-1",
+            sandbox_status=_proto_status(terminal_status),
+        )
+        from aviato import Sandbox
+
+        sb = Sandbox._from_sandbox_info(
+            info, base_url="https://api.example.com", timeout_seconds=300.0
+        )
+        assert isinstance(sb._state, _Terminal)
+        assert sb._state.status == terminal_status
+        assert sb._is_done is True
+
+    def test_terminal_sandbox_omits_returncode(self) -> None:
+        """Non-poll source omits returncode even if info has one."""
+        info = _make_proto_info(
+            sandbox_id="sb-1",
+            sandbox_status=_proto_status(SandboxStatus.COMPLETED),
+            returncode=42,
+        )
+        from aviato import Sandbox
+
+        sb = Sandbox._from_sandbox_info(
+            info, base_url="https://api.example.com", timeout_seconds=300.0
+        )
+        assert isinstance(sb._state, _Terminal)
+        assert sb._state.returncode is None
+
+    def test_pending_sandbox_has_starting_state(self) -> None:
+        info = _make_proto_info(
+            sandbox_id="sb-1",
+            sandbox_status=_proto_status(SandboxStatus.PENDING),
+        )
+        from aviato import Sandbox
+
+        sb = Sandbox._from_sandbox_info(
+            info, base_url="https://api.example.com", timeout_seconds=300.0
+        )
+        assert isinstance(sb._state, _Starting)
+        assert sb._state.sandbox_id == "sb-1"
 
 
 # ---------------------------------------------------------------------------

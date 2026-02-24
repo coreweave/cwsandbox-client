@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aviato import Sandbox, Session
+from aviato._sandbox import _Running
 from tests.unit.aviato.conftest import make_operation_ref, make_process
 
 
@@ -107,6 +108,7 @@ class TestSessionCleanup:
         session = Session()
         sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
+        sandbox._state = _Running(sandbox_id="test-sandbox-id")
 
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
@@ -649,6 +651,7 @@ class TestSessionAdopt:
         session = Session()
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-123"
+        sandbox._state = _Running(sandbox_id="test-123")
 
         session.adopt(sandbox)
 
@@ -664,6 +667,7 @@ class TestSessionAdopt:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-123"
+        sandbox._state = _Running(sandbox_id="test-123")
 
         with pytest.raises(SandboxError, match="session is closed"):
             session.adopt(sandbox)
