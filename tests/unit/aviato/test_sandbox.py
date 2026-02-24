@@ -1282,6 +1282,7 @@ class TestSandboxStop:
 
     def test_stop_raises_on_backend_failure(self) -> None:
         """Test stop raises SandboxError when backend reports failure."""
+        from aviato.exceptions import SandboxError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1325,6 +1326,7 @@ class TestSandboxStop:
 
     def test_stop_missing_ok_false_raises_not_found(self) -> None:
         """Test stop(missing_ok=False) raises SandboxNotFoundError."""
+        from aviato.exceptions import SandboxNotFoundError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1609,6 +1611,7 @@ class TestSandboxFromId:
     @pytest.mark.asyncio
     async def test_from_id_raises_not_found(self, mock_aviato_api_key: str) -> None:
         """Test from_id() raises SandboxNotFoundError for non-existent sandbox."""
+        from aviato.exceptions import SandboxNotFoundError
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -1655,6 +1658,7 @@ class TestSandboxDeleteClassMethod:
     @pytest.mark.asyncio
     async def test_delete_raises_not_found_by_default(self, mock_aviato_api_key: str) -> None:
         """Test delete() raises SandboxNotFoundError when sandbox doesn't exist."""
+        from aviato.exceptions import SandboxNotFoundError
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -2368,6 +2372,7 @@ class TestTranslateRpcError:
     def test_not_found_returns_sandbox_not_found_error(self) -> None:
         """Test NOT_FOUND status code returns SandboxNotFoundError."""
         from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
 
         error = MockRpcError(grpc.StatusCode.NOT_FOUND, "sandbox not found")
         result = _translate_rpc_error(error, sandbox_id="test-123")
@@ -2379,6 +2384,7 @@ class TestTranslateRpcError:
     def test_not_found_without_sandbox_id_uses_details(self) -> None:
         """Test NOT_FOUND without sandbox_id uses error details."""
         from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxNotFoundError
 
         error = MockRpcError(grpc.StatusCode.NOT_FOUND, "resource not found")
         result = _translate_rpc_error(error)
@@ -2455,6 +2461,7 @@ class TestTranslateRpcError:
     def test_other_status_returns_sandbox_error(self) -> None:
         """Test other status codes return generic SandboxError."""
         from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
 
         error = MockRpcError(grpc.StatusCode.INTERNAL, "internal error")
         result = _translate_rpc_error(error, operation="Test operation")
@@ -2465,6 +2472,7 @@ class TestTranslateRpcError:
     def test_empty_details_uses_string_repr(self) -> None:
         """Test that empty details falls back to str(e)."""
         from aviato._sandbox import _translate_rpc_error
+        from aviato.exceptions import SandboxError
 
         error = MockRpcError(grpc.StatusCode.INTERNAL, "")
         result = _translate_rpc_error(error, operation="Test")
@@ -3184,3 +3192,306 @@ def test_stream_logs_flushes_trailing_partial_line(mock_aviato_api_key: str) -> 
         lines = list(reader)
 
     assert lines == ["no trailing newline"]
+
+
+def test_stream_logs_close_cancels_future(mock_aviato_api_key: str) -> None:
+    """Calling reader.close() on a stream_logs reader cancels the background future."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"line\n")),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    with _stream_logs_sandbox(responses) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        # Close before consuming -- should cancel the background future.
+        assert not reader._exhausted
+        reader.close()
+        assert reader._exhausted
+
+
+class TestSandboxShell:
+    """Tests for Sandbox.shell() method."""
+
+    @staticmethod
+    def _ready_exit_responses(exit_code: int = 0) -> Callable[[], AsyncIterator[Any]]:
+        """Create response generator that yields ready then exit."""
+
+        async def gen() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = MagicMock()
+            yield ready
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = exit_code
+            yield exit_resp
+
+        return gen
+
+    @staticmethod
+    def _shell_sandbox(
+        response_generator: Callable[[], AsyncIterator[Any]],
+        *,
+        on_write: Callable[[Any], None] | None = None,
+    ) -> Any:
+        """Create a sandbox wired to a MockBidirectionalStreamCall for shell tests.
+
+        Returns a context manager that yields (sandbox, mock_call).
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():  # type: ignore[no-untyped-def]
+            sandbox = Sandbox(base_url="http://localhost:50051")
+            sandbox._sandbox_id = "test-sandbox-id"
+            sandbox._stopped = False
+
+            mock_call = MockBidirectionalStreamCall(
+                response_generator=response_generator, on_write=on_write
+            )
+            mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+            with (
+                patch.object(type(sandbox), "_ensure_started_async", new_callable=AsyncMock),
+                patch.object(
+                    type(sandbox),
+                    "_wait_until_running_async",
+                    new_callable=AsyncMock,
+                ),
+                patch("aviato._sandbox.resolve_auth_metadata", return_value=()),
+                patch(
+                    "aviato._sandbox.parse_grpc_target",
+                    return_value=("localhost:443", True),
+                ),
+                patch("aviato._sandbox.create_channel", return_value=mock_channel),
+                patch(
+                    "aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                    return_value=mock_stub,
+                ),
+            ):
+                yield sandbox, mock_call
+
+        return _ctx()
+
+    def test_shell_returns_terminal_session(self, mock_aviato_api_key: str) -> None:
+        """shell() returns a TerminalSession."""
+        from aviato._types import TerminalSession
+
+        with self._shell_sandbox(self._ready_exit_responses()) as (sandbox, _):
+            session = sandbox.shell()
+            assert isinstance(session, TerminalSession)
+            session.stdin.close().result()
+            result = session.result()
+            assert result.returncode == 0
+
+    def test_shell_default_command(self, mock_aviato_api_key: str) -> None:
+        """shell() defaults to ['/bin/bash']."""
+        captured_requests: list[Any] = []
+
+        def capture_write(request: Any) -> None:
+            captured_requests.append(request)
+
+        with self._shell_sandbox(self._ready_exit_responses(), on_write=capture_write) as (
+            sandbox,
+            _,
+        ):
+            session = sandbox.shell()
+            session.stdin.close().result()
+            session.result()
+
+        init_requests = [r for r in captured_requests if r.HasField("init")]
+        assert len(init_requests) == 1
+        init = init_requests[0].init
+        assert list(init.command) == ["/bin/bash"]
+        assert init.tty is True
+
+    def test_shell_custom_command(self, mock_aviato_api_key: str) -> None:
+        """shell() passes custom command to init message."""
+        captured_requests: list[Any] = []
+
+        def capture_write(request: Any) -> None:
+            captured_requests.append(request)
+
+        with self._shell_sandbox(self._ready_exit_responses(), on_write=capture_write) as (
+            sandbox,
+            _,
+        ):
+            session = sandbox.shell(["/bin/zsh"])
+            session.stdin.close().result()
+            session.result()
+
+        init_requests = [r for r in captured_requests if r.HasField("init")]
+        assert len(init_requests) == 1
+        assert list(init_requests[0].init.command) == ["/bin/zsh"]
+
+    def test_shell_empty_command_raises(self) -> None:
+        """shell([]) raises ValueError."""
+        sandbox = Sandbox(base_url="http://localhost:50051")
+        with pytest.raises(ValueError, match="Command cannot be empty"):
+            sandbox.shell([])
+
+    def test_shell_tty_init_fields(self, mock_aviato_api_key: str) -> None:
+        """shell() passes width/height to ExecStreamInit."""
+        captured_requests: list[Any] = []
+
+        def capture_write(request: Any) -> None:
+            captured_requests.append(request)
+
+        with self._shell_sandbox(self._ready_exit_responses(), on_write=capture_write) as (
+            sandbox,
+            _,
+        ):
+            session = sandbox.shell(width=120, height=40)
+            session.stdin.close().result()
+            session.result()
+
+        init_requests = [r for r in captured_requests if r.HasField("init")]
+        assert len(init_requests) == 1
+        init = init_requests[0].init
+        assert init.tty is True
+        assert init.tty_width == 120
+        assert init.tty_height == 40
+
+    def test_shell_output_is_raw_bytes(self, mock_aviato_api_key: str) -> None:
+        """shell() output yields raw bytes, not decoded str."""
+        raw_data = b"\x1b[31mred\x1b[0m\xff\xfe"
+
+        output_response = MagicMock()
+        output_response.HasField = lambda field: field == "output"
+        output_response.output.data = raw_data
+
+        async def response_gen() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = MagicMock()
+            yield ready
+            yield output_response
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 0
+            yield exit_resp
+
+        with self._shell_sandbox(response_gen) as (sandbox, _):
+            session = sandbox.shell()
+            chunks = list(session.output)
+            session.stdin.close().result()
+            result = session.result()
+
+        # Output is raw bytes, preserved without decode
+        assert len(chunks) == 1
+        assert isinstance(chunks[0], bytes)
+        assert chunks[0] == raw_data
+        assert result.returncode == 0
+
+    def test_shell_no_output_buffering(self, mock_aviato_api_key: str) -> None:
+        """shell() returns TerminalResult without accumulated output."""
+        from aviato._types import TerminalResult
+
+        output_response = MagicMock()
+        output_response.HasField = lambda field: field == "output"
+        output_response.output.data = b"some output\n"
+
+        async def response_gen() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = MagicMock()
+            yield ready
+            yield output_response
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 42
+            yield exit_resp
+
+        with self._shell_sandbox(response_gen) as (sandbox, _):
+            session = sandbox.shell()
+            # Consume output
+            list(session.output)
+            session.stdin.close().result()
+            result = session.result()
+
+        assert isinstance(result, TerminalResult)
+        assert result.returncode == 42
+        # TerminalResult has no stdout/stderr fields
+        assert not hasattr(result, "stdout")
+        assert not hasattr(result, "stderr")
+
+    def test_shell_resize_sends_message(self, mock_aviato_api_key: str) -> None:
+        """session.resize() sends an ExecStreamResize in the gRPC request stream."""
+        captured_requests: list[Any] = []
+        resize_captured = asyncio.Event()
+
+        def capture_write(request: Any) -> None:
+            captured_requests.append(request)
+            if request.HasField("resize"):
+                resize_captured.set()
+
+        async def response_gen() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = MagicMock()
+            yield ready
+            await resize_captured.wait()
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 0
+            yield exit_resp
+
+        with self._shell_sandbox(response_gen, on_write=capture_write) as (sandbox, _):
+            session = sandbox.shell(width=80, height=24)
+            session.resize(120, 40)
+            session.stdin.close().result()
+            session.result()
+
+        resize_requests = [r for r in captured_requests if r.HasField("resize")]
+        assert len(resize_requests) == 1
+        assert resize_requests[0].resize.width == 120
+        assert resize_requests[0].resize.height == 40
+
+    def test_shell_error_response_raises(self, mock_aviato_api_key: str) -> None:
+        """shell() raises SandboxExecutionError on gRPC error response."""
+        from aviato.exceptions import SandboxExecutionError
+
+        error_response = MagicMock()
+        error_response.HasField = lambda field: field == "error"
+        error_response.error.message = "exec failed"
+
+        async def response_gen() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = MagicMock()
+            yield ready
+            yield error_response
+
+        with self._shell_sandbox(response_gen) as (sandbox, _):
+            session = sandbox.shell()
+            # Consume output to drain the stream
+            list(session.output)
+            with pytest.raises(SandboxExecutionError, match="exec failed"):
+                session.result()
+
+    def test_shell_stopped_sandbox_raises(self, mock_aviato_api_key: str) -> None:
+        """shell() raises SandboxNotRunningError on a stopped sandbox."""
+        sandbox = Sandbox(base_url="http://localhost:50051")
+        sandbox._sandbox_id = "test-sandbox-id"
+        sandbox._stopped = True
+
+        session = sandbox.shell()
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            session.result()
+
+    def test_shell_increments_exec_count(self) -> None:
+        """shell() increments _exec_count under _exec_stats_lock."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+
+        with (
+            patch.object(sandbox, "_exec_streaming_tty_async", new=MagicMock()),
+            patch.object(sandbox._loop_manager, "run_async", return_value=MagicMock()),
+        ):
+            sandbox.shell()
+            assert sandbox._exec_count == 1
+
+            sandbox.shell()
+            assert sandbox._exec_count == 2

@@ -14,8 +14,7 @@ import uuid
 import httpx
 import pytest
 
-from aviato import NetworkOptions, Sandbox, SandboxDefaults, Session
-from aviato._sandbox import SandboxStatus
+from aviato import NetworkOptions, Sandbox, SandboxDefaults, SandboxStatus, Session
 from tests.integration.aviato.conftest import _SESSION_TAG
 
 
@@ -1051,6 +1050,40 @@ def test_stream_logs_does_not_disrupt_sandbox(sandbox_defaults: SandboxDefaults)
         result = sandbox.exec(["echo", "still alive"]).result()
         assert result.returncode == 0
         assert "still alive" in result.stdout
+
+        # Verify sandbox is not in an error state
+        status = sandbox.get_status()
+        assert status == SandboxStatus.RUNNING
+
+
+def test_shell_does_not_disrupt_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """Shell session must not disrupt a running sandbox.
+
+    Verifies the critical invariant: after a shell session ends,
+    the sandbox continues operating normally (exec still works, no error state).
+    """
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        # Open shell session
+        session = sandbox.shell(
+            ["/bin/sh"],
+            width=80,
+            height=24,
+        )
+
+        # Send a command and exit
+        session.stdin.writeline("echo hello-tty").result()
+        session.stdin.writeline("exit").result()
+
+        # Consume output and wait for exit
+        for _chunk in session.output:
+            pass
+        exit_code = session.wait(timeout=10.0)
+        assert exit_code == 0
+
+        # Critical check: sandbox still works normally after shell session
+        check_result = sandbox.exec(["echo", "still alive"]).result()
+        assert check_result.returncode == 0
+        assert "still alive" in check_result.stdout
 
         # Verify sandbox is not in an error state
         status = sandbox.get_status()

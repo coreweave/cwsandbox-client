@@ -51,6 +51,8 @@ from aviato._types import (
     ProcessResult,
     StreamReader,
     StreamWriter,
+    TerminalResult,
+    TerminalSession,
 )
 from aviato.exceptions import (
     AviatoAuthenticationError,
@@ -65,6 +67,8 @@ from aviato.exceptions import (
 )
 
 if TYPE_CHECKING:
+    import concurrent.futures
+
     from aviato._session import Session
 
 logger = logging.getLogger(__name__)
@@ -988,13 +992,14 @@ class Sandbox:
 
     def _on_exec_complete(
         self,
-        result: ProcessResult | None,
+        result: ProcessResult | TerminalResult | None,
         exception: BaseException | None,
     ) -> None:
         """Record exec completion outcome for metrics.
 
         Args:
-            result: The ProcessResult if execution completed, None on failure
+            result: The ProcessResult or TerminalResult if execution completed,
+                None on failure
             exception: The exception if execution failed, None on success
         """
         with self._exec_stats_lock:
@@ -2317,6 +2322,326 @@ class Sandbox:
             stats_callback=self._on_exec_complete,
         )
 
+    async def _exec_streaming_tty_async(
+        self,
+        command: Sequence[str],
+        output_queue: asyncio.Queue[bytes | Exception | None],
+        *,
+        stdin_queue: asyncio.Queue[bytes | None],
+        stdin_writer: StreamWriter,
+        resize_queue: asyncio.Queue[tuple[int, int] | None],
+        tty_width: int | None = None,
+        tty_height: int | None = None,
+    ) -> TerminalResult:
+        """Internal async: Execute TTY command, push raw bytes to output queue.
+
+        Unlike _exec_streaming_async, this method:
+        - Does not accumulate stdout/stderr into a final in-memory buffer
+          (output is streamed via queues and must be consumed by the caller)
+        - Pushes raw bytes to the output queue (no UTF-8 decode)
+        - Returns TerminalResult (exit code only)
+        - Always operates in TTY mode
+        - No client-side timeout (interactive sessions are open-ended)
+        """
+        if not command:
+            raise ValueError("Command cannot be empty")
+
+        try:
+            await self._ensure_started_async()
+            if self._stopped:
+                raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+            if self._sandbox_id is None:
+                raise SandboxNotRunningError("No sandbox is running")
+
+            await self._wait_until_running_async()
+
+            await self._ensure_client()
+            channel = await self._get_or_create_streaming_channel()
+            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+
+            auth_metadata = self._auth_metadata
+
+            logger.debug(
+                "Opening TTY session in sandbox %s: %s",
+                self._sandbox_id,
+                shlex.join(command),
+            )
+
+            exit_code: int | None = None
+            shutdown_event = asyncio.Event()
+            ready_event = asyncio.Event()
+            request_error: Exception | None = None
+            exec_start_time = time.monotonic()
+
+            async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+                """Generate request messages for the TTY bidirectional stream."""
+                init_msg = streaming_pb2.ExecStreamInit(
+                    sandbox_id=self._sandbox_id,
+                    command=list(command),
+                    tty=True,
+                )
+                if tty_width is not None:
+                    init_msg.tty_width = tty_width
+                if tty_height is not None:
+                    init_msg.tty_height = tty_height
+                yield streaming_pb2.ExecStreamRequest(init=init_msg)
+
+                nonlocal request_error
+                ready_timeout = 5.0
+                try:
+                    await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
+                except TimeoutError:
+                    request_error = SandboxTimeoutError(
+                        "stdin ready signal not received within timeout"
+                    )
+                    shutdown_event.set()
+                    raise request_error from None
+
+                # Multiplex stdin + resize.  Reuse tasks across iterations;
+                # only recreate a task after its result has been consumed.
+                shutdown_task = asyncio.create_task(shutdown_event.wait())
+                get_task: asyncio.Task[bytes | None] = asyncio.create_task(stdin_queue.get())
+                resize_task: asyncio.Task[tuple[int, int] | None] = asyncio.create_task(
+                    resize_queue.get()
+                )
+
+                while not shutdown_event.is_set():
+                    try:
+                        done, _pending = await asyncio.wait(
+                            [get_task, shutdown_task, resize_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+
+                        if shutdown_task in done:
+                            remaining: list[asyncio.Task[Any]] = [get_task, resize_task]
+                            for t in remaining:
+                                if not t.done():
+                                    t.cancel()
+                                    with contextlib.suppress(asyncio.CancelledError):
+                                        await t
+                            return
+
+                        if resize_task in done:
+                            dims = resize_task.result()
+                            resize_task = asyncio.create_task(resize_queue.get())
+                            if dims is not None:
+                                w, h = dims
+                                yield streaming_pb2.ExecStreamRequest(
+                                    resize=streaming_pb2.ExecStreamResize(width=w, height=h)
+                                )
+                            if get_task not in done:
+                                continue
+
+                        if get_task in done:
+                            data = get_task.result()
+                            if data is None:
+                                yield streaming_pb2.ExecStreamRequest(
+                                    close=streaming_pb2.ExecStreamClose()
+                                )
+                                to_cancel: list[asyncio.Task[Any]] = [resize_task, shutdown_task]
+                                for t in to_cancel:
+                                    if not t.done():
+                                        t.cancel()
+                                        with contextlib.suppress(asyncio.CancelledError):
+                                            await t
+                                return
+
+                            get_task = asyncio.create_task(stdin_queue.get())
+                            for i in range(0, len(data), STDIN_CHUNK_SIZE):
+                                chunk = data[i : i + STDIN_CHUNK_SIZE]
+                                yield streaming_pb2.ExecStreamRequest(
+                                    stdin=streaming_pb2.ExecStreamData(data=chunk)
+                                )
+                    except asyncio.CancelledError:
+                        cleanup: list[asyncio.Task[Any]] = [get_task, resize_task, shutdown_task]
+                        for t in cleanup:
+                            if not t.done():
+                                t.cancel()
+                                with contextlib.suppress(asyncio.CancelledError):
+                                    await t
+                        return
+
+            # No client-side timeout for interactive sessions
+            call: grpc.aio.StreamStreamCall[
+                streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+            ] = stub.StreamExec(
+                request_iterator=request_generator(),
+                timeout=None,
+                metadata=auth_metadata,
+            )
+
+            # Bounded queue propagates backpressure to gRPC reads — when the
+            # consumer is slow, collect_responses() blocks on put(), stopping
+            # reads from gRPC.  Without this bound, long-lived TTY sessions
+            # can accumulate unlimited protobuf messages in memory.
+            response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
+                asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
+            )
+
+            async def collect_responses() -> None:
+                """Collect responses from gRPC streaming call into queue."""
+                try:
+                    async for response in call:
+                        await response_queue.put(response)
+                        if response.HasField("exit") or response.HasField("error"):
+                            return
+                except grpc.aio.AioRpcError as e:
+                    await response_queue.put(e)
+                except Exception as e:
+                    await response_queue.put(e)
+                finally:
+                    await response_queue.put(None)
+
+            collect_task = asyncio.create_task(collect_responses())
+
+            try:
+                while True:
+                    item = await response_queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, grpc.aio.AioRpcError):
+                        raise _translate_rpc_error(
+                            item, sandbox_id=self._sandbox_id, operation="TTY exec"
+                        )
+                    if isinstance(item, Exception):
+                        raise item
+
+                    response = item
+                    if response.HasField("ready"):
+                        ready_latency = time.monotonic() - exec_start_time
+                        logger.debug(
+                            "TTY stdin ready signal received",
+                            extra={
+                                "sandbox_id": self._sandbox_id,
+                                "ready_latency_ms": ready_latency * 1000,
+                                "ready_at": response.ready.ready_at.ToDatetime().isoformat(),
+                            },
+                        )
+                        ready_event.set()
+
+                    elif response.HasField("output"):
+                        # Raw bytes — no decode, no buffer
+                        await output_queue.put(response.output.data)
+
+                    elif response.HasField("exit"):
+                        ready_event.set()
+                        exit_code = response.exit.exit_code
+                        break
+
+                    elif response.HasField("error"):
+                        ready_event.set()
+                        raise SandboxExecutionError(
+                            f"Exec stream error: {response.error.message}",
+                        )
+            finally:
+                ready_event.set()
+                shutdown_event.set()
+                collect_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await collect_task
+                stdin_writer.set_exception(SandboxExecutionError("Terminal session has ended"))
+                try:
+                    output_queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass  # Consumer stopped; sentinel not needed
+
+            if request_error is not None:
+                raise request_error
+
+            return TerminalResult(
+                returncode=exit_code if exit_code is not None else -1,
+                command=list(command),
+            )
+        except Exception as exc:
+            # Early failures (before the inner try/finally) must propagate to
+            # the consumer so it doesn't hang waiting on a sentinel that never
+            # arrives.  StreamReader stops iteration on Exception, so no
+            # trailing None sentinel is needed.
+            await output_queue.put(exc)
+            raise
+
+    def shell(
+        self,
+        command: Sequence[str] | None = None,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> TerminalSession:
+        """Start an interactive TTY session in the sandbox.
+
+        Returns a TerminalSession optimized for interactive terminal use:
+        raw byte output (no decode/re-encode), no output buffering, and
+        fire-and-forget stdin.
+
+        Args:
+            command: Shell command to execute. Defaults to ["/bin/bash"].
+                Accepts a sequence like ["/bin/sh"] or ["/usr/bin/python3"].
+            width: Initial terminal width in columns.
+            height: Initial terminal height in rows.
+
+        Returns:
+            TerminalSession handle with .output (StreamReader[bytes]),
+            .stdin (StreamWriter), and .resize(w, h).
+
+        Raises:
+            ValueError: If command is explicitly empty.
+
+        Example:
+            ```python
+            session = sandbox.shell(width=80, height=24)
+            session.stdin.writeline("echo hello")
+            for chunk in session.output:
+                sys.stdout.buffer.write(chunk)
+            exit_code = session.wait()
+            ```
+        """
+        if command is None:
+            command = ["/bin/bash"]
+        if not command:
+            raise ValueError("Command cannot be empty")
+
+        with self._exec_stats_lock:
+            self._exec_count += 1
+
+        # Bounded queue provides backpressure for potentially unbounded TTY output
+        # (interactive shells can run indefinitely). Contrast with exec stdout/stderr
+        # queues which are unbounded because exec output is finite.
+        output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue(maxsize=4096)
+
+        stdin_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=StreamWriter.QUEUE_SIZE)
+        stdin_writer = StreamWriter(stdin_queue, self._loop_manager)
+
+        resize_queue: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+
+        session_future = self._loop_manager.run_async(
+            self._exec_streaming_tty_async(
+                command=command,
+                output_queue=output_queue,
+                stdin_queue=stdin_queue,
+                stdin_writer=stdin_writer,
+                resize_queue=resize_queue,
+                tty_width=width,
+                tty_height=height,
+            )
+        )
+
+        def _on_tty_complete(fut: concurrent.futures.Future[TerminalResult]) -> None:
+            try:
+                tty_result = fut.result()
+                self._on_exec_complete(tty_result, None)
+            except BaseException as exc:
+                self._on_exec_complete(None, exc)
+
+        session_future.add_done_callback(_on_tty_complete)
+
+        return TerminalSession(
+            future=session_future,
+            command=list(command),
+            output=StreamReader(output_queue, self._loop_manager),
+            stdin=stdin_writer,
+            resize_queue=resize_queue,
+        )
+
     async def _read_file_async(
         self,
         filepath: str,
@@ -2465,7 +2790,7 @@ class Sandbox:
         tail_lines: int | None = None,
         since_time: datetime | None = None,
         timestamps: bool = False,
-    ) -> StreamReader:
+    ) -> StreamReader[str]:
         """Stream logs from the sandbox.
 
         Returns a StreamReader that yields log lines as strings. The method
