@@ -270,7 +270,7 @@ class TestStreamReader:
 
     def test_stream_reader_sync_iteration(self) -> None:
         """Test StreamReader works with sync for loop."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         queue.put_nowait("line1")
         queue.put_nowait("line2")
         queue.put_nowait(None)  # Sentinel
@@ -283,7 +283,7 @@ class TestStreamReader:
 
     def test_stream_reader_stops_on_sentinel(self) -> None:
         """Test StreamReader stops iteration on None sentinel."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         queue.put_nowait("only_line")
         queue.put_nowait(None)  # Sentinel
 
@@ -295,7 +295,7 @@ class TestStreamReader:
 
     def test_stream_reader_exhausted_raises_stop_iteration(self) -> None:
         """Test exhausted StreamReader raises StopIteration immediately."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         queue.put_nowait(None)  # Immediately exhausted
 
         mock_manager = self._create_mock_loop_manager()
@@ -311,7 +311,7 @@ class TestStreamReader:
     @pytest.mark.asyncio
     async def test_stream_reader_async_iteration(self) -> None:
         """Test StreamReader works with async for loop."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         await queue.put("async_line1")
         await queue.put("async_line2")
         await queue.put(None)  # Sentinel
@@ -325,7 +325,7 @@ class TestStreamReader:
     @pytest.mark.asyncio
     async def test_stream_reader_async_stops_on_sentinel(self) -> None:
         """Test StreamReader async iteration stops on None sentinel."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         await queue.put("single")
         await queue.put(None)
 
@@ -338,7 +338,7 @@ class TestStreamReader:
     @pytest.mark.asyncio
     async def test_stream_reader_async_exhausted_raises_stop(self) -> None:
         """Test exhausted StreamReader raises StopAsyncIteration."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         await queue.put(None)
 
         mock_manager = MagicMock()
@@ -348,6 +348,50 @@ class TestStreamReader:
         _ = [line async for line in reader]
 
         # Further iteration should raise immediately
+        with pytest.raises(StopAsyncIteration):
+            await reader.__anext__()
+
+    def test_stream_reader_sync_exception_propagation(self) -> None:
+        """Test StreamReader re-raises exceptions from the queue."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        queue.put_nowait("line1")
+        queue.put_nowait(RuntimeError("stream error"))
+        queue.put_nowait(None)
+
+        mock_manager = self._create_mock_loop_manager()
+        reader = StreamReader(queue, mock_manager)
+
+        # First item succeeds
+        assert next(reader) == "line1"
+
+        # Second item raises the exception
+        with pytest.raises(RuntimeError, match="stream error"):
+            next(reader)
+
+        # Reader is exhausted after exception
+        with pytest.raises(StopIteration):
+            next(reader)
+
+    @pytest.mark.asyncio
+    async def test_stream_reader_async_exception_propagation(self) -> None:
+        """Test StreamReader re-raises exceptions in async iteration."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        await queue.put("line1")
+        await queue.put(ValueError("async stream error"))
+        await queue.put(None)
+
+        mock_manager = MagicMock()
+        reader = StreamReader(queue, mock_manager)
+
+        # First item succeeds
+        line = await reader.__anext__()
+        assert line == "line1"
+
+        # Second item raises the exception
+        with pytest.raises(ValueError, match="async stream error"):
+            await reader.__anext__()
+
+        # Reader is exhausted after exception
         with pytest.raises(StopAsyncIteration):
             await reader.__anext__()
 
@@ -668,7 +712,7 @@ class TestProcess:
 
     def _create_mock_stream_reader(self) -> StreamReader:
         """Create a mock StreamReader for testing."""
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         queue.put_nowait(None)  # Empty stream
         mock_manager = MagicMock()
         return StreamReader(queue, mock_manager)
