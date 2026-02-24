@@ -10,6 +10,7 @@ import contextlib
 import logging
 import os
 import shlex
+import threading
 import time
 import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
@@ -360,7 +361,8 @@ class Sandbox:
         self._applied_ingress_mode: str | None = None
         self._applied_egress_mode: str | None = None
 
-        # Execution statistics for metrics
+        # Execution statistics for metrics (protected by _exec_stats_lock)
+        self._exec_stats_lock = threading.Lock()
         self._exec_count = 0
         self._exec_completed_ok = 0
         self._exec_completed_nonzero = 0
@@ -559,7 +561,8 @@ class Sandbox:
         # TODO: Add applied_ingress_mode/applied_egress_mode once backend adds to GetSandboxResponse
         sandbox._applied_ingress_mode = None
         sandbox._applied_egress_mode = None
-        # Exec stats for discovered sandboxes
+        # Exec stats for discovered sandboxes (protected by _exec_stats_lock)
+        sandbox._exec_stats_lock = threading.Lock()
         sandbox._exec_count = 0
         sandbox._exec_completed_ok = 0
         sandbox._exec_completed_nonzero = 0
@@ -974,12 +977,13 @@ class Sandbox:
             - exec_failures: Execs that failed with an exception (including
               SandboxExecutionError from check=True with non-zero exit)
         """
-        return {
-            "exec_count": self._exec_count,
-            "exec_completed_ok": self._exec_completed_ok,
-            "exec_completed_nonzero": self._exec_completed_nonzero,
-            "exec_failures": self._exec_failures,
-        }
+        with self._exec_stats_lock:
+            return {
+                "exec_count": self._exec_count,
+                "exec_completed_ok": self._exec_completed_ok,
+                "exec_completed_nonzero": self._exec_completed_nonzero,
+                "exec_failures": self._exec_failures,
+            }
 
     def _on_exec_complete(
         self,
@@ -992,18 +996,19 @@ class Sandbox:
             result: The ProcessResult if execution completed, None on failure
             exception: The exception if execution failed, None on success
         """
-        if exception is not None:
-            self._exec_failures += 1
-            outcome = ExecOutcome.FAILURE
-        elif result is not None:
-            if result.returncode == 0:
-                self._exec_completed_ok += 1
-                outcome = ExecOutcome.COMPLETED_OK
+        with self._exec_stats_lock:
+            if exception is not None:
+                self._exec_failures += 1
+                outcome = ExecOutcome.FAILURE
+            elif result is not None:
+                if result.returncode == 0:
+                    self._exec_completed_ok += 1
+                    outcome = ExecOutcome.COMPLETED_OK
+                else:
+                    self._exec_completed_nonzero += 1
+                    outcome = ExecOutcome.COMPLETED_NONZERO
             else:
-                self._exec_completed_nonzero += 1
-                outcome = ExecOutcome.COMPLETED_NONZERO
-        else:
-            return
+                return
 
         if self._session is not None:
             self._session._record_exec_outcome(outcome, self._sandbox_id)
@@ -2126,7 +2131,8 @@ class Sandbox:
         _validate_cwd(cwd)
 
         # Track exec count for metrics
-        self._exec_count += 1
+        with self._exec_stats_lock:
+            self._exec_count += 1
 
         # Unbounded queues prevent data loss when producer fills queue before consumer iterates.
         # Bounded queues caused race conditions with HTTP/2 stream buffering.
