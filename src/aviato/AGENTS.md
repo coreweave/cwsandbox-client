@@ -42,7 +42,7 @@ All public methods return immediately. Blocking happens via:
 
 The `_LoopManager` runs async code in a background daemon thread, enabling sync usage without user-managed event loops.
 
-**Thread Safety**: The API is designed for **single-threaded use**. No internal locking is provided - users wanting multi-threaded access must add their own synchronization. This is intentional to keep the implementation simple.
+**Thread Safety**: The public API is designed for **single-threaded use**. Users wanting multi-threaded access to the same sandbox must add their own synchronization.
 
 ### Adding New Sandbox Methods
 
