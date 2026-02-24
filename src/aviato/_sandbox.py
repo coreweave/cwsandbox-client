@@ -2042,8 +2042,8 @@ class Sandbox:
     async def _exec_streaming_async(
         self,
         command: Sequence[str],
-        stdout_queue: asyncio.Queue[str | None],
-        stderr_queue: asyncio.Queue[str | None],
+        stdout_queue: asyncio.Queue[str | Exception | None],
+        stderr_queue: asyncio.Queue[str | Exception | None],
         *,
         cwd: str | None = None,
         check: bool = False,
@@ -2378,8 +2378,8 @@ class Sandbox:
 
         # Unbounded queues prevent data loss when producer fills queue before consumer iterates.
         # Bounded queues caused race conditions with HTTP/2 stream buffering.
-        stdout_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        stderr_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        stdout_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        stderr_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
 
         # Stdin queue is bounded to provide backpressure
         stdin_queue: asyncio.Queue[bytes | None] | None = None
