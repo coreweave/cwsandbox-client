@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from aviato import NetworkOptions, Sandbox, SandboxDefaults, Session
+from aviato._sandbox import SandboxStatus
 from tests.integration.aviato.conftest import _SESSION_TAG
 
 
@@ -1023,3 +1024,34 @@ async def test_sandbox_exec_stdin_async(sandbox_defaults: SandboxDefaults) -> No
         result = await process
         assert "from-async" in result.stdout
         assert result.returncode == 0
+
+
+def test_stream_logs_does_not_disrupt_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """Streaming logs must not disrupt a running sandbox.
+
+    Verifies the critical invariant: after a log streaming session ends,
+    the sandbox continues operating normally (exec still works, no error state).
+
+    Uses a container command that writes to stdout (container logs) before
+    sleeping, since exec() output goes through the exec stream, not container logs.
+    """
+    with Sandbox.run(
+        "sh",
+        "-c",
+        "echo 'container-log-marker' && sleep infinity",
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        # Stream logs — container's main process wrote to stdout
+        lines = list(sandbox.stream_logs(tail_lines=10))
+        assert any(
+            "container-log-marker" in line for line in lines
+        ), f"Expected log marker in container logs, got: {lines}"
+
+        # Critical check: sandbox still works normally after log streaming
+        result = sandbox.exec(["echo", "still alive"]).result()
+        assert result.returncode == 0
+        assert "still alive" in result.stdout
+
+        # Verify sandbox is not in an error state
+        status = sandbox.get_status()
+        assert status == SandboxStatus.RUNNING

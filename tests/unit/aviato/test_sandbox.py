@@ -2934,3 +2934,253 @@ class TestCrossLoopRegression:
                     assert result is sandbox
                 finally:
                     loop.close()
+
+
+def _stream_logs_sandbox(responses=None, *, error_on_read=None, stream_logs_fn=None, stopped=False):
+    """Create a sandbox wired to a MockStreamCall for stream_logs tests.
+
+    Yields (sandbox, mock_call, mock_stub) inside a patch context that stubs
+    out gRPC networking so stream_logs can run without a real backend.
+
+    Args:
+        responses: List of LogStreamResponse protobufs to replay.
+        error_on_read: Exception to raise during gRPC iteration.
+        stream_logs_fn: Custom callable for ``mock_stub.StreamLogs``.
+            When provided, this replaces the default MagicMock so tests
+            can capture the request iterator.
+        stopped: If True, the sandbox is marked as stopped before yielding.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx():
+        sandbox = Sandbox(base_url="http://localhost:50051")
+        sandbox._sandbox_id = "test-sandbox-id"
+        sandbox._stopped = stopped
+
+        mock_call = MockStreamCall(responses=responses or [], error_on_read=error_on_read)
+
+        with (
+            patch.object(type(sandbox), "_ensure_started_async", new_callable=AsyncMock),
+            patch.object(type(sandbox), "_wait_until_running_async", new_callable=AsyncMock),
+            patch.object(type(sandbox), "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                type(sandbox),
+                "_get_or_create_streaming_channel",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch("aviato._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub") as mock_stub_cls,
+        ):
+            mock_stub = MagicMock()
+            if stream_logs_fn:
+                mock_stub.StreamLogs = stream_logs_fn
+            else:
+                mock_stub.StreamLogs = MagicMock(return_value=mock_call)
+            mock_stub_cls.return_value = mock_stub
+            yield sandbox, mock_call, mock_stub
+
+    return _ctx()
+
+
+def test_stream_logs_delivers_data(mock_aviato_api_key: str) -> None:
+    """stream_logs delivers log lines from gRPC data messages."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"line one\n")),
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"line two\n")),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    with _stream_logs_sandbox(responses) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        lines = list(reader)
+
+    assert lines == ["line one\n", "line two\n"]
+
+
+def test_stream_logs_error_raises_sandbox_error(mock_aviato_api_key: str) -> None:
+    """stream_logs raises SandboxError when server sends error response."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(
+            error=streaming_pb2.LogStreamError(
+                message="sandbox not found", code="SANDBOX_NOT_FOUND"
+            )
+        ),
+    ]
+
+    with _stream_logs_sandbox(responses) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        with pytest.raises(SandboxError, match="sandbox not found"):
+            list(reader)
+
+
+def test_stream_logs_grpc_error_translates(mock_aviato_api_key: str) -> None:
+    """stream_logs translates gRPC errors to SDK exceptions."""
+    error = MockAioRpcError(grpc.StatusCode.NOT_FOUND, "sandbox not found")
+
+    with _stream_logs_sandbox(error_on_read=error) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        with pytest.raises(SandboxNotFoundError):
+            list(reader)
+
+
+def test_stream_logs_handles_partial_lines(mock_aviato_api_key: str) -> None:
+    """stream_logs buffers partial lines and delivers complete lines."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"partial ")),
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"line\ncomplete\n")),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    with _stream_logs_sandbox(responses) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        lines = list(reader)
+
+    assert lines == ["partial line\n", "complete\n"]
+
+
+def test_stream_logs_stopped_sandbox_raises(mock_aviato_api_key: str) -> None:
+    """stream_logs raises SandboxNotRunningError on a stopped sandbox."""
+    sandbox = Sandbox(base_url="http://localhost:50051")
+    sandbox._sandbox_id = "test-sandbox-id"
+    sandbox._stopped = True
+
+    reader = sandbox.stream_logs()
+    with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+        list(reader)
+
+
+def test_stream_logs_timestamps_in_init(mock_aviato_api_key: str) -> None:
+    """stream_logs sets timestamps=True in the init message and passes through data."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(
+            data=streaming_pb2.LogStreamData(data=b"2025-02-20T18:00:00Z hello world\n")
+        ),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    mock_call_ref: list[MockStreamCall] = []
+
+    def capture_stream_logs(*, request_iterator, metadata):
+        mock_call = MockStreamCall(responses=responses)
+        mock_call.set_request_iterator(request_iterator)
+        mock_call_ref.append(mock_call)
+        return mock_call
+
+    with _stream_logs_sandbox(responses, stream_logs_fn=capture_stream_logs) as (
+        sandbox,
+        _mock_call,
+        _mock_stub,
+    ):
+        reader = sandbox.stream_logs(timestamps=True)
+        lines = list(reader)
+
+    assert lines == ["2025-02-20T18:00:00Z hello world\n"]
+
+    # Verify the init message requested timestamps from the server.
+    captured = mock_call_ref[0]
+    assert len(captured._writes) >= 1
+    init_request = captured._writes[0]
+    assert init_request.HasField("init")
+    assert init_request.init.timestamps is True
+
+
+def test_stream_logs_follow_in_init(mock_aviato_api_key: str) -> None:
+    """stream_logs(follow=True) sets follow in the init message and delivers data."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(data=streaming_pb2.LogStreamData(data=b"follow line\n")),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    # With follow=True the request generator blocks after yielding the init
+    # message (it awaits a shutdown event).  MockStreamCall.consume_requests
+    # would hang trying to drain that iterator, so we capture the first
+    # request directly and build a plain MockStreamCall without an iterator.
+    captured_writes: list = []
+
+    def capture_stream_logs(*, request_iterator, metadata):
+        async def _grab_init():
+            captured_writes.append(await request_iterator.__anext__())
+
+        asyncio.get_event_loop().create_task(_grab_init())
+        return MockStreamCall(responses=responses)
+
+    with _stream_logs_sandbox(responses, stream_logs_fn=capture_stream_logs) as (
+        sandbox,
+        _unused_call,
+        _mock_stub,
+    ):
+        reader = sandbox.stream_logs(follow=True)
+        lines = list(reader)
+
+    assert lines == ["follow line\n"]
+
+    # Verify the init message requested follow mode.
+    assert len(captured_writes) >= 1
+    init_request = captured_writes[0]
+    assert init_request.HasField("init")
+    assert init_request.init.follow is True
+
+
+def test_stream_logs_tail_lines_in_init(mock_aviato_api_key: str) -> None:
+    """stream_logs passes tail_lines and since_time to the LogStreamInit message."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    mock_call_ref: list[MockStreamCall] = []
+
+    def capture_stream_logs(*, request_iterator, metadata):
+        mock_call = MockStreamCall(responses=responses)
+        mock_call.set_request_iterator(request_iterator)
+        mock_call_ref.append(mock_call)
+        return mock_call
+
+    with _stream_logs_sandbox(responses, stream_logs_fn=capture_stream_logs) as (
+        sandbox,
+        _mock_call,
+        _mock_stub,
+    ):
+        from datetime import UTC, datetime
+
+        since = datetime(2026, 2, 20, 14, 0, 0, tzinfo=UTC)
+        reader = sandbox.stream_logs(tail_lines=50, since_time=since)
+        list(reader)
+
+    # The init message is the first request consumed via the request_iterator.
+    captured = mock_call_ref[0]
+    assert len(captured._writes) >= 1
+    init_request = captured._writes[0]
+    assert init_request.HasField("init")
+    assert init_request.init.tail_lines == 50
+    assert init_request.init.HasField("since_time")
+
+
+def test_stream_logs_flushes_trailing_partial_line(mock_aviato_api_key: str) -> None:
+    """stream_logs flushes remaining data without trailing newline on complete."""
+    from coreweave.aviato.v1beta1 import streaming_pb2
+
+    responses = [
+        streaming_pb2.LogStreamResponse(
+            data=streaming_pb2.LogStreamData(data=b"no trailing newline")
+        ),
+        streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete()),
+    ]
+
+    with _stream_logs_sandbox(responses) as (sandbox, _mock_call, _mock_stub):
+        reader = sandbox.stream_logs()
+        lines = list(reader)
+
+    assert lines == ["no trailing newline"]

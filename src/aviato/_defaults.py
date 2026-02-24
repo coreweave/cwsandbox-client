@@ -39,6 +39,12 @@ DEFAULT_PROJECT_NAME: str = "uncategorized"
 # Max bytes per stdin chunk sent to the process
 STDIN_CHUNK_SIZE: int = 64 * 1024  # 64KB
 
+# Max protobuf response messages buffered between the gRPC read loop and
+# the processing loop.  Provides backpressure: when the consumer is slow,
+# the bounded queue blocks the gRPC reader, preventing unbounded memory
+# growth in long-lived streams (follow-mode logs, interactive TTY sessions).
+STREAMING_RESPONSE_QUEUE_SIZE: int = 256
+
 
 @dataclass(frozen=True)
 class SandboxDefaults:
