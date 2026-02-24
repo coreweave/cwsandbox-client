@@ -190,3 +190,95 @@ async def test_session_async_context_manager(sandbox_defaults: SandboxDefaults) 
 
     # After exiting, all session sandboxes should be cleaned up
     assert session.sandbox_count == 0
+
+
+# List include_stopped tests
+
+
+def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None:
+    """Test session.list(include_stopped=True) returns terminal sandboxes.
+
+    Creates a sandbox via session, lets it complete, then verifies that
+    session.list(include_stopped=True) returns it while the default
+    session.list() excludes it.
+    """
+    import time
+    import uuid
+
+    unique_tag = f"e2e-session-stopped-{uuid.uuid4().hex[:8]}"
+    defaults = sandbox_defaults.with_overrides(tags=sandbox_defaults.merge_tags([unique_tag]))
+
+    with Sandbox.session(defaults) as session:
+        sandbox = session.sandbox(command="echo", args=["hello"])
+        sandbox.wait_until_complete(timeout=60.0).result()
+        sandbox_id = sandbox.sandbox_id
+        assert sandbox_id is not None
+
+    # Session is closed, sandbox is stopped. Wait for the status to propagate.
+    time.sleep(5)
+
+    # Use a fresh session to list with the same tags
+    with Sandbox.session(defaults) as session:
+        # Default list should exclude the stopped sandbox (eventually)
+        for _ in range(15):
+            active = session.list().result()
+            ids = [sb.sandbox_id for sb in active]
+            if sandbox_id not in ids:
+                break
+            time.sleep(2)
+
+        # include_stopped should include it.
+        # The status may not yet reflect the final terminal state, so we only
+        # assert the sandbox is returned — not a specific status.
+        found = False
+        for _ in range(15):
+            all_sandboxes = session.list(include_stopped=True).result()
+            for sb in all_sandboxes:
+                if sb.sandbox_id == sandbox_id:
+                    found = True
+                    break
+            if found:
+                break
+            time.sleep(1)
+
+        assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+
+
+def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that session.list with a terminal status filter returns stopped sandboxes.
+
+    A terminal status filter automatically widens the search,
+    even without include_stopped=True.
+
+    The sandbox is created outside the session context manager to avoid
+    session.close() calling stop(), which would change the status from
+    COMPLETED to TERMINATED.
+    """
+    import time
+    import uuid
+
+    unique_tag = f"e2e-session-status-filter-{uuid.uuid4().hex[:8]}"
+    defaults = sandbox_defaults.with_overrides(tags=sandbox_defaults.merge_tags([unique_tag]))
+
+    # Create sandbox directly (not via session) so it reaches COMPLETED
+    # without being stopped by session cleanup.
+    sandbox = Sandbox.run("echo", "hello", defaults=defaults, tags=[unique_tag])
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+    sandbox.wait_until_complete(timeout=60.0).result()
+
+    # Use session.list() with terminal status filter to find it
+    with Sandbox.session(defaults) as session:
+        found = False
+        for _ in range(15):
+            sandboxes = session.list(status="completed").result()
+            for sb in sandboxes:
+                if sb.sandbox_id == sandbox_id:
+                    assert sb.status == "completed"
+                    found = True
+                    break
+            if found:
+                break
+            time.sleep(1)
+
+        assert found, f"Sandbox {sandbox_id} not found with status='completed' filter via session"

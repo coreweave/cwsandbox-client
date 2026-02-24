@@ -1023,3 +1023,120 @@ async def test_sandbox_exec_stdin_async(sandbox_defaults: SandboxDefaults) -> No
         result = await process
         assert "from-async" in result.stdout
         assert result.returncode == 0
+
+
+# List and Get endpoint tests
+
+
+def test_sandbox_list_excludes_stopped_by_default(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that default list() excludes terminal (stopped) sandboxes.
+
+    Creates a sandbox, stops it, then verifies it does not appear in the
+    default list results. The backend now filters out terminal sandboxes
+    from the default list response.
+    """
+    unique_tag = f"e2e-list-stopped-{uuid.uuid4().hex[:8]}"
+
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults, tags=[unique_tag])
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+
+    # Wait for sandbox to complete (echo exits immediately)
+    sandbox.wait_until_complete(timeout=60.0).result()
+
+    # Default list should exclude the stopped sandbox.
+    # Poll until the status propagates (may take a few seconds).
+    for _ in range(15):
+        sandboxes = Sandbox.list(tags=[unique_tag]).result()
+        ids = [sb.sandbox_id for sb in sandboxes]
+        if sandbox_id not in ids:
+            break
+        time.sleep(2)
+    else:
+        pytest.fail(f"Stopped sandbox {sandbox_id} still appears in default list after 30s")
+
+
+def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that list(include_stopped=True) includes terminal sandboxes.
+
+    Creates a sandbox, stops it, then verifies it appears when
+    include_stopped=True is set.
+    """
+    unique_tag = f"e2e-include-stopped-{uuid.uuid4().hex[:8]}"
+
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults, tags=[unique_tag])
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+
+    # Wait for sandbox to reach terminal state
+    sandbox.wait_until_complete(timeout=60.0).result()
+
+    # With include_stopped=True, the sandbox should appear.
+    # The status may not yet reflect the final terminal state, so we only
+    # assert the sandbox is returned — not a specific status.
+    found = False
+    for _ in range(15):
+        sandboxes = Sandbox.list(tags=[unique_tag], include_stopped=True).result()
+        for sb in sandboxes:
+            if sb.sandbox_id == sandbox_id:
+                found = True
+                break
+        if found:
+            break
+        time.sleep(1)
+
+    assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+
+
+def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that listing with a terminal status filter returns stopped sandboxes.
+
+    A terminal status filter automatically widens the search,
+    even without include_stopped=True.
+    """
+    unique_tag = f"e2e-status-filter-{uuid.uuid4().hex[:8]}"
+
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults, tags=[unique_tag])
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+
+    # Wait for terminal state
+    sandbox.wait_until_complete(timeout=60.0).result()
+
+    # Filtering by a terminal status should return the sandbox
+    found = False
+    for _ in range(15):
+        sandboxes = Sandbox.list(tags=[unique_tag], status="completed").result()
+        for sb in sandboxes:
+            if sb.sandbox_id == sandbox_id:
+                assert sb.status == "completed"
+                found = True
+                break
+        if found:
+            break
+        time.sleep(1)
+
+    assert found, f"Sandbox {sandbox_id} not found with status='completed' filter"
+
+
+def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that from_id() returns stopped sandboxes.
+
+    Previously, Get on a stopped sandbox returned NOT_FOUND. Now the
+    backend returns the historical record with terminal status.
+    """
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults)
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+
+    # Wait for sandbox to reach terminal state
+    sandbox.wait_until_complete(timeout=60.0).result()
+
+    # Wait for the stopped status to propagate.
+    time.sleep(5)
+
+    # from_id should still return the sandbox after it has stopped.
+    # The backend may return UNSPECIFIED for the stopped sandbox's status.
+    recovered = Sandbox.from_id(sandbox_id).result()
+    assert recovered.sandbox_id == sandbox_id
+    assert recovered.status in ("completed", "terminated", "failed", "unspecified")
