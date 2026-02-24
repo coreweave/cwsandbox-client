@@ -13,6 +13,7 @@ import shlex
 import time
 import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -173,6 +174,87 @@ def _translate_rpc_error(
         return AviatoAuthenticationError(f"Authentication failed: {details}")
     else:
         return SandboxError(f"{operation} failed: {details}")
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle state types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _NotStarted:
+    cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class _Starting:
+    sandbox_id: str
+    status: SandboxStatus = SandboxStatus.PENDING
+
+
+@dataclass(frozen=True)
+class _Running:
+    sandbox_id: str
+    status: SandboxStatus = SandboxStatus.RUNNING
+    tower_id: str | None = None
+    runway_id: str | None = None
+    tower_group_id: str | None = None
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class _Terminal:
+    sandbox_id: str
+    status: SandboxStatus
+    returncode: int | None = None
+    tower_id: str | None = None
+    runway_id: str | None = None
+    tower_group_id: str | None = None
+    started_at: datetime | None = None
+
+
+_LifecycleState = _NotStarted | _Starting | _Running | _Terminal
+
+_RUNNING_STATUSES = frozenset({SandboxStatus.RUNNING, SandboxStatus.PAUSED})
+_TERMINAL_STATUSES = frozenset(
+    {SandboxStatus.COMPLETED, SandboxStatus.FAILED, SandboxStatus.TERMINATED}
+)
+
+
+def _lifecycle_state_from_info(
+    *,
+    sandbox_id: str,
+    status: SandboxStatus,
+    tower_id: str | None = None,
+    runway_id: str | None = None,
+    tower_group_id: str | None = None,
+    started_at: datetime | None = None,
+    returncode: int | None = None,
+) -> _LifecycleState:
+    """Build a lifecycle state from sandbox info fields.
+
+    Used by _from_sandbox_info (construct) and _apply_sandbox_info (poll/query).
+    """
+    if status in _RUNNING_STATUSES:
+        return _Running(
+            sandbox_id=sandbox_id,
+            status=status,
+            tower_id=tower_id,
+            runway_id=runway_id,
+            tower_group_id=tower_group_id,
+            started_at=started_at,
+        )
+    if status in _TERMINAL_STATUSES:
+        return _Terminal(
+            sandbox_id=sandbox_id,
+            status=status,
+            returncode=returncode,
+            tower_id=tower_id,
+            runway_id=runway_id,
+            tower_group_id=tower_group_id,
+            started_at=started_at,
+        )
+    return _Starting(sandbox_id=sandbox_id, status=status)
 
 
 class Sandbox:
@@ -342,6 +424,8 @@ class Sandbox:
         # sandboxes, we can remove this and query backend status directly.
         self._stopped = False
         self._start_lock = asyncio.Lock()
+
+        self._state: _LifecycleState = _NotStarted()
 
         # Shared polling task for _wait_until_running_async deduplication
         self._running_task: asyncio.Task[None] | None = None
@@ -1002,6 +1086,75 @@ class Sandbox:
             "exec_completed_nonzero": self._exec_completed_nonzero,
             "exec_failures": self._exec_failures,
         }
+
+    @property
+    def _is_done(self) -> bool:
+        """True when sandbox has reached a terminal state or was cancelled before start."""
+        return isinstance(self._state, _Terminal) or (
+            isinstance(self._state, _NotStarted) and self._state.cancelled
+        )
+
+    @staticmethod
+    def _raise_or_return_for_terminal(state: _Terminal) -> None:
+        """Raise the appropriate error for FAILED/TERMINATED, or return for COMPLETED."""
+        if state.status == SandboxStatus.FAILED:
+            raise SandboxFailedError(f"Sandbox {state.sandbox_id} failed")
+        if state.status == SandboxStatus.TERMINATED:
+            raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
+
+    def _apply_sandbox_info(
+        self,
+        info: Any,
+        source: str = "poll",
+    ) -> _LifecycleState:
+        """Compute a new lifecycle state from a sandbox info/response protobuf.
+
+        Guards against regressing from terminal or cancelled states.
+
+        Args:
+            info: Protobuf response with sandbox_status, tower_id, runway_id,
+                tower_group_id, started_at_time, and optionally returncode fields.
+            source: Controls returncode behavior:
+                "poll" - set returncode (polling observed the exit)
+                "query" - omit returncode (get_status/list/from_id)
+                "construct" - omit returncode (building from _from_sandbox_info)
+
+        Returns:
+            The new _LifecycleState (does NOT mutate self._state).
+        """
+        if isinstance(self._state, _Terminal):
+            return self._state
+        if isinstance(self._state, _NotStarted) and self._state.cancelled:
+            return self._state
+
+        status = SandboxStatus.from_proto(info.sandbox_status)
+        # Polling: UNSPECIFIED means the sandbox exited cleanly
+        if source == "poll" and status == SandboxStatus.UNSPECIFIED:
+            status = SandboxStatus.COMPLETED
+        if not isinstance(self._state, _NotStarted):
+            sandbox_id = self._state.sandbox_id
+        else:
+            sandbox_id = getattr(self, "_sandbox_id", None) or str(info.sandbox_id)
+        started_at = (
+            info.started_at_time.ToDatetime()
+            if hasattr(info, "started_at_time") and info.started_at_time
+            else None
+        )
+        # returncode is only meaningful for completed sandboxes observed via polling
+        if source == "poll" and status == SandboxStatus.COMPLETED and hasattr(info, "returncode"):
+            returncode = info.returncode
+        else:
+            returncode = None
+
+        return _lifecycle_state_from_info(
+            sandbox_id=sandbox_id,
+            status=status,
+            tower_id=getattr(info, "tower_id", None) or None,
+            runway_id=getattr(info, "runway_id", None) or None,
+            tower_group_id=getattr(info, "tower_group_id", None) or None,
+            started_at=started_at,
+            returncode=returncode,
+        )
 
     def _on_exec_complete(
         self,
