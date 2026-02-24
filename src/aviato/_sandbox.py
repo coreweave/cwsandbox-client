@@ -2132,11 +2132,12 @@ class Sandbox:
                     shutdown_event.set()
                     raise request_error from None
 
-                # Now safe to send stdin data
+                # Now safe to send stdin data.  Cache the shutdown task across
+                # iterations since it only completes once.
+                shutdown_task = asyncio.create_task(shutdown_event.wait())
                 while not shutdown_event.is_set():
                     # Wait for either queue data or shutdown signal
                     get_task = asyncio.create_task(stdin_queue.get())
-                    shutdown_task = asyncio.create_task(shutdown_event.wait())
                     try:
                         done, pending = await asyncio.wait(
                             [get_task, shutdown_task],
@@ -2144,6 +2145,8 @@ class Sandbox:
                         )
                         # Cancel pending tasks
                         for task in pending:
+                            if task is shutdown_task:
+                                continue  # Reuse across iterations
                             task.cancel()
                             with contextlib.suppress(asyncio.CancelledError):
                                 await task
