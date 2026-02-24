@@ -18,8 +18,13 @@ except ImportError as e:
         "aviato CLI requires the 'cli' extra. Install it with:  pip install aviato[cli]"
     ) from e
 
+from aviato.cli.list import list_sandboxes
+
 
 @click.group()
 @click.version_option(package_name="aviato")
 def cli() -> None:
     """Aviato sandbox CLI."""
+
+
+cli.add_command(list_sandboxes)

@@ -292,6 +292,17 @@ Entry points:
 - Console script: `aviato` (defined in `pyproject.toml` `[project.scripts]`)
 - Module: `python -m aviato` (via `src/aviato/__main__.py`)
 
+Commands:
+
+| Command | File | Description |
+|---------|------|-------------|
+| `aviato list` | `cli/list.py` | List sandboxes with optional filters (`--status`, `--tag`, `--runway-id`, `--tower-id`) |
+
+```bash
+aviato list                                    # List all sandboxes
+aviato list --status running --tag my-project  # Filter by status and tag
+```
+
 Adding new CLI commands:
 1. Create `src/aviato/cli/<command>.py` with a `@click.command()` function
 2. Register it in `src/aviato/cli/__init__.py` via `cli.add_command()`

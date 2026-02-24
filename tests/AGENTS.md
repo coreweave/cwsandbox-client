@@ -110,6 +110,7 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 | `test_types.py` | OperationRef, ProcessResult, Process, StreamReader |
 | `test_utilities.py` | aviato.result(), aviato.wait() utilities |
 | `test_cli_main.py` | `__main__` entry point, --help, --version, ImportError fallback |
+| `test_cli_list.py` | CLI list command, filters, empty state, API errors |
 
 ### Integration Test Files (`tests/integration/aviato/`)
 

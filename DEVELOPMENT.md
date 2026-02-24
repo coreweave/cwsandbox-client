@@ -148,6 +148,8 @@ The `aviato` CLI requires the `cli` extra. After `uv sync --extra cli`, the `avi
 ```bash
 aviato --help                              # Show available commands
 aviato --version                           # Show SDK version
+aviato list                                # List sandboxes
+aviato list --status running --tag dev     # Filter sandboxes
 ```
 
 You can also invoke it as a Python module:
