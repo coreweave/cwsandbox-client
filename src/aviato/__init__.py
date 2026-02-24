@@ -25,6 +25,8 @@ from aviato._types import (
     Serialization,
     StreamReader,
     StreamWriter,
+    TerminalResult,
+    TerminalSession,
 )
 from aviato.exceptions import (
     AsyncFunctionError,
@@ -49,7 +51,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 # Type alias for things that can be waited on
-Waitable = Sandbox | OperationRef[Any] | Process
+Waitable = Sandbox | OperationRef[Any] | Process | TerminalSession
 
 
 @overload
@@ -103,9 +105,10 @@ def wait(
     - Sandbox: waits until RUNNING status
     - OperationRef: waits until operation completes
     - Process: waits until process completes
+    - TerminalSession: waits until session completes
 
     Args:
-        waitables: Sequence of Sandbox, OperationRef, or Process objects.
+        waitables: Sequence of Sandbox, OperationRef, Process, or TerminalSession objects.
         num_returns: If specified, return after this many complete.
             If None, wait for all to complete.
         timeout: Maximum seconds to wait. If None, wait forever.
@@ -171,9 +174,7 @@ async def _wait_async(
     def _to_awaitable(w: Waitable) -> asyncio.Task[Any]:
         if isinstance(w, Sandbox):
             return asyncio.create_task(w._wait_until_running_async())
-        if isinstance(w, Process):
-            return asyncio.create_task(_wrap_future(w._future))
-        # OperationRef
+        # OperationRef (including Process and TerminalSession)
         return asyncio.create_task(_wrap_future(w._future))
 
     # Create tasks mapping back to original objects
@@ -261,6 +262,8 @@ __all__ = [
     "Session",
     "StreamReader",
     "StreamWriter",
+    "TerminalResult",
+    "TerminalSession",
     "Waitable",
     "WandbAuthError",
     "results",

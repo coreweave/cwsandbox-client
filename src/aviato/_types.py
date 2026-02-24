@@ -166,12 +166,18 @@ class ProcessResult:
     command: list[str] = field(default_factory=list)
 
 
-class StreamReader:
-    """Sync and async iterable for streaming output.
+_S = TypeVar("_S")
+
+
+class StreamReader(Generic[_S]):
+    """Sync and async iterable stream reader.
 
     StreamReader wraps an asyncio.Queue and provides both synchronous and
     asynchronous iteration interfaces. This enables streaming output to be
     consumed in both sync and async contexts.
+
+    Used as ``StreamReader[str]`` for text streams (exec stdout/stderr, logs)
+    and ``StreamReader[bytes]`` for raw byte streams (TTY output).
 
     The stream uses None as a sentinel value to signal end-of-stream.
     Exception instances in the queue are re-raised to the consumer.
@@ -192,7 +198,7 @@ class StreamReader:
 
     def __init__(
         self,
-        queue: asyncio.Queue[str | Exception | None],
+        queue: asyncio.Queue[_S | Exception | None],
         loop_manager: _LoopManager,
         *,
         cancel: Callable[[], object] | None = None,
@@ -200,9 +206,9 @@ class StreamReader:
         """Initialize with a queue and loop manager.
 
         Args:
-            queue: The asyncio.Queue to read from. Supports string items,
-                None as end-of-stream sentinel, and Exception instances
-                which are re-raised to the consumer.
+            queue: The asyncio.Queue to read from. Supports items of the
+                parameterized type, None as end-of-stream sentinel, and
+                Exception instances which are re-raised to the consumer.
             loop_manager: The _LoopManager for executing async operations.
             cancel: Optional callback to cancel the background producer.
                 Called by ``close()`` to stop the stream.
@@ -212,11 +218,11 @@ class StreamReader:
         self._exhausted = False
         self._cancel = cancel
 
-    def __iter__(self) -> StreamReader:
+    def __iter__(self) -> StreamReader[_S]:
         """Return self as iterator for sync iteration."""
         return self
 
-    def __next__(self) -> str:
+    def __next__(self) -> _S:
         """Get next item from stream (blocking).
 
         Returns:
@@ -237,11 +243,11 @@ class StreamReader:
             raise item
         return item
 
-    def __aiter__(self) -> StreamReader:
+    def __aiter__(self) -> StreamReader[_S]:
         """Return self as async iterator for async iteration."""
         return self
 
-    async def __anext__(self) -> str:
+    async def __anext__(self) -> _S:
         """Get next item from stream (async).
 
         Returns:
@@ -409,6 +415,177 @@ class StreamWriter:
         self._exception = exception
 
 
+@dataclass(frozen=True)
+class TerminalResult:
+    """Result from a completed terminal session.
+
+    Unlike ProcessResult, does not contain captured stdout/stderr because
+    TTY sessions do not buffer output.
+
+    Attributes:
+        returncode: Exit code from the shell process.
+        command: The command that was executed.
+    """
+
+    returncode: int
+    command: list[str] = field(default_factory=list)
+
+
+class TerminalSession(OperationRef[TerminalResult]):
+    """Handle for an interactive TTY session in a sandbox.
+
+    TerminalSession is purpose-built for interactive use cases where a local
+    terminal is connected to a remote shell. Unlike Process:
+
+    - Output is raw bytes (StreamReader[bytes]), preserving ANSI sequences
+    - No output buffering -- safe for long-running sessions
+    - result() returns TerminalResult (exit code only, no captured output)
+
+    Attributes:
+        output: StreamReader[bytes] for raw byte output (merged stdout/stderr)
+        stdin: StreamWriter for standard input (always present)
+
+    Examples:
+        SDK-level interactive session:
+        ```python
+        session = sandbox.shell(width=80, height=24)
+        for chunk in session.output:
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+        exit_code = session.wait()
+        ```
+
+        Async usage:
+        ```python
+        session = sandbox.shell()
+        async for chunk in session.output:
+            sys.stdout.buffer.write(chunk)
+        result = await session
+        ```
+    """
+
+    def __init__(
+        self,
+        future: concurrent.futures.Future[TerminalResult],
+        command: list[str],
+        output: StreamReader[bytes],
+        stdin: StreamWriter,
+        resize_queue: asyncio.Queue[tuple[int, int] | None],
+    ) -> None:
+        """Initialize with a future and stream components.
+
+        Args:
+            future: Future that will contain the TerminalResult when complete.
+            command: The command being executed.
+            output: StreamReader[bytes] for raw byte output.
+            stdin: StreamWriter for stdin input.
+            resize_queue: Queue for sending terminal resize messages.
+        """
+        super().__init__(future)
+        self._command = command
+        self.output = output
+        self.stdin = stdin
+        self._resize_queue = resize_queue
+        self._result: TerminalResult | None = None
+        self._exception: BaseException | None = None
+
+    @property
+    def command(self) -> list[str]:
+        """The command that was executed."""
+        return self._command
+
+    @property
+    def returncode(self) -> int | None:
+        """The exit code, or None if the session is still active."""
+        if self._result is not None:
+            return self._result.returncode
+        if self._future.done():
+            self._fetch_result()
+            return self._result.returncode if self._result else None
+        return None
+
+    def resize(self, width: int, height: int) -> None:
+        """Send terminal resize. Fire-and-forget.
+
+        Args:
+            width: New terminal width in columns.
+            height: New terminal height in rows.
+
+        Raises:
+            SandboxExecutionError: If the session has ended.
+        """
+        if self._future.done():
+            raise SandboxExecutionError("Cannot resize: terminal session has ended")
+
+        from aviato._loop_manager import _LoopManager
+
+        _LoopManager.get().get_loop().call_soon_threadsafe(
+            self._resize_queue.put_nowait, (width, height)
+        )
+
+    def result(self, timeout: float | None = None) -> TerminalResult:
+        """Block until the terminal session ends and return the result.
+
+        Args:
+            timeout: Maximum seconds to wait. None means wait forever.
+
+        Returns:
+            TerminalResult with the exit code.
+
+        Raises:
+            concurrent.futures.TimeoutError: If timeout expires.
+            Exception: Any exception from the session.
+        """
+        self._fetch_result(timeout)
+        if self._exception is not None:
+            raise self._exception
+        assert self._result is not None
+        return self._result
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Block until the session ends and return exit code.
+
+        Args:
+            timeout: Maximum seconds to wait. None means wait forever.
+
+        Returns:
+            The process exit code.
+
+        Raises:
+            concurrent.futures.TimeoutError: If timeout expires.
+            Exception: Any exception from the session.
+        """
+        return self.result(timeout).returncode
+
+    def _fetch_result(self, timeout: float | None = None) -> None:
+        """Fetch result from future if not already cached."""
+        if self._result is None and self._exception is None:
+            try:
+                self._result = self._future.result(timeout)
+            except concurrent.futures.TimeoutError:
+                raise
+            except Exception as e:
+                self._exception = e
+
+    def __await__(self) -> Generator[Any, None, TerminalResult]:
+        """Make this session awaitable for async contexts.
+
+        Returns:
+            Generator that yields the TerminalResult when complete.
+        """
+
+        async def _await() -> TerminalResult:
+            try:
+                result = await asyncio.wrap_future(self._future)
+                self._result = result
+                return result
+            except Exception as e:
+                self._exception = e
+                raise
+
+        return _await().__await__()
+
+
 class Process(OperationRef[ProcessResult]):
     """Handle for a running process with streaming stdout/stderr.
 
@@ -459,8 +636,8 @@ class Process(OperationRef[ProcessResult]):
         self,
         future: concurrent.futures.Future[ProcessResult],
         command: list[str],
-        stdout: StreamReader,
-        stderr: StreamReader,
+        stdout: StreamReader[str],
+        stderr: StreamReader[str],
         stdin: StreamWriter | None = None,
         stats_callback: Callable[[ProcessResult | None, BaseException | None], None] | None = None,
     ) -> None:

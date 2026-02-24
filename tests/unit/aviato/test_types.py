@@ -19,6 +19,8 @@ from aviato._types import (
     Serialization,
     StreamReader,
     StreamWriter,
+    TerminalResult,
+    TerminalSession,
 )
 from aviato.exceptions import SandboxExecutionError
 
@@ -927,3 +929,217 @@ class TestProcess:
 
         with pytest.raises(RuntimeError, match="process died"):
             process.wait()
+
+
+class TestTerminalResult:
+    """Tests for TerminalResult dataclass."""
+
+    def test_creation(self) -> None:
+        """Test TerminalResult can be created with fields."""
+        result = TerminalResult(returncode=0, command=["bash"])
+        assert result.returncode == 0
+        assert result.command == ["bash"]
+
+    def test_defaults(self) -> None:
+        """Test TerminalResult has correct defaults."""
+        result = TerminalResult(returncode=1)
+        assert result.command == []
+
+    def test_frozen(self) -> None:
+        """Test TerminalResult is immutable."""
+        result = TerminalResult(returncode=0)
+        with pytest.raises(AttributeError):
+            result.returncode = 1  # type: ignore[misc]
+
+
+class TestTerminalSession:
+    """Tests for TerminalSession class."""
+
+    def _create_session(
+        self,
+        *,
+        future: Future[TerminalResult] | None = None,
+        command: list[str] | None = None,
+    ) -> TerminalSession:
+        """Create a TerminalSession with sensible defaults for testing."""
+        if future is None:
+            future = Future()
+        if command is None:
+            command = ["/bin/bash"]
+
+        output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+        output_queue.put_nowait(None)
+        stdin_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        resize_queue: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+
+        mock_manager = MagicMock()
+        output = StreamReader(output_queue, mock_manager)
+        stdin = StreamWriter(stdin_queue, mock_manager)
+
+        return TerminalSession(
+            future=future,
+            command=command,
+            output=output,
+            stdin=stdin,
+            resize_queue=resize_queue,
+        )
+
+    def test_is_operation_ref(self) -> None:
+        """TerminalSession is an OperationRef[TerminalResult]."""
+        session = self._create_session()
+        assert isinstance(session, OperationRef)
+
+    def test_result_returns_terminal_result(self) -> None:
+        """Test result() blocks and returns TerminalResult."""
+        future: Future[TerminalResult] = Future()
+        expected = TerminalResult(returncode=0, command=["/bin/bash"])
+        future.set_result(expected)
+
+        session = self._create_session(future=future)
+        result = session.result()
+        assert result.returncode == 0
+        assert result.command == ["/bin/bash"]
+
+    def test_wait_returns_exit_code(self) -> None:
+        """Test wait() returns the exit code."""
+        future: Future[TerminalResult] = Future()
+        future.set_result(TerminalResult(returncode=42))
+
+        session = self._create_session(future=future)
+        assert session.wait() == 42
+
+    def test_returncode_none_while_active(self) -> None:
+        """Test returncode is None while session is active."""
+        session = self._create_session()
+        assert session.returncode is None
+
+    def test_returncode_after_completion(self) -> None:
+        """Test returncode reflects exit code after completion."""
+        future: Future[TerminalResult] = Future()
+        future.set_result(TerminalResult(returncode=7))
+
+        session = self._create_session(future=future)
+        assert session.returncode == 7
+
+    def test_command_property(self) -> None:
+        """Test command property returns the executed command."""
+        session = self._create_session(command=["/bin/zsh"])
+        assert session.command == ["/bin/zsh"]
+
+    def test_result_raises_exception(self) -> None:
+        """Test result() raises exception from the session."""
+        future: Future[TerminalResult] = Future()
+        future.set_exception(RuntimeError("session failed"))
+
+        session = self._create_session(future=future)
+        with pytest.raises(RuntimeError, match="session failed"):
+            session.result()
+
+    def test_result_with_timeout(self) -> None:
+        """Test result() times out when session is still active."""
+        session = self._create_session()
+        with pytest.raises(FuturesTimeoutError):
+            session.result(timeout=0.01)
+
+    def test_resize_after_exit_raises(self) -> None:
+        """Test resize() raises when session has ended."""
+        future: Future[TerminalResult] = Future()
+        future.set_result(TerminalResult(returncode=0))
+
+        session = self._create_session(future=future)
+        with pytest.raises(SandboxExecutionError, match="terminal session has ended"):
+            session.resize(80, 24)
+
+    def test_resize_enqueues_dimensions(self) -> None:
+        """Test resize() enqueues (width, height) on the resize queue."""
+        from unittest.mock import patch
+
+        future: Future[TerminalResult] = Future()
+        resize_queue: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+
+        output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+        output_queue.put_nowait(None)
+        stdin_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        mock_manager = MagicMock()
+
+        session = TerminalSession(
+            future=future,
+            command=["/bin/bash"],
+            output=StreamReader(output_queue, mock_manager),
+            stdin=StreamWriter(stdin_queue, mock_manager),
+            resize_queue=resize_queue,
+        )
+
+        mock_loop = MagicMock()
+        with patch("aviato._loop_manager._LoopManager") as mock_lm_cls:
+            mock_lm_cls.get.return_value.get_loop.return_value = mock_loop
+            session.resize(120, 40)
+
+        mock_loop.call_soon_threadsafe.assert_called_once_with(resize_queue.put_nowait, (120, 40))
+
+    def test_stdin_always_present(self) -> None:
+        """Test stdin is always present (not Optional)."""
+        session = self._create_session()
+        assert session.stdin is not None
+        assert isinstance(session.stdin, StreamWriter)
+
+    def test_fetch_result_caches_exception(self) -> None:
+        """Test _fetch_result caches exception and re-raises on subsequent calls."""
+        future: Future[TerminalResult] = Future()
+        future.set_exception(RuntimeError("session crashed"))
+
+        session = self._create_session(future=future)
+        with pytest.raises(RuntimeError, match="session crashed"):
+            session.result()
+
+        # Second call should re-raise the cached exception without touching the future
+        with pytest.raises(RuntimeError, match="session crashed"):
+            session.result()
+
+    @pytest.mark.asyncio
+    async def test_await_in_async_context(self) -> None:
+        """Test TerminalSession is awaitable in async context."""
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(lambda: TerminalResult(returncode=0, command=["/bin/bash"]))
+            output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+            output_queue.put_nowait(None)
+            stdin_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+            resize_queue: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+            mock_manager = MagicMock()
+
+            session = TerminalSession(
+                future=future,
+                command=["/bin/bash"],
+                output=StreamReader(output_queue, mock_manager),
+                stdin=StreamWriter(stdin_queue, mock_manager),
+                resize_queue=resize_queue,
+            )
+
+            result = await session
+            assert result.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_await_with_exception(self) -> None:
+        """Test await raises exception from the session."""
+
+        def raise_error() -> TerminalResult:
+            raise ValueError("async session error")
+
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(raise_error)
+            output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+            output_queue.put_nowait(None)
+            stdin_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+            resize_queue: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+            mock_manager = MagicMock()
+
+            session = TerminalSession(
+                future=future,
+                command=["/bin/bash"],
+                output=StreamReader(output_queue, mock_manager),
+                stdin=StreamWriter(stdin_queue, mock_manager),
+                resize_queue=resize_queue,
+            )
+
+            with pytest.raises(ValueError, match="async session error"):
+                await session

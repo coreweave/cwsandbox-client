@@ -203,11 +203,24 @@ class TestWait:
         stderr = StreamReader(asyncio.Queue(), mock_lm)
         proc = Process(future2, ["cmd"], stdout, stderr)
 
+        # Create a TerminalSession
+        from aviato._types import StreamWriter, TerminalResult, TerminalSession
+
+        future3: concurrent.futures.Future[TerminalResult] = concurrent.futures.Future()
+        future3.set_result(TerminalResult(returncode=0, command=["/bin/bash"]))
+        term = TerminalSession(
+            future=future3,
+            command=["/bin/bash"],
+            output=StreamReader(asyncio.Queue(), mock_lm),
+            stdin=StreamWriter(asyncio.Queue(), mock_lm),
+            resize_queue=asyncio.Queue(),
+        )
+
         # Create a Sandbox mock
         sandbox = MagicMock(spec=Sandbox)
         sandbox._wait_until_running_async = AsyncMock(return_value=None)
 
-        waitables: list[aviato.Waitable] = [ref, proc, sandbox]
+        waitables: list[aviato.Waitable] = [ref, proc, term, sandbox]
 
         # Mock the loop manager
         mock_manager = MagicMock()
@@ -216,7 +229,7 @@ class TestWait:
 
         done, pending = wait(waitables)
 
-        assert len(done) == 3
+        assert len(done) == 4
         assert len(pending) == 0
         assert set(done) == set(waitables)
 
