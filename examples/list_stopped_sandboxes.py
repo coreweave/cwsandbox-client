@@ -8,7 +8,7 @@
 
 By default, Sandbox.list() only returns active sandboxes. Use
 ``include_stopped=True`` to also retrieve terminal sandboxes
-(completed, failed, terminated) from persistent storage.
+(completed, failed, terminated).
 
 This is useful for:
 - Auditing past sandbox runs

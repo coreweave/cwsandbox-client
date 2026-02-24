@@ -417,7 +417,7 @@ class Session:
 
         By default, only active (non-terminal) sandboxes are returned.
         Set ``include_stopped=True`` to widen the search to include terminal
-        sandboxes (completed, failed, terminated) from persistent storage.
+        sandboxes (completed, failed, terminated).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
@@ -427,7 +427,7 @@ class Session:
             runway_ids: Filter by runway IDs (defaults to session's runway_ids if set)
             tower_ids: Filter by tower IDs (defaults to session's tower_ids if set)
             include_stopped: If True, include terminal sandboxes (completed,
-                failed, terminated) from persistent storage. Defaults to False.
+                failed, terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
 

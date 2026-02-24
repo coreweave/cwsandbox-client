@@ -588,7 +588,7 @@ class Sandbox:
 
         By default, only active (non-terminal) sandboxes are returned.
         Set ``include_stopped=True`` to widen the search to include terminal
-        sandboxes (completed, failed, terminated) from persistent storage.
+        sandboxes (completed, failed, terminated).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
@@ -598,7 +598,7 @@ class Sandbox:
             runway_ids: Filter by runway IDs
             tower_ids: Filter by tower IDs
             include_stopped: If True, include terminal sandboxes (completed,
-                failed, terminated) from persistent storage. Defaults to False.
+                failed, terminated). Defaults to False.
             base_url: Override API URL (default: AVIATO_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
 
