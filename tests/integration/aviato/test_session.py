@@ -251,6 +251,10 @@ def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
 
     The backend queries the DB when a terminal status filter is used,
     even without include_stopped=True.
+
+    The sandbox is created outside the session context manager to avoid
+    session.close() calling stop(), which would change the status from
+    COMPLETED to TERMINATED.
     """
     import time
     import uuid
@@ -260,13 +264,14 @@ def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
         tags=sandbox_defaults.merge_tags([unique_tag])
     )
 
-    with Sandbox.session(defaults) as session:
-        sandbox = session.sandbox(command="echo", args=["hello"])
-        sandbox.wait_until_complete(timeout=60.0).result()
-        sandbox_id = sandbox.sandbox_id
-        assert sandbox_id is not None
+    # Create sandbox directly (not via session) so it reaches COMPLETED
+    # without being stopped by session cleanup.
+    sandbox = Sandbox.run("echo", "hello", defaults=defaults, tags=[unique_tag])
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+    sandbox.wait_until_complete(timeout=60.0).result()
 
-    # Use a fresh session to list with terminal status filter
+    # Use session.list() with terminal status filter to find it
     with Sandbox.session(defaults) as session:
         found = False
         for _ in range(15):
