@@ -543,7 +543,11 @@ class Sandbox:
         sandbox._auth_metadata = ()
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
-        sandbox._stopped = False
+        sandbox._stopped = sandbox._status in (
+            SandboxStatus.COMPLETED,
+            SandboxStatus.FAILED,
+            SandboxStatus.TERMINATED,
+        )
         sandbox._returncode = None
         sandbox._session = None
         sandbox._defaults = SandboxDefaults()
