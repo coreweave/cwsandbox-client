@@ -112,7 +112,8 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 | `test_cli_main.py` | `__main__` entry point, --help, --version, ImportError fallback |
 | `test_cli_list.py` | CLI list command, filters, empty state, API errors |
 | `test_cli_exec.py` | CLI exec command, stdout, stderr, returncode, cwd, timeout, not-found error |
-| `test_cli_logs.py` | CLI logs command, follow, tail, since, timestamps, error handling |
+| `test_cli_logs.py` | CLI logs command, follow flag, options, not-found error |
+| `test_cli_shell.py` | CLI shell command, happy-path session, Windows guard, not-found error |
 
 ### Integration Test Files (`tests/integration/aviato/`)
 

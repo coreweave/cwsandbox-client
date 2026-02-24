@@ -19,12 +19,14 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 | `swebench.md` | Run SWE-bench evaluations with parallel Aviato sandboxes |
 | `rl-training.md` | RL training with code execution rewards, TRL integration |
 | `logging.md` | Stream sandbox container logs with `stream_logs()` and `aviato logs` CLI |
+| `interactive-shells.md` | Interactive shells with `Sandbox.shell()` and `aviato shell` CLI |
 
 ## Key Patterns
 
 All guides follow these conventions:
 
 - **Process for exec**: `exec()` returns a `Process` (inherits from OperationRef) - call `.result()` to block for the result
+- **TerminalSession for shell**: `shell()` returns a `TerminalSession` with raw byte streaming - iterate `.output` for data, call `.wait()` for exit code
 - **OperationRef for other ops**: `read_file()`, `write_file()`, `stop()` return `OperationRef` - call `.result()` to block
 - **Context managers**: Use `with` statements for automatic cleanup
 

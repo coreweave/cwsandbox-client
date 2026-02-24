@@ -17,7 +17,7 @@ aviato/
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
-├── _types.py         # OperationRef, ProcessResult, Process, StreamReader
+├── _types.py         # OperationRef, ProcessResult, Process, StreamReader, TerminalSession
 ├── _defaults.py      # SandboxDefaults configuration dataclass
 ├── _auth.py          # Authentication resolution (Aviato, W&B, netrc)
 ├── _loop_manager.py  # Background asyncio event loop singleton
@@ -26,7 +26,10 @@ aviato/
 ├── py.typed          # PEP 561 type information marker
 └── cli/              # CLI subpackage (only loaded when `aviato` command is invoked)
     ├── __init__.py   # Click group, registers commands
-    └── logs.py       # aviato logs command
+    ├── exec.py       # aviato exec — execute a command in a sandbox
+    ├── list.py       # aviato list — query sandboxes
+    ├── logs.py       # aviato logs — stream container logs
+    └── shell.py      # aviato shell — interactive TTY shell
 ```
 
 ## Naming Conventions

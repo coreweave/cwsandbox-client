@@ -51,7 +51,8 @@ Key methods:
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
-- `stream_logs(follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from sandbox, return `StreamReader` directly. Iterate synchronously with `for line in reader` or asynchronously with `async for line in reader`. Set `follow=True` for continuous streaming (like `tail -f`). Set `timestamps=True` to prefix lines with ISO 8601 timestamps.
+- `shell(command=None, *, width=None, height=None)`: Start interactive TTY session, return `TerminalSession`. Output is raw bytes via `session.output` (StreamReader[bytes]). No output buffering (safe for long-running sessions). Defaults to `["/bin/bash"]`.
+- `stream_logs(follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from sandbox, return `StreamReader[str]` directly. Iterate synchronously with `for line in reader` or asynchronously with `async for line in reader`. Set `follow=True` for continuous streaming (like `tail -f`). Set `timestamps=True` to prefix lines with ISO 8601 timestamps.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
 - `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
@@ -146,9 +147,26 @@ data = await ref
 **Exec Types** (`_types.py`): Types for command execution, returned by `Sandbox.exec()`:
 
 - `Process`: Handle for running process with `stdout`/`stderr` StreamReaders and optional `stdin` StreamWriter. Properties: `returncode` (exit code or None), `command` (list executed), `stdin` (StreamWriter when `stdin=True`, or None). Methods: `poll()`, `wait(timeout)`, `result(timeout)`, `cancel()`. Awaitable in async contexts.
-- `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`. Exception instances in the queue are re-raised to the consumer (used by `stream_logs()` to propagate errors).
+- `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`. Exception instances in the queue are re-raised to the consumer (used by `stream_logs()` to propagate errors). Methods: `close()` (cancel background producer and mark exhausted).
 - `StreamWriter`: Writable stream for stdin. Methods: `write(data: bytes)`, `writeline(text: str)`, `close()`. All return `OperationRef[None]`. Property: `closed` (bool). Uses bounded queue (16 items, ~1MB with 64KB chunks) for backpressure.
 - `ProcessResult`: Dataclass with `stdout`, `stderr`, `returncode`, `command`, plus raw byte variants (`stdout_bytes`, `stderr_bytes`).
+
+**Interactive TTY Types** (`_types.py`): Types for interactive terminal sessions, returned by `Sandbox.shell()`:
+
+- `TerminalSession`: Handle for an interactive TTY session. Unlike Process, output is raw bytes (no decode/re-encode), no output buffering, and result contains only an exit code. Attributes: `output` (StreamReader[bytes]), `stdin` (StreamWriter, always present). Methods: `resize(width, height)`, `result(timeout)`, `wait(timeout)`. Awaitable in async contexts.
+- `TerminalResult`: Frozen dataclass with `returncode` and `command` only. No `stdout`/`stderr` fields since TTY sessions don't buffer output.
+
+Usage:
+```python
+# Interactive shell session
+session = sandbox.shell(width=80, height=24)
+for chunk in session.output:     # raw bytes
+    sys.stdout.buffer.write(chunk)
+exit_code = session.wait()
+
+# Custom command
+session = sandbox.shell(["/bin/zsh"], width=120, height=40)
+```
 
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
@@ -280,7 +298,7 @@ done, pending = aviato.wait(refs, num_returns=2)
 done, pending = aviato.wait(procs, timeout=30.0)
 ```
 
-**`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process`.
+**`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process | TerminalSession`.
 
 ### Backend Communication
 
@@ -305,6 +323,7 @@ Commands:
 | `aviato exec` | `cli/exec.py` | Execute a command in a sandbox (`--cwd`, `--timeout`) |
 | `aviato list` | `cli/list.py` | List sandboxes with optional filters (`--status`, `--tag`, `--runway-id`, `--tower-id`) |
 | `aviato logs` | `cli/logs.py` | Stream container logs (`--follow`, `--tail`, `--since`, `--timestamps`) |
+| `aviato shell` | `cli/shell.py` | Interactive TTY shell in a sandbox (`--cmd`). Uses `Sandbox.shell()` for raw byte streaming. Unix only. |
 
 ```bash
 aviato exec <sandbox-id> echo hello             # Run a command
@@ -313,6 +332,9 @@ aviato list                                    # List all sandboxes
 aviato list --status running --tag my-project  # Filter by status and tag
 aviato logs <sandbox-id> --follow              # Stream logs
 aviato logs <sandbox-id> --tail 50 --timestamps
+aviato shell <sandbox-id>                      # Interactive bash shell (exit: Ctrl+D or 'exit')
+aviato shell <sandbox-id> --cmd /bin/zsh       # Custom shell program
+aviato shell <sandbox-id> --cmd "python main.py"  # Run command with PTY
 ```
 
 Adding new CLI commands:

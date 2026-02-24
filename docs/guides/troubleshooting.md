@@ -181,6 +181,20 @@ See [Cleanup Patterns - Orphan Management](cleanup-patterns.md#orphan-management
 
 ## CLI Issues
 
+### aviato shell: "not supported on Windows"
+
+The `aviato shell` command requires Unix TTY support (termios, raw mode). It is not available on Windows.
+
+### aviato shell: garbled terminal after crash
+
+If the shell exits abnormally, your terminal may be stuck in raw mode. Reset it:
+
+```bash
+reset
+# or
+stty sane
+```
+
 ### aviato logs: no output
 
 **Issue**: `aviato logs` shows nothing.

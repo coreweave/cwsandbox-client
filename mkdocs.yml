@@ -77,6 +77,7 @@ nav:
   - Guides:
       - Sandbox Lifecycle: guides/sandbox-lifecycle.md
       - Command Execution: guides/execution.md
+      - Interactive Shells: guides/interactive-shells.md
       - File Operations: guides/file-operations.md
       - Sessions: guides/sessions.md
       - Remote Functions: guides/remote-functions.md

@@ -317,6 +317,14 @@ Exits with the command's return code.
     `exec()` streams output from a specific command. For container-level logs (PID 1 stdout/stderr),
     use [`stream_logs()`](logging.md) instead.
 
+## Interactive Shells
+
+For interactive TTY sessions, use `sandbox.shell()` instead of `exec()`. See the [Interactive Shells guide](interactive-shells.md) for details.
+
+```python
+session = sandbox.shell(["/bin/bash"], width=80, height=24)
+```
+
 ## Process Control
 
 The `Process` object provides methods for monitoring and control:

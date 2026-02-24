@@ -42,7 +42,7 @@ and stdin.
 `session.sandbox()` returns an unstarted sandbox. The sandbox auto-starts on the first operation
 that needs it:
 
-**Triggers auto-start**: `exec()`, `read_file()`, `write_file()`, `wait()`, `wait_until_complete()`, `stream_logs()`
+**Triggers auto-start**: `exec()`, `read_file()`, `write_file()`, `wait()`, `wait_until_complete()`, `stream_logs()`, `shell()`
 
 **Does not auto-start**: `get_status()` (raises `SandboxNotRunningError`), `stop()` (no-op if never started)
 
@@ -321,6 +321,26 @@ print(f"Sandbox is {status}")  # e.g. SandboxStatus.RUNNING
     ```python
     async for line in sandbox.stream_logs(follow=True, tail_lines=100):
         print(line, end="")
+    ```
+
+### shell()
+
+=== "Sync"
+
+    ```python
+    session = sandbox.shell(["/bin/bash"], width=80, height=24)
+    for chunk in session.output:       # raw bytes
+        sys.stdout.buffer.write(chunk)
+    exit_code = session.wait(timeout=5.0)
+    ```
+
+=== "Async"
+
+    ```python
+    session = sandbox.shell(["/bin/bash"], width=80, height=24)
+    async for chunk in session.output:  # raw bytes
+        sys.stdout.buffer.write(chunk)
+    result = await session
     ```
 
 ### Streaming stdout
