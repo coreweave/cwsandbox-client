@@ -141,6 +141,23 @@ Or with `mise`: `mise run test:cov`
 
 ---
 
+## CLI
+
+The `aviato` CLI requires the `cli` extra. After `uv sync --extra cli`, the `aviato` command is available:
+
+```bash
+aviato --help                              # Show available commands
+aviato --version                           # Show SDK version
+```
+
+You can also invoke it as a Python module:
+
+```bash
+uv run python -m aviato --help
+```
+
+---
+
 ## Troubleshooting
 
 ### buf.build Authentication

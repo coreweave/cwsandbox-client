@@ -4,7 +4,7 @@ This file provides guidance to AI coding assistants when working with code in th
 
 ## Project Overview
 
-Python client library for Aviato sandboxes - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
+Python client library for Aviato sandboxes - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments. Includes a CLI (`aviato`) for terminal-based sandbox management.
 
 ## Development Setup
 
@@ -283,6 +283,20 @@ Uses gRPC via `coreweave-aviato-grpc-python` and `grpcio` packages. Proto defini
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 
 **Streaming exec**: Uses native gRPC bidirectional streaming with request iterator pattern for proper half-close semantics via iterator completion.
+
+### CLI (`aviato.cli`)
+
+The CLI lives as a subpackage at `src/aviato/cli/`. `click` is an optional dependency — install with `pip install aviato[cli]` (or `uv sync --extra cli`). `import aviato` does NOT import CLI modules or `click`.
+
+Entry points:
+- Console script: `aviato` (defined in `pyproject.toml` `[project.scripts]`)
+- Module: `python -m aviato` (via `src/aviato/__main__.py`)
+
+Adding new CLI commands:
+1. Create `src/aviato/cli/<command>.py` with a `@click.command()` function
+2. Register it in `src/aviato/cli/__init__.py` via `cli.add_command()`
+3. Add tests in `tests/unit/aviato/test_cli_<command>.py`
+4. Mock `aviato.cli.<command>.Sandbox` in tests (not the top-level `aviato.Sandbox`)
 
 ### Related Repositories
 

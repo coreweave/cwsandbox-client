@@ -13,6 +13,7 @@ This directory contains the aviato SDK implementation.
 ```
 aviato/
 ├── __init__.py       # Public API exports, get(), wait() utilities
+├── __main__.py       # Entry point for `python -m aviato` and console script
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
@@ -22,7 +23,9 @@ aviato/
 ├── _loop_manager.py  # Background asyncio event loop singleton
 ├── _cleanup.py       # atexit/signal handlers for graceful shutdown
 ├── exceptions.py     # Exception hierarchy
-└── py.typed          # PEP 561 type information marker
+├── py.typed          # PEP 561 type information marker
+└── cli/              # CLI subpackage (only loaded when `aviato` command is invoked)
+    └── __init__.py   # Click group, registers commands
 ```
 
 ## Naming Conventions

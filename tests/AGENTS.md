@@ -109,6 +109,7 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 | `test_wandb.py` | WandbReporter metrics, per-sandbox tracking, lazy run detection |
 | `test_types.py` | OperationRef, ProcessResult, Process, StreamReader |
 | `test_utilities.py` | aviato.result(), aviato.wait() utilities |
+| `test_cli_main.py` | `__main__` entry point, --help, --version, ImportError fallback |
 
 ### Integration Test Files (`tests/integration/aviato/`)
 
