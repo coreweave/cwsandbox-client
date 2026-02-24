@@ -543,7 +543,11 @@ class Sandbox:
         sandbox._auth_metadata = ()
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
-        sandbox._stopped = False
+        sandbox._stopped = sandbox._status in (
+            SandboxStatus.COMPLETED,
+            SandboxStatus.FAILED,
+            SandboxStatus.TERMINATED,
+        )
         sandbox._returncode = None
         sandbox._session = None
         sandbox._defaults = SandboxDefaults()
@@ -577,6 +581,7 @@ class Sandbox:
         status: str | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
+        include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
@@ -585,11 +590,19 @@ class Sandbox:
         Returns OperationRef that resolves to Sandbox instances usable for
         operations like exec(), stop(), get_status(), read_file(), write_file().
 
+        By default, only active (non-terminal) sandboxes are returned.
+        Set ``include_stopped=True`` to widen the search to include terminal
+        sandboxes (completed, failed, terminated).
+        A terminal status filter (e.g. ``status="completed"``) also widens
+        the search automatically.
+
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
             runway_ids: Filter by runway IDs
             tower_ids: Filter by tower IDs
+            include_stopped: If True, include terminal sandboxes (completed,
+                failed, terminated). Defaults to False.
             base_url: Override API URL (default: AVIATO_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
 
@@ -599,11 +612,16 @@ class Sandbox:
 
         Example:
             ```python
-            # Sync usage
+            # Sync usage - active sandboxes only (default)
             sandboxes = Sandbox.list(tags=["my-batch-job"]).result()
             for sb in sandboxes:
                 print(f"{sb.sandbox_id}: {sb.status}")
                 sb.stop().result()
+
+            # Include stopped sandboxes
+            all_sandboxes = Sandbox.list(
+                tags=["my-batch-job"], include_stopped=True
+            ).result()
 
             # Async usage
             sandboxes = await Sandbox.list(status="running")
@@ -617,6 +635,7 @@ class Sandbox:
                 status=status,
                 runway_ids=runway_ids,
                 tower_ids=tower_ids,
+                include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
             )
@@ -631,6 +650,7 @@ class Sandbox:
         status: str | None = None,
         runway_ids: builtins.list[str] | None = None,
         tower_ids: builtins.list[str] | None = None,
+        include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
@@ -663,6 +683,8 @@ class Sandbox:
             if tower_ids is not None:
                 request_kwargs["tower_ids"] = tower_ids
 
+            if include_stopped:
+                request_kwargs["include_stopped"] = True
             request = atc_pb2.ListSandboxesRequest(**request_kwargs)
             try:
                 response = await stub.List(request, timeout=timeout, metadata=auth_metadata)

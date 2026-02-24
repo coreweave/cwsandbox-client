@@ -517,6 +517,30 @@ class TestSessionList:
 
             assert session.sandbox_count == 0
 
+    @pytest.mark.asyncio
+    async def test_list_include_stopped_passes_to_sandbox_list(
+        self, mock_aviato_api_key: str
+    ) -> None:
+        """Test session.list(include_stopped=True) passes the field through."""
+        from coreweave.aviato.v1beta1 import atc_pb2
+
+        session = Session()
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+
+        with (
+            patch("aviato._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("aviato._sandbox.create_channel", return_value=mock_channel),
+            patch("aviato._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+        ):
+            await session.list(include_stopped=True)
+
+            call_args = mock_stub.List.call_args[0][0]
+            assert call_args.include_stopped is True
+
 
 class TestSessionFromId:
     """Tests for Session.from_id method."""
