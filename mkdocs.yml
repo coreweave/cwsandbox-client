@@ -81,6 +81,7 @@ nav:
       - Sessions: guides/sessions.md
       - Remote Functions: guides/remote-functions.md
       - Sandbox Configuration: guides/sandbox-configuration.md
+      - Sandbox Logging: guides/logging.md
       - Cleanup Patterns: guides/cleanup-patterns.md
       - Sync vs Async: guides/sync-vs-async.md
       - Troubleshooting: guides/troubleshooting.md

@@ -16,6 +16,7 @@ Runnable example scripts demonstrating aviato SDK usage patterns.
 |------|---------|-------------|-------------|
 | `quick_start.py` | Sync | `def main()` | Context manager with exec |
 | `basic_execution.py` | Sync | `def main()` | Context manager pattern with exec, file ops |
+| `interactive_streaming_sandbox.py` | Sync | `def main()` | Log streaming with exec interaction |
 | `streaming_exec.py` | Sync | `def main()` | Real-time stdout iteration |
 | `stdin_streaming.py` | Sync/Async | `def main()` | Stdin streaming with `exec(stdin=True)` |
 | `function_decorator.py` | Sync | `def main()` | Remote function execution with `@session.function()` |

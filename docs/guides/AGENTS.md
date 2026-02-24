@@ -18,6 +18,7 @@ Task-oriented guides for common operations. Each guide answers "How do I...?"
 | `environment-variables.md` | Use environment variables in sandboxes |
 | `swebench.md` | Run SWE-bench evaluations with parallel Aviato sandboxes |
 | `rl-training.md` | RL training with code execution rewards, TRL integration |
+| `logging.md` | Stream sandbox container logs with `stream_logs()` and `aviato logs` CLI |
 
 ## Key Patterns
 

@@ -74,6 +74,19 @@ Demonstrates:
 - Separate stdout/stderr handling
 - Process lifecycle (returncode, poll, wait, result)
 
+### Interactive Streaming Sandbox (`interactive_streaming_sandbox.py`)
+
+Start a sandbox, stream logs, and use exec to change output in real time:
+
+```bash
+python examples/interactive_streaming_sandbox.py
+```
+
+Demonstrates:
+- Log streaming with `stream_logs(follow=True, timestamps=True)`
+- Using exec to modify sandbox state while streaming
+- Verifying exec doesn't disrupt a running sandbox
+
 ### Stdin Streaming (`stdin_streaming.py`)
 
 Send input to interactive commands:

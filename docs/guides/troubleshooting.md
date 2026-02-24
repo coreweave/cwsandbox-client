@@ -179,6 +179,22 @@ See [Cleanup Patterns - Orphan Management](cleanup-patterns.md#orphan-management
 
 ---
 
+## CLI Issues
+
+### aviato logs: no output
+
+**Issue**: `aviato logs` shows nothing.
+
+**Causes and solutions**:
+
+| Cause | Solution |
+|-------|----------|
+| Sandbox not yet running | Wait for RUNNING status before streaming logs |
+| Container writes to files, not stdout | Logs only capture PID 1 stdout/stderr. Use `exec()` to read files instead |
+| Log data not yet flushed | Use `--follow` to wait for new output |
+
+---
+
 ## Common Error Messages
 
 | Error | Cause | Solution |

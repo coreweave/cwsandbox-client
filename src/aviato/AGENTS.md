@@ -25,7 +25,8 @@ aviato/
 ├── exceptions.py     # Exception hierarchy
 ├── py.typed          # PEP 561 type information marker
 └── cli/              # CLI subpackage (only loaded when `aviato` command is invoked)
-    └── __init__.py   # Click group, registers commands
+    ├── __init__.py   # Click group, registers commands
+    └── logs.py       # aviato logs command
 ```
 
 ## Naming Conventions

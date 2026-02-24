@@ -313,6 +313,10 @@ aviato exec <sandbox-id> --timeout 30 python script.py
 
 Exits with the command's return code.
 
+!!! note "exec stdout vs container logs"
+    `exec()` streams output from a specific command. For container-level logs (PID 1 stdout/stderr),
+    use [`stream_logs()`](logging.md) instead.
+
 ## Process Control
 
 The `Process` object provides methods for monitoring and control:

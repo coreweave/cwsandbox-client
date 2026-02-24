@@ -35,6 +35,11 @@ with Sandbox.run("sleep", "infinity") as sb:
         print(line, end="")
     result = process.result()  # Get final ProcessResult
 
+# Streaming logs
+with Sandbox.run("sleep", "infinity") as sb:
+    for line in sb.stream_logs(follow=True, tail_lines=100):
+        print(line, end="")
+
 # Async context manager
 async with Sandbox.run("sleep", "infinity") as sb:
     result = await sb.exec(["echo", "hello"])
@@ -46,6 +51,7 @@ Key methods:
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
+- `stream_logs(follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from sandbox, return `StreamReader` directly. Iterate synchronously with `for line in reader` or asynchronously with `async for line in reader`. Set `follow=True` for continuous streaming (like `tail -f`). Set `timestamps=True` to prefix lines with ISO 8601 timestamps.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
 - `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
@@ -140,7 +146,7 @@ data = await ref
 **Exec Types** (`_types.py`): Types for command execution, returned by `Sandbox.exec()`:
 
 - `Process`: Handle for running process with `stdout`/`stderr` StreamReaders and optional `stdin` StreamWriter. Properties: `returncode` (exit code or None), `command` (list executed), `stdin` (StreamWriter when `stdin=True`, or None). Methods: `poll()`, `wait(timeout)`, `result(timeout)`, `cancel()`. Awaitable in async contexts.
-- `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`.
+- `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`. Exception instances in the queue are re-raised to the consumer (used by `stream_logs()` to propagate errors).
 - `StreamWriter`: Writable stream for stdin. Methods: `write(data: bytes)`, `writeline(text: str)`, `close()`. All return `OperationRef[None]`. Property: `closed` (bool). Uses bounded queue (16 items, ~1MB with 64KB chunks) for backpressure.
 - `ProcessResult`: Dataclass with `stdout`, `stderr`, `returncode`, `command`, plus raw byte variants (`stdout_bytes`, `stderr_bytes`).
 
@@ -298,12 +304,15 @@ Commands:
 |---------|------|-------------|
 | `aviato exec` | `cli/exec.py` | Execute a command in a sandbox (`--cwd`, `--timeout`) |
 | `aviato list` | `cli/list.py` | List sandboxes with optional filters (`--status`, `--tag`, `--runway-id`, `--tower-id`) |
+| `aviato logs` | `cli/logs.py` | Stream container logs (`--follow`, `--tail`, `--since`, `--timestamps`) |
 
 ```bash
 aviato exec <sandbox-id> echo hello             # Run a command
 aviato exec <sandbox-id> --cwd /app ls -la     # Run with working directory
 aviato list                                    # List all sandboxes
 aviato list --status running --tag my-project  # Filter by status and tag
+aviato logs <sandbox-id> --follow              # Stream logs
+aviato logs <sandbox-id> --tail 50 --timestamps
 ```
 
 Adding new CLI commands:
@@ -377,6 +386,7 @@ AviatoError
 
 The `examples/` directory contains runnable scripts demonstrating common patterns:
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py`, `stdin_streaming.py` - Sandbox creation and execution
+- `interactive_streaming_sandbox.py` - Log streaming with exec interaction
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
 - `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
