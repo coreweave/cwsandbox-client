@@ -16,7 +16,7 @@ import pytest
 
 from aviato import NetworkOptions, Sandbox, SandboxDefaults
 from aviato._sandbox import SandboxStatus, _Running, _Starting, _Terminal
-from aviato.exceptions import SandboxNotRunningError
+from aviato.exceptions import SandboxError, SandboxNotFoundError, SandboxNotRunningError
 
 
 class MockRpcError(grpc.RpcError):
@@ -1395,7 +1395,6 @@ class TestSandboxStop:
 
     def test_stop_raises_on_backend_failure(self) -> None:
         """Test stop raises SandboxError when backend reports failure."""
-        from aviato.exceptions import SandboxError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1441,7 +1440,6 @@ class TestSandboxStop:
 
     def test_stop_missing_ok_false_raises_not_found(self) -> None:
         """Test stop(missing_ok=False) raises SandboxNotFoundError."""
-        from aviato.exceptions import SandboxNotFoundError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1770,7 +1768,6 @@ class TestSandboxFromId:
     @pytest.mark.asyncio
     async def test_from_id_raises_not_found(self, mock_aviato_api_key: str) -> None:
         """Test from_id() raises SandboxNotFoundError for non-existent sandbox."""
-        from aviato.exceptions import SandboxNotFoundError
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -1817,7 +1814,6 @@ class TestSandboxDeleteClassMethod:
     @pytest.mark.asyncio
     async def test_delete_raises_not_found_by_default(self, mock_aviato_api_key: str) -> None:
         """Test delete() raises SandboxNotFoundError when sandbox doesn't exist."""
-        from aviato.exceptions import SandboxNotFoundError
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -2366,6 +2362,42 @@ class TestSandboxExecutionStats:
         assert sandbox._exec_completed_nonzero == 0
         assert sandbox._exec_failures == 1
 
+    def test_exec_stats_lock_provides_atomic_read(self) -> None:
+        """exec_stats blocks while the lock is held by another thread."""
+        import threading
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        acquired = threading.Event()
+        release = threading.Event()
+
+        def hold_lock() -> None:
+            with sandbox._exec_stats_lock:
+                acquired.set()
+                release.wait(timeout=5.0)
+
+        t = threading.Thread(target=hold_lock, daemon=True)
+        t.start()
+        assert acquired.wait(timeout=5.0)
+
+        done = threading.Event()
+        stats_result: dict[str, int] = {}
+
+        def read_stats() -> None:
+            stats_result.update(sandbox.exec_stats)
+            done.set()
+
+        reader = threading.Thread(target=read_stats, daemon=True)
+        reader.start()
+
+        # Reader should not finish while lock is held
+        assert not done.wait(timeout=0.2)
+
+        release.set()
+        assert done.wait(timeout=5.0)
+        t.join(timeout=5.0)
+        reader.join(timeout=5.0)
+
     def test_on_exec_complete_reports_to_session(self) -> None:
         """Test _on_exec_complete reports to session reporter."""
         from aviato._wandb import ExecOutcome
@@ -2503,7 +2535,6 @@ class TestTranslateRpcError:
     def test_not_found_returns_sandbox_not_found_error(self) -> None:
         """Test NOT_FOUND status code returns SandboxNotFoundError."""
         from aviato._sandbox import _translate_rpc_error
-        from aviato.exceptions import SandboxNotFoundError
 
         error = MockRpcError(grpc.StatusCode.NOT_FOUND, "sandbox not found")
         result = _translate_rpc_error(error, sandbox_id="test-123")
@@ -2515,7 +2546,6 @@ class TestTranslateRpcError:
     def test_not_found_without_sandbox_id_uses_details(self) -> None:
         """Test NOT_FOUND without sandbox_id uses error details."""
         from aviato._sandbox import _translate_rpc_error
-        from aviato.exceptions import SandboxNotFoundError
 
         error = MockRpcError(grpc.StatusCode.NOT_FOUND, "resource not found")
         result = _translate_rpc_error(error)
@@ -2592,7 +2622,6 @@ class TestTranslateRpcError:
     def test_other_status_returns_sandbox_error(self) -> None:
         """Test other status codes return generic SandboxError."""
         from aviato._sandbox import _translate_rpc_error
-        from aviato.exceptions import SandboxError
 
         error = MockRpcError(grpc.StatusCode.INTERNAL, "internal error")
         result = _translate_rpc_error(error, operation="Test operation")
@@ -2603,7 +2632,6 @@ class TestTranslateRpcError:
     def test_empty_details_uses_string_repr(self) -> None:
         """Test that empty details falls back to str(e)."""
         from aviato._sandbox import _translate_rpc_error
-        from aviato.exceptions import SandboxError
 
         error = MockRpcError(grpc.StatusCode.INTERNAL, "")
         result = _translate_rpc_error(error, operation="Test")
@@ -2701,9 +2729,9 @@ class TestExecStdinReadySignal:
         assert close_received_time is not None, "Stdin close was never received"
 
         # Stdin should be sent after ready (with some tolerance for timing)
-        assert stdin_received_time >= ready_sent_time, (
-            f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
-        )
+        assert (
+            stdin_received_time >= ready_sent_time
+        ), f"Stdin received at {stdin_received_time} but ready sent at {ready_sent_time}"
 
     def test_exec_stdin_ready_timeout(self) -> None:
         """Test SandboxTimeoutError raised when ready signal not received."""
