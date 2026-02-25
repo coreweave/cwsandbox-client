@@ -15,6 +15,7 @@ import grpc.aio
 import pytest
 
 from aviato import NetworkOptions, Sandbox, SandboxDefaults
+from aviato._sandbox import SandboxStatus, _Running, _Starting, _Terminal
 from aviato.exceptions import SandboxNotRunningError
 
 
@@ -358,6 +359,7 @@ class TestSandboxExec:
         """Test exec with empty command raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         with pytest.raises(ValueError, match="Command cannot be empty"):
@@ -371,6 +373,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -407,6 +410,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -444,6 +448,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -498,6 +503,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -527,6 +533,7 @@ class TestSandboxExec:
         """Test exec with empty cwd raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
 
         with pytest.raises(ValueError, match="cwd cannot be empty string"):
             sandbox.exec(["ls"], cwd="")
@@ -535,6 +542,7 @@ class TestSandboxExec:
         """Test exec with relative cwd raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
 
         with pytest.raises(ValueError, match="cwd must be an absolute path"):
             sandbox.exec(["ls"], cwd="relative/path")
@@ -544,6 +552,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         captured_command: list[str] = []
@@ -584,6 +593,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -615,6 +625,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         captured_command: list[str] = []
@@ -654,6 +665,7 @@ class TestSandboxExec:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         captured_command: list[str] = []
@@ -684,6 +696,39 @@ class TestSandboxExec:
 
         # Without cwd, command should not be wrapped
         assert captured_command == ["ls", "-la"]
+
+    def test_exec_raises_on_terminal_sandbox(self) -> None:
+        """exec() on a terminal sandbox raises SandboxNotRunningError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Terminal(sandbox_id="test-id", status=SandboxStatus.COMPLETED)
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.exec(["echo", "hello"]).result()
+
+    def test_read_file_raises_on_terminal_sandbox(self) -> None:
+        """read_file() on a terminal sandbox raises SandboxNotRunningError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Terminal(sandbox_id="test-id", status=SandboxStatus.COMPLETED)
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.read_file("/tmp/test.txt").result()
+
+    def test_write_file_raises_on_terminal_sandbox(self) -> None:
+        """write_file() on a terminal sandbox raises SandboxNotRunningError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Terminal(sandbox_id="test-id", status=SandboxStatus.COMPLETED)
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.write_file("/tmp/test.txt", b"data").result()
 
 
 class TestExecCwdHelperFunctions:
@@ -805,6 +850,7 @@ class TestSandboxCleanup:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
+        sandbox._state = _Starting(sandbox_id="test-sandbox-id")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -838,6 +884,7 @@ class TestSandboxCleanup:
 
         def mock_start() -> OperationRef[None]:
             sandbox._sandbox_id = "test-sandbox-id"
+            sandbox._state = _Starting(sandbox_id="test-sandbox-id")
             future: concurrent.futures.Future[None] = concurrent.futures.Future()
             future.set_result(None)
             return OperationRef(future)
@@ -857,6 +904,36 @@ class TestSandboxCleanup:
 
         assert stop_called
 
+    def test_sync_context_manager_skips_stop_when_done(self) -> None:
+        """Test __exit__ cleans up channels without calling stop() when sandbox is terminal."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Terminal(sandbox_id="test-id", status=SandboxStatus.COMPLETED)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_streaming_channel = MagicMock()
+        mock_streaming_channel.close = AsyncMock()
+        sandbox._channel = mock_channel
+        sandbox._streaming_channel = mock_streaming_channel
+
+        stop_called = False
+
+        def mock_stop(**kwargs: object) -> None:
+            nonlocal stop_called
+            stop_called = True
+
+        sandbox.stop = mock_stop  # type: ignore[method-assign]
+
+        with sandbox:
+            pass
+
+        assert not stop_called
+        mock_channel.close.assert_called_once_with(grace=None)
+        mock_streaming_channel.close.assert_called_once_with(grace=None)
+        assert sandbox._channel is None
+        assert sandbox._streaming_channel is None
+
     def test_enter_starts_if_not_started(self) -> None:
         """Test __enter__ starts sandbox if not already started."""
         import concurrent.futures
@@ -870,6 +947,7 @@ class TestSandboxCleanup:
             nonlocal start_called
             start_called = True
             sandbox._sandbox_id = "enter-sandbox-id"
+            sandbox._state = _Starting(sandbox_id="enter-sandbox-id")
             future: concurrent.futures.Future[None] = concurrent.futures.Future()
             future.set_result(None)
             return OperationRef(future)
@@ -897,6 +975,32 @@ class TestSandboxGetStatus:
         with pytest.raises(SandboxNotRunningError, match="has not been started"):
             sandbox.get_status()
 
+    def test_get_status_raises_for_cancelled(self) -> None:
+        """get_status raises SandboxNotRunningError for a cancelled sandbox."""
+        from aviato._sandbox import _NotStarted
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _NotStarted(cancelled=True)
+
+        with pytest.raises(SandboxNotRunningError, match="cancelled before starting"):
+            sandbox.get_status()
+
+    @pytest.mark.parametrize(
+        "terminal_status",
+        [SandboxStatus.COMPLETED, SandboxStatus.FAILED, SandboxStatus.TERMINATED],
+    )
+    def test_get_status_returns_cached_for_terminal(self, terminal_status: SandboxStatus) -> None:
+        """get_status returns cached status for terminal sandboxes without API call."""
+        from aviato._sandbox import _Terminal
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(sandbox_id="test-id", status=terminal_status)
+
+        result = sandbox.get_status()
+
+        assert result == terminal_status
+        assert sandbox._status_updated_at is not None
+
 
 class TestSandboxWait:
     """Tests for Sandbox.wait method (wait until RUNNING)."""
@@ -909,6 +1013,7 @@ class TestSandboxWait:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
@@ -926,6 +1031,7 @@ class TestSandboxWait:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
@@ -1052,6 +1158,7 @@ class TestSandboxWaitUntilComplete:
 
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.returncode = 0
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
@@ -1070,10 +1177,13 @@ class TestSandboxWaitUntilComplete:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
+        mock_response.returncode = 0
+        mock_response.started_at_time = None
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         sandbox.wait_until_complete(raise_on_termination=False).result()
@@ -1173,6 +1283,7 @@ class TestSandboxWaitForRunning:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "failing-sandbox-id"
+        sandbox._state = _Starting(sandbox_id="failing-sandbox-id")
 
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_FAILED
@@ -1191,9 +1302,11 @@ class TestSandboxWaitForRunning:
 
         sandbox = Sandbox(command="echo", args=["hello"])
         sandbox._sandbox_id = "fast-sandbox-id"
+        sandbox._state = _Starting(sandbox_id="fast-sandbox-id")
 
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.returncode = 0
         mock_get_response.tower_id = "tower-1"
         mock_get_response.runway_id = "runway-1"
         mock_get_response.tower_group_id = None
@@ -1286,6 +1399,7 @@ class TestSandboxStop:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
@@ -1313,6 +1427,7 @@ class TestSandboxStop:
         """Test stop(missing_ok=True) suppresses SandboxNotFoundError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         sandbox._stub.Stop = AsyncMock(
@@ -1330,6 +1445,7 @@ class TestSandboxStop:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         sandbox._stub.Stop = AsyncMock(
@@ -1391,6 +1507,7 @@ class TestSandboxTimeouts:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2202,6 +2319,7 @@ class TestSandboxExecutionStats:
         """Test exec() increments exec_count before execution."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
 
         # Mock _exec_streaming_async with MagicMock to avoid creating a real coroutine
         # that would trigger "coroutine was never awaited" warnings when discarded
@@ -2254,6 +2372,7 @@ class TestSandboxExecutionStats:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
 
         mock_session = MagicMock()
         sandbox._session = mock_session
@@ -2300,16 +2419,20 @@ class TestSandboxStartupTimeTracking:
 
     def test_from_sandbox_info_marks_startup_recorded(self) -> None:
         """Test _from_sandbox_info marks startup as already recorded."""
+        from unittest.mock import MagicMock
+
         from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
 
+        info = MagicMock()
+        info.sandbox_id = "test-123"
+        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
+        info.tower_id = "tower-1"
+        info.tower_group_id = "group-1"
+        info.runway_id = "runway-1"
         sandbox = Sandbox._from_sandbox_info(
-            sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
-            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            info,
             base_url="https://api.example.com",
             timeout_seconds=300.0,
         )
@@ -2323,6 +2446,7 @@ class TestSandboxStartupTimeTracking:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._start_accepted_at = 100.0
 
         mock_session = MagicMock()
@@ -2351,6 +2475,7 @@ class TestSandboxStartupTimeTracking:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
         sandbox._start_accepted_at = 100.0
         sandbox._startup_recorded = True
 
@@ -2502,6 +2627,7 @@ class TestExecStdinReadySignal:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2585,6 +2711,7 @@ class TestExecStdinReadySignal:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2614,6 +2741,7 @@ class TestExecStdinReadySignal:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2646,6 +2774,7 @@ class TestExecStdinReadySignal:
         """Test exit before ready signal unblocks and returns result."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2681,6 +2810,7 @@ class TestExecStdinReadySignal:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2714,6 +2844,7 @@ class TestExecStdinReadySignal:
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
 
@@ -2948,3 +3079,41 @@ class TestCrossLoopRegression:
                     assert result is sandbox
                 finally:
                     loop.close()
+
+
+class TestTerminalStateProperties:
+    """Verify property accessors return correct values from _Terminal state."""
+
+    def test_returncode_from_terminal_state(self) -> None:
+        """Properties read returncode from _Terminal state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED, returncode=42)
+        assert sandbox.returncode == 42
+
+    def test_status_from_terminal_state(self) -> None:
+        """Properties read status from _Terminal state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.FAILED)
+        assert sandbox.status == SandboxStatus.FAILED
+
+    def test_sandbox_id_from_terminal_state(self) -> None:
+        """Properties read sandbox_id from _Terminal state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(sandbox_id="sb-terminal", status=SandboxStatus.COMPLETED)
+        assert sandbox.sandbox_id == "sb-terminal"
+
+    def test_tower_id_from_terminal_state(self) -> None:
+        """Properties read tower_id from _Terminal state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(
+            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, tower_id="tower-99"
+        )
+        assert sandbox.tower_id == "tower-99"
+
+    def test_runway_id_from_terminal_state(self) -> None:
+        """Properties read runway_id from _Terminal state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Terminal(
+            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, runway_id="runway-99"
+        )
+        assert sandbox.runway_id == "runway-99"

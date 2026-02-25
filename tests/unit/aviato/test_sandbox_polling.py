@@ -13,8 +13,9 @@ import pytest
 from coreweave.aviato.v1beta1 import atc_pb2
 
 from aviato import Sandbox
-from aviato._sandbox import SandboxStatus
+from aviato._sandbox import SandboxStatus, _NotStarted, _Running, _Starting, _Terminal
 from aviato.exceptions import (
+    SandboxFailedError,
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
@@ -45,7 +46,12 @@ def _make_sandbox(
     sandbox._auth_metadata = ()
     sandbox._request_timeout_seconds = timeout
     if status is not None:
-        sandbox._status = status
+        if status in (SandboxStatus.RUNNING, SandboxStatus.PAUSED):
+            sandbox._state = _Running(sandbox_id=sandbox_id, status=status)
+        elif status in (SandboxStatus.COMPLETED, SandboxStatus.FAILED, SandboxStatus.TERMINATED):
+            sandbox._state = _Terminal(sandbox_id=sandbox_id, status=status)
+    else:
+        sandbox._state = _Starting(sandbox_id=sandbox_id)
     return sandbox
 
 
@@ -57,6 +63,7 @@ def _get_response(status: int, **kwargs: object) -> MagicMock:
     resp.tower_group_id = kwargs.get("tower_group_id", "")
     resp.runway_id = kwargs.get("runway_id", "")
     resp.started_at_time = kwargs.get("started_at_time", None)
+    resp.returncode = kwargs.get("returncode", 0)
     return resp
 
 
@@ -101,6 +108,71 @@ class TestRunningDedup:
         sandbox._stub.Get.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_fast_path_completed_returns(self) -> None:
+        """COMPLETED terminal state returns without error or API call."""
+        sandbox = _make_sandbox(status=SandboxStatus.COMPLETED)
+        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+
+        await sandbox._wait_until_running_async()
+        sandbox._stub.Get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_failed_raises(self) -> None:
+        """FAILED terminal state raises SandboxFailedError."""
+        sandbox = _make_sandbox(status=SandboxStatus.FAILED)
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_running_async()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_terminated_raises(self) -> None:
+        """TERMINATED terminal state raises SandboxTerminatedError."""
+        sandbox = _make_sandbox(status=SandboxStatus.TERMINATED)
+
+        with pytest.raises(SandboxTerminatedError):
+            await sandbox._wait_until_running_async()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_paused_returns(self) -> None:
+        """PAUSED state is treated as running - returns without API call."""
+        sandbox = _make_sandbox()
+        sandbox._state = _Running(sandbox_id="test-sandbox", status=SandboxStatus.PAUSED)
+        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+
+        await sandbox._wait_until_running_async()
+        sandbox._stub.Get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_poll_through_to_paused(self) -> None:
+        """Sandbox starting in _Starting transitions to _Running with PAUSED status."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(atc_pb2.SANDBOX_STATUS_PENDING)
+            return _get_response(atc_pb2.SANDBOX_STATUS_PAUSED)
+
+        sandbox = _make_sandbox()
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_running_async()
+
+        assert isinstance(sandbox._state, _Running)
+        assert sandbox._state.status == SandboxStatus.PAUSED
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fast_path_cancelled_raises(self) -> None:
+        """Cancelled _NotStarted raises SandboxNotRunningError."""
+        sandbox = _make_sandbox()
+        sandbox._state = _NotStarted(cancelled=True)
+
+        with pytest.raises(SandboxNotRunningError, match="cancelled before starting"):
+            await sandbox._wait_until_running_async()
+
+    @pytest.mark.asyncio
     async def test_cancellation_isolation(self) -> None:
         """Cancelling one waiter does not cancel the shared polling task."""
         poll_round = 0
@@ -128,7 +200,7 @@ class TestRunningDedup:
 
         # waiter_b should still complete
         await waiter_b
-        assert sandbox._status == SandboxStatus.RUNNING
+        assert sandbox.status == SandboxStatus.RUNNING
 
     @pytest.mark.asyncio
     async def test_timeout_isolation(self) -> None:
@@ -155,7 +227,7 @@ class TestRunningDedup:
 
         # Long waiter should succeed
         await long_waiter
-        assert sandbox._status == SandboxStatus.RUNNING
+        assert sandbox.status == SandboxStatus.RUNNING
 
     @pytest.mark.asyncio
     async def test_stop_while_waiting(self) -> None:
@@ -208,7 +280,7 @@ class TestRunningDedup:
 
         # Second waiter retries and succeeds
         await sandbox._wait_until_running_async()
-        assert sandbox._status == SandboxStatus.RUNNING
+        assert sandbox.status == SandboxStatus.RUNNING
 
 
 # ---------------------------------------------------------------------------
@@ -267,13 +339,41 @@ class TestCompleteDedup:
         await quiet_waiter
 
     @pytest.mark.asyncio
-    async def test_fast_path_when_returncode_set(self) -> None:
-        """When _returncode is already set, no API calls are made."""
+    async def test_fast_path_when_terminal(self) -> None:
+        """When state is already terminal, no API calls are made."""
         sandbox = _make_sandbox(status=SandboxStatus.COMPLETED)
-        sandbox._returncode = 0
         sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_complete_async()
+        sandbox._stub.Get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_failed_raises(self) -> None:
+        """FAILED terminal state raises SandboxFailedError without API call."""
+        sandbox = _make_sandbox(status=SandboxStatus.FAILED)
+        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_complete_async()
+        sandbox._stub.Get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_terminated_raises(self) -> None:
+        """TERMINATED terminal state raises SandboxTerminatedError by default."""
+        sandbox = _make_sandbox(status=SandboxStatus.TERMINATED)
+        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+
+        with pytest.raises(SandboxTerminatedError):
+            await sandbox._wait_until_complete_async(raise_on_termination=True)
+        sandbox._stub.Get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fast_path_terminated_no_raise(self) -> None:
+        """TERMINATED with raise_on_termination=False returns without error or API call."""
+        sandbox = _make_sandbox(status=SandboxStatus.TERMINATED)
+        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+
+        await sandbox._wait_until_complete_async(raise_on_termination=False)
         sandbox._stub.Get.assert_not_called()
 
     @pytest.mark.asyncio
@@ -304,7 +404,7 @@ class TestCompleteDedup:
 
         # waiter_b should still complete
         await waiter_b
-        assert sandbox._status == SandboxStatus.COMPLETED
+        assert sandbox.status == SandboxStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_timeout_isolation(self) -> None:
@@ -331,7 +431,7 @@ class TestCompleteDedup:
 
         # Long waiter should succeed
         await long_waiter
-        assert sandbox._status == SandboxStatus.COMPLETED
+        assert sandbox.status == SandboxStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_stop_while_waiting(self) -> None:
@@ -381,4 +481,4 @@ class TestCompleteDedup:
         assert sandbox._complete_task is None
 
         await sandbox._wait_until_complete_async()
-        assert sandbox._status == SandboxStatus.COMPLETED
+        assert sandbox.status == SandboxStatus.COMPLETED

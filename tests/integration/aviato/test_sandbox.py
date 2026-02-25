@@ -456,7 +456,7 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
         assert content == b"async content"
 
     # After exiting, sandbox should be stopped
-    # (sandbox._stopped should be True, but we can't easily verify this externally)
+    # (sandbox._is_done should be True, but we can't easily verify this externally)
 
 
 # Infrastructure filtering tests (runway_ids, tower_ids)
