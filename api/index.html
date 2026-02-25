@@ -3973,7 +3973,9 @@ was last fetched. For guaranteed fresh status, use
 
     <div class="doc doc-contents ">
 
-        <p>Timestamp when status was last fetched from the API.</p>
+        <p>Timestamp when status was last confirmed.</p>
+<p>For terminal sandboxes, this is updated on each get_status() call
+without an API round-trip since terminal states are immutable.</p>
 <p>Returns None only for sandboxes that haven't been started yet.</p>
 
     </div>
@@ -5485,7 +5487,9 @@ doesn't exist.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Get the current status of the sandbox from the backend.</p>
+        <p>Get the current status of the sandbox.</p>
+<p>For terminal sandboxes (COMPLETED/FAILED/TERMINATED), returns the cached
+status without an API call. For active sandboxes, fetches from backend.</p>
 
 
 <table>
