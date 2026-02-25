@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-02-25)
+
+### Documentation
+
+- Update get_status() for terminal sandbox caching
+  ([`00f588a`](https://github.com/coreweave/aviato-client/commit/00f588afc426827f1b47474ea60261572524eded))
+
+### Features
+
+- **sandbox**: Add _LifecycleState sealed type and transition helpers
+  ([`27c3c23`](https://github.com/coreweave/aviato-client/commit/27c3c2370f55497954ec7e8430ab1733db911a04))
+
+### Refactoring
+
+- **sandbox**: Replace lifecycle variables with _LifecycleState
+  ([`cc327e5`](https://github.com/coreweave/aviato-client/commit/cc327e5c567b044167201bae0dbc0344d3227ca5))
+
+
 ## v0.2.0 (2026-02-24)
 
 ### Bug Fixes
