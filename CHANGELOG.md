@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-02-26)
+
+### Bug Fixes
+
+- **sandbox**: Add lock for exec statistics
+  ([`d281eb4`](https://github.com/coreweave/aviato-client/commit/d281eb486cb06b14ba07c429b463482fe580b803))
+
+- **sandbox**: Cache shutdown task in stdin loop
+  ([`5b9fa78`](https://github.com/coreweave/aviato-client/commit/5b9fa7816f6f950a06f2032de61c44f9b064376d))
+
+### Chores
+
+- Update ruff pre-commit hook to v0.14.10 and fix formatting
+  ([`430311b`](https://github.com/coreweave/aviato-client/commit/430311ba49d147e55bdf03efe53b9115483acb0b))
+
+### Features
+
+- **types**: Propagate exceptions in StreamReader
+  ([`3b94574`](https://github.com/coreweave/aviato-client/commit/3b94574ef3e2bad0f7a70d0a2eef2d31614b4f41))
+
+### Refactoring
+
+- **sandbox**: Widen exec queue types
+  ([`ab79d7a`](https://github.com/coreweave/aviato-client/commit/ab79d7af52225c9fbe9164e47ff4348e072e0fb5))
+
+
 ## v0.3.0 (2026-02-25)
 
 ### Documentation
