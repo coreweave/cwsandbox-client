@@ -1,6 +1,6 @@
 # RL training guide
 
-How to use Aviato sandboxes for RL training workflows where models execute tool calls in isolated environments.
+How to use CWSandboxes for RL training workflows where models execute tool calls in isolated environments.
 
 ## Contents
 
@@ -29,10 +29,10 @@ The tagging and listing APIs make it practical to clean up and monitor training 
 Set your API key:
 
 ```bash
-export AVIATO_API_KEY="your-api-key"
+export CWSANDBOX_API_KEY="your-api-key"
 ```
 
-Install aviato from source (from repo root):
+Install cwsandbox from source (from repo root):
 
 ```bash
 uv pip install -e .
@@ -43,8 +43,8 @@ uv pip install -e .
 The basic setup: an agent loop runs on your training infrastructure, and tool calls execute in a sandbox.
 
 ```python
-import aviato
-from aviato import Sandbox
+import cwsandbox
+from cwsandbox import Sandbox
 
 def run_agent_episode(model, task: dict, sandbox: Sandbox) -> tuple[list, float]:
     """Run one agent episode, returning trajectory and reward."""
@@ -117,7 +117,7 @@ Tags let you filter and find sandboxes created by your training jobs. Include me
 
 ```python
 import os
-from aviato import SandboxDefaults
+from cwsandbox import SandboxDefaults
 
 def make_defaults(model_name: str) -> SandboxDefaults:
     return SandboxDefaults(
@@ -152,9 +152,9 @@ A minimal integration: compute code execution rewards with parallel sandbox exec
 - Computes binary rewards: 1.0 for successful execution, 0.0 for failure
 - Shows progress as results arrive (faster executions complete first)
 
-**How it uses Aviato:**
+**How it uses CWSandbox:**
 
-The example uses `aviato.wait()` to process results as they complete:
+The example uses `cwsandbox.wait()` to process results as they complete:
 
 ```python
 # Create sandboxes and execute all completions in parallel
@@ -168,7 +168,7 @@ processes = [
 
 # Collect results as they complete
 while pending:
-    [process], pending = aviato.wait(pending, num_returns=1)
+    [process], pending = cwsandbox.wait(pending, num_returns=1)
     result = process.result()
     reward = 1.0 if result.returncode == 0 else 0.0
 ```
@@ -219,10 +219,10 @@ TRL uses a reward function interface where completions map directly to rewards. 
 The standard pattern uses `<answer>` XML tags for code extraction (matching the format used in GRPO math examples with `\boxed{}`):
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-session = aviato.Session(defaults=SandboxDefaults(
+session = cwsandbox.Session(defaults=SandboxDefaults(
     container_image="python:3.11",
     tags=("trl-grpo",),
 ))
@@ -260,7 +260,7 @@ This pattern works for training models to generate correct code in a single turn
 
 ## Try it: trl_grpo_integration.py
 
-Uses Aviato sandboxes with TRL's GRPOTrainer for code execution rewards.
+Uses CWSandboxes with TRL's GRPOTrainer for code execution rewards.
 
 **What it does:**
 - Loads a small model (`Qwen/Qwen2.5-0.5B-Instruct`)
@@ -268,7 +268,7 @@ Uses Aviato sandboxes with TRL's GRPOTrainer for code execution rewards.
 - Trains the model using GRPO with sandbox-based reward computation
 - Runs 10 training steps to demonstrate the integration
 
-**How it uses Aviato:**
+**How it uses CWSandbox:**
 
 The reward function extracts code from `<answer>` tags (the standard GRPO pattern), creates sandboxes in parallel through a Session, executes each completion, and returns binary rewards:
 
@@ -340,14 +340,14 @@ Setting up GRPOTrainer...
 
 Starting training (10 steps)...
 ------------------------------------------------------------
-  [Aviato] Reward call 1: 2 sandboxes, 0/2 passed
-  [Aviato] Reward call 2: 1 sandboxes, 0/1 passed, 1 skipped (no code)
-  [Aviato] Reward call 3: 0 sandboxes, 0/0 passed, 2 skipped (no code)
-  [Aviato] Reward call 4: 2 sandboxes, 0/2 passed
+  [CWSandbox] Reward call 1: 2 sandboxes, 0/2 passed
+  [CWSandbox] Reward call 2: 1 sandboxes, 0/1 passed, 1 skipped (no code)
+  [CWSandbox] Reward call 3: 0 sandboxes, 0/0 passed, 2 skipped (no code)
+  [CWSandbox] Reward call 4: 2 sandboxes, 0/2 passed
   ...
-  [Aviato] Reward call 8: 2 sandboxes, 1/2 passed
-  [Aviato] Reward call 9: 2 sandboxes, 1/2 passed
-  [Aviato] Reward call 10: 1 sandboxes, 0/1 passed, 1 skipped (no code)
+  [CWSandbox] Reward call 8: 2 sandboxes, 1/2 passed
+  [CWSandbox] Reward call 9: 2 sandboxes, 1/2 passed
+  [CWSandbox] Reward call 10: 1 sandboxes, 0/1 passed, 1 skipped (no code)
 [training logs]
 ------------------------------------------------------------
 
@@ -369,7 +369,7 @@ Expected with a small, untrained model. As training progresses, you should see f
 Sandbox operations can fail (timeouts, missing files, sandbox termination). Return observations that help the agent understand what went wrong:
 
 ```python
-from aviato import SandboxTimeoutError, SandboxFileError
+from cwsandbox import SandboxTimeoutError, SandboxFileError
 
 def execute_tool(sandbox, tool) -> str:
     """Execute a tool call, returning an observation string."""
@@ -398,7 +398,7 @@ For reward computation, catch exceptions and return a fallback reward instead of
 
 ## W&B metrics integration
 
-When using W&B (Weights & Biases) for training, aviato Sessions log sandbox usage metrics to your active wandb run automatically.
+When using W&B (Weights & Biases) for training, cwsandbox Sessions log sandbox usage metrics to your active wandb run automatically.
 
 ### Auto-detection
 
@@ -406,7 +406,7 @@ If `WANDB_API_KEY` is set and a wandb run is active (`wandb.run` exists), metric
 
 ```python
 import wandb
-from aviato import Session, SandboxDefaults
+from cwsandbox import Session, SandboxDefaults
 
 wandb.init(project="my-rl-training")
 
@@ -442,17 +442,17 @@ Execution metrics are tracked automatically when `exec()` completes:
 
 | Metric | Description |
 |--------|-------------|
-| `aviato/sandboxes_created` | Total sandboxes created via session |
-| `aviato/executions` | Total exec() calls |
-| `aviato/exec_completed_ok` | Completed executions (returncode=0) |
-| `aviato/exec_completed_nonzero` | Completed executions (returncode!=0) |
-| `aviato/exec_failures` | Failed executions (timeouts, transport failures) |
-| `aviato/exec_completion_rate` | Fraction of exec() that completed with returncode=0 |
-| `aviato/exec_failure_rate` | Fraction of exec() that failed to complete |
-| `aviato/startup_count` | Number of sandbox startup times recorded |
-| `aviato/avg_startup_seconds` | Average sandbox startup time |
-| `aviato/min_startup_seconds` | Minimum sandbox startup time |
-| `aviato/max_startup_seconds` | Maximum sandbox startup time |
+| `cwsandbox/sandboxes_created` | Total sandboxes created via session |
+| `cwsandbox/executions` | Total exec() calls |
+| `cwsandbox/exec_completed_ok` | Completed executions (returncode=0) |
+| `cwsandbox/exec_completed_nonzero` | Completed executions (returncode!=0) |
+| `cwsandbox/exec_failures` | Failed executions (timeouts, transport failures) |
+| `cwsandbox/exec_completion_rate` | Fraction of exec() that completed with returncode=0 |
+| `cwsandbox/exec_failure_rate` | Fraction of exec() that failed to complete |
+| `cwsandbox/startup_count` | Number of sandbox startup times recorded |
+| `cwsandbox/avg_startup_seconds` | Average sandbox startup time |
+| `cwsandbox/min_startup_seconds` | Minimum sandbox startup time |
+| `cwsandbox/max_startup_seconds` | Maximum sandbox startup time |
 
 Tracking is automatic: just call `exec()` on any sandbox associated with a session. Call `session.log_metrics(step=N)` to log at specific training steps:
 
@@ -486,9 +486,9 @@ Sessions with W&B integration also track per-sandbox metrics:
 
 | Metric | Description |
 |--------|-------------|
-| `aviato/avg_execs_per_sandbox` | Average exec() calls per sandbox (useful for "tool calls per rollout") |
-| `aviato/min_execs_per_sandbox` | Minimum exec() calls in any sandbox |
-| `aviato/max_execs_per_sandbox` | Maximum exec() calls in any sandbox |
+| `cwsandbox/avg_execs_per_sandbox` | Average exec() calls per sandbox (useful for "tool calls per rollout") |
+| `cwsandbox/min_execs_per_sandbox` | Minimum exec() calls in any sandbox |
+| `cwsandbox/max_execs_per_sandbox` | Maximum exec() calls in any sandbox |
 
 What these tell you about agent behavior:
 
@@ -517,7 +517,7 @@ Metrics are also logged automatically when the session closes, so you get final 
 Monitor sandbox usage during training:
 
 ```python
-from aviato import Sandbox, SandboxStatus
+from cwsandbox import Sandbox, SandboxStatus
 
 def count_active_sandboxes(run_id: str) -> dict:
     sandboxes = Sandbox.list(
@@ -578,11 +578,11 @@ The `examples/rl_training/art/` directory demonstrates this pattern on the MBPP 
 
 ### Overview
 
-[ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) is an open-source RL framework by OpenPipe for training multi-step agents using GRPO. This example integrates Aviato sandboxes with ART:
+[ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) is an open-source RL framework by OpenPipe for training multi-step agents using GRPO. This example integrates CWSandboxes with ART:
 
 - Uses the `art` package (`openpipe-art`) for trajectory collection and training
 - Supports two backends: `LocalBackend` (requires GPU) or `TinkerBackend` (no GPU)
-- Executes code via tool calling in Aviato sandboxes
+- Executes code via tool calling in CWSandboxes
 - Computes binary rewards based on MBPP test case results
 
 ### Training approach: GRPO with distillation
@@ -597,7 +597,7 @@ This example uses **distillation with reinforcement learning**: a stronger model
 
 **How it works:**
 
-1. The inference model generates multiple trajectories per problem, each with tool calls executed in Aviato sandboxes
+1. The inference model generates multiple trajectories per problem, each with tool calls executed in CWSandboxes
 2. Each trajectory receives a binary reward: 1.0 if tests pass, 0.0 otherwise
 3. Trajectories for the same problem form a group - GRPO compares trajectories within each group
 4. The base model (Qwen3-8B) is trained to prefer higher-reward trajectories over lower-reward ones
@@ -615,7 +615,7 @@ After training, you deploy Qwen3-8B with the same tool definitions. It will have
 Environment variables:
 
 ```bash
-export AVIATO_API_KEY="your-aviato-key"
+export CWSANDBOX_API_KEY="your-cwsandbox-key"
 export OPENAI_API_KEY="your-openai-key"
 export ART_TINKER_API_KEY="your-tinker-key"  # required for --backend=tinker
 export WANDB_API_KEY="your-wandb-key"        # optional, for logging
@@ -658,7 +658,7 @@ uv run examples/rl_training/art/train.py --backend local --num-problems 10
 Expected output:
 
 ```
-ART Training with Aviato Sandboxes
+ART Training with CWSandbox
 ========================================
 Backend: tinker
 Model: gpt-5.1-codex-mini
@@ -666,7 +666,7 @@ Base model: Qwen/Qwen3-8B
 Problems: 10
 Steps: 5
 Trajectories per problem: 2
-Project: aviato-mbpp
+Project: cwsandbox-mbpp
 Run name: train-001
 
 Loading MBPP problems...
@@ -698,7 +698,7 @@ Training complete: step=1, metrics={'loss': 0.42}
 | `--num-steps` | `5` | Training steps |
 | `--trajectories-per-problem` | `2` | Trajectories collected per problem per step |
 | `--base-url` | `None` | OpenAI-compatible API base URL |
-| `--project` | `aviato-mbpp` | W&B project name |
+| `--project` | `cwsandbox-mbpp` | W&B project name |
 | `--run-name` | `train-001` | Training run name |
 | `--learning-rate` | `1e-5` | Learning rate |
 | `--dry-run` | `false` | Validate setup without training |
@@ -723,7 +723,7 @@ from art.tinker import TinkerBackend
 # Create trainable model
 model = art.TrainableModel(
     name="train-001",
-    project="aviato-mbpp",
+    project="cwsandbox-mbpp",
     base_model="Qwen/Qwen3-8B",
 )
 
@@ -792,7 +792,7 @@ The training pipeline has several components:
 
 2. **OpenAI API (inference)**: During trajectory collection, the rollout code calls the OpenAI API (or compatible endpoint) to generate model responses. The model receives tool definitions and returns tool calls that the rollout executes.
 
-3. **Aviato sandboxes (code execution)**: Each rollout uses a single Aviato sandbox that persists across all tool calls. When the model calls `execute_code` or `submit_solution`, the code runs in that sandbox. This means file changes and state accumulate as the agent iterates - it can write a file, run it, see an error, and fix it. The sandbox provides isolation so untrusted model-generated code cannot affect the host. Results (stdout, stderr, exit code) flow back to the rollout.
+3. **CWSandboxes (code execution)**: Each rollout uses a single CWSandbox that persists across all tool calls. When the model calls `execute_code` or `submit_solution`, the code runs in that sandbox. This means file changes and state accumulate as the agent iterates - it can write a file, run it, see an error, and fix it. The sandbox provides isolation so untrusted model-generated code cannot affect the host. Results (stdout, stderr, exit code) flow back to the rollout.
 
 4. **Trajectory collection**: The rollout accumulates the conversation history (messages and tool results) along with the final reward into an `art.Trajectory` object. Multiple trajectories for the same problem form an `art.TrajectoryGroup`.
 

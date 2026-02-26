@@ -1,27 +1,27 @@
 # SWE-bench evaluation guide
 
-Run SWE-bench evaluations in parallel using Aviato sandboxes.
+Run SWE-bench evaluations in parallel using CWSandboxes.
 
 ## What this does
 
 [SWE-bench](https://www.swebench.com/) tests whether language models can fix real bugs in real repositories. Each task: apply a patch, run the test suite, see if the fix works.
 
-You can run SWE-bench locally with Docker, but you're limited by your machine's resources. Aviato lets you run evaluations at scale on CoreWeave infrastructure. Spin up dozens or hundreds of sandboxes concurrently without managing any of it yourself. The script pulls pre-built images from Epoch AI's registry on GHCR, so there's no local Docker build step.
+You can run SWE-bench locally with Docker, but you're limited by your machine's resources. CWSandbox lets you run evaluations at scale on CoreWeave infrastructure. Spin up dozens or hundreds of sandboxes concurrently without managing any of it yourself. The script pulls pre-built images from Epoch AI's registry on GHCR, so there's no local Docker build step.
 
 ## Setup
 
 Clone the repo and install dependencies:
 
 ```bash
-git clone https://github.com/coreweave/aviato-client.git
-cd aviato-client
+git clone https://github.com/coreweave/cwsandbox-client.git
+cd cwsandbox-client
 uv sync
 uv pip install swebench datasets
 ```
 
 For authentication, set one of these:
 
-- `AVIATO_API_KEY` environment variable (recommended)
+- `CWSANDBOX_API_KEY` environment variable (recommended)
 - `WANDB_API_KEY` environment variable
 - W&B credentials in `~/.netrc`
 
@@ -125,13 +125,13 @@ Each instance goes through these steps:
 | Step | Where | What happens |
 |------|-------|--------------|
 | 1. Load dataset | Local | Fetch instance metadata from HuggingFace |
-| 2. Create sandbox | Aviato | Start sandbox with the instance's image |
-| 3. Write patch | Aviato | Write patch to `/tmp/patch.diff` |
-| 4. Apply patch | Aviato | Run `git apply` (falls back to `patch` if needed) |
-| 5. Run tests | Aviato | Execute `/root/eval.sh` |
+| 2. Create sandbox | CWSandbox | Start sandbox with the instance's image |
+| 3. Write patch | CWSandbox | Write patch to `/tmp/patch.diff` |
+| 4. Apply patch | CWSandbox | Run `git apply` (falls back to `patch` if needed) |
+| 5. Run tests | CWSandbox | Execute `/root/eval.sh` |
 | 6. Grade results | Local | Parse output with `swebench.harness.grading` |
 | 7. Write report | Local | Save results to `logs/swebench/` |
-| 8. Cleanup | Aviato | Stop sandbox |
+| 8. Cleanup | CWSandbox | Stop sandbox |
 
 Steps 2-5 and 8 run remotely. Steps 1, 6, and 7 run on your machine.
 
@@ -143,10 +143,10 @@ Results come back as workflows finish via `as_completed()`.
 
 ### Cleanup
 
-The script uses an Aviato `Session` to track sandboxes. When the session exits (normal exit, exception, or Ctrl+C), all sandboxes get cleaned up.
+The script uses a CWSandbox `Session` to track sandboxes. When the session exits (normal exit, exception, or Ctrl+C), all sandboxes get cleaned up.
 
 ```python
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Sandboxes created here get cleaned up when the session exits
 ```

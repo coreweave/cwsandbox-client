@@ -44,7 +44,7 @@ There are two ways to create a sandbox, differing in when the start RPC fires.
 backend accepts the request:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 # Returns after backend accepts the start request
 sandbox = Sandbox.run("echo", "hello")
@@ -69,10 +69,10 @@ Sandbox.run(command="echo", args=["hello", "world"])
 fires on first use:
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-with aviato.Session(SandboxDefaults()) as session:
+with cwsandbox.Session(SandboxDefaults()) as session:
     sandbox = session.sandbox(command="sleep", args=["infinity"])
 
     # No network call yet - sandbox_id is None
@@ -196,7 +196,7 @@ print(sandbox.returncode)  # 0 if training succeeded
 The `raise_on_termination` parameter controls behavior when a sandbox is externally terminated:
 
 ```python
-from aviato import SandboxTerminatedError
+from cwsandbox import SandboxTerminatedError
 
 # Default: raises on termination
 try:
@@ -355,7 +355,7 @@ This architecture avoids cross-event-loop issues and works in Jupyter notebooks 
 Run a command and get the result. Context manager handles cleanup:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
     result = sandbox.exec(["echo", "hello"]).result()
@@ -367,7 +367,7 @@ with Sandbox.run() as sandbox:
 Separate start errors from operation errors:
 
 ```python
-from aviato import Sandbox, SandboxFailedError
+from cwsandbox import Sandbox, SandboxFailedError
 
 sandbox = Sandbox.run("sleep", "infinity")
 try:
@@ -385,7 +385,7 @@ sandbox.stop().result()
 Wait for the main command to complete:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 sandbox = Sandbox.run("python", "train.py")
 sandbox.wait_until_complete(timeout=7200.0)
@@ -399,7 +399,7 @@ if sandbox.returncode == 0:
 Reattach to a sandbox from a previous session or process:
 
 ```python
-from aviato import Sandbox, SandboxStatus
+from cwsandbox import Sandbox, SandboxStatus
 
 sandbox = Sandbox.from_id("sandbox-abc123").result()
 
@@ -415,10 +415,10 @@ else:
 Create multiple sandboxes and wait for results:
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-with aviato.Session(SandboxDefaults(tags=("batch-job",))) as session:
+with cwsandbox.Session(SandboxDefaults(tags=("batch-job",))) as session:
     sandboxes = [session.sandbox() for _ in range(5)]
 
     processes = [
@@ -426,7 +426,7 @@ with aviato.Session(SandboxDefaults(tags=("batch-job",))) as session:
         for i, sb in enumerate(sandboxes)
     ]
 
-    done, pending = aviato.wait(processes)
+    done, pending = cwsandbox.wait(processes)
     for p in done:
         print(p.result().stdout)
 ```

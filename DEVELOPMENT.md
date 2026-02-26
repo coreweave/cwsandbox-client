@@ -1,6 +1,6 @@
 # Development
 
-Development setup and workflows for aviato-client contributors.
+Development setup and workflows for cwsandbox-client contributors.
 
 ## Prerequisites
 
@@ -14,8 +14,8 @@ Development setup and workflows for aviato-client contributors.
 ## Setup
 
 ```bash
-git clone https://github.com/coreweave/aviato-client.git
-cd aviato-client
+git clone https://github.com/coreweave/cwsandbox-client.git
+cd cwsandbox-client
 
 # Install buf (if not already installed)
 brew install bufbuild/buf/buf # macOS (or see https://buf.build/docs/installation/)
@@ -58,7 +58,7 @@ cp .env.example .env
 ```
 
 Authentication options:
-- **Aviato**: `AVIATO_API_KEY` (takes priority)
+- **CWSandbox**: `CWSANDBOX_API_KEY` (takes priority)
 - **Weights & Biases**: `WANDB_API_KEY` + `WANDB_ENTITY_NAME` (or `~/.netrc`)
 
 ---
@@ -112,7 +112,7 @@ Fast, mock-based tests with no external dependencies (default pytest path: `test
 
 ```bash
 uv run pytest                                    # All unit tests
-uv run pytest tests/unit/aviato/test_sandbox.py  # Single file
+uv run pytest tests/unit/cwsandbox/test_sandbox.py  # Single file
 uv run pytest -k "test_create"                   # By name pattern
 ```
 
@@ -163,16 +163,16 @@ The token is saved to `~/.netrc` and will be used automatically for future insta
 
 ### Import Errors
 
-If `import aviato` fails after installation:
+If `import cwsandbox` fails after installation:
 1. Ensure you've activated the virtual environment: `source .venv/bin/activate`
-2. Check the package is installed: `pip list | grep aviato`
+2. Check the package is installed: `pip list | grep cwsandbox`
 3. Reinstall: `uv sync --extra dev`
 
 ### Integration Tests Hanging
 
 Integration tests provision real sandboxes and may take time to complete depending on backend availability and network conditions. If tests appear stuck:
 1. Check your auth credentials in `.env`
-2. Verify network connectivity to the Aviato backend
+2. Verify network connectivity to the CWSandbox backend
 3. Try running a single test with `-v` flag for detailed output
 
 ### Pre-commit Hook Failures

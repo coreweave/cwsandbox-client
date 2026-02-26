@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Basic sandbox execution example using the sync API.
 
@@ -10,7 +10,7 @@ This example demonstrates:
 - Reading and writing files
 """
 
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 
 def main() -> None:
@@ -32,7 +32,7 @@ def main() -> None:
         print(f"Sandbox status: {sandbox.status}")
 
         # Execute a simple command
-        result = sandbox.exec(["echo", "Hello from Aviato sandbox"]).result()
+        result = sandbox.exec(["echo", "Hello from CWSandbox"]).result()
         print(result.stdout.rstrip())
 
         # Write a file

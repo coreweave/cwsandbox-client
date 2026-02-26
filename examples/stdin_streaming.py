@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Stdin streaming with exec(stdin=True).
 
@@ -11,7 +11,7 @@ combined stdin/stdout streaming, and async usage.
 
 import asyncio
 
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 
 def main() -> None:

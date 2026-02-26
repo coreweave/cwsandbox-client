@@ -3,7 +3,7 @@
 Run Python functions in sandboxes without writing command strings:
 
 ```python
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 with Sandbox.session(SandboxDefaults()) as session:
     @session.function()

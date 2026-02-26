@@ -9,7 +9,7 @@ File operations return `OperationRef` objects. Use `.result()` to block for comp
 ### Writing Files
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
     # Write bytes to a file
@@ -43,7 +43,7 @@ File operations return immediately, enabling natural parallelism.
 ### Parallel Uploads
 
 ```python
-from aviato import results
+from cwsandbox import results
 
 # Start all uploads simultaneously
 write_refs = [
@@ -75,7 +75,7 @@ output, metrics, logs = results(read_refs)
 A common workflow: upload input files, run processing, download results.
 
 ```python
-from aviato import Sandbox, results
+from cwsandbox import Sandbox, results
 
 with Sandbox.run() as sandbox:
     # 1. Parallel uploads
@@ -100,7 +100,7 @@ with Sandbox.run() as sandbox:
 ### File Not Found
 
 ```python
-from aviato import SandboxFileError
+from cwsandbox import SandboxFileError
 
 try:
     content = sandbox.read_file("/nonexistent/file.txt").result()

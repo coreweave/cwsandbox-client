@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Reconnect to an existing sandbox by ID.
 
@@ -25,8 +25,8 @@ Usage:
 
 import argparse
 
-from aviato import Sandbox
-from aviato.exceptions import SandboxNotFoundError
+from cwsandbox import Sandbox
+from cwsandbox.exceptions import SandboxNotFoundError
 
 
 def create_long_running_sandbox() -> str:

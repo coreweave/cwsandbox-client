@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""ART training script with Aviato sandbox execution.
+"""ART training script with CWSandbox execution.
 
 This script trains language models on MBPP coding problems using:
-- Aviato sandboxes for code execution
+- CWSandboxes for code execution
 - ART (Agent Reinforcement Trainer) for RL training
 - LocalBackend (requires GPU) or TinkerBackend (no GPU) for training
 
@@ -12,7 +12,7 @@ Usage:
 Environment Variables:
     OPENAI_API_KEY: API key for inference
     ART_TINKER_API_KEY: API key for TinkerBackend (required if --backend=tinker)
-    AVIATO_API_KEY: API key for Aviato sandboxes
+    CWSANDBOX_API_KEY: API key for CWSandboxes
     WANDB_API_KEY: (optional) API key for W&B logging
 """
 
@@ -31,7 +31,7 @@ from rollout import Problem, RolloutConfig, rollout
 import art
 from art.local import LocalBackend
 from art.tinker import TinkerBackend
-from aviato import SandboxDefaults, Session
+from cwsandbox import SandboxDefaults, Session
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -47,13 +47,13 @@ DEFAULT_TRAJECTORIES_PER_PROBLEM = 2
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Train on MBPP with ART and Aviato sandboxes",
+        description="Train on MBPP with ART and CWSandboxes",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment Variables:
   OPENAI_API_KEY        API key for inference
   ART_TINKER_API_KEY    API key for TinkerBackend (required if --backend=tinker)
-  AVIATO_API_KEY        API key for Aviato sandboxes
+  CWSANDBOX_API_KEY        API key for CWSandboxes
   WANDB_API_KEY         (optional) API key for W&B logging
 """,
     )
@@ -98,8 +98,8 @@ Environment Variables:
     )
     parser.add_argument(
         "--project",
-        default="aviato-mbpp",
-        help="W&B project name (default: aviato-mbpp)",
+        default="cwsandbox-mbpp",
+        help="W&B project name (default: cwsandbox-mbpp)",
     )
     parser.add_argument(
         "--run-name",
@@ -237,7 +237,7 @@ async def train_step(
 
     print(f"Collected {total_trajectories} trajectories, avg reward: {avg_reward:.2f}")
 
-    # Log aviato metrics BEFORE training (aligns with trajectory collection step)
+    # Log cwsandbox metrics BEFORE training (aligns with trajectory collection step)
     session.log_metrics(step=trajectory_step, reset=True)
 
     print("Training...")
@@ -251,7 +251,7 @@ async def train_step(
 async def main(args: argparse.Namespace) -> int:
     """Main training entry point."""
 
-    print("ART Training with Aviato Sandboxes")
+    print("ART Training with CWSandbox Sandboxes")
     print("=" * 40)
     print(f"Backend: {args.backend}")
     print(f"Model: {args.model}")

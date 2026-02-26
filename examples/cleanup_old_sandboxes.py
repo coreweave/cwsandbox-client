@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Clean up sandboxes older than a threshold.
 
@@ -23,7 +23,7 @@ Usage:
 import argparse
 from datetime import UTC, datetime, timedelta
 
-from aviato import Sandbox, SandboxError
+from cwsandbox import Sandbox, SandboxError
 
 
 def cleanup_old_sandboxes(

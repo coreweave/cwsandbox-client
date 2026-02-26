@@ -9,7 +9,7 @@ This guide covers resource management and cleanup strategies for sandboxes.
 Sandboxes are stopped when exiting the context:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
     result = sandbox.exec(["echo", "hello"]).result()
@@ -19,10 +19,10 @@ with Sandbox.run() as sandbox:
 Sessions clean up all their sandboxes:
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
+with cwsandbox.Session(SandboxDefaults(container_image="python:3.11")) as session:
     sb1 = session.sandbox()
     sb2 = session.sandbox()
 # Both sandboxes stopped automatically
@@ -56,9 +56,9 @@ sandbox.stop(snapshot_on_stop=True).result()
 ### Session close()
 
 ```python
-from aviato import SandboxDefaults
+from cwsandbox import SandboxDefaults
 
-session = aviato.Session(SandboxDefaults(container_image="python:3.11"))
+session = cwsandbox.Session(SandboxDefaults(container_image="python:3.11"))
 sandbox = session.sandbox()
 # ...
 session.close().result()  # Stops all sandboxes
@@ -67,7 +67,7 @@ session.close().result()  # Stops all sandboxes
 ### Batch Cleanup
 
 ```python
-from aviato import results
+from cwsandbox import results
 
 sandboxes = [Sandbox.run() for _ in range(5)]
 # ... use sandboxes ...
@@ -81,7 +81,7 @@ results([sb.stop() for sb in sandboxes])  # Stop all in parallel
 The SDK's automatic cleanup handlers prevent most orphans, but sandboxes can still be left running after forced shutdowns (kill -9), network failures, or when creating sandboxes outside of sessions and context managers. Use tags to make any orphans easily discoverable.
 
 ```python
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 # Tag at creation time
 defaults = SandboxDefaults(
@@ -103,7 +103,7 @@ Good tagging practices:
 Query by tags to find sandboxes from previous runs:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 orphans = Sandbox.list(tags=["my-project"]).result()
 for sandbox in orphans:
@@ -115,10 +115,10 @@ for sandbox in orphans:
 Bring orphans under session management for automatic cleanup:
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
+with cwsandbox.Session(SandboxDefaults(container_image="python:3.11")) as session:
     orphans = session.list(tags=["my-project"]).result()
     for sandbox in orphans:
         session.adopt(sandbox)
@@ -128,7 +128,7 @@ with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
 ### Deleting by ID
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 Sandbox.delete("sandbox-abc123").result()
 Sandbox.delete("sandbox-abc123", missing_ok=True)  # Ignore if gone

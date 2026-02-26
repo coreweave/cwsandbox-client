@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """W&B (Weights & Biases) metrics integration example.
 
@@ -11,16 +11,16 @@ Demonstrates:
 - Automatic exec() tracking and per-step log_metrics()
 
 Metrics logged to wandb:
-- aviato/sandboxes_created: Total sandboxes created via session
-- aviato/executions: Total exec() calls
-- aviato/exec_completed_ok: Completed executions (returncode=0)
-- aviato/exec_completed_nonzero: Completed executions (returncode!=0)
-- aviato/exec_failures: Failed executions (timeouts, transport failures)
-- aviato/exec_completion_rate: Fraction of exec() that completed with returncode=0
-- aviato/exec_failure_rate: Fraction of exec() that failed to complete
-- aviato/avg_execs_per_sandbox: Average exec() calls per sandbox
-- aviato/min_execs_per_sandbox: Minimum exec() calls in any sandbox
-- aviato/max_execs_per_sandbox: Maximum exec() calls in any sandbox
+- cwsandbox/sandboxes_created: Total sandboxes created via session
+- cwsandbox/executions: Total exec() calls
+- cwsandbox/exec_completed_ok: Completed executions (returncode=0)
+- cwsandbox/exec_completed_nonzero: Completed executions (returncode!=0)
+- cwsandbox/exec_failures: Failed executions (timeouts, transport failures)
+- cwsandbox/exec_completion_rate: Fraction of exec() that completed with returncode=0
+- cwsandbox/exec_failure_rate: Fraction of exec() that failed to complete
+- cwsandbox/avg_execs_per_sandbox: Average exec() calls per sandbox
+- cwsandbox/min_execs_per_sandbox: Minimum exec() calls in any sandbox
+- cwsandbox/max_execs_per_sandbox: Maximum exec() calls in any sandbox
 
 Prerequisites:
 - Set WANDB_API_KEY environment variable
@@ -36,7 +36,7 @@ Run without wandb (metrics logged to console instead):
 import argparse
 import sys
 
-from aviato import SandboxDefaults, Session
+from cwsandbox import SandboxDefaults, Session
 
 
 def main() -> None:
@@ -75,9 +75,9 @@ def run_with_wandb(defaults: SandboxDefaults) -> None:
     # Session created before wandb.init() - lazy detection finds the run later
     with Session(defaults) as session:
         wandb.init(
-            project="aviato-examples",
+            project="cwsandbox-examples",
             name="wandb-integration-demo",
-            tags=["aviato", "example"],
+            tags=["cwsandbox", "example"],
         )
         print(f"Initialized wandb run: {wandb.run.name}")
         print()

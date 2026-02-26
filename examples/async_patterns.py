@@ -2,11 +2,11 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
-"""Async patterns with aviato's sync/async hybrid API.
+"""Async patterns with cwsandbox's sync/async hybrid API.
 
-All aviato operations support both sync and async usage:
+All cwsandbox operations support both sync and async usage:
 - Sync: call .result() to block for the result
 - Async: use await on OperationRef or Process objects
 
@@ -19,7 +19,7 @@ Usage:
 
 import asyncio
 
-from aviato import Sandbox, SandboxDefaults, Session
+from cwsandbox import Sandbox, SandboxDefaults, Session
 
 
 async def main() -> None:

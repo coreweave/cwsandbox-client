@@ -1,6 +1,6 @@
 # ART: Agent Reinforcement Trainer dependencies
 #
-# Install aviato from source first:
+# Install cwsandbox from source first:
 #   uv pip install -e .
 
 # ART framework for multi-step agent training

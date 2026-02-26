@@ -2,11 +2,11 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
-"""SWE-bench evaluation using Aviato parallel sandboxes.
+"""SWE-bench evaluation using CWSandbox parallel sandboxes.
 
-This example demonstrates running SWE-bench evaluations using Aviato's parallel
+This example demonstrates running SWE-bench evaluations using CWSandbox's parallel
 sandbox execution. It showcases the SDK's ability to manage many concurrent
 sandboxes for agentic evaluation workloads.
 
@@ -37,8 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +90,7 @@ def get_epoch_image_key(instance_id: str, arch: str = "x86_64") -> str:
 
 
 def run_in_sandbox(
-    sandbox: aviato.Sandbox,
+    sandbox: cwsandbox.Sandbox,
     command: str,
     timeout_seconds: int | None = None,
 ) -> tuple[str, int]:
@@ -125,7 +125,7 @@ class EvaluationResult:
 
 
 def run_instance(
-    session: aviato.Session,
+    session: cwsandbox.Session,
     test_spec: Any,
     pred: dict[str, Any],
     run_id: str,
@@ -135,7 +135,7 @@ def run_instance(
     """Run a single SWE-bench instance with the given prediction.
 
     Args:
-        session: Aviato session for sandbox management
+        session: CWSandbox session for sandbox management
         test_spec: TestSpec from swebench
         pred: Prediction dict with model_patch and instance_id
         run_id: Run identifier
@@ -319,7 +319,7 @@ def run_evaluation(
         resources={"cpu": "2", "memory": "4Gi"},
     )
     with (
-        aviato.Session(defaults=defaults) as session,
+        cwsandbox.Session(defaults=defaults) as session,
         ThreadPoolExecutor(max_workers=max_workers) as executor,
     ):
         futures = {
@@ -409,7 +409,7 @@ def load_predictions(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run SWE-bench evaluation using Aviato parallel sandboxes",
+        description="Run SWE-bench evaluation using CWSandbox parallel sandboxes",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

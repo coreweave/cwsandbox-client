@@ -1,6 +1,6 @@
 # RL Training Examples
 
-Examples demonstrating Aviato sandboxes for reinforcement learning training with code execution rewards.
+Examples demonstrating CWSandboxes for reinforcement learning training with code execution rewards.
 
 **Full documentation**: [RL Training Guide](../../docs/guides/rl-training.md)
 
@@ -8,9 +8,9 @@ Examples demonstrating Aviato sandboxes for reinforcement learning training with
 
 ```bash
 # Set credentials
-export AVIATO_API_KEY="your-api-key"
+export CWSANDBOX_API_KEY="your-api-key"
 
-# Install aviato from source (from repo root)
+# Install cwsandbox from source (from repo root)
 uv pip install -e .
 
 # Run standalone reward function (no GPU needed)
@@ -27,7 +27,7 @@ uv run examples/rl_training/trl_grpo_integration.py
 |--------|-------------|-----|
 | `reward_function.py` | Standalone reward function with toy completions | No |
 | `trl_grpo_integration.py` | TRL GRPOTrainer with sandbox rewards | Recommended |
-| `art/` | ART training with Aviato sandboxes | See below |
+| `art/` | ART training with CWSandboxes | See below |
 
 ### ART Training
 

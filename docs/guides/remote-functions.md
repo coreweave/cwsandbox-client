@@ -7,10 +7,10 @@ This guide covers the `@session.function()` decorator for running Python functio
 The function decorator API lets you execute Python functions in isolated sandbox containers:
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
-with aviato.Session(SandboxDefaults(container_image="python:3.11")) as session:
+with cwsandbox.Session(SandboxDefaults(container_image="python:3.11")) as session:
     @session.function()
     def compute(x: int, y: int) -> int:
         return x + y
@@ -65,7 +65,7 @@ def square(x: int) -> int:
 refs = square.map((x,) for x in range(10))
 
 # Collect all results
-from aviato import results
+from cwsandbox import results
 all_results = results(refs)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
 
@@ -98,7 +98,7 @@ print(result)  # 5
 Safe and human-readable, but limited to JSON-serializable types:
 
 ```python
-from aviato import Serialization
+from cwsandbox import Serialization
 
 @session.function(serialization=Serialization.JSON)
 def process(data: dict) -> dict:
@@ -205,8 +205,8 @@ The function API is intentionally simple. For complex workflows:
 ## Complete Example
 
 ```python
-import aviato
-from aviato import SandboxDefaults, Serialization, results
+import cwsandbox
+from cwsandbox import SandboxDefaults, Serialization, results
 import numpy as np
 
 defaults = SandboxDefaults(
@@ -214,7 +214,7 @@ defaults = SandboxDefaults(
     tags=("remote-functions-demo",),
 )
 
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # JSON serialization for simple types
     @session.function()
     def square(x: int) -> int:

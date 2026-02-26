@@ -3,7 +3,7 @@
 Pass configuration options directly to `Sandbox.run()`:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run(
     container_image="python:3.11",

@@ -1,6 +1,6 @@
 # Sync vs Async Patterns
 
-The aviato SDK has a single async implementation internally. The sync/async flexibility comes from
+The cwsandbox SDK has a single async implementation internally. The sync/async flexibility comes from
 how you consume results: `.result()` for sync, `await` for async.
 
 ## Quick Decision Guide
@@ -53,7 +53,7 @@ that needs it:
 === "Sync"
 
     ```python
-    from aviato import Sandbox
+    from cwsandbox import Sandbox
 
     # Context manager (recommended)
     with Sandbox.run("sleep", "infinity") as sb:
@@ -64,7 +64,7 @@ that needs it:
 === "Async"
 
     ```python
-    from aviato import Sandbox
+    from cwsandbox import Sandbox
 
     # Construct + await to reach RUNNING, then async context manager for cleanup
     sb = Sandbox(command="sleep", args=["infinity"])
@@ -354,39 +354,39 @@ and `close()` to signal EOF.
     print(result.stdout)  # "hello world\n"
     ```
 
-### aviato.results()
+### cwsandbox.results()
 
-`aviato.results()` is a sync-only batch helper. It calls `.result()` on one or more OperationRefs.
+`cwsandbox.results()` is a sync-only batch helper. It calls `.result()` on one or more OperationRefs.
 
 ```python
-import aviato
+import cwsandbox
 
 # Single ref
-data = aviato.results(sandbox.read_file("/path"))
+data = cwsandbox.results(sandbox.read_file("/path"))
 
 # Multiple refs
-all_data = aviato.results([sb.read_file(f) for f in files])
+all_data = cwsandbox.results([sb.read_file(f) for f in files])
 ```
 
-### aviato.wait()
+### cwsandbox.wait()
 
-`aviato.wait()` is sync-only. It waits for a sequence of `Sandbox`, `OperationRef`, or `Process`
+`cwsandbox.wait()` is sync-only. It waits for a sequence of `Sandbox`, `OperationRef`, or `Process`
 objects and returns `(done, pending)`. Sandboxes resolve when they reach RUNNING status, not when
 they complete.
 
 ```python
-import aviato
+import cwsandbox
 
 # Wait for all sandboxes to reach RUNNING
 sandboxes = [Sandbox.run() for _ in range(5)]
-done, pending = aviato.wait(sandboxes)
+done, pending = cwsandbox.wait(sandboxes)
 
 # Wait for first 2 operations to complete
 refs = [sb.read_file(f) for f in files]
-done, pending = aviato.wait(refs, num_returns=2)
+done, pending = cwsandbox.wait(refs, num_returns=2)
 
 # Wait with timeout
-done, pending = aviato.wait(procs, timeout=30.0)
+done, pending = cwsandbox.wait(procs, timeout=30.0)
 ```
 
 ### @session.function()
@@ -434,7 +434,7 @@ internally). For parallel startup, use `session.sandbox()` (auto-starts on first
 collect `start()` refs:
 
 ```python
-from aviato import Sandbox, Session, SandboxDefaults
+from cwsandbox import Sandbox, Session, SandboxDefaults
 
 # Option 1: session.sandbox() - sandboxes auto-start on first exec()
 with Session(SandboxDefaults()) as session:
@@ -461,7 +461,7 @@ loop in a daemon thread:
 
 ```python
 # Cell 1 - Create sandbox
-from aviato import Sandbox
+from cwsandbox import Sandbox
 sandbox = Sandbox.run()
 sandbox.wait()  # Wait until RUNNING
 

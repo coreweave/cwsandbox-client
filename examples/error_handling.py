@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
-"""Error handling patterns for aviato SDK.
+"""Error handling patterns for cwsandbox SDK.
 
 Demonstrates:
 - SandboxExecutionError with check=True
@@ -13,8 +13,8 @@ Usage:
     uv run examples/error_handling.py
 """
 
-from aviato import Sandbox, SandboxDefaults
-from aviato.exceptions import (
+from cwsandbox import Sandbox, SandboxDefaults
+from cwsandbox.exceptions import (
     SandboxExecutionError,
     SandboxNotFoundError,
     SandboxTimeoutError,

@@ -1,14 +1,14 @@
-# Aviato SDK Documentation
+# CoreWeave Sandbox SDK Documentation
 
-Python client library for Aviato sandboxes - a remote code execution platform.
+Python client library for CoreWeave Sandbox - a remote code execution platform.
 
 ## Installation
 
 Clone and install the SDK locally:
 
 ```bash
-git clone https://github.com/coreweave/aviato-client.git
-cd aviato-client
+git clone https://github.com/coreweave/cwsandbox-client.git
+cd cwsandbox-client
 uv sync
 ```
 
@@ -16,10 +16,10 @@ uv sync
 
 The SDK checks for credentials in this order:
 
-### Option 1: Aviato API Key (Recommended)
+### Option 1: CWSandbox API Key (Recommended)
 
 ```bash
-export AVIATO_API_KEY="your-api-key"
+export CWSANDBOX_API_KEY="your-api-key"
 ```
 
 ### Option 2: W&B Credentials
@@ -44,11 +44,11 @@ machine api.wandb.ai
 ## Quick Start
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
-    result = sandbox.exec(["echo", "Hello, Aviato!"]).result()
-    print(result.stdout)  # "Hello, Aviato!\n"
+    result = sandbox.exec(["echo", "Hello, CWSandbox!"]).result()
+    print(result.stdout)  # "Hello, CWSandbox!\n"
 ```
 
 ## Core Concepts
@@ -84,7 +84,7 @@ Most operations handle state transitions automatically. For example, `exec()` wa
 
 ## Tutorial
 
-New to Aviato? The [Tutorial](tutorial/01-first-sandbox.md) walks you through the SDK step by step, from creating your first sandbox to cleanup patterns.
+New to CWSandbox? The [Tutorial](tutorial/01-first-sandbox.md) walks you through the SDK step by step, from creating your first sandbox to cleanup patterns.
 
 ## Guides
 

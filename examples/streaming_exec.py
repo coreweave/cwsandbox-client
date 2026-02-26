@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Streaming command execution with real-time output.
 
@@ -8,7 +8,7 @@ This example demonstrates iterating over process.stdout to receive
 lines as they arrive, rather than waiting for the command to complete.
 """
 
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 
 def main() -> None:

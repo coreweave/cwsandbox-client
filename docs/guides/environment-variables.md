@@ -9,7 +9,7 @@ This guide covers how to use environment variables in sandboxes.
 Set environment variables when creating a sandbox:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run(
     environment_variables={"LOG_LEVEL": "info"},
@@ -27,7 +27,7 @@ with Sandbox.run(
 Use sessions to share environment variables across multiple sandboxes:
 
 ```python
-from aviato import SandboxDefaults, Session
+from cwsandbox import SandboxDefaults, Session
 
 defaults = SandboxDefaults(
     environment_variables={

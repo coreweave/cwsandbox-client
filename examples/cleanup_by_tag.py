@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Clean up sandboxes by tag.
 
@@ -23,7 +23,7 @@ Usage:
 
 import argparse
 
-from aviato import Sandbox, SandboxError
+from cwsandbox import Sandbox, SandboxError
 
 
 def create_tagged_sandboxes(tag: str, count: int) -> None:

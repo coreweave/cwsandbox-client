@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Function decorator example using sessions.
 
@@ -13,7 +13,7 @@ This example demonstrates:
 - .local() for testing without creating sandboxes
 """
 
-from aviato import SandboxDefaults, Serialization, Session
+from cwsandbox import SandboxDefaults, Serialization, Session
 
 # Module-level global variable (will be captured automatically)
 GLOBAL_MULTIPLIER = 100

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Quick start example - the most common sandbox usage pattern.
 
@@ -10,7 +10,7 @@ This example demonstrates:
 - Automatic cleanup when the context exits
 """
 
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 
 def main() -> None:

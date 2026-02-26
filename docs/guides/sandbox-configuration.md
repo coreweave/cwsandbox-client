@@ -11,7 +11,7 @@ Sandbox configuration can be set in three places:
 3. **@session.function() kwargs** - Function-specific configuration
 
 ```python
-from aviato import Sandbox, SandboxDefaults, Session
+from cwsandbox import Sandbox, SandboxDefaults, Session
 
 # Via SandboxDefaults
 defaults = SandboxDefaults(
@@ -136,7 +136,7 @@ sandbox = Sandbox.run(
 Configure network options using the `NetworkOptions` dataclass or a plain dict:
 
 ```python
-from aviato import NetworkOptions, Sandbox
+from cwsandbox import NetworkOptions, Sandbox
 
 # Using NetworkOptions
 sandbox = Sandbox.run(
@@ -169,7 +169,7 @@ All fields are optional and default to `None`, which uses backend defaults.
 Set a default network configuration for all sandboxes:
 
 ```python
-from aviato import NetworkOptions, SandboxDefaults, Session
+from cwsandbox import NetworkOptions, SandboxDefaults, Session
 
 defaults = SandboxDefaults(
     network=NetworkOptions(egress_mode="internet"),
@@ -220,7 +220,7 @@ This is a server-side limit. The sandbox will be terminated when it reaches this
 ## Complete Example
 
 ```python
-from aviato import NetworkOptions, Sandbox, SandboxDefaults
+from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults
 
 defaults = SandboxDefaults(
     container_image="python:3.11",
