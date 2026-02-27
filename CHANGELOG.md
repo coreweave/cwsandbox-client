@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.6.1 (2026-02-27)
+
+### Bug Fixes
+
+- Sync uv.lock during semantic-release version bump
+  ([`fdac3c6`](https://github.com/coreweave/cwsandbox-client/commit/fdac3c68239df82a9b48405e8c1f2b482ec286b8))
+
+
 ## v0.6.0 (2026-02-27)
 
 ### Chores
