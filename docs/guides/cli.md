@@ -48,6 +48,14 @@ cwsandbox exec <sandbox-id> --timeout 30 make test
 
 The exit code matches the remote command's exit code.
 
+### Stream logs
+
+```bash
+cwsandbox logs <sandbox-id>                       # Recent logs
+cwsandbox logs <sandbox-id> --follow              # Continuous (like tail -f)
+cwsandbox logs <sandbox-id> --tail 50 --timestamps
+```
+
 ## JSON output for scripting
 
 `cwsandbox ls -o json` returns a JSON array for use with `jq`:
@@ -71,3 +79,4 @@ Each object contains: `sandbox_id`, `status`, `tower_id`, `runway_id`, `tower_gr
 ## See also
 
 - [Command Execution](execution.md) — `exec()` SDK method details
+- [Sandbox Logging](logging.md) — `stream_logs()` SDK method details

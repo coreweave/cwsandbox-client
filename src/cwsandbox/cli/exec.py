@@ -73,6 +73,9 @@ def exec_command(
                 click.echo(line, nl=False)
 
             result = process.result()
+        except BaseException:
+            process.stderr.close()
+            raise
         finally:
             stderr_thread.join()
     except KeyboardInterrupt:
