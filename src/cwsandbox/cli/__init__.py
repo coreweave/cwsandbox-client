@@ -23,6 +23,7 @@ except ModuleNotFoundError as e:
         ) from e
     raise
 
+from cwsandbox.cli.exec import exec_command
 from cwsandbox.cli.list import list_sandboxes
 from cwsandbox.exceptions import CWSandboxError
 
@@ -48,3 +49,4 @@ def cli() -> None:
 
 
 cli.add_command(list_sandboxes, "ls")
+cli.add_command(exec_command, "exec")
