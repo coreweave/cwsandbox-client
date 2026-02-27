@@ -316,3 +316,9 @@ if process.poll() is None:
 exit_code = process.wait()
 print(f"Exited with code: {exit_code}")
 ```
+
+
+## See also
+
+- [Sandbox Logging](logging.md) — streaming logs from the sandbox's main process (PID 1)
+- [Sync vs Async](sync-vs-async.md) — iteration patterns for streaming output

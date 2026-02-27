@@ -356,6 +356,7 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py`, `stdin_streaming.py` - Sandbox creation and execution
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
+- `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)
 - `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
 - `delete_sandboxes.py` - Deletion patterns with `Sandbox.delete()`
 - `error_handling.py` - Exception hierarchy and error recovery patterns
