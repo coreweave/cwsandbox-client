@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: cwsandbox-client
+
+name: Bug Report
+description: Report a bug in cwsandbox
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the sections below
+        so we can reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code or steps to reproduce the issue.
+      placeholder: |
+        ```python
+        from cwsandbox import Sandbox
+
+        with Sandbox.run("sleep", "infinity") as sb:
+            result = sb.exec(["echo", "hello"]).result()
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Include tracebacks if applicable.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: cwsandbox version
+      description: Output of `python -c "import cwsandbox; print(cwsandbox.__version__)"`
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "3.11.9"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15.3, Ubuntu 24.04, etc."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other context, logs, or screenshots.
+    validations:
+      required: false

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: cwsandbox-client
+
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. Please describe what you'd like and why.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem does this solve, or what use case does it enable?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How you'd like it to work. Code examples are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've considered or workarounds you're using today.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other context, examples, or references.
+    validations:
+      required: false
