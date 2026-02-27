@@ -2760,7 +2760,7 @@ class Sandbox:
         since_time: datetime | None = None,
         timestamps: bool = False,
         timeout_seconds: float | None = None,
-    ) -> StreamReader:
+    ) -> StreamReader[str]:
         """Stream logs from the sandbox's main process.
 
         Streams stdout/stderr from the sandbox's **main command** — the
