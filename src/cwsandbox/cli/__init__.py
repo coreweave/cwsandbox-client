@@ -23,6 +23,7 @@ except ModuleNotFoundError as e:
         ) from e
     raise
 
+from cwsandbox.cli.list import list_sandboxes
 from cwsandbox.exceptions import CWSandboxError
 
 
@@ -44,3 +45,6 @@ class _CWSandboxCLI(click.Group):
 @click.version_option(package_name="cwsandbox")
 def cli() -> None:
     """CWSandbox CLI."""
+
+
+cli.add_command(list_sandboxes, "ls")
