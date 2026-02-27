@@ -7,7 +7,7 @@ packages = ["src/cwsandbox"]
 
 [project]
 name = "cwsandbox"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Python client library for CoreWeave Sandbox"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
