@@ -22,6 +22,8 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 | `error_handling.py` | Sync | `def main()` | Exception hierarchy: SandboxExecutionError, TimeoutError, NotFoundError |
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
 | `delete_sandboxes.py` | Sync | `def main()` | Deletion patterns with `Sandbox.delete()` |
+| `interactive_streaming_sandbox.py` | Sync | `def main()` | Log streaming with `stream_logs()` and CLI interaction |
+| `list_stopped_sandboxes.py` | Sync | `def main()` | List sandboxes including stopped with `include_stopped=True` |
 | `reconnect_to_sandbox.py` | Sync | `def main()` | Attach via `Sandbox.from_id()` |
 | `async_patterns.py` | Async | `async def main()` | Using await with OperationRef and Process |
 | `session_adopt_orphans.py` | Sync | `def main()` | Orphan management with `session.list()` |
