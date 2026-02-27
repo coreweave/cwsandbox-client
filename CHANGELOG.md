@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.6.2 (2026-02-27)
+
+### Bug Fixes
+
+- Update default base URL to atc.cw-sandbox.com
+  ([`5ccee3e`](https://github.com/coreweave/cwsandbox-client/commit/5ccee3e97b107cc457c40195502a84bffaba3026))
+
+
 ## v0.6.1 (2026-02-27)
 
 ### Bug Fixes
