@@ -274,7 +274,7 @@ toml = [
 
 [[package]]
 name = "cwsandbox"
-version = "0.3.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "coreweave-aviato-grpc-python" },
@@ -284,7 +284,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cli = [
+    { name = "click" },
+]
 dev = [
+    { name = "click" },
     { name = "grpc-stubs" },
     { name = "httpx" },
     { name = "mypy" },
@@ -307,6 +311,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", marker = "extra == 'cli'", specifier = ">=8.0" },
+    { name = "click", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "coreweave-aviato-grpc-python", specifier = "==1.78.1.1.20260220161707+89028200095a" },
     { name = "grpc-stubs", marker = "extra == 'dev'", specifier = ">=1.53.0" },
     { name = "grpcio", specifier = ">=1.78.1" },
@@ -328,7 +334,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "wandb", marker = "extra == 'dev'", specifier = ">=0.19.0" },
 ]
-provides-extras = ["dev", "docs"]
+provides-extras = ["cli", "dev", "docs"]
 
 [[package]]
 name = "deprecated"
