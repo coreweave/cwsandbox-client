@@ -367,8 +367,7 @@ class TestSandboxExec:
 
     def test_exec_check_raises_on_nonzero_returncode(self) -> None:
         """Test exec with check=True raises SandboxExecutionError on failure."""
-        from coreweave.aviato.v1beta1 import streaming_pb2
-
+        from cwsandbox._proto import streaming_pb2
         from cwsandbox.exceptions import SandboxExecutionError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -406,7 +405,7 @@ class TestSandboxExec:
 
     def test_exec_check_false_returns_result_on_failure(self) -> None:
         """Test exec with check=False returns result even on failure."""
-        from coreweave.aviato.v1beta1 import streaming_pb2
+        from cwsandbox._proto import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -444,7 +443,7 @@ class TestSandboxExec:
 
     def test_exec_streams_stdout_to_queue(self) -> None:
         """Test exec() streams stdout data to the queue as it arrives."""
-        from coreweave.aviato.v1beta1 import streaming_pb2
+        from cwsandbox._proto import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1007,8 +1006,7 @@ class TestSandboxWait:
 
     def test_wait_raises_on_failed(self) -> None:
         """Test wait raises SandboxFailedError when sandbox fails."""
-        from coreweave.aviato.v1beta1 import atc_pb2
-
+        from cwsandbox._proto import atc_pb2
         from cwsandbox.exceptions import SandboxFailedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1025,8 +1023,7 @@ class TestSandboxWait:
 
     def test_wait_raises_on_terminated_by_default(self) -> None:
         """Test wait raises SandboxTerminatedError when terminated."""
-        from coreweave.aviato.v1beta1 import atc_pb2
-
+        from cwsandbox._proto import atc_pb2
         from cwsandbox.exceptions import SandboxTerminatedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1043,7 +1040,7 @@ class TestSandboxWait:
 
     def test_wait_auto_starts_unstarted_sandbox(self) -> None:
         """Test wait() triggers auto-start on unstarted sandbox."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
 
@@ -1075,7 +1072,7 @@ class TestSandboxAutoStartFileOps:
 
     def test_read_file_auto_starts_unstarted_sandbox(self) -> None:
         """Test read_file() triggers auto-start on unstarted sandbox."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -1111,7 +1108,7 @@ class TestSandboxAutoStartFileOps:
 
     def test_write_file_auto_starts_unstarted_sandbox(self) -> None:
         """Test write_file() triggers auto-start on unstarted sandbox."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -1149,7 +1146,7 @@ class TestSandboxWaitUntilComplete:
 
     def test_wait_until_complete_auto_starts(self) -> None:
         """Test wait_until_complete auto-starts via _ensure_started_async."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
 
@@ -1173,7 +1170,7 @@ class TestSandboxWaitUntilComplete:
 
     def test_wait_until_complete_no_raise_on_terminated_when_disabled(self) -> None:
         """Test wait_until_complete returns normally when raise_on_termination=False."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1277,8 +1274,7 @@ class TestSandboxWaitForRunning:
 
     def test_wait_raises_on_failed_status(self) -> None:
         """Test wait raises SandboxFailedError when sandbox fails to start."""
-        from coreweave.aviato.v1beta1 import atc_pb2
-
+        from cwsandbox._proto import atc_pb2
         from cwsandbox.exceptions import SandboxFailedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1298,7 +1294,7 @@ class TestSandboxWaitForRunning:
 
     def test_wait_handles_fast_completion(self) -> None:
         """Test wait handles sandbox that completes during startup."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
         sandbox._sandbox_id = "fast-sandbox-id"
@@ -1598,8 +1594,9 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_returns_sandbox_instances(self, mock_api_key: str) -> None:
         """Test list() returns list of Sandbox instances."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_sandbox_info = atc_pb2.SandboxInfo(
             sandbox_id="test-123",
@@ -1636,7 +1633,7 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_with_status_filter(self, mock_api_key: str) -> None:
         """Test list() passes status filter to request."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
@@ -1666,7 +1663,7 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_empty_result(self, mock_api_key: str) -> None:
         """Test list() returns empty list when no sandboxes match."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -1684,7 +1681,7 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_passes_field(self, mock_api_key: str) -> None:
         """Test list(include_stopped=True) sets the field on the request."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
@@ -1706,7 +1703,7 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_default_false(self, mock_api_key: str) -> None:
         """Test list() does not set include_stopped by default."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -1730,8 +1727,9 @@ class TestSandboxFromId:
     @pytest.mark.asyncio
     async def test_from_id_returns_sandbox_instance(self, mock_api_key: str) -> None:
         """Test from_id() returns a Sandbox instance."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.GetSandboxResponse(
             sandbox_id="test-123",
@@ -1786,7 +1784,7 @@ class TestSandboxDeleteClassMethod:
     @pytest.mark.asyncio
     async def test_delete_returns_none_on_success(self, mock_api_key: str) -> None:
         """Test delete() returns None when deletion succeeds."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.DeleteSandboxResponse(success=True, error_message="")
 
@@ -1941,8 +1939,9 @@ class TestSandboxServiceAddressAndExposedPorts:
     @pytest.mark.asyncio
     async def test_from_id_has_none_for_service_address(self, mock_api_key: str) -> None:
         """Test from_id() returns sandbox with None service_address."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.GetSandboxResponse(
             sandbox_id="test-123",
@@ -2170,7 +2169,7 @@ class TestAppliedNetworkModes:
 
     def test_applied_modes_preserved_after_get_status(self) -> None:
         """Test applied_* values are preserved after get_status() refresh."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -2449,8 +2448,9 @@ class TestSandboxStartupTimeTracking:
         """Test _from_sandbox_info marks startup as already recorded."""
         from unittest.mock import MagicMock
 
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         info = MagicMock()
         info.sandbox_id = "test-123"
@@ -2470,7 +2470,7 @@ class TestSandboxStartupTimeTracking:
 
     def test_wait_records_startup_time_to_session(self) -> None:
         """Test wait() records startup time to session reporter."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -2499,7 +2499,7 @@ class TestSandboxStartupTimeTracking:
 
     def test_startup_time_only_recorded_once(self) -> None:
         """Test startup time is only recorded once."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -2864,7 +2864,7 @@ class TestExecStdinReadySignal:
 
     def test_exec_no_stdin_no_ready_wait(self) -> None:
         """Test stdin=False does not wait for ready signal."""
-        from coreweave.aviato.v1beta1 import streaming_pb2
+        from cwsandbox._proto import streaming_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"

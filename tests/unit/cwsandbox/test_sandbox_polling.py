@@ -10,9 +10,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from coreweave.aviato.v1beta1 import atc_pb2
 
 from cwsandbox import Sandbox
+from cwsandbox._proto import atc_pb2
 from cwsandbox._sandbox import SandboxStatus, _NotStarted, _Running, _Starting, _Terminal
 from cwsandbox.exceptions import (
     SandboxFailedError,

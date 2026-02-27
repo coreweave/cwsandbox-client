@@ -168,45 +168,6 @@ wheels = [
 ]
 
 [[package]]
-name = "coreweave-aviato-grpc-python"
-version = "1.78.1.1.20260220161707+89028200095a"
-source = { registry = "https://buf.build/gen/python" }
-dependencies = [
-    { name = "coreweave-aviato-protocolbuffers-python" },
-    { name = "googleapis-googleapis-grpc-python" },
-    { name = "grpcio" },
-]
-wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-grpc-python/coreweave_aviato_grpc_python-1.78.1.1.20260220161707+89028200095a-py3-none-any.whl" },
-]
-
-[[package]]
-name = "coreweave-aviato-protocolbuffers-pyi"
-version = "33.5.0.1.20260220161707+89028200095a"
-source = { registry = "https://buf.build/gen/python" }
-dependencies = [
-    { name = "googleapis-googleapis-protocolbuffers-pyi" },
-    { name = "protobuf" },
-    { name = "types-protobuf" },
-]
-wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-pyi/coreweave_aviato_protocolbuffers_pyi-33.5.0.1.20260220161707+89028200095a-py3-none-any.whl" },
-]
-
-[[package]]
-name = "coreweave-aviato-protocolbuffers-python"
-version = "33.5.0.1.20260220161707+89028200095a"
-source = { registry = "https://buf.build/gen/python" }
-dependencies = [
-    { name = "coreweave-aviato-protocolbuffers-pyi" },
-    { name = "googleapis-googleapis-protocolbuffers-python" },
-    { name = "protobuf" },
-]
-wheels = [
-    { url = "https://buf.build/gen/python/coreweave-aviato-protocolbuffers-python/coreweave_aviato_protocolbuffers_python-33.5.0.1.20260220161707+89028200095a-py3-none-any.whl" },
-]
-
-[[package]]
 name = "coverage"
 version = "7.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -274,10 +235,10 @@ toml = [
 
 [[package]]
 name = "cwsandbox"
-version = "0.3.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
-    { name = "coreweave-aviato-grpc-python" },
+    { name = "googleapis-common-protos" },
     { name = "grpcio" },
     { name = "protobuf" },
     { name = "pydantic" },
@@ -296,6 +257,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-semantic-release" },
     { name = "ruff" },
+    { name = "types-protobuf" },
     { name = "wandb" },
 ]
 docs = [
@@ -307,9 +269,9 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coreweave-aviato-grpc-python", specifier = "==1.78.1.1.20260220161707+89028200095a" },
+    { name = "googleapis-common-protos", specifier = ">=1.63.0" },
     { name = "grpc-stubs", marker = "extra == 'dev'", specifier = ">=1.53.0" },
-    { name = "grpcio", specifier = ">=1.78.1" },
+    { name = "grpcio", specifier = ">=1.78.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
     { name = "mkdocs-include-markdown-plugin", marker = "extra == 'docs'", specifier = ">=7.0.0" },
@@ -317,7 +279,7 @@ requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.27.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0" },
-    { name = "protobuf", specifier = ">=6.33.4" },
+    { name = "protobuf", specifier = ">=6.33.5" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
@@ -326,6 +288,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5.0" },
     { name = "python-semantic-release", marker = "extra == 'dev'", specifier = ">=9.15.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=6.32.0" },
     { name = "wandb", marker = "extra == 'dev'", specifier = ">=0.19.0" },
 ]
 provides-extras = ["dev", "docs"]
@@ -415,39 +378,15 @@ wheels = [
 ]
 
 [[package]]
-name = "googleapis-googleapis-grpc-python"
-version = "1.78.1.1.20251126203132+004180b77378"
-source = { registry = "https://buf.build/gen/python" }
-dependencies = [
-    { name = "googleapis-googleapis-protocolbuffers-python" },
-    { name = "grpcio" },
-]
-wheels = [
-    { url = "https://buf.build/gen/python/googleapis-googleapis-grpc-python/googleapis_googleapis_grpc_python-1.78.1.1.20251126203132+004180b77378-py3-none-any.whl" },
-]
-
-[[package]]
-name = "googleapis-googleapis-protocolbuffers-pyi"
-version = "33.5.0.1.20251126203132+004180b77378"
-source = { registry = "https://buf.build/gen/python" }
+name = "googleapis-common-protos"
+version = "1.72.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
-    { name = "types-protobuf" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/e5/7b/adfd75544c415c487b33061fe7ae526165241c1ea133f9a9125a56b39fd8/googleapis_common_protos-1.72.0.tar.gz", hash = "sha256:e55a601c1b32b52d7a3e65f43563e2aa61bcd737998ee672ac9b951cd49319f5", size = 147433, upload-time = "2025-11-06T18:29:24.087Z" }
 wheels = [
-    { url = "https://buf.build/gen/python/googleapis-googleapis-protocolbuffers-pyi/googleapis_googleapis_protocolbuffers_pyi-33.5.0.1.20251126203132+004180b77378-py3-none-any.whl" },
-]
-
-[[package]]
-name = "googleapis-googleapis-protocolbuffers-python"
-version = "33.5.0.1.20251126203132+004180b77378"
-source = { registry = "https://buf.build/gen/python" }
-dependencies = [
-    { name = "googleapis-googleapis-protocolbuffers-pyi" },
-    { name = "protobuf" },
-]
-wheels = [
-    { url = "https://buf.build/gen/python/googleapis-googleapis-protocolbuffers-python/googleapis_googleapis_protocolbuffers_python-33.5.0.1.20251126203132+004180b77378-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/c4/ab/09169d5a4612a5f92490806649ac8d41e3ec9129c636754575b3553f4ea4/googleapis_common_protos-1.72.0-py3-none-any.whl", hash = "sha256:4299c5a82d5ae1a9702ada957347726b167f9f8d1fc352477702a1e851ff4038", size = 297515, upload-time = "2025-11-06T18:29:13.14Z" },
 ]
 
 [[package]]
@@ -1423,11 +1362,11 @@ wheels = [
 
 [[package]]
 name = "types-protobuf"
-version = "6.32.1.20251210"
+version = "6.32.1.20260221"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c2/59/c743a842911887cd96d56aa8936522b0cd5f7a7f228c96e81b59fced45be/types_protobuf-6.32.1.20251210.tar.gz", hash = "sha256:c698bb3f020274b1a2798ae09dc773728ce3f75209a35187bd11916ebfde6763", size = 63900, upload-time = "2025-12-10T03:14:25.451Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5f/e2/9aa4a3b2469508bd7b4e2ae11cbedaf419222a09a1b94daffcd5efca4023/types_protobuf-6.32.1.20260221.tar.gz", hash = "sha256:6d5fb060a616bfb076cbb61b4b3c3969f5fc8bec5810f9a2f7e648ee5cbcbf6e", size = 64408, upload-time = "2026-02-21T03:55:13.916Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/43/58e75bac4219cbafee83179505ff44cae3153ec279be0e30583a73b8f108/types_protobuf-6.32.1.20251210-py3-none-any.whl", hash = "sha256:2641f78f3696822a048cfb8d0ff42ccd85c25f12f871fbebe86da63793692140", size = 77921, upload-time = "2025-12-10T03:14:24.477Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/e8/1fd38926f9cf031188fbc5a96694203ea6f24b0e34bd64a225ec6f6291ba/types_protobuf-6.32.1.20260221-py3-none-any.whl", hash = "sha256:da7cdd947975964a93c30bfbcc2c6841ee646b318d3816b033adc2c4eb6448e4", size = 77956, upload-time = "2026-02-21T03:55:12.894Z" },
 ]
 
 [[package]]

@@ -5,9 +5,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cwsandbox"]
 
-[[tool.uv.index]]
-url = "https://buf.build/gen/python"
-
 [project]
 name = "cwsandbox"
 version = "0.5.0"
@@ -28,12 +25,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # For local dev with backend changes, comment out the pinned version and run:
-    #   uv pip install -e ../aviato/gen/python
-    "coreweave-aviato-grpc-python==1.78.1.1.20260220161707+89028200095a",  # Published version
-    "protobuf>=6.33.4",
+    "googleapis-common-protos>=1.63.0",
+    "protobuf>=6.33.5",
     "pydantic>=2.0.0",
-    "grpcio>=1.78.1",
+    "grpcio>=1.78.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +43,7 @@ dev = [
     "pre-commit>=3.7.0",
     "wandb>=0.19.0",
     "grpc-stubs>=1.53.0",  # Type stubs for grpcio
+    "types-protobuf>=6.32.0",  # Type stubs for protobuf (used by vendored proto stubs)
     "httpx>=0.27.0",  # For integration tests (network connectivity testing)
     "python-semantic-release>=9.15.1",
 ]
@@ -61,6 +57,7 @@ docs = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["src/cwsandbox/_proto"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP"]
@@ -106,6 +103,10 @@ python_version = "3.11"
 strict = true
 mypy_path = "src"
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "cwsandbox._proto.*"
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "wandb.*"

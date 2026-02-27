@@ -60,6 +60,38 @@ run = "uv run pytest tests/unit/ tests/integration/ -v"
 description = "Run unit tests with coverage"
 run = "uv run pytest --cov=src --cov-report=term-missing"
 
+[tasks."test:packaging"]
+description = "Smoke test: build wheel, install in clean venv, verify imports"
+run = """
+#!/bin/bash
+set -e
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "==> Building wheel..."
+uv build --wheel --out-dir "$TMPDIR/dist"
+
+WHEEL=$(ls "$TMPDIR/dist"/*.whl)
+NUM_WHEELS=$(echo "$WHEEL" | wc -l | tr -d ' ')
+if [ "$NUM_WHEELS" -ne 1 ]; then
+    echo "ERROR: expected 1 wheel, found $NUM_WHEELS" >&2
+    exit 1
+fi
+echo "==> Built: $(basename "$WHEEL")"
+
+echo "==> Creating temporary venv..."
+uv venv "$TMPDIR/venv"
+
+echo "==> Installing wheel..."
+uv pip install --python "$TMPDIR/venv/bin/python" "$WHEEL"
+
+echo "==> Verifying imports..."
+"$TMPDIR/venv/bin/python" -c "from cwsandbox import Sandbox; print('cwsandbox.Sandbox: ok')"
+"$TMPDIR/venv/bin/python" -c "from cwsandbox._proto import atc_pb2; print('cwsandbox._proto.atc_pb2: ok')"
+
+echo "==> Packaging smoke test passed."
+"""
+
 # =============================================================================
 # Combined Quality Checks
 # =============================================================================
@@ -91,62 +123,21 @@ run = "uv run pre-commit run --all-files"
 alias = "pc"
 
 # =============================================================================
-# Local Backend Development
+# Proto Stub Updates
 # =============================================================================
 
-[tasks."dev:local-protos"]
-description = "Install locally-generated protos from aviato backend repo"
+[tasks."proto:update"]
+description = "Update vendored proto stubs from buf.build"
+run = "scripts/update-protos.sh"
+
+[tasks."proto:update:local"]
+description = "Update vendored proto stubs from local aviato checkout"
 run = """
 #!/bin/bash
 set -e
-
 BACKEND_REPO="${CWSANDBOX_BACKEND_PATH:-../aviato}"
-
-if [ ! -d "$BACKEND_REPO" ]; then
-    echo "Error: Backend repo not found at $BACKEND_REPO"
-    echo "Set CWSANDBOX_BACKEND_PATH or ensure ../aviato exists"
-    exit 1
-fi
-
 echo "==> Generating Python protos from $BACKEND_REPO..."
 (cd "$BACKEND_REPO" && make buf-gen-python)
-
-echo "==> Installing local protos into client venv..."
-uv pip install "$BACKEND_REPO/gen/python" --reinstall-package coreweave-aviato-grpc-python --no-deps
-
-echo "==> Verifying installation..."
-VERSION=$(uv pip show coreweave-aviato-grpc-python | grep Version | cut -d' ' -f2)
-echo "Installed: coreweave-aviato-grpc-python==$VERSION"
-
-echo ""
-echo "Done! Local protos installed."
-echo ""
-echo "Usage with local protos:"
-echo "  uv run --no-sync pytest ...    # Run tests without reverting"
-echo "  uv run --no-sync python ...    # Run scripts without reverting"
-echo "  mise run dev:revert-protos     # Revert to published protos"
+echo "==> Copying stubs into vendored _proto directory..."
+scripts/update-protos.sh --local "$BACKEND_REPO/gen/python"
 """
-
-[tasks."dev:lint"]
-description = "Lint without syncing (preserves local protos)"
-run = "uv run --no-sync ruff check ."
-
-[tasks."dev:typecheck"]
-description = "Typecheck without syncing (preserves local protos)"
-run = "uv run --no-sync mypy src/"
-
-[tasks."dev:test"]
-description = "Run unit tests without syncing (preserves local protos)"
-run = "uv run --no-sync pytest tests/unit/"
-
-[tasks."dev:test:e2e"]
-description = "Run integration tests without syncing (preserves local protos)"
-run = "uv run --no-sync pytest tests/integration/ -v"
-
-[tasks."dev:check"]
-description = "Run all quality checks without syncing (preserves local protos)"
-depends = ["dev:lint", "dev:typecheck", "dev:test"]
-
-[tasks."dev:revert-protos"]
-description = "Revert to published protos (runs uv sync)"
-run = "uv sync --extra dev"
