@@ -149,6 +149,11 @@ data = await ref
 - `StreamWriter`: Writable stream for stdin. Methods: `write(data: bytes)`, `writeline(text: str)`, `close()`. All return `OperationRef[None]`. Property: `closed` (bool). Uses bounded queue (16 items, ~1MB with 64KB chunks) for backpressure.
 - `ProcessResult`: Dataclass with `stdout`, `stderr`, `returncode`, `command`, plus raw byte variants (`stdout_bytes`, `stderr_bytes`).
 
+**Terminal Types** (`_types.py`): Types for interactive TTY sessions, returned by `Sandbox.shell()`:
+
+- `TerminalSession`: Handle for an interactive TTY session. Extends `OperationRef[TerminalResult]`. Properties: `output` (StreamReader[bytes] — merged stdout/stderr as raw bytes), `stdin` (StreamWriter — always present), `command` (list executed). Methods: `resize(width, height)` (fire-and-forget), `wait(timeout)` (blocks until session ends, returns exit code), `result(timeout)` (returns TerminalResult). Awaitable in async contexts.
+- `TerminalResult`: Frozen dataclass with `returncode` and `command`. Unlike `ProcessResult`, does not contain captured stdout/stderr because TTY sessions do not buffer output.
+
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
 Fields:

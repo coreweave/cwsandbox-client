@@ -26,6 +26,8 @@ from cwsandbox._types import (
     Serialization,
     StreamReader,
     StreamWriter,
+    TerminalResult,
+    TerminalSession,
 )
 from cwsandbox.exceptions import (
     AsyncFunctionError,
@@ -50,7 +52,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 # Type alias for things that can be waited on
-Waitable = Sandbox | OperationRef[Any] | Process
+Waitable = Sandbox | OperationRef[Any] | Process | TerminalSession
 
 
 @overload
@@ -172,9 +174,7 @@ async def _wait_async(
     def _to_awaitable(w: Waitable) -> asyncio.Task[Any]:
         if isinstance(w, Sandbox):
             return asyncio.create_task(w._wait_until_running_async())
-        if isinstance(w, Process):
-            return asyncio.create_task(_wrap_future(w._future))
-        # OperationRef
+        # OperationRef (including Process and TerminalSession)
         return asyncio.create_task(_wrap_future(w._future))
 
     # Create tasks mapping back to original objects
@@ -263,6 +263,8 @@ __all__ = [
     "Session",
     "StreamReader",
     "StreamWriter",
+    "TerminalResult",
+    "TerminalSession",
     "Waitable",
     "WandbAuthError",
     "results",
