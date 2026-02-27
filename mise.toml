@@ -1,4 +1,4 @@
-# mise.toml - Task runner configuration for aviato-client
+# mise.toml - Task runner configuration for cwsandbox-client
 # Run tasks with: mise run <task>
 
 # =============================================================================
@@ -100,11 +100,11 @@ run = """
 #!/bin/bash
 set -e
 
-BACKEND_REPO="${AVIATO_BACKEND_PATH:-../aviato}"
+BACKEND_REPO="${CWSANDBOX_BACKEND_PATH:-../aviato}"
 
 if [ ! -d "$BACKEND_REPO" ]; then
     echo "Error: Backend repo not found at $BACKEND_REPO"
-    echo "Set AVIATO_BACKEND_PATH or ensure ../aviato exists"
+    echo "Set CWSANDBOX_BACKEND_PATH or ensure ../aviato exists"
     exit 1
 fi
 

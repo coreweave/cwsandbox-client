@@ -1,8 +1,8 @@
-site_name: Aviato Client
-site_description: Python client library for Aviato sandboxes
-site_url: https://coreweave.github.io/aviato-client/
-repo_url: https://github.com/coreweave/aviato-client
-repo_name: coreweave/aviato-client
+site_name: CoreWeave Sandbox Client
+site_description: Python client library for CoreWeave Sandbox
+site_url: https://coreweave.github.io/cwsandbox-client/
+repo_url: https://github.com/coreweave/cwsandbox-client
+repo_name: coreweave/cwsandbox-client
 
 theme:
   name: material

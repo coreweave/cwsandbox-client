@@ -87,7 +87,7 @@ Source code should contain an SPDX-style license header, reflecting:
 - Year & Copyright owner
 - SPDX License identifier `SPDX-License-Identifier: Apache-2.0` or
   `SPDX-License-Identifier: BSD-3-Clause` for examples.
-- Package Name: `SPDX-PackageName: aviato-client`
+- Package Name: `SPDX-PackageName: cwsandbox-client`
 
 This can be partially automated with [FSFe REUSE](https://reuse.software/dev/#tool)
 ```shell
@@ -98,10 +98,10 @@ Blindly adding the headers to every file without review risks assigning the
 wrong copyright owner! You should endeavor to understand who owns
 contributions!
 
-- The Aviato Client library source & testcases are licensed under the Apache-2.0 license
+- The CWSandbox Client library source & testcases are licensed under the Apache-2.0 license
   to protect the rights of all parties.
-- The Aviato Client usage examples (`examples/` directory) are licensed with
-  the [BSD-3-Clause license](https://spdx.org/licenses/BSD-3-Clause.html) to encourage usage of the Aviato Client, while
+- The CWSandbox Client usage examples (`examples/` directory) are licensed with
+  the [BSD-3-Clause license](https://spdx.org/licenses/BSD-3-Clause.html) to encourage usage of the CWSandbox Client, while
   protecting CoreWeave's trademarks & name.
 
 Licensing state & SPDX bill-of-materials (BOM) can be valiated & generated with:

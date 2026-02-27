@@ -1,28 +1,28 @@
 <!--
 SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 SPDX-License-Identifier: BSD-3-Clause
-SPDX-PackageName: aviato-client
+SPDX-PackageName: cwsandbox-client
 -->
 
-# Aviato Examples
+# CWSandbox Examples
 
-This directory contains example scripts demonstrating how to use the `aviato` package.
+This directory contains example scripts demonstrating how to use the `cwsandbox` package.
 
 ## Prerequisites
 
 1. Install the package:
    ```bash
-   pip install aviato
+   pip install cwsandbox
    ```
 
 2. Set your API key:
    ```bash
-   export AVIATO_API_KEY="your-api-key"
+   export CWSANDBOX_API_KEY="your-api-key"
    ```
 
 ## Sync vs Async Patterns
 
-The aviato SDK uses a sync/async hybrid API. **Most users should use sync patterns** - they require no asyncio boilerplate and work in Jupyter notebooks without `nest_asyncio`.
+The cwsandbox SDK uses a sync/async hybrid API. **Most users should use sync patterns** - they require no asyncio boilerplate and work in Jupyter notebooks without `nest_asyncio`.
 
 **Sync patterns** (recommended): All examples except `async_patterns.py`
 
@@ -200,7 +200,7 @@ python examples/parallel_batch_job.py
 Demonstrates:
 - Creating multiple sandboxes in parallel via Session
 - Submitting long-running commands concurrently
-- Using `aviato.wait()` to process results as they complete
+- Using `cwsandbox.wait()` to process results as they complete
 - Progress tracking through a batch job
 
 ### Cleanup by Tag (`cleanup_by_tag.py`)
@@ -260,7 +260,7 @@ Demonstrates:
 
 ### SWE-bench Evaluation (`swebench/run_evaluation.py`)
 
-Demonstrates using Aviato as a backend for running agentic model evaluations at scale. The script runs SWE-bench evaluations in parallel using Aviato sandboxes, showing how to orchestrate many concurrent evaluation instances.
+Demonstrates using CWSandbox as a backend for running agentic model evaluations at scale. The script runs SWE-bench evaluations in parallel using CWSandboxes, showing how to orchestrate many concurrent evaluation instances.
 
 Demonstrates:
 - Using `Session` with `ThreadPoolExecutor` for parallel sandbox execution
@@ -293,7 +293,7 @@ Demonstrates:
 
 ## API Patterns
 
-The aviato SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.result()` (sync) or `await` (async).
+The cwsandbox SDK uses a sync/async hybrid API. Operations return immediately and results can be retrieved with `.result()` (sync) or `await` (async).
 
 The `exec()` method returns a `Process` object. Call `.result()` to block for the final result. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 

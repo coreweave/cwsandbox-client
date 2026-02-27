@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: List sandboxes including stopped ones.
 
@@ -28,7 +28,7 @@ Usage:
 
 import argparse
 
-from aviato import Sandbox, SandboxDefaults, Session
+from cwsandbox import Sandbox, SandboxDefaults, Session
 
 TAG = "list-stopped-example"
 

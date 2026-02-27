@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Use Session to adopt and clean up orphaned sandboxes.
 
@@ -21,7 +21,7 @@ Usage:
 
 import argparse
 
-from aviato import Sandbox, Session
+from cwsandbox import Sandbox, Session
 
 
 def create_orphans(tag: str, count: int) -> None:

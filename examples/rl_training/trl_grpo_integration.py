@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""TRL GRPOTrainer integration example with Aviato sandboxes.
+"""TRL GRPOTrainer integration example with CWSandboxes.
 
-This example demonstrates integrating Aviato sandboxes with TRL's GRPOTrainer
+This example demonstrates integrating CWSandboxes with TRL's GRPOTrainer
 for reinforcement learning with code execution rewards.
 
 Key patterns demonstrated:
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import uuid
 
-from aviato import SandboxDefaults, Session
+from cwsandbox import SandboxDefaults, Session
 
 JOB_ID = uuid.uuid4().hex[:8]
 
@@ -105,7 +105,7 @@ def make_reward_function(session: Session):
             except Exception as e:
                 exceptions += 1
                 err_type = type(e).__name__
-                print(f"  [Aviato] WARNING: Sandbox exception {i}: {err_type}: {e}")
+                print(f"  [CWSandbox] WARNING: Sandbox exception {i}: {err_type}: {e}")
 
         total_executions[0] += len(code_indices)
         total_successes[0] += successes
@@ -115,7 +115,7 @@ def make_reward_function(session: Session):
         skip_note = f", {skipped} skipped (no code)" if skipped else ""
         exception_note = f", {exceptions} exceptions" if exceptions else ""
         print(
-            f"  [Aviato] Reward call {call_count[0]}: "
+            f"  [CWSandbox] Reward call {call_count[0]}: "
             f"{len(code_indices)} sandboxes, "
             f"{successes}/{len(code_indices)} passed{skip_note}{exception_note}"
         )
@@ -168,10 +168,10 @@ def create_toy_dataset():
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": "Write code that prints the length of the string 'aviato'.",
+                    "content": "Write code that prints the length of the string 'cwsandbox'.",
                 },
             ],
-            "expected_output": "6",
+            "expected_output": "9",
         },
         {
             "prompt": [

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Test suite for sandbox package."""

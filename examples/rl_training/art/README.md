@@ -1,12 +1,12 @@
-# ART Integration with Aviato Sandboxes
+# ART Integration with CWSandbox
 
-Multi-step RL training using [ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) from OpenPipe with Aviato sandboxes for code execution.
+Multi-step RL training using [ART (Agent Reinforcement Trainer)](https://github.com/OpenPipe/ART) from OpenPipe with CWSandboxes for code execution.
 
 ## Overview
 
 This example demonstrates training language models on MBPP (Mostly Basic Python Problems) using:
 
-- **Aviato sandboxes** for secure code execution
+- **CWSandboxes** for secure code execution
 - **ART framework** for multi-step agent training
 - **LocalBackend** (requires GPU) or **TinkerBackend** (no GPU) for training
 
@@ -15,8 +15,8 @@ This example demonstrates training language models on MBPP (Mostly Basic Python 
 ### Environment Variables
 
 ```bash
-# Aviato authentication
-export AVIATO_API_KEY="your-aviato-key"
+# CWSandbox authentication
+export CWSANDBOX_API_KEY="your-cwsandbox-key"
 
 # OpenAI-compatible inference
 export OPENAI_API_KEY="your-openai-key"
@@ -31,7 +31,7 @@ export WANDB_API_KEY="your-wandb-key"
 ## Installation
 
 ```bash
-# Install aviato from source first
+# Install cwsandbox from source first
 uv pip install -e .
 
 # Install ART dependencies (includes TinkerBackend support)
@@ -74,7 +74,7 @@ uv run python examples/rl_training/art/train.py \
 --num-steps INT            Training steps (default: 5)
 --trajectories-per-problem Number of trajectories per problem (default: 2)
 --base-url TEXT            Inference API base URL
---project TEXT             W&B project name (default: aviato-mbpp)
+--project TEXT             W&B project name (default: cwsandbox-mbpp)
 --run-name TEXT            Training run name (default: train-001)
 --learning-rate FLOAT      Learning rate (default: 1e-5)
 --dry-run                  Validate setup without training
@@ -82,13 +82,13 @@ uv run python examples/rl_training/art/train.py \
 
 ## Architecture
 
-1. **Trajectory Collection**: For each problem, the agent uses tools (execute_code, submit_solution) in Aviato sandboxes to explore and solve the problem
+1. **Trajectory Collection**: For each problem, the agent uses tools (execute_code, submit_solution) in CWSandboxes to explore and solve the problem
 2. **Reward Computation**: Binary reward (1.0 if tests pass, 0.0 otherwise)
 3. **Training Step**: Collected trajectories are grouped and used to train the model via ART backend
 
 ## W&B Metrics
 
-When `WANDB_API_KEY` is set, aviato automatically logs sandbox execution metrics (success rate, error rate, exec counts) to your wandb run. See the [W&B Metrics Integration](../../../docs/guides/rl-training.md#wb-metrics-integration) section of the RL Training Guide for details.
+When `WANDB_API_KEY` is set, cwsandbox automatically logs sandbox execution metrics (success rate, error rate, exec counts) to your wandb run. See the [W&B Metrics Integration](../../../docs/guides/rl-training.md#wb-metrics-integration) section of the RL Training Guide for details.
 
 ## Further Reading
 

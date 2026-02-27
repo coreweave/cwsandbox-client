@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 name: Deploy Documentation
 
@@ -11,7 +11,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'src/aviato/**'
+      - 'src/cwsandbox/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 

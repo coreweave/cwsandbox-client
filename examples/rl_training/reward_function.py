@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone reward function example for RL training.
 
-This example demonstrates the simplest integration pattern: using Aviato sandboxes
+This example demonstrates the simplest integration pattern: using CWSandboxes
 to compute code execution rewards for reinforcement learning training loops.
 
 The reward function executes model-generated code completions against test cases
@@ -10,7 +10,7 @@ in isolated sandboxes, returning binary rewards (1.0 for pass, 0.0 for fail).
 Key patterns demonstrated:
 - Session-based sandbox management for automatic cleanup
 - Parallel sandbox creation and execution
-- Progress tracking with aviato.wait() as results complete
+- Progress tracking with cwsandbox.wait() as results complete
 - Tagging with job ID and problem index for tracking
 - Timeout handling (zero reward on timeout)
 
@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import uuid
 
-import aviato
-from aviato import SandboxDefaults, Session
+import cwsandbox
+from cwsandbox import SandboxDefaults, Session
 
 JOB_ID = uuid.uuid4().hex[:8]
 
@@ -67,7 +67,7 @@ def code_execution_reward(
     total = len(processes)
 
     while pending:
-        [process], pending = aviato.wait(pending, num_returns=1)
+        [process], pending = cwsandbox.wait(pending, num_returns=1)
         idx = process_to_idx[id(process)]
         test_id = test_cases[idx]
 

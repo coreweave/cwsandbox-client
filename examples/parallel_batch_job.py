@@ -2,22 +2,22 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Parallel batch processing with progress tracking.
 
 This example shows how to:
 - Create multiple sandboxes in parallel
 - Submit long-running commands concurrently
-- Use aviato.wait() to process results as they complete
+- Use cwsandbox.wait() to process results as they complete
 - Track progress through a large batch job
 
 Usage:
     uv run examples/parallel_batch_job.py
 """
 
-import aviato
-from aviato import SandboxDefaults, Session
+import cwsandbox
+from cwsandbox import SandboxDefaults, Session
 
 
 def main() -> None:
@@ -49,7 +49,7 @@ def main() -> None:
             processes.append(process)
         print(f"Submitted {len(processes)} tasks\n")
 
-        # Process results as they complete using aviato.wait()
+        # Process results as they complete using cwsandbox.wait()
         print("Waiting for results (processing in batches of 2)...")
         print("-" * 50)
 
@@ -59,7 +59,7 @@ def main() -> None:
         while pending:
             # Wait for next 2 tasks to complete (or fewer if less remaining)
             batch_size = min(2, len(pending))
-            done, pending = aviato.wait(pending, num_returns=batch_size)
+            done, pending = cwsandbox.wait(pending, num_returns=batch_size)
 
             # Process completed tasks
             for process in done:

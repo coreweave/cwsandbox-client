@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Multiple sandboxes example using sessions.
 
@@ -11,7 +11,7 @@ This example demonstrates:
 - Automatic cleanup when session exits
 """
 
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 
 def main() -> None:

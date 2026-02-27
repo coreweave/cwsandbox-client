@@ -1,8 +1,8 @@
-"""ART rollout function with Aviato sandbox execution.
+"""ART rollout function with CWSandbox execution.
 
 This module implements the core rollout function that:
 1. Uses OpenAI Responses API with tool calling
-2. Executes tools (execute_code, submit_solution) in Aviato sandboxes
+2. Executes tools (execute_code, submit_solution) in CWSandboxes
 3. Builds an ART Trajectory with the conversation history
 4. Computes binary reward (1.0 if tests pass, 0.0 otherwise)
 
@@ -38,7 +38,7 @@ from tools import (
 import art
 
 if TYPE_CHECKING:
-    from aviato import Sandbox
+    from cwsandbox import Sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ async def execute_code_in_sandbox(
     """Execute code in sandbox and return output or error message.
 
     Args:
-        sandbox: Aviato sandbox instance
+        sandbox: CWSandbox instance
         code: Python code to execute
         timeout: Maximum execution time in seconds
 
@@ -160,7 +160,7 @@ async def run_tests_in_sandbox(
     """Run solution against test cases in sandbox.
 
     Args:
-        sandbox: Aviato sandbox instance
+        sandbox: CWSandbox instance
         solution_code: The solution code to test
         test_code: Test code that validates the solution
         test_imports: Optional imports for test code
@@ -300,7 +300,7 @@ async def handle_tool_call(
 
     Args:
         tool_call: The tool call to handle
-        sandbox: Aviato sandbox instance
+        sandbox: CWSandbox instance
         problem: The coding problem
         config: Rollout configuration
 
@@ -357,7 +357,7 @@ async def rollout(
 
     Args:
         problem: The coding problem to solve
-        sandbox: Aviato sandbox instance (must be running)
+        sandbox: CWSandbox instance (must be running)
         config: Optional rollout configuration
         client: Optional AsyncOpenAI client (reuses connections if provided)
 

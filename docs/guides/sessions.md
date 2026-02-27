@@ -12,8 +12,8 @@ A `Session` provides:
 ## Basic Usage
 
 ```python
-import aviato
-from aviato import SandboxDefaults
+import cwsandbox
+from cwsandbox import SandboxDefaults
 
 # Define shared configuration
 defaults = SandboxDefaults(
@@ -22,7 +22,7 @@ defaults = SandboxDefaults(
 )
 
 # Create a session with context manager
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # Create sandboxes through the session
     sb1 = session.sandbox()
     sb2 = session.sandbox()
@@ -41,7 +41,7 @@ with aviato.Session(defaults=defaults) as session:
 Creates a sandbox with session defaults. The sandbox is not started until first use:
 
 ```python
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # sandbox() returns an unstarted sandbox
     sandbox = session.sandbox()
 
@@ -52,7 +52,7 @@ with aviato.Session(defaults=defaults) as session:
 For explicit control over when the start RPC fires:
 
 ```python
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     sandbox = session.sandbox()
     sandbox.start().result()  # Explicit start
     sandbox.wait()            # Wait for RUNNING
@@ -70,7 +70,7 @@ defaults = SandboxDefaults(
     tags=("my-project",),
 )
 
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # Override image and resources for this sandbox
     gpu_sandbox = session.sandbox(
         command="sleep",
@@ -88,7 +88,7 @@ See the [Sandbox Configuration Guide](sandbox-configuration.md) for all availabl
 Sessions excel at managing sandbox pools:
 
 ```python
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # Create a pool of sandboxes
     sandboxes = [
         session.sandbox()
@@ -114,7 +114,7 @@ with aviato.Session(defaults=defaults) as session:
 Close a session explicitly when not using context manager:
 
 ```python
-session = aviato.Session(defaults=defaults)
+session = cwsandbox.Session(defaults=defaults)
 
 sandbox = session.sandbox()
 result = sandbox.exec(["echo", "hello"]).result()
@@ -134,7 +134,7 @@ session.close().result()
 Sessions clean up even if exceptions occur:
 
 ```python
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     sandbox = session.sandbox()
     raise RuntimeError("Something went wrong!")
 # Sandbox is still cleaned up
@@ -145,10 +145,10 @@ with aviato.Session(defaults=defaults) as session:
 Bring sandboxes created outside the session under session management:
 
 ```python
-import aviato
-from aviato import Sandbox
+import cwsandbox
+from cwsandbox import Sandbox
 
-with aviato.Session(defaults=defaults) as session:
+with cwsandbox.Session(defaults=defaults) as session:
     # Find existing sandboxes
     existing = Sandbox.list(tags=["orphaned-work"]).result()
 
@@ -162,7 +162,7 @@ with aviato.Session(defaults=defaults) as session:
 ## Session Properties
 
 ```python
-session = aviato.Session(defaults=defaults)
+session = cwsandbox.Session(defaults=defaults)
 
 # Number of sandboxes tracked
 print(session.sandbox_count)  # 0
@@ -186,7 +186,7 @@ print(session.sandbox_count)  # 1
 For single sandboxes, sessions aren't required:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 # Direct usage without session
 with Sandbox.run() as sandbox:

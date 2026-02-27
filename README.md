@@ -1,15 +1,15 @@
-# aviato-client
+# cwsandbox-client
 
-A Python client library for Aviato sandboxes.
+A Python client library for CWSandboxes.
 
 ## Documentation
 
-See the [documentation site](https://coreweave.github.io/aviato-client/) for the full tutorial, guides, and API reference.
+See the [documentation site](https://coreweave.github.io/cwsandbox-client/) for the full tutorial, guides, and API reference.
 
 ## Quick Start
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 # Quick one-liner with factory method (sync/async hybrid API)
 sb = Sandbox.run("echo", "Hello, World!")
@@ -33,5 +33,5 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
 For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
-- The Aviato Client library is licensed under the Apache-2.0 license.
-- The Aviato Client examples are licensed under the BSD-3-Clause license.
+- The CWSandbox Client library is licensed under the Apache-2.0 license.
+- The CWSandbox Client examples are licensed under the BSD-3-Clause license.

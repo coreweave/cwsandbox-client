@@ -1,22 +1,22 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when working with the Aviato SDK.
+This guide covers common issues and their solutions when working with the CWSandbox SDK.
 
 ## Authentication Issues
 
-**Symptom**: `AviatoAuthenticationError` or `WandbAuthError` raised on sandbox operations.
+**Symptom**: `CWSandboxAuthenticationError` or `WandbAuthError` raised on sandbox operations.
 
 The SDK resolves authentication in this order:
 
-1. `AVIATO_API_KEY` env var (takes priority)
+1. `CWSANDBOX_API_KEY` env var (takes priority)
 2. `WANDB_API_KEY` + `WANDB_ENTITY_NAME` env vars
 3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY_NAME`
 
 You need **one** of these configured. Check which method you're using:
 
 ```bash
-# Option 1: Aviato API key
-echo $AVIATO_API_KEY
+# Option 1: CWSandbox API key
+echo $CWSANDBOX_API_KEY
 
 # Option 2: W&B credentials
 echo $WANDB_API_KEY
@@ -27,7 +27,7 @@ echo $WANDB_ENTITY_NAME
 
 | Issue | Solution |
 |-------|----------|
-| No credentials configured | Set `AVIATO_API_KEY` or W&B credentials |
+| No credentials configured | Set `CWSANDBOX_API_KEY` or W&B credentials |
 | Invalid or expired API key | Contact your administrator for a new key |
 | W&B API key set but entity missing | Set `WANDB_ENTITY_NAME` to your W&B entity/team |
 | Using netrc but entity missing | Set `WANDB_ENTITY_NAME` - it's always required for W&B |
@@ -49,7 +49,7 @@ The SDK has two types of timeouts:
 **Client-side timeout** (`timeout_seconds`):
 
 ```python
-from aviato import SandboxTimeoutError
+from cwsandbox import SandboxTimeoutError
 
 try:
     result = sandbox.exec(
@@ -63,7 +63,7 @@ except SandboxTimeoutError:
 **Server-side lifetime** (`max_lifetime_seconds`):
 
 ```python
-from aviato import SandboxDefaults
+from cwsandbox import SandboxDefaults
 
 defaults = SandboxDefaults(
     container_image="python:3.11",
@@ -116,7 +116,7 @@ Exit codes follow Unix conventions:
 Use `check=True` to raise on non-zero exit:
 
 ```python
-from aviato import SandboxExecutionError
+from cwsandbox import SandboxExecutionError
 
 try:
     result = sandbox.exec(
@@ -183,7 +183,7 @@ See [Cleanup Patterns - Orphan Management](cleanup-patterns.md#orphan-management
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `AviatoAuthenticationError` | Missing or invalid credentials | Check `AVIATO_API_KEY` is set |
+| `CWSandboxAuthenticationError` | Missing or invalid credentials | Check `CWSANDBOX_API_KEY` is set |
 | `WandbAuthError: WANDB_ENTITY_NAME is not set` | W&B API key found but entity missing | Set `WANDB_ENTITY_NAME` env var |
 | `SandboxNotRunningError` | Operation on stopped sandbox | Check `sandbox.status` before operations |
 | `SandboxTimeoutError` | Operation exceeded timeout | Increase `timeout_seconds` or optimize command |

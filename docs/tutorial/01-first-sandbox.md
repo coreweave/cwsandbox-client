@@ -5,16 +5,16 @@
 Clone and install the SDK locally:
 
 ```bash
-git clone https://github.com/coreweave/aviato-client.git
-cd aviato-client
+git clone https://github.com/coreweave/cwsandbox-client.git
+cd cwsandbox-client
 uv sync
 ```
 
 Set your credentials:
 
 ```bash
-# Option 1: Aviato API key
-export AVIATO_API_KEY="your-api-key"
+# Option 1: CWSandbox API key
+export CWSANDBOX_API_KEY="your-api-key"
 
 # Option 2: W&B credentials
 export WANDB_API_KEY="your-wandb-key"
@@ -24,7 +24,7 @@ export WANDB_ENTITY_NAME="your-entity"
 ## Run Your First Sandbox
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
     result = sandbox.exec(["echo", "Hello!"]).result()

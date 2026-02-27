@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 
 """Example: Delete sandboxes by ID.
 
@@ -14,8 +14,8 @@ Usage:
     uv run examples/delete_sandboxes.py
 """
 
-from aviato import Sandbox
-from aviato.exceptions import SandboxNotFoundError
+from cwsandbox import Sandbox
+from cwsandbox.exceptions import SandboxNotFoundError
 
 
 def main() -> None:

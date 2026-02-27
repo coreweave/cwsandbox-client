@@ -4,7 +4,7 @@ This file provides guidance to AI coding assistants when working with code in th
 
 ## Project Overview
 
-Python client library for Aviato sandboxes - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
+Python client library for CoreWeave Sandbox - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
 
 ## Development Setup
 
@@ -153,7 +153,7 @@ Fields:
 
 Usage:
 ```python
-from aviato import NetworkOptions
+from cwsandbox import NetworkOptions
 
 # Using NetworkOptions (recommended for type safety)
 sandbox = Sandbox.run(
@@ -173,7 +173,7 @@ sandbox = Sandbox.run(
 ### Authentication Flow
 
 `_auth.py` implements a priority-based resolution:
-1. `AVIATO_API_KEY` env var - Bearer token auth
+1. `CWSANDBOX_API_KEY` env var - Bearer token auth
 2. `WANDB_API_KEY` + `WANDB_ENTITY_NAME` - W&B headers (x-api-key, x-entity-id, x-project-name)
 3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY_NAME`
 
@@ -250,28 +250,28 @@ On first signal, performs cleanup then chains to original handler. On second sig
 
 ### Module-Level Utilities
 
-**`aviato.result()`**: Block for one or more OperationRefs and return results.
+**`cwsandbox.result()`**: Block for one or more OperationRefs and return results.
 
 ```python
 # Single ref
-data = aviato.result(sandbox.read_file("/path"))
+data = cwsandbox.result(sandbox.read_file("/path"))
 
 # Multiple refs
-results = aviato.result([sb.read_file(f) for f in files])
+results = cwsandbox.result([sb.read_file(f) for f in files])
 ```
 
-**`aviato.wait()`**: Wait for Sandbox, OperationRef, or Process objects to complete. Returns `(done, pending)` tuple.
+**`cwsandbox.wait()`**: Wait for Sandbox, OperationRef, or Process objects to complete. Returns `(done, pending)` tuple.
 
 ```python
 # Wait for all sandboxes to be running
 sandboxes = [Sandbox.run(...) for _ in range(5)]
-done, pending = aviato.wait(sandboxes)
+done, pending = cwsandbox.wait(sandboxes)
 
 # Wait for first N to complete
-done, pending = aviato.wait(refs, num_returns=2)
+done, pending = cwsandbox.wait(refs, num_returns=2)
 
 # Wait with timeout
-done, pending = aviato.wait(procs, timeout=30.0)
+done, pending = cwsandbox.wait(procs, timeout=30.0)
 ```
 
 **`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process`.
@@ -308,7 +308,7 @@ mise run test:e2e                         # Full suite (~2.5 minutes)
 mise run test:e2e:parallel                # Parallel execution (faster)
 
 # Individual test with timeout
-timeout 120 uv run pytest tests/integration/aviato/test_sandbox.py::test_sandbox_lifecycle -v
+timeout 120 uv run pytest tests/integration/cwsandbox/test_sandbox.py::test_sandbox_lifecycle -v
 ```
 
 **Important**: If integration tests hang beyond expected times, check:
@@ -329,8 +329,8 @@ def test_sandbox_example(sandbox_defaults: SandboxDefaults) -> None:
 ## Exception Hierarchy
 
 ```
-AviatoError
-├── AviatoAuthenticationError
+CWSandboxError
+├── CWSandboxAuthenticationError
 │   └── WandbAuthError
 ├── SandboxError
 │   ├── SandboxNotRunningError
@@ -386,7 +386,7 @@ All new files MUST include an SPDX license header. See [CONTRIBUTING.md](CONTRIB
 ```python
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-PackageName: aviato-client
+# SPDX-PackageName: cwsandbox-client
 ```
 
 **Markdown files** (`.md`):
@@ -394,7 +394,7 @@ All new files MUST include an SPDX license header. See [CONTRIBUTING.md](CONTRIB
 <!--
 SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 SPDX-License-Identifier: Apache-2.0
-SPDX-PackageName: aviato-client
+SPDX-PackageName: cwsandbox-client
 -->
 ```
 

@@ -17,7 +17,7 @@ sandbox.exec(["ls"], cwd="/app").result()
 ## Parallel Execution
 
 ```python
-import aviato
+import cwsandbox
 
 # exec() returns a Process immediately without waiting for the command to finish
 p1 = sandbox.exec(["sleep", "1"])
@@ -25,7 +25,7 @@ p2 = sandbox.exec(["sleep", "1"])
 p3 = sandbox.exec(["sleep", "1"])
 
 # Call .result() when you need the output - ~1 second total, not 3
-aviato.result([p1, p2, p3])
+cwsandbox.result([p1, p2, p3])
 ```
 
 For streaming, error handling, and process control, see the [Execution Guide](../guides/execution.md).

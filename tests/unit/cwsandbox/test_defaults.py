@@ -1,0 +1,152 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: cwsandbox-client
+
+"""Unit tests for cwsandbox._defaults module."""
+
+import dataclasses
+
+import pytest
+
+from cwsandbox import NetworkOptions, SandboxDefaults
+
+
+class TestSandboxDefaults:
+    """Tests for SandboxDefaults dataclass."""
+
+    def test_defaults_are_reasonable(self) -> None:
+        """Test SandboxDefaults has reasonable default values."""
+        defaults = SandboxDefaults()
+
+        # Container image should be non-empty and look like a docker image
+        assert defaults.container_image
+        assert ":" in defaults.container_image or "/" in defaults.container_image
+
+        # Command and args should be non-empty (sandbox needs something to run)
+        assert defaults.command
+        assert isinstance(defaults.args, tuple)
+
+        # Base URL should be a valid HTTP(S) URL
+        assert defaults.base_url.startswith(("http://", "https://"))
+
+        # Timeout should be positive
+        assert 0 < defaults.request_timeout_seconds
+
+        # max_lifetime_seconds can be None (backend-controlled) or positive
+        assert defaults.max_lifetime_seconds is None or defaults.max_lifetime_seconds > 0
+
+        # Tags should default to empty tuple (immutable)
+        assert defaults.tags == ()
+
+        # Runway/tower IDs should default to None (no filtering)
+        assert defaults.runway_ids is None
+        assert defaults.tower_ids is None
+
+        # Network should default to None (backend defaults)
+        assert defaults.network is None
+
+    def test_defaults_are_immutable(self) -> None:
+        """Test SandboxDefaults is frozen/immutable."""
+        defaults = SandboxDefaults(container_image="python:3.11")
+
+        assert dataclasses.is_dataclass(defaults)
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            defaults.container_image = "python:3.12"  # type: ignore[misc]
+
+    def test_merge_tags_empty_base(self) -> None:
+        """Test merge_tags with no default tags."""
+        defaults = SandboxDefaults()
+
+        result = defaults.merge_tags(["new-tag"])
+
+        assert result == ["new-tag"]
+
+    def test_merge_tags_empty_additional(self) -> None:
+        """Test merge_tags with no additional tags."""
+        defaults = SandboxDefaults(tags=("default-tag",))
+
+        result = defaults.merge_tags(None)
+
+        assert result == ["default-tag"]
+
+    def test_merge_tags_both(self) -> None:
+        """Test merge_tags combines both sources."""
+        defaults = SandboxDefaults(tags=("default-1", "default-2"))
+
+        result = defaults.merge_tags(["additional-1", "additional-2"])
+
+        assert result == ["default-1", "default-2", "additional-1", "additional-2"]
+
+    def test_with_overrides_creates_new(self) -> None:
+        """Test with_overrides creates a new instance."""
+        defaults = SandboxDefaults(container_image="python:3.11")
+
+        new_defaults = defaults.with_overrides(container_image="python:3.12")
+
+        assert defaults.container_image == "python:3.11"  # original unchanged
+        assert new_defaults.container_image == "python:3.12"
+
+    def test_with_overrides_partial(self) -> None:
+        """Test with_overrides preserves other fields."""
+        defaults = SandboxDefaults(
+            container_image="python:3.11",
+            base_url="http://example.com",
+            request_timeout_seconds=60.0,
+        )
+
+        new_defaults = defaults.with_overrides(request_timeout_seconds=120.0)
+
+        assert new_defaults.container_image == "python:3.11"
+        assert new_defaults.base_url == "http://example.com"
+        assert new_defaults.request_timeout_seconds == 120.0
+
+    def test_merge_environment_variables_empty_base(self) -> None:
+        """Test merge_environment_variables with no default environment variables."""
+        defaults = SandboxDefaults()
+
+        result = defaults.merge_environment_variables({"LOG_LEVEL": "info"})
+
+        assert result == {"LOG_LEVEL": "info"}
+
+    def test_merge_environment_variables_with_additional(self) -> None:
+        """Test merge_environment_variables with additional environment variables."""
+        defaults = SandboxDefaults(
+            environment_variables={
+                "LOG_LEVEL": "info",
+                "REGION": "us-west",
+            },
+        )
+
+        result = defaults.merge_environment_variables(
+            {
+                "LOG_LEVEL": "debug",
+                "MODEL": "gpt2",
+            }
+        )
+
+        assert result == {
+            "LOG_LEVEL": "debug",  # Overridden
+            "REGION": "us-west",  # Preserved
+            "MODEL": "gpt2",  # Added
+        }
+
+    def test_network_can_be_set(self) -> None:
+        """Test network can be set in SandboxDefaults."""
+        network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+        defaults = SandboxDefaults(network=network)
+
+        assert defaults.network is network
+        assert defaults.network.ingress_mode == "public"
+        assert defaults.network.exposed_ports == (8080,)
+
+    def test_with_overrides_network(self) -> None:
+        """Test with_overrides can change network."""
+        network1 = NetworkOptions(egress_mode="internet")
+        network2 = NetworkOptions(egress_mode="isolated")
+        defaults = SandboxDefaults(network=network1)
+
+        new_defaults = defaults.with_overrides(network=network2)
+
+        assert defaults.network is network1  # original unchanged
+        assert new_defaults.network is network2

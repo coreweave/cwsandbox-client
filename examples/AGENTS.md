@@ -1,16 +1,16 @@
 <!--
 SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 SPDX-License-Identifier: BSD-3-Clause
-SPDX-PackageName: aviato-client
+SPDX-PackageName: cwsandbox-client
 -->
 
 # Examples
 
-Runnable example scripts demonstrating aviato SDK usage patterns.
+Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 
 ## API Patterns
 
-**All aviato operations support sync/async hybrid usage.** Use `.result()` in sync code, or `await` in async code. Sync patterns are simpler for most use cases.
+**All cwsandbox operations support sync/async hybrid usage.** Use `.result()` in sync code, or `await` in async code. Sync patterns are simpler for most use cases.
 
 | File | Pattern | Entry Point | Description |
 |------|---------|-------------|-------------|
@@ -25,7 +25,7 @@ Runnable example scripts demonstrating aviato SDK usage patterns.
 | `reconnect_to_sandbox.py` | Sync | `def main()` | Attach via `Sandbox.from_id()` |
 | `async_patterns.py` | Async | `async def main()` | Using await with OperationRef and Process |
 | `session_adopt_orphans.py` | Sync | `def main()` | Orphan management with `session.list()` |
-| `parallel_batch_job.py` | Sync | `def main()` | Parallel batch processing with aviato.wait() |
+| `parallel_batch_job.py` | Sync | `def main()` | Parallel batch processing with cwsandbox.wait() |
 | `cleanup_by_tag.py` | Sync | `def main()` | Tag-based cleanup |
 | `cleanup_old_sandboxes.py` | Sync | `def main()` | Age-based cleanup |
 | `swebench/run_evaluation.py` | Sync | `def main()` | SWE-bench evaluation with parallel sandboxes |
@@ -39,7 +39,7 @@ For detailed guides, see `docs/guides/`. See [Sync vs Async](../docs/guides/sync
 
 ```bash
 # Set API key
-export AVIATO_API_KEY="your-api-key"
+export CWSANDBOX_API_KEY="your-api-key"
 
 # Run any example
 python examples/quick_start.py
@@ -51,7 +51,7 @@ python examples/basic_execution.py
 Each example follows this pattern:
 
 1. Docstring explaining what it demonstrates
-2. Imports from `aviato` package
+2. Imports from `cwsandbox` package
 3. Self-contained `main()` function
 4. Clear output showing results
 
@@ -78,7 +78,7 @@ Demonstrates:
 - Another concept shown
 """
 
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 
 def main() -> None:
@@ -108,7 +108,7 @@ Demonstrates:
 """
 
 import asyncio
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 
 async def main() -> None:

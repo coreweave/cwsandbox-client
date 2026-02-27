@@ -1,4 +1,4 @@
-"""Tool definitions for ART rollout with Aviato sandboxes.
+"""Tool definitions for ART rollout with CWSandboxes.
 
 This module defines the tool schemas for the multi-step rollout:
 - execute_code: Run Python code in sandbox, return stdout/stderr

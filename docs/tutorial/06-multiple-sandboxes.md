@@ -3,7 +3,7 @@
 Sessions manage multiple sandboxes with shared defaults and automatic cleanup:
 
 ```python
-from aviato import Sandbox, SandboxDefaults
+from cwsandbox import Sandbox, SandboxDefaults
 
 defaults = SandboxDefaults(container_image="python:3.11", tags=("my-app",))
 

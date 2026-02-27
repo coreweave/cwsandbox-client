@@ -7,7 +7,7 @@ This guide covers running commands in sandboxes using the `exec()` method.
 The `exec()` method runs commands in a sandbox and returns a `Process` handle:
 
 ```python
-from aviato import Sandbox
+from cwsandbox import Sandbox
 
 with Sandbox.run() as sandbox:
     # Run a command and get the result
@@ -191,7 +191,7 @@ The path must be absolute.
 Set command timeout with `timeout_seconds`:
 
 ```python
-from aviato import SandboxTimeoutError
+from cwsandbox import SandboxTimeoutError
 
 try:
     result = sandbox.exec(
@@ -220,7 +220,7 @@ print(result.returncode)  # 1 (no exception)
 Raises `SandboxExecutionError` on non-zero exit:
 
 ```python
-from aviato import SandboxExecutionError
+from cwsandbox import SandboxExecutionError
 
 try:
     result = sandbox.exec(
@@ -282,15 +282,15 @@ for r in results:
 
 ### Waiting for N of M to Complete
 
-Use `aviato.wait()` to wait for a subset of processes:
+Use `cwsandbox.wait()` to wait for a subset of processes:
 
 ```python
-import aviato
+import cwsandbox
 
 processes = [sb.exec(["python", "task.py"]) for sb in sandboxes]
 
 # Wait for first 2 to complete
-done, pending = aviato.wait(processes, num_returns=2)
+done, pending = cwsandbox.wait(processes, num_returns=2)
 
 # Process completed ones immediately
 for p in done:
