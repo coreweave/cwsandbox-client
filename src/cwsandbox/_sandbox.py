@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import grpc
 import grpc.aio
+from google.protobuf import timestamp_pb2
 
 from cwsandbox._auth import resolve_auth_metadata
 from cwsandbox._defaults import (
@@ -31,7 +32,10 @@ from cwsandbox._defaults import (
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    MAX_LINE_BUFFER_BYTES,
     STDIN_CHUNK_SIZE,
+    STREAMING_OUTPUT_QUEUE_SIZE,
+    STREAMING_RESPONSE_QUEUE_SIZE,
     SandboxDefaults,
 )
 from cwsandbox._loop_manager import _LoopManager
@@ -2058,6 +2062,180 @@ class Sandbox:
         )
         return OperationRef(future)
 
+    async def _stream_logs_async(
+        self,
+        output_queue: asyncio.Queue[str | Exception | None],
+        *,
+        follow: bool = False,
+        tail_lines: int | None = None,
+        since_time: datetime | None = None,
+        timestamps: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        """Internal async: Stream logs from sandbox, push lines to queue.
+
+        Uses gRPC bidirectional streaming to receive log data as it arrives.
+        Buffers partial lines and pushes complete lines to output_queue.
+        Signals end-of-stream with None sentinel when log stream completes.
+        """
+        try:
+            await self._ensure_started_async()
+            if self._sandbox_id is None:
+                raise SandboxNotRunningError("No sandbox is running")
+            if self._is_done and follow:
+                raise SandboxNotRunningError(
+                    f"Sandbox {self._sandbox_id} has been stopped"
+                    " (follow=True requires a running sandbox)"
+                )
+
+            if not self._is_done:
+                await self._wait_until_running_async()
+
+            await self._ensure_client()
+            channel = await self._get_or_create_streaming_channel()
+            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+
+            auth_metadata = self._auth_metadata
+
+            logger.debug("Streaming logs from sandbox %s (follow=%s)", self._sandbox_id, follow)
+
+            shutdown_event = asyncio.Event()
+
+            async def request_generator() -> AsyncIterator[streaming_pb2.LogStreamRequest]:
+                init = streaming_pb2.LogStreamInit(
+                    sandbox_id=self._sandbox_id,
+                    follow=follow,
+                )
+                if tail_lines is not None:
+                    init.tail_lines = tail_lines
+                if since_time is not None:
+                    ts = timestamp_pb2.Timestamp()
+                    ts.FromDatetime(since_time)
+                    init.since_time.CopyFrom(ts)
+                if timestamps:
+                    init.timestamps = True
+                yield streaming_pb2.LogStreamRequest(init=init)
+                # For follow mode, keep generator alive until shutdown
+                if follow:
+                    await shutdown_event.wait()
+                    yield streaming_pb2.LogStreamRequest(close=streaming_pb2.LogStreamClose())
+
+            # For follow=False, apply a client-side deadline so a stalled
+            # server doesn't block the client indefinitely.  follow=True
+            # streams are intentionally unbounded.
+            grpc_timeout = timeout_seconds if not follow else None
+
+            call: grpc.aio.StreamStreamCall[
+                streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
+            ] = stub.StreamLogs(
+                request_iterator=request_generator(),
+                metadata=auth_metadata,
+                **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
+            )
+
+            # Bounded queue propagates backpressure to gRPC reads — when the
+            # downstream output_queue is full the processing loop blocks, which
+            # in turn blocks collect_responses() on response_queue.put(), which
+            # stops reading from gRPC.  Without this bound, follow-mode streams
+            # can accumulate unlimited protobuf messages in memory.
+            response_queue: asyncio.Queue[streaming_pb2.LogStreamResponse | Exception | None] = (
+                asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
+            )
+
+            async def collect_responses() -> None:
+                """Collect responses from gRPC streaming call into queue."""
+                try:
+                    async for response in call:
+                        await response_queue.put(response)
+                        if response.HasField("error") or response.HasField("complete"):
+                            return
+                except grpc.aio.AioRpcError as e:
+                    await response_queue.put(e)
+                except Exception as e:
+                    await response_queue.put(e)
+                finally:
+                    await response_queue.put(None)
+
+            collect_task = asyncio.create_task(collect_responses())
+
+            line_parts: list[str] = []
+            line_parts_bytes = 0
+            cancelled = False
+
+            try:
+                while True:
+                    item = await response_queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, grpc.aio.AioRpcError):
+                        translated = _translate_rpc_error(
+                            item, sandbox_id=self._sandbox_id, operation="Stream logs"
+                        )
+                        await output_queue.put(translated)
+                        return
+                    if isinstance(item, Exception):
+                        await output_queue.put(item)
+                        return
+
+                    response = item
+                    if response.HasField("data"):
+                        text = response.data.data.decode("utf-8", errors="replace")
+
+                        # Buffer partial lines: split on newlines and push complete lines
+                        # When timestamps=True, the backend embeds timestamps in the
+                        # raw log bytes so no client-side prefix is needed.
+                        line_parts.append(text)
+                        line_parts_bytes += len(text)
+
+                        # Guard against unbounded accumulation from newline-free
+                        # output (e.g. binary data).  Flush as a partial line once
+                        # the buffer exceeds MAX_LINE_BUFFER_BYTES.
+                        if "\n" not in text and line_parts_bytes < MAX_LINE_BUFFER_BYTES:
+                            continue
+
+                        combined = "".join(line_parts)
+                        line_parts.clear()
+                        line_parts_bytes = 0
+                        parts = combined.split("\n")
+                        for part in parts[:-1]:
+                            await output_queue.put(part + "\n")
+                        if parts[-1]:
+                            line_parts.append(parts[-1])
+                            line_parts_bytes = len(parts[-1])
+
+                    elif response.HasField("error"):
+                        await output_queue.put(
+                            SandboxError(f"Log stream error: {response.error.message}")
+                        )
+                        return
+
+                    elif response.HasField("complete"):
+                        break
+
+                # Flush any remaining partial line
+                if line_parts:
+                    await output_queue.put("".join(line_parts))
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            finally:
+                shutdown_event.set()
+                collect_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await collect_task
+                if not cancelled:
+                    await output_queue.put(None)
+        except Exception as exc:
+            # Early failures (before the inner try/finally) must propagate to
+            # the consumer so it doesn't hang waiting on a sentinel that never
+            # arrives.  StreamReader stops iteration on Exception, so no
+            # trailing None sentinel is needed.  Use put_nowait to avoid
+            # blocking if the consumer has stopped draining.
+            try:
+                output_queue.put_nowait(exc)
+            except asyncio.QueueFull:
+                pass
+
     async def _exec_streaming_async(
         self,
         command: Sequence[str],
@@ -2573,3 +2751,100 @@ class Sandbox:
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._write_file_async(filepath, contents, timeout))
         return OperationRef(future)
+
+    def stream_logs(
+        self,
+        *,
+        follow: bool = False,
+        tail_lines: int | None = None,
+        since_time: datetime | None = None,
+        timestamps: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> StreamReader:
+        """Stream logs from the sandbox's main process.
+
+        Streams stdout/stderr from the sandbox's **main command** — the
+        entrypoint passed to ``Sandbox.run()`` (or the default
+        ``tail -f /dev/null``). Output from commands started via ``exec()``
+        is **not** included; use ``Process.stdout``/``Process.stderr`` for
+        those.
+
+        .. note::
+
+            Sandboxes created with the default command (``tail -f /dev/null``)
+            do not produce any log output. To see logs here, pass a command
+            that writes to stdout/stderr when calling ``Sandbox.run()``.
+
+        Returns a StreamReader that yields log lines as strings. The method
+        returns immediately — iteration on the StreamReader blocks until
+        data arrives.
+
+        Can also retrieve historical logs from stopped sandboxes when
+        ``follow=False``.
+
+        Args:
+            follow: If True, continuously stream new logs (like ``tail -f``).
+                If False, stream existing logs and stop. Only running
+                sandboxes support ``follow=True``.
+            tail_lines: Number of most recent lines to retrieve. If None,
+                returns all available lines.
+            since_time: Only return logs after this timestamp.
+            timestamps: If True, prefix each line with an ISO 8601 timestamp
+                from the server.
+            timeout_seconds: Client-side deadline for the gRPC call. Defaults
+                to ``request_timeout_seconds`` when ``follow=False``, and
+                ``None`` (no timeout) when ``follow=True``.
+
+        Returns:
+            StreamReader yielding log lines as strings. Iterate synchronously
+            with ``for line in reader`` or asynchronously with
+            ``async for line in reader``.
+
+        Raises:
+            SandboxNotRunningError: If ``follow=True`` and the sandbox has
+                been stopped.
+            SandboxError: If the log stream encounters an error.
+
+        Example:
+            ```python
+            # One-shot: get recent logs
+            for line in sandbox.stream_logs(tail_lines=100):
+                print(line, end="")
+
+            # Follow mode: stream continuously
+            for line in sandbox.stream_logs(follow=True):
+                print(line, end="")
+
+            # Retrieve logs from a stopped sandbox
+            sb = Sandbox.from_id("sbx-abc123").result()
+            for line in sb.stream_logs(tail_lines=50):
+                print(line, end="")
+
+            # Async usage
+            async for line in sandbox.stream_logs(follow=True):
+                print(line, end="")
+            ```
+        """
+        # Default timeout: request_timeout for finite streams, None for follow
+        if timeout_seconds is None and not follow:
+            timeout_seconds = self._request_timeout_seconds
+
+        # Bounded queue provides backpressure for potentially unbounded log output
+        # (follow=True streams indefinitely). Contrast with exec stdout/stderr
+        # queues which are unbounded because exec output is finite.
+        output_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue(
+            maxsize=STREAMING_OUTPUT_QUEUE_SIZE
+        )
+
+        future = self._loop_manager.run_async(
+            self._stream_logs_async(
+                output_queue,
+                follow=follow,
+                tail_lines=tail_lines,
+                since_time=since_time,
+                timestamps=timestamps,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+
+        return StreamReader(output_queue, self._loop_manager, cancel=future.cancel)
