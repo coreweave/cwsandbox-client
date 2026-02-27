@@ -56,6 +56,16 @@ cwsandbox logs <sandbox-id> --follow              # Continuous (like tail -f)
 cwsandbox logs <sandbox-id> --tail 50 --timestamps
 ```
 
+### Interactive shell
+
+```bash
+cwsandbox sh <sandbox-id>                        # Default /bin/bash
+cwsandbox sh <sandbox-id> --cmd /bin/zsh          # Custom shell
+cwsandbox sh <sandbox-id> --cmd "python main.py"  # Run a command with TTY
+```
+
+The shell runs in raw mode — keystrokes (including Ctrl+C) are forwarded to the remote process. Exit with `exit` or Ctrl+D.
+
 ## JSON output for scripting
 
 `cwsandbox ls -o json` returns a JSON array for use with `jq`:
@@ -80,3 +90,4 @@ Each object contains: `sandbox_id`, `status`, `tower_id`, `runway_id`, `tower_gr
 
 - [Command Execution](execution.md) — `exec()` SDK method details
 - [Sandbox Logging](logging.md) — `stream_logs()` SDK method details
+- [Interactive Shells](interactive-shells.md) — `shell()` SDK method details
