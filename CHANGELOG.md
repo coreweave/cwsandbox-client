@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-02-27)
+
+### Refactoring
+
+- Rename package from aviato to cwsandbox
+  ([`59bc899`](https://github.com/coreweave/aviato-client/commit/59bc899e3aa575f2c76629fb79d4b0257dc73d20))
+
+### Breaking Changes
+
+- All imports, env vars, and exception names changed. No backward compatibility layer.
+
+
 ## v0.4.0 (2026-02-26)
 
 ### Bug Fixes
