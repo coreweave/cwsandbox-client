@@ -191,7 +191,11 @@ class StreamReader:
     """
 
     def __init__(
-        self, queue: asyncio.Queue[str | Exception | None], loop_manager: _LoopManager
+        self,
+        queue: asyncio.Queue[str | Exception | None],
+        loop_manager: _LoopManager,
+        *,
+        cancel: Callable[[], object] | None = None,
     ) -> None:
         """Initialize with a queue and loop manager.
 
@@ -200,10 +204,13 @@ class StreamReader:
                 None as end-of-stream sentinel, and Exception instances
                 which are re-raised to the consumer.
             loop_manager: The _LoopManager for executing async operations.
+            cancel: Optional callback to cancel the background producer.
+                Called by ``close()`` to stop the stream.
         """
         self._queue = queue
         self._loop_manager = loop_manager
         self._exhausted = False
+        self._cancel = cancel
 
     def __iter__(self) -> StreamReader:
         """Return self as iterator for sync iteration."""
@@ -254,6 +261,18 @@ class StreamReader:
             self._exhausted = True
             raise item
         return item
+
+    def close(self) -> None:
+        """Cancel the background producer and mark the stream as exhausted.
+
+        Safe to call multiple times. After close(), iteration will raise
+        StopIteration/StopAsyncIteration on the next call.
+        """
+        if self._exhausted:
+            return
+        self._exhausted = True
+        if self._cancel is not None:
+            self._cancel()
 
 
 class StreamWriter:
