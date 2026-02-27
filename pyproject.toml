@@ -121,7 +121,7 @@ major_on_zero           = false
 tag_format              = "v{version}"
 version_toml            = ["pyproject.toml:project.version"]
 version_variables       = ["src/cwsandbox/__init__.py:__version__"]
-build_command           = "uv build"
+build_command           = "uv lock && git add uv.lock && uv build"
 
 [tool.semantic_release.branches.main]
 match            = "(main|master)"
