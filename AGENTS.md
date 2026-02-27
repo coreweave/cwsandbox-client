@@ -95,7 +95,7 @@ with Session(defaults) as session:
 
 Fields (all optional with sensible defaults):
 - `container_image`, `command`, `args` - Container configuration
-- `base_url` - API endpoint (default: `https://atc.cwaviato.com`)
+- `base_url` - API endpoint (default: `https://atc.cw-sandbox.com`)
 - `request_timeout_seconds` - Client-side HTTP timeout (default: 300.0)
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
@@ -112,7 +112,7 @@ Utility methods:
 Key constants (from `_defaults.py`):
 - `DEFAULT_CONTAINER_IMAGE = "python:3.11"`
 - `DEFAULT_COMMAND = "tail"`, `DEFAULT_ARGS = ("-f", "/dev/null")`
-- `DEFAULT_BASE_URL = "https://atc.cwaviato.com"`
+- `DEFAULT_BASE_URL = "https://atc.cw-sandbox.com"`
 - `DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0` - Client-side HTTP timeout
 - `DEFAULT_MAX_LIFETIME_SECONDS = None` - Server controls sandbox lifetime
 - `DEFAULT_GRACEFUL_SHUTDOWN_SECONDS = 10.0`

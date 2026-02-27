@@ -24,7 +24,7 @@ def parse_grpc_target(base_url: str) -> tuple[str, bool]:
     """Parse a URL into a gRPC target and security flag.
 
     Args:
-        base_url: HTTP(S) URL to parse (e.g., "https://atc.cwaviato.com")
+        base_url: HTTP(S) URL to parse (e.g., "https://atc.cw-sandbox.com")
 
     Returns:
         Tuple of (target, is_secure) where:
