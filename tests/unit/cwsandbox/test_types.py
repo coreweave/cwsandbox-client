@@ -395,6 +395,49 @@ class TestStreamReader:
         with pytest.raises(StopAsyncIteration):
             await reader.__anext__()
 
+    def test_stream_reader_close_marks_exhausted(self) -> None:
+        """Test close() marks the reader as exhausted."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        queue.put_nowait("line1")
+        queue.put_nowait(None)
+
+        mock_manager = self._create_mock_loop_manager()
+        reader = StreamReader(queue, mock_manager)
+
+        reader.close()
+        with pytest.raises(StopIteration):
+            next(reader)
+
+    def test_stream_reader_close_calls_cancel(self) -> None:
+        """Test close() invokes the cancel callback."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        cancel = MagicMock()
+        reader = StreamReader(queue, mock_manager, cancel=cancel)
+
+        reader.close()
+        cancel.assert_called_once()
+
+    def test_stream_reader_close_without_cancel(self) -> None:
+        """Test close() is safe when no cancel callback is set."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        reader = StreamReader(queue, mock_manager)
+
+        reader.close()  # Should not raise
+        assert reader._exhausted
+
+    def test_stream_reader_close_idempotent(self) -> None:
+        """Test close() can be called multiple times safely."""
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        mock_manager = self._create_mock_loop_manager()
+        cancel = MagicMock()
+        reader = StreamReader(queue, mock_manager, cancel=cancel)
+
+        reader.close()
+        reader.close()
+        cancel.assert_called_once()  # cancel only fires on the first close()
+
 
 class TestStreamWriter:
     """Tests for StreamWriter class."""
