@@ -8,8 +8,8 @@ This module provides utilities for creating and managing gRPC channels
 to communicate with the CWSandbox backend.
 
 Generated SDK imports:
-- from coreweave.aviato.v1beta1 import atc_pb2_grpc (ATCServiceStub)
-- from coreweave.aviato.v1beta1 import streaming_pb2_grpc (ATCStreamingServiceStub)
+- from cwsandbox._proto import atc_pb2_grpc (ATCServiceStub)
+- from cwsandbox._proto import streaming_pb2_grpc (ATCStreamingServiceStub)
 """
 
 from __future__ import annotations

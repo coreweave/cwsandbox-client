@@ -278,7 +278,7 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 ### Backend Communication
 
-Uses gRPC via `coreweave-aviato-grpc-python` and `grpcio` packages. Proto definitions generate `atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, and `streaming_pb2_grpc` modules.
+Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
 
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 

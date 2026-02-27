@@ -393,10 +393,10 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_returns_sandbox_instances(self, mock_api_key: str) -> None:
         """Test session.list() returns Sandbox instances."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
 
         from cwsandbox import SandboxDefaults
+        from cwsandbox._proto import atc_pb2
 
         mock_sandbox_info = atc_pb2.SandboxInfo(
             sandbox_id="test-123",
@@ -430,9 +430,8 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_uses_default_tags(self, mock_api_key: str) -> None:
         """Test session.list() automatically filters by session's default tags."""
-        from coreweave.aviato.v1beta1 import atc_pb2
-
         from cwsandbox import SandboxDefaults
+        from cwsandbox._proto import atc_pb2
 
         defaults = SandboxDefaults(tags=("session-tag",))
         session = Session(defaults)
@@ -455,8 +454,9 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_with_adopt_registers_sandboxes(self, mock_api_key: str) -> None:
         """Test session.list(adopt=True) registers sandboxes with session."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_sandbox_info = atc_pb2.SandboxInfo(
             sandbox_id="test-123",
@@ -489,8 +489,9 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_without_adopt_does_not_register(self, mock_api_key: str) -> None:
         """Test session.list(adopt=False) does not register sandboxes."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_sandbox_info = atc_pb2.SandboxInfo(
             sandbox_id="test-123",
@@ -522,7 +523,7 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_passes_to_sandbox_list(self, mock_api_key: str) -> None:
         """Test session.list(include_stopped=True) passes the field through."""
-        from coreweave.aviato.v1beta1 import atc_pb2
+        from cwsandbox._proto import atc_pb2
 
         session = Session()
 
@@ -548,8 +549,9 @@ class TestSessionFromId:
     @pytest.mark.asyncio
     async def test_from_id_returns_sandbox_instance(self, mock_api_key: str) -> None:
         """Test session.from_id() returns a Sandbox instance."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.GetSandboxResponse(
             sandbox_id="test-123",
@@ -580,8 +582,9 @@ class TestSessionFromId:
     @pytest.mark.asyncio
     async def test_from_id_adopts_by_default(self, mock_api_key: str) -> None:
         """Test session.from_id() adopts sandbox by default."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.GetSandboxResponse(
             sandbox_id="test-123",
@@ -612,8 +615,9 @@ class TestSessionFromId:
     @pytest.mark.asyncio
     async def test_from_id_adopt_false_does_not_register(self, mock_api_key: str) -> None:
         """Test session.from_id(adopt=False) does not register sandbox."""
-        from coreweave.aviato.v1beta1 import atc_pb2
         from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
 
         mock_response = atc_pb2.GetSandboxResponse(
             sandbox_id="test-123",

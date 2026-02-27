@@ -6,7 +6,6 @@ Development setup and workflows for cwsandbox-client contributors.
 
 - Python 3.10-3.13
 - [uv](https://github.com/astral-sh/uv) - Python package manager
-- [buf](https://buf.build/docs/installation/) - Protocol buffer tooling (for dependency authentication)
 - [mise](https://mise.jdx.dev/) - Optional task runner (convenience wrapper for `uv` commands)
 
 ---
@@ -16,12 +15,6 @@ Development setup and workflows for cwsandbox-client contributors.
 ```bash
 git clone https://github.com/coreweave/cwsandbox-client.git
 cd cwsandbox-client
-
-# Install buf (if not already installed)
-brew install bufbuild/buf/buf # macOS (or see https://buf.build/docs/installation/)
-
-# Authenticate with buf.build (required for protobuf dependencies)
-buf registry login            # Opens browser for authentication
 
 # Install dependencies
 uv sync --extra dev           # Install package + dev dependencies
@@ -141,25 +134,43 @@ Or with `mise`: `mise run test:cov`
 
 ---
 
-## Troubleshooting
+## Updating Proto Stubs
 
-### buf.build Authentication
-
-If you encounter errors about buf.build authentication when installing:
-
-```
-hint: An index URL (https://buf.build/gen/python) could not be queried
-due to a lack of valid authentication credentials (401 Unauthorized).
-```
-
-Run the buf login command:
+Protobuf and gRPC stubs are vendored in `src/cwsandbox/_proto/`. When the backend API changes,
+update the stubs using the provided script:
 
 ```bash
-buf registry login            # Opens browser for authentication
-uv sync --extra dev           # Retry installation
+# Download version-pinned stubs from buf.build
+# To bump versions, edit the pin variables at the top of the script.
+scripts/update-protos.sh
+
+# Or with mise
+mise run proto:update
 ```
 
-The token is saved to `~/.netrc` and will be used automatically for future installs.
+### Local backend development
+
+When developing against a local aviato backend checkout with proto changes that
+haven't been published to buf.build yet:
+
+```bash
+# Generate protos from local backend and copy into vendored directory
+mise run proto:update:local
+
+# Or manually (if CWSANDBOX_BACKEND_PATH is not ../aviato):
+(cd /path/to/aviato && make buf-gen-python)
+scripts/update-protos.sh --local /path/to/aviato/gen/python
+```
+
+To revert local proto changes, use git:
+
+```bash
+git checkout src/cwsandbox/_proto/
+```
+
+---
+
+## Troubleshooting
 
 ### Import Errors
 

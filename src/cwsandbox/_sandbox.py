@@ -21,12 +21,6 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import grpc
 import grpc.aio
-from coreweave.aviato.v1beta1 import (
-    atc_pb2,
-    atc_pb2_grpc,
-    streaming_pb2,
-    streaming_pb2_grpc,
-)
 
 from cwsandbox._auth import resolve_auth_metadata
 from cwsandbox._defaults import (
@@ -42,6 +36,12 @@ from cwsandbox._defaults import (
 )
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._network import create_channel, parse_grpc_target
+from cwsandbox._proto import (
+    atc_pb2,
+    atc_pb2_grpc,
+    streaming_pb2,
+    streaming_pb2_grpc,
+)
 from cwsandbox._types import (
     ExecOutcome,
     NetworkOptions,
