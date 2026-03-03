@@ -119,25 +119,19 @@ def _try_wandb_auth() -> AuthHeaders | None:
         # No W&B credentials configured
         return None
 
-    # API key found - entity is now required
+    headers = {
+        "x-api-key": api_key,
+    }
+
     entity = os.environ.get("WANDB_ENTITY_NAME")
-    if not entity:
-        raise WandbAuthError(
-            "WANDB_API_KEY or ~/.netrc credentials found, but WANDB_ENTITY_NAME is not set. "
-            "Set WANDB_ENTITY_NAME to your W&B entity/team name."
-        )
+    if entity:
+        headers["x-entity-id"] = entity
 
-    project = os.environ.get("WANDB_PROJECT_NAME", DEFAULT_PROJECT_NAME)
+    project = os.environ.get("WANDB_PROJECT", DEFAULT_PROJECT_NAME)
+    if project:
+        headers["x-project-name"] = project
 
-    return AuthHeaders(
-        headers={
-            "x-api-key": api_key,
-            "x-entity-id": entity,
-            "x-project-name": project,
-        },
-        strategy="wandb",
-    )
-
+    return AuthHeaders(headers=headers, strategy="wandb")
 
 def _read_api_key_from_netrc() -> str | None:
     """Read W&B API key from ~/.netrc file.
