@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.6.3 (2026-03-03)
+
+### Bug Fixes
+
+- Honor base_url when using `session.list()`
+  ([`7600dd4`](https://github.com/coreweave/cwsandbox-client/commit/7600dd414521b26c3b8d976d726ee23c6f8a6635))
+
+
 ## v0.6.2 (2026-02-27)
 
 ### Bug Fixes
