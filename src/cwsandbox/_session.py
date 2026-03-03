@@ -9,7 +9,7 @@ import builtins
 import logging
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from cwsandbox._defaults import SandboxDefaults
+from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import ExecOutcome, NetworkOptions, OperationRef, Serialization
@@ -503,7 +503,9 @@ class Session:
             runway_ids=effective_runway_ids,
             tower_ids=effective_tower_ids,
             include_stopped=include_stopped,
-            base_url=self._defaults.base_url,
+            base_url=None
+            if self._defaults.base_url == DEFAULT_BASE_URL
+            else self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
         )
 
@@ -558,7 +560,9 @@ class Session:
 
         sandbox = await Sandbox._from_id_async(
             sandbox_id,
-            base_url=self._defaults.base_url,
+            base_url=None
+            if self._defaults.base_url == DEFAULT_BASE_URL
+            else self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
         )
 
