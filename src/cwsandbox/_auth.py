@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Literal
 
 from cwsandbox._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
-from cwsandbox.exceptions import WandbAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +103,11 @@ def _try_wandb_auth() -> AuthHeaders | None:
     """Try to resolve W&B authentication from env vars or netrc.
 
     API key can come from WANDB_API_KEY env var or ~/.netrc.
-    Entity must be set via WANDB_ENTITY_NAME env var.
+    WANDB_ENTITY_NAME and WANDB_PROJECT are optional; when set, they are
+    sent as x-entity-id and x-project-name headers.
 
     Returns:
-        AuthHeaders if valid W&B credentials found, None otherwise
-
-    Raises:
-        WandbAuthError: If API key is found but entity is missing
+        AuthHeaders if valid W&B credentials found, None otherwise.
     """
     # Check for API key first (env var, then netrc)
     api_key = os.environ.get("WANDB_API_KEY") or _read_api_key_from_netrc()
