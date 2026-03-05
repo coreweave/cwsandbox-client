@@ -357,14 +357,7 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `session_adopt_orphans.py`, `cleanup_by_tag.py`, `cleanup_old_sandboxes.py` - Orphan management and cleanup
 - `parallel_batch_job.py` - Parallel batch processing with progress tracking
 
-See `examples/README.md` and `examples/AGENTS.md` for full documentation. For detailed guides, see `docs/guides/`.
-
-## Design Documentation
-
-For comprehensive API design details, see `docs/` directory:
-- `docs/guides/` - How-to guides for common tasks
-
-When adding new documentation files to `docs/`, update `mkdocs.yml` nav section to include them.
+See `examples/README.md` and `examples/AGENTS.md` for full documentation. For detailed guides, see [docs.coreweave.com](https://docs.coreweave.com/products/coreweave-sandbox/client).
 
 ### Key Design Decisions
 
