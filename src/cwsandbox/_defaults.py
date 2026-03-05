@@ -34,7 +34,7 @@ DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS: float = 5.0
 DEFAULT_TEMP_DIR: str = "/tmp"
 
 # Default W&B project name when not specified
-DEFAULT_PROJECT_NAME: str = "uncategorized"
+DEFAULT_PROJECT_NAME: str = "sandbox"
 
 # Max bytes per stdin chunk sent to the process
 STDIN_CHUNK_SIZE: int = 64 * 1024  # 64KB
