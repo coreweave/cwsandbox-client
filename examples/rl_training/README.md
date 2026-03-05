@@ -2,7 +2,7 @@
 
 Examples demonstrating CWSandboxes for reinforcement learning training with code execution rewards.
 
-**Full documentation**: [RL Training Guide](../../docs/guides/rl-training.md)
+**Full documentation**: [RL Training Guide](https://docs.coreweave.com/products/coreweave-sandbox/client/guides/rl-training)
 
 ## Quick Start
 
