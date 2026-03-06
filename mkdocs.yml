@@ -75,6 +75,7 @@ nav:
       - 7. Remote Function Execution: tutorial/07-remote-functions.md
       - 8. Cleanup: tutorial/08-cleanup.md
   - Guides:
+      - CLI Quickstart: guides/cli.md
       - Sandbox Lifecycle: guides/sandbox-lifecycle.md
       - Command Execution: guides/execution.md
       - File Operations: guides/file-operations.md
