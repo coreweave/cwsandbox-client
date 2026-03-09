@@ -49,7 +49,7 @@ class WandbReporter:
     - cwsandbox/avg_execs_per_sandbox: Average exec() calls per sandbox
     - cwsandbox/min_execs_per_sandbox: Minimum exec() calls in any sandbox
     - cwsandbox/max_execs_per_sandbox: Maximum exec() calls in any sandbox
-    Example:
+    Examples:
         reporter = WandbReporter()
         reporter.record_sandbox_created()
         reporter.record_exec_outcome(ExecOutcome.COMPLETED_OK, sandbox_id="sb-123")

@@ -70,7 +70,18 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxStatus(StrEnum):
-    """Sandbox status values."""
+    """Sandbox lifecycle status values.
+
+    Attributes:
+        PENDING: Sandbox has been accepted but not yet scheduled.
+        CREATING: Sandbox container is being created.
+        RUNNING: Sandbox is running and ready for operations.
+        PAUSED: Sandbox is paused (resources may be reclaimed).
+        COMPLETED: Sandbox exited normally (check ``returncode``).
+        FAILED: Sandbox failed to start or encountered a fatal error.
+        TERMINATED: Sandbox was stopped externally (via ``stop()`` or timeout).
+        UNSPECIFIED: Status is unknown or not yet reported by the backend.
+    """
 
     RUNNING = "running"
     CREATING = "creating"
@@ -508,7 +519,7 @@ class Sandbox:
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
-        Example:
+        Examples:
             ```python
             # Using defaults (tail -f /dev/null)
             sb = Sandbox.run()
@@ -577,7 +588,7 @@ class Sandbox:
         Returns:
             A Session instance
 
-        Example:
+        Examples:
             ```python
             session = Sandbox.session(defaults)
             sb = session.create(command="sleep", args=["infinity"])
@@ -696,7 +707,7 @@ class Sandbox:
             OperationRef[list[Sandbox]]: Use .result() to block for results,
             or await directly in async contexts.
 
-        Example:
+        Examples:
             ```python
             # Sync usage - active sandboxes only (default)
             sandboxes = Sandbox.list(tags=["my-batch-job"]).result()
@@ -813,7 +824,7 @@ class Sandbox:
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
 
-        Example:
+        Examples:
             ```python
             # Sync usage
             sb = Sandbox.from_id("sandbox-abc123").result()
@@ -901,7 +912,7 @@ class Sandbox:
             SandboxNotFoundError: If sandbox doesn't exist and missing_ok=False
             SandboxError: If deletion failed for other reasons
 
-        Example:
+        Examples:
             ```python
             # Sync usage
             Sandbox.delete("sandbox-abc123").result()
@@ -1084,11 +1095,13 @@ class Sandbox:
 
         Returns:
             Dictionary with execution counts:
-            - exec_count: Total number of exec() calls
-            - exec_completed_ok: Execs that completed with returncode 0
-            - exec_completed_nonzero: Execs that completed with non-zero returncode
-              (when check=False; with check=True, non-zero exits count as failures)
-            - exec_failures: Execs that failed with an exception (including
+
+            - ``exec_count``: Total number of exec() calls
+            - ``exec_completed_ok``: Execs that completed with returncode 0
+            - ``exec_completed_nonzero``: Execs that completed with non-zero
+              returncode (when check=False; with check=True, non-zero exits
+              count as failures)
+            - ``exec_failures``: Execs that failed with an exception (including
               SandboxExecutionError from check=True with non-zero exit)
         """
         with self._exec_stats_lock:
@@ -1250,7 +1263,7 @@ class Sandbox:
         Raises:
             SandboxNotRunningError: If sandbox has not been started
 
-        Example:
+        Examples:
             ```python
             sb = Sandbox.run("sleep", "10")
             status = sb.get_status()
@@ -1815,7 +1828,7 @@ class Sandbox:
         Returns:
             OperationRef[None]: Use .result() to block until backend accepts.
 
-        Example:
+        Examples:
             ```python
             sandbox = Sandbox(command="sleep", args=["infinity"])
             sandbox.start().result()
@@ -1846,7 +1859,7 @@ class Sandbox:
             SandboxTerminatedError: If sandbox was terminated externally
             SandboxTimeoutError: If timeout expires
 
-        Example:
+        Examples:
             ```python
             sb = Sandbox.run("sleep", "infinity").wait()
             result = sb.exec(["echo", "ready"]).result()
@@ -1879,7 +1892,7 @@ class Sandbox:
             SandboxTerminatedError: If sandbox was terminated (and raise_on_termination=True)
             SandboxFailedError: If sandbox failed
 
-        Example:
+        Examples:
             ```python
             sb = Sandbox.run("python", "-c", "print('done')")
             sb.wait_until_complete().result()
@@ -1900,7 +1913,7 @@ class Sandbox:
         Routes through _loop_manager to avoid cross-event-loop issues.
         Auto-starts if not already started.
 
-        Example:
+        Examples:
             ```python
             sb = Sandbox.run("sleep", "infinity")
             await sb  # Wait until RUNNING
@@ -2028,7 +2041,7 @@ class Sandbox:
             Raises SandboxError on failure, SandboxNotFoundError if not found
             (unless missing_ok=True).
 
-        Example:
+        Examples:
             ```python
             sb.stop().result()  # Block until stopped
 
@@ -2352,7 +2365,7 @@ class Sandbox:
         Raises:
             ValueError: If command is empty or cwd is invalid (empty or relative path)
 
-        Example:
+        Examples:
             ```python
             # Get result directly
             process = sb.exec(["echo", "hello"])
@@ -2477,7 +2490,7 @@ class Sandbox:
         Returns:
             OperationRef[bytes]: Use .result() to block and retrieve contents.
 
-        Example:
+        Examples:
             ```python
             data = sb.read_file("/output/result.txt").result()
             ```
@@ -2552,7 +2565,7 @@ class Sandbox:
         Returns:
             OperationRef[None]: Use .result() to block until complete.
 
-        Example:
+        Examples:
             ```python
             sb.write_file("/input/data.txt", b"content").result()
             ```

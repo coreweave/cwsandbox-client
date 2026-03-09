@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, overload
 # Import cleanup module to install atexit and signal handlers
 from cwsandbox import _cleanup as _cleanup  # noqa: F401
 from cwsandbox._defaults import SandboxDefaults
+from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._sandbox import Sandbox, SandboxStatus
 from cwsandbox._session import Session
@@ -246,6 +247,7 @@ __all__ = [
     "OperationRef",
     "Process",
     "ProcessResult",
+    "RemoteFunction",
     "Sandbox",
     "SandboxDefaults",
     "SandboxError",
