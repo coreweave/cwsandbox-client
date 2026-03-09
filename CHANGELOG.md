@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-03-09)
+
+### Documentation
+
+- Add CLI quickstart guide
+  ([`e48aa6c`](https://github.com/coreweave/cwsandbox-client/commit/e48aa6cd3da3bada997154d0cab7179db2620b0d))
+
+### Features
+
+- **cli**: Add exec command
+  ([`d3b7b3d`](https://github.com/coreweave/cwsandbox-client/commit/d3b7b3db8c5c35ddd0514928e7a25bc9e169d850))
+
+- **cli**: Add list command
+  ([`22935db`](https://github.com/coreweave/cwsandbox-client/commit/22935dbc75ea463e2927bd339392c93f0d85fbb6))
+
+- **cli**: Scaffold CLI with Click entry point
+  ([`51480d8`](https://github.com/coreweave/cwsandbox-client/commit/51480d894e7d619588993162d8d10cf9d6d77df2))
+
+
 ## v0.6.3 (2026-03-03)
 
 ### Bug Fixes
