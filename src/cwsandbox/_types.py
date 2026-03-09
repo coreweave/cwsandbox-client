@@ -85,7 +85,7 @@ class OperationRef(Generic[T]):
         Returns:
             Generator that yields the result when complete.
 
-        Example:
+        Examples:
             ```python
             async def example():
                 ref = sandbox.read_file("/path")
@@ -96,7 +96,14 @@ class OperationRef(Generic[T]):
 
 
 class Serialization(str, Enum):
-    """Serialization modes for sandbox function execution."""
+    """Serialization modes for sandbox function execution.
+
+    Attributes:
+        JSON: Safe, human-readable JSON serialization. Limited to JSON-serializable
+            types (str, int, float, dict, list, bool, None). Default mode.
+        PICKLE: Python pickle serialization. Supports complex types (numpy arrays,
+            custom classes) but requires trust - only use in trusted environments.
+    """
 
     PICKLE = "pickle"
     JSON = "json"
@@ -118,7 +125,16 @@ class ExecOutcome(StrEnum):
 
 @dataclass(frozen=True)
 class NetworkOptions:
-    """Network configuration for sandbox ingress/egress."""
+    """Network configuration for sandbox ingress/egress.
+
+    Attributes:
+        ingress_mode: Inbound traffic mode. Available modes depend on the
+            runway configurations of towers you have access to.
+        exposed_ports: Ports to expose when using ingress. Required when
+            ``ingress_mode`` is set. Lists are normalized to tuples.
+        egress_mode: Outbound traffic mode. Available modes depend on the
+            runway configurations of towers you have access to.
+    """
 
     ingress_mode: str | None = None
     exposed_ports: tuple[int, ...] | None = None
@@ -402,9 +418,11 @@ class Process(OperationRef[ProcessResult]):
     completion and returns the full ProcessResult.
 
     Attributes:
-        stdout: StreamReader for standard output
-        stderr: StreamReader for standard error
-        stdin: StreamWriter for standard input (None if stdin streaming is disabled)
+        stdout: StreamReader for standard output.
+        stderr: StreamReader for standard error.
+        stdin: StreamWriter for standard input, or None if stdin streaming is disabled.
+        returncode: Exit code from the command, or None if not yet complete.
+        command: The command that was executed.
 
     Examples:
         Basic execution with result:

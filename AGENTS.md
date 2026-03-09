@@ -6,6 +6,10 @@ This file provides guidance to AI coding assistants when working with code in th
 
 Python client library for CoreWeave Sandbox - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
 
+## Public API and Documentation
+
+When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `scripts/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
+
 ## Development Setup
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for setup, workflow, and all development tasks.
@@ -147,9 +151,9 @@ data = await ref
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
 Fields:
-- `ingress_mode: str | None` - Inbound traffic mode: `"public"` (internet accessible), `"internal"` (cluster only), etc.
+- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
 - `exposed_ports: tuple[int, ...] | None` - Ports to expose (required with `ingress_mode`). Lists are normalized to tuples for immutability.
-- `egress_mode: str | None` - Outbound traffic mode: `"internet"` (full access), `"isolated"` (no external), `"org"` (org-internal only), etc.
+- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
 
 Usage:
 ```python

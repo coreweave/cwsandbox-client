@@ -41,7 +41,11 @@ class SandboxFailedError(SandboxError):
 
 
 class SandboxNotFoundError(SandboxError):
-    """Raised when a sandbox is not found (e.g., already deleted)."""
+    """Raised when a sandbox is not found (e.g., already deleted).
+
+    Attributes:
+        sandbox_id: The ID of the sandbox that was not found, or None.
+    """
 
     def __init__(self, message: str, *, sandbox_id: str | None = None) -> None:
         super().__init__(message)
@@ -51,7 +55,10 @@ class SandboxNotFoundError(SandboxError):
 class SandboxExecutionError(SandboxError):
     """Raised when command execution fails inside a sandbox.
 
-    Access execution details via exec_result
+    Attributes:
+        exec_result: The ``ProcessResult`` from the failed execution, or None.
+        exception_type: Python exception class name from sandbox stderr, or None.
+        exception_message: Exception message from sandbox stderr, or None.
     """
 
     def __init__(
@@ -73,6 +80,9 @@ class SandboxFileError(SandboxError):
 
     This is a sandbox infrastructure error, not a user code error.
     Inherits from SandboxError since it's a sandbox operation failure.
+
+    Attributes:
+        filepath: The path of the file that caused the error, or None.
     """
 
     def __init__(self, message: str, *, filepath: str | None = None) -> None:

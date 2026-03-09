@@ -54,7 +54,23 @@ class SandboxDefaults:
     Tags enable filtering and organizing sandboxes. They are propagated to
     the backend and can be used to query sandboxes by tag.
 
-    Example:
+    Attributes:
+        container_image: Docker image for the sandbox container.
+        command: Entrypoint command to run.
+        args: Arguments passed to the command.
+        base_url: CWSandbox API endpoint URL.
+        request_timeout_seconds: Client-side HTTP timeout in seconds.
+        max_lifetime_seconds: Server-side sandbox lifetime limit in seconds.
+            None lets the backend control the default.
+        temp_dir: Temp directory path inside the sandbox.
+        tags: Tags for filtering and organizing sandboxes.
+        runway_ids: Restrict to specific runway IDs.
+        tower_ids: Restrict to specific tower IDs.
+        resources: Resource requests (CPU, memory, GPU) as a dict.
+        network: Network configuration via ``NetworkOptions``.
+        environment_variables: Environment variables injected into the sandbox.
+
+    Examples:
         ```python
         defaults = SandboxDefaults(
             container_image="python:3.12",

@@ -48,7 +48,7 @@ class Session:
     associated with this session. Use log_metrics(step=N) to log metrics
     at specific training steps.
 
-    Example:
+    Examples:
         ```python
         defaults = SandboxDefaults(container_image="python:3.11")
 
@@ -175,7 +175,7 @@ class Session:
             True if metrics were logged, False if no reporter configured
             or no active wandb run.
 
-        Example:
+        Examples:
             ```python
             with Session(defaults, report_to=["wandb"]) as session:
                 for step in range(100):
@@ -236,7 +236,7 @@ class Session:
         Raises:
             SandboxError: If one or more running sandboxes failed to stop.
 
-        Example:
+        Examples:
             ```python
             session.close().result()  # Block until all sandboxes stopped
             ```
@@ -347,7 +347,7 @@ class Session:
         Raises:
             SandboxError: If the session has been closed.
 
-        Example:
+        Examples:
             ```python
             with Session(defaults) as session:
                 # Auto-start: sandbox starts on first exec()
@@ -435,7 +435,7 @@ class Session:
             OperationRef[list[Sandbox]]: Use .result() to block for results,
             or await directly in async contexts.
 
-        Example:
+        Examples:
             ```python
             # Session defaults include a tag for this application/run
             defaults = SandboxDefaults(tags=("my-app", "run-abc123"))
@@ -532,7 +532,7 @@ class Session:
             OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
             or await directly in async contexts.
 
-        Example:
+        Examples:
             ```python
             with Session(defaults) as session:
                 # Sync usage - reconnect to a sandbox
@@ -585,7 +585,7 @@ class Session:
             SandboxError: If the session is closed
             ValueError: If the sandbox has no sandbox_id
 
-        Example:
+        Examples:
             ```python
             with Session(defaults) as session:
                 # Get sandboxes via class method
@@ -651,7 +651,7 @@ class Session:
         Returns:
             A decorator that wraps a function as a RemoteFunction
 
-        Example:
+        Examples:
             ```python
             with Session(defaults) as session:
                 @session.function()

@@ -165,7 +165,7 @@ class RemoteFunction(Generic[P, R]):
         Returns:
             OperationRef[R]: Use .result() to block until result is ready.
 
-        Example:
+        Examples:
             ```python
             ref = compute.remote(2, 3)
             result = ref.result()  # Block for result
@@ -188,7 +188,7 @@ class RemoteFunction(Generic[P, R]):
         Returns:
             List of OperationRef[R], one for each item.
 
-        Example:
+        Examples:
             ```python
             # Execute add(1, 2), add(3, 4), add(5, 6) in parallel
             refs = add.map([(1, 2), (3, 4), (5, 6)])
@@ -211,7 +211,7 @@ class RemoteFunction(Generic[P, R]):
         Returns:
             The result of the function execution.
 
-        Example:
+        Examples:
             ```python
             # Test without sandbox overhead
             result = compute.local(2, 3)
@@ -404,7 +404,7 @@ def _extract_global_variables(func: Callable[..., Any]) -> dict[str, Any]:
     This function inspects the function's bytecode to find which global names it
     references, then extracts only those values.
 
-    Example:
+    Examples:
         ```python
         MODULE_CONFIG = {"key": "value"}  # Used by func
         UNUSED_GLOBAL = "not needed"       # Not used by func
