@@ -37,6 +37,8 @@ cwsandbox = "cwsandbox.__main__:main"
 [project.optional-dependencies]
 cli = [
     "click>=8.0",
+    "httpx>=0.27.0",
+    "kubernetes>=28.0.0",
 ]
 dev = [
     "click>=8.0",
@@ -117,6 +119,10 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "wandb.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "kubernetes.*"
 ignore_missing_imports = true
 follow_imports = "skip"
 
