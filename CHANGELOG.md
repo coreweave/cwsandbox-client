@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-03-10)
+
+### Bug Fixes
+
+- **cli**: Close stderr stream on exec failure
+  ([`f68a6a8`](https://github.com/coreweave/cwsandbox-client/commit/f68a6a8f5e87d6481534f25ec5b31699397a9f85))
+
+### Documentation
+
+- Add logging guide and update CLI quickstart
+  ([`22ee9b7`](https://github.com/coreweave/cwsandbox-client/commit/22ee9b7600b78f9417c896754f0b51882b37de5d))
+
+- Standardize docstrings and export RemoteFunction
+  ([`5188b37`](https://github.com/coreweave/cwsandbox-client/commit/5188b37cdabcf6411d75a62b6b62a1074093bae9))
+
+### Features
+
+- **cli**: Add logs command
+  ([`a9175ca`](https://github.com/coreweave/cwsandbox-client/commit/a9175ca2166c5289a0385c3b8fb4d9424db80c97))
+
+- **sandbox**: Add stream_logs method
+  ([`613605c`](https://github.com/coreweave/cwsandbox-client/commit/613605c9da18a1f73295dc2b2d627feea7baa5da))
+
+- **types**: Add StreamReader.close()
+  ([`354b24d`](https://github.com/coreweave/cwsandbox-client/commit/354b24d78e2263752ed7345d23afaf6956ecf6ff))
+
+
 ## v0.7.0 (2026-03-09)
 
 ### Documentation
