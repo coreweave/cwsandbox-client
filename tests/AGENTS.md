@@ -41,7 +41,7 @@ uv run pytest -k "test_create"                   # By name pattern
 | `mock_api_key` | function | No | Sets `CWSANDBOX_API_KEY` to `"test-api-key"`, returns value |
 | `mock_base_url` | function | No | Sets `CWSANDBOX_BASE_URL` to `"http://test-api.example.com"`, returns value |
 | `mock_wandb_api_key` | function | No | Sets `WANDB_API_KEY` to `"test-wandb-api-key"`, returns value |
-| `mock_wandb_entity_name` | function | No | Sets `WANDB_ENTITY_NAME` to `"test-entity"`, returns value |
+| `mock_wandb_entity_name` | function | No | Sets `WANDB_ENTITY` to `"test-entity"`, returns value |
 
 ### Integration Test Fixtures (`tests/integration/cwsandbox/conftest.py`)
 
@@ -85,8 +85,8 @@ mise run test:e2e
 Set environment variables before running tests (in priority order):
 
 1. `CWSANDBOX_API_KEY` environment variable (takes priority)
-2. `WANDB_API_KEY` + `WANDB_ENTITY_NAME` environment variables
-3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY_NAME`
+2. `WANDB_API_KEY` + `WANDB_ENTITY` environment variables
+3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY`
 
 A `.env` file in the project root is automatically loaded via python-dotenv.
 

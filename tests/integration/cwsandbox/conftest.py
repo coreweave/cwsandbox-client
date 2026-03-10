@@ -38,7 +38,7 @@ def require_auth(request: pytest.FixtureRequest) -> None:
 
     Raises pytest.skip for:
     - No auth configured at all (strategy == "none")
-    - Incomplete W&B auth (WANDB_API_KEY found but missing WANDB_ENTITY_NAME)
+    - Incomplete W&B auth (WANDB_API_KEY found but missing WANDB_ENTITY)
     """
     # Skip for test_auth.py which manages its own auth via fixtures
     if request.path.name == "test_auth.py":
@@ -47,14 +47,14 @@ def require_auth(request: pytest.FixtureRequest) -> None:
     try:
         auth = resolve_auth()
     except WandbAuthError as e:
-        pytest.skip(f"W&B credentials incomplete: {e}\nSet WANDB_ENTITY_NAME environment variable.")
+        pytest.skip(f"W&B credentials incomplete: {e}\nSet WANDB_ENTITY environment variable.")
 
     if auth.strategy == "none":
         pytest.skip(
             "Integration tests require authentication. Configure one of:\n"
             "  1. CWSANDBOX_API_KEY environment variable\n"
-            "  2. WANDB_API_KEY + WANDB_ENTITY_NAME environment variables\n"
-            "  3. ~/.netrc (api.wandb.ai) + WANDB_ENTITY_NAME\n"
+            "  2. WANDB_API_KEY + WANDB_ENTITY environment variables\n"
+            "  3. ~/.netrc (api.wandb.ai) + WANDB_ENTITY\n"
             "  4. .env file in project root (auto-loaded, see .env.example)"
         )
 

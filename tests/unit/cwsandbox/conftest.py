@@ -27,8 +27,8 @@ AUTH_ENV_VARS = (
     "CWSANDBOX_API_KEY",
     "CWSANDBOX_BASE_URL",
     "WANDB_API_KEY",
-    "WANDB_ENTITY_NAME",
-    "WANDB_PROJECT_NAME",
+    "WANDB_ENTITY",
+    "WANDB_PROJECT",
 )
 
 
@@ -79,9 +79,9 @@ def mock_wandb_api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.fixture
 def mock_wandb_entity_name(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Set a mock WANDB_ENTITY_NAME for the test."""
+    """Set a mock WANDB_ENTITY for the test."""
     test_entity = "test-entity"
-    monkeypatch.setenv("WANDB_ENTITY_NAME", test_entity)
+    monkeypatch.setenv("WANDB_ENTITY", test_entity)
     return test_entity
 
 

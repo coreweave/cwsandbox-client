@@ -52,7 +52,7 @@ cp .env.example .env
 
 Authentication options:
 - **CWSandbox**: `CWSANDBOX_API_KEY` (takes priority)
-- **Weights & Biases**: `WANDB_API_KEY` + `WANDB_ENTITY_NAME` (or `~/.netrc`)
+- **Weights & Biases**: `WANDB_API_KEY` + `WANDB_ENTITY` (or `~/.netrc`)
 
 ---
 

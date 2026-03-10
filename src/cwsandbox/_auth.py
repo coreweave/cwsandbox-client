@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from cwsandbox._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
+from cwsandbox._defaults import WANDB_NETRC_HOST
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,8 @@ def resolve_auth() -> AuthHeaders:
 
     Resolution order:
     1. CWSANDBOX_API_KEY env var (API key auth)
-    2. WANDB_API_KEY + WANDB_ENTITY_NAME env vars (W&B auth)
-    3. ~/.netrc api.wandb.ai + WANDB_ENTITY_NAME env var (W&B auth)
+    2. WANDB_API_KEY + WANDB_ENTITY env vars (W&B auth)
+    3. ~/.netrc api.wandb.ai + WANDB_ENTITY env var (W&B auth)
     4. No auth (empty headers)
 
     Returns:
@@ -103,7 +103,7 @@ def _try_wandb_auth() -> AuthHeaders | None:
     """Try to resolve W&B authentication from env vars or netrc.
 
     API key can come from WANDB_API_KEY env var or ~/.netrc.
-    WANDB_ENTITY_NAME and WANDB_PROJECT are optional; when set, they are
+    WANDB_ENTITY and WANDB_PROJECT are optional; when set, they are
     sent as x-entity-id and x-project-name headers.
 
     Returns:
@@ -120,11 +120,11 @@ def _try_wandb_auth() -> AuthHeaders | None:
         "x-api-key": api_key,
     }
 
-    entity = os.environ.get("WANDB_ENTITY_NAME")
+    entity = os.environ.get("WANDB_ENTITY")
     if entity:
         headers["x-entity-id"] = entity
 
-    project = os.environ.get("WANDB_PROJECT", DEFAULT_PROJECT_NAME)
+    project = os.environ.get("WANDB_PROJECT")
     if project:
         headers["x-project-name"] = project
 

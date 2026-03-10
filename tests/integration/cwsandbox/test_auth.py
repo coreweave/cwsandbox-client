@@ -26,16 +26,16 @@ from cwsandbox._defaults import WANDB_NETRC_HOST
 def wandb_env_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set up W&B auth via environment variables.
 
-    Requires WANDB_API_KEY and WANDB_ENTITY_NAME env vars to be set.
+    Requires WANDB_API_KEY and WANDB_ENTITY env vars to be set.
     Skips if credentials are not available.
     """
     api_key = os.environ.get("WANDB_API_KEY")
-    entity = os.environ.get("WANDB_ENTITY_NAME")
+    entity = os.environ.get("WANDB_ENTITY")
 
     if not api_key:
         pytest.skip("WANDB_API_KEY env var required for env var auth test")
     if not entity:
-        pytest.skip("WANDB_ENTITY_NAME env var required for env var auth test")
+        pytest.skip("WANDB_ENTITY env var required for env var auth test")
 
     # Ensure we're not using API key auth
     monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
@@ -49,17 +49,17 @@ def wandb_netrc_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     a temporary netrc file, then unsets the env var so the SDK falls back
     to reading from netrc.
 
-    Requires WANDB_ENTITY_NAME env var to be set.
+    Requires WANDB_ENTITY env var to be set.
     Skips if no API key source is available.
     """
     # Get API key from env var or existing netrc
     api_key = os.environ.get("WANDB_API_KEY") or _read_api_key_from_netrc()
-    entity = os.environ.get("WANDB_ENTITY_NAME")
+    entity = os.environ.get("WANDB_ENTITY")
 
     if not api_key:
         pytest.skip("WANDB_API_KEY env var or ~/.netrc credentials required for netrc auth test")
     if not entity:
-        pytest.skip("WANDB_ENTITY_NAME env var required for netrc auth test")
+        pytest.skip("WANDB_ENTITY env var required for netrc auth test")
 
     # Create temp netrc file with the credentials
     netrc_path = tmp_path / ".netrc"
@@ -77,7 +77,7 @@ def wandb_netrc_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
     """Test W&B authentication via environment variables.
 
-    Requires: WANDB_API_KEY and WANDB_ENTITY_NAME env vars.
+    Requires: WANDB_API_KEY and WANDB_ENTITY env vars.
     """
     with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sandbox:
         assert sandbox.sandbox_id is not None
@@ -90,7 +90,7 @@ def test_wandb_auth_via_env_vars(wandb_env_auth: None) -> None:
 def test_wandb_auth_via_netrc(wandb_netrc_auth: None) -> None:
     """Test W&B authentication via netrc file.
 
-    Requires: WANDB_ENTITY_NAME env var, plus either WANDB_API_KEY env var
+    Requires: WANDB_ENTITY env var, plus either WANDB_API_KEY env var
     or existing ~/.netrc credentials for api.wandb.ai.
     """
     with Sandbox.run("sleep", "infinity", container_image="python:3.11") as sandbox:

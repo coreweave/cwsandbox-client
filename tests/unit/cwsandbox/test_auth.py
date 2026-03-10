@@ -17,7 +17,7 @@ from cwsandbox._auth import (
     resolve_auth,
     resolve_auth_metadata,
 )
-from cwsandbox._defaults import DEFAULT_PROJECT_NAME, WANDB_NETRC_HOST
+from cwsandbox._defaults import WANDB_NETRC_HOST
 
 
 class TestAuthHeaders:
@@ -47,7 +47,7 @@ class TestResolveAuth:
         """Test CWSANDBOX_API_KEY takes priority over W&B credentials."""
         monkeypatch.setenv("CWSANDBOX_API_KEY", "test-key")
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
 
         auth = resolve_auth()
 
@@ -58,7 +58,7 @@ class TestResolveAuth:
         """Test W&B auth is used when CWSANDBOX_API_KEY is not set."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
 
         auth = resolve_auth()
@@ -67,14 +67,13 @@ class TestResolveAuth:
         assert auth.headers == {
             "x-api-key": "wandb-key",
             "x-entity-id": "my-entity",
-            "x-project-name": DEFAULT_PROJECT_NAME,
         }
 
     def test_wandb_auth_with_project_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test W&B auth includes custom project name when set."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
         monkeypatch.setenv("WANDB_PROJECT", "my-project")
 
         auth = resolve_auth()
@@ -88,7 +87,7 @@ class TestResolveAuth:
         """Test empty headers when no credentials are found."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
 
         # Also mock netrc to ensure no credentials from there
         with patch("cwsandbox._auth.Path.home", return_value=tmp_path):
@@ -101,16 +100,13 @@ class TestResolveAuth:
         """Test resolve_auth succeeds with only WANDB_API_KEY (entity and project optional)."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
 
         auth = resolve_auth()
 
         assert auth.strategy == "wandb"
-        assert auth.headers == {
-            "x-api-key": "wandb-key",
-            "x-project-name": DEFAULT_PROJECT_NAME,
-        }
+        assert auth.headers == {"x-api-key": "wandb-key"}
 
 
 class TestTryApiKeyAuth:
@@ -142,7 +138,7 @@ class TestTryWandbAuth:
         """Test returns AuthHeaders when all W&B env vars are set."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
         monkeypatch.setenv("WANDB_PROJECT", "my-project")
 
         result = _try_wandb_auth()
@@ -156,25 +152,22 @@ class TestTryWandbAuth:
         }
 
     def test_returns_auth_with_api_key_only_no_entity(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test returns AuthHeaders with only x-api-key when entity is not set."""
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        """Test returns AuthHeaders with only x-api-key when entity and project are not set."""
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
 
         result = _try_wandb_auth()
 
         assert result is not None
-        assert result.headers == {
-            "x-api-key": "wandb-key",
-            "x-project-name": DEFAULT_PROJECT_NAME,
-        }
+        assert result.headers == {"x-api-key": "wandb-key"}
 
     def test_returns_auth_from_netrc_when_no_entity(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Test returns AuthHeaders from netrc with only x-api-key when entity is not set."""
+        """Test returns AuthHeaders from netrc with only x-api-key when entity/project not set."""
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
 
         netrc_path = tmp_path / ".netrc"
@@ -184,17 +177,14 @@ class TestTryWandbAuth:
             result = _try_wandb_auth()
 
         assert result is not None
-        assert result.headers == {
-            "x-api-key": "netrc-key",
-            "x-project-name": DEFAULT_PROJECT_NAME,
-        }
+        assert result.headers == {"x-api-key": "netrc-key"}
 
     def test_returns_none_when_no_api_key_and_no_entity(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Test returns None when neither API key nor entity is set."""
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
 
         # Also mock netrc to ensure no credentials from there
         with patch("cwsandbox._auth.Path.home", return_value=tmp_path):
@@ -202,21 +192,21 @@ class TestTryWandbAuth:
 
         assert result is None
 
-    def test_defaults_project_name_when_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test project name uses default when WANDB_PROJECT not set."""
+    def test_omits_project_header_when_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test x-project-name header is omitted when WANDB_PROJECT not set."""
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
 
         result = _try_wandb_auth()
 
         assert result is not None
-        assert result.headers["x-project-name"] == DEFAULT_PROJECT_NAME
+        assert "x-project-name" not in result.headers
 
     def test_falls_back_to_netrc(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Test falls back to netrc when WANDB_API_KEY is not set."""
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
 
         # Create a mock netrc file
         netrc_path = tmp_path / ".netrc"
@@ -233,7 +223,7 @@ class TestTryWandbAuth:
     ) -> None:
         """Test returns None when no API key in env or netrc."""
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
 
         # No netrc file
         with patch("cwsandbox._auth.Path.home", return_value=tmp_path):
@@ -300,7 +290,7 @@ class TestResolveAuthMetadata:
         """Test returns empty tuple when no credentials found."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.delenv("WANDB_API_KEY", raising=False)
-        monkeypatch.delenv("WANDB_ENTITY_NAME", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
 
         with patch("cwsandbox._auth.Path.home", return_value=tmp_path):
             result = resolve_auth_metadata()
@@ -308,13 +298,13 @@ class TestResolveAuthMetadata:
         assert result == ()
 
     def test_wandb_metadata_has_correct_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test W&B metadata contains all expected keys."""
+        """Test W&B metadata contains expected keys (no x-project-name when WANDB_PROJECT unset)."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
         monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
-        monkeypatch.setenv("WANDB_ENTITY_NAME", "my-entity")
+        monkeypatch.setenv("WANDB_ENTITY", "my-entity")
         monkeypatch.delenv("WANDB_PROJECT", raising=False)
 
         result = resolve_auth_metadata()
 
         keys = {k for k, v in result}
-        assert keys == {"x-api-key", "x-entity-id", "x-project-name"}
+        assert keys == {"x-api-key", "x-entity-id"}
