@@ -151,7 +151,9 @@ class TestTryWandbAuth:
             "x-project-name": "my-project",
         }
 
-    def test_returns_auth_with_api_key_only_no_entity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_auth_with_api_key_only_no_entity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test returns AuthHeaders with only x-api-key when entity and project are not set."""
         monkeypatch.delenv("WANDB_ENTITY", raising=False)
         monkeypatch.delenv("WANDB_PROJECT", raising=False)

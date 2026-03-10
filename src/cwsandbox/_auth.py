@@ -130,6 +130,7 @@ def _try_wandb_auth() -> AuthHeaders | None:
 
     return AuthHeaders(headers=headers, strategy="wandb")
 
+
 def _read_api_key_from_netrc() -> str | None:
     """Read W&B API key from ~/.netrc file.
 
