@@ -793,6 +793,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../guides/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../guides/file-operations/" class="md-nav__link">
         
   
@@ -1521,6 +1549,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cwsandbox.Sandbox.stream_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stream_logs
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1833,6 +1872,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="StreamReader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cwsandbox.StreamReader.close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        close
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2533,6 +2589,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cwsandbox.Sandbox.stream_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stream_logs
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2845,6 +2912,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="StreamReader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cwsandbox.StreamReader.close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        close
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -7548,6 +7632,272 @@ stdin is closed immediately and Process.stdin is None.</p>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="cwsandbox.Sandbox.stream_logs" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">stream_logs</span>
+
+
+<a href="#cwsandbox.Sandbox.stream_logs" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">stream_logs</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">follow</span><span class="p">:</span> <span class="n"><span title="bool">bool</span></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">tail_lines</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">since_time</span><span class="p">:</span> <span class="n"><span title="datetime.datetime">datetime</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">timestamps</span><span class="p">:</span> <span class="n"><span title="bool">bool</span></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">timeout_seconds</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            StreamReader (cwsandbox._types.StreamReader)" href="#cwsandbox.StreamReader">StreamReader</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Stream logs from the sandbox's main process.</p>
+<p>Streams stdout/stderr from the sandbox's <strong>main command</strong> — the
+entrypoint passed to <code>Sandbox.run()</code> (or the default
+<code>tail -f /dev/null</code>). Output from commands started via <code>exec()</code>
+is <strong>not</strong> included; use <code>Process.stdout</code>/<code>Process.stderr</code> for
+those.</p>
+<p>.. note::</p>
+<div class="highlight"><pre><span></span><code>Sandboxes created with the default command (``tail -f /dev/null``)
+do not produce any log output. To see logs here, pass a command
+that writes to stdout/stderr when calling ``Sandbox.run()``.
+</code></pre></div>
+<p>Returns a StreamReader that yields log lines as strings. The method
+returns immediately — iteration on the StreamReader blocks until
+data arrives.</p>
+<p>Can also retrieve historical logs from stopped sandboxes when
+<code>follow=False</code>.</p>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">PARAMETER</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>follow</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If True, continuously stream new logs (like <code>tail -f</code>).
+If False, stream existing logs and stop. Only running
+sandboxes support <code>follow=True</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>False</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>tail_lines</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of most recent lines to retrieve. If None,
+returns all available lines.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span> | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>since_time</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Only return logs after this timestamp.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="datetime.datetime">datetime</span> | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>timestamps</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If True, prefix each line with an ISO 8601 timestamp
+from the server.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>False</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>timeout_seconds</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Client-side deadline for the gRPC call. Defaults
+to <code>request_timeout_seconds</code> when <code>follow=False</code>, and
+<code>None</code> (no timeout) when <code>follow=True</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span> | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RETURNS</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><a class="autorefs autorefs-internal" title="            StreamReader (cwsandbox._types.StreamReader)" href="#cwsandbox.StreamReader">StreamReader</a></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>StreamReader yielding log lines as strings. Iterate synchronously</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><a class="autorefs autorefs-internal" title="            StreamReader (cwsandbox._types.StreamReader)" href="#cwsandbox.StreamReader">StreamReader</a></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>with <code>for line in reader</code> or asynchronously with</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><a class="autorefs autorefs-internal" title="            StreamReader (cwsandbox._types.StreamReader)" href="#cwsandbox.StreamReader">StreamReader</a></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p><code>async for line in reader</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RAISES</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+              <span class="doc-raises-annotation">
+                  <code><a class="autorefs autorefs-internal" title="            SandboxNotRunningError (cwsandbox.exceptions.SandboxNotRunningError)" href="#cwsandbox.SandboxNotRunningError">SandboxNotRunningError</a></code>
+              </span>
+            </td>
+            <td class="doc-raises-details">
+              <div class="doc-md-description">
+                <p>If <code>follow=True</code> and the sandbox has
+been stopped.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+              <span class="doc-raises-annotation">
+                  <code><a class="autorefs autorefs-internal" title="            SandboxError (cwsandbox.exceptions.SandboxError)" href="#cwsandbox.SandboxError">SandboxError</a></code>
+              </span>
+            </td>
+            <td class="doc-raises-details">
+              <div class="doc-md-description">
+                <p>If the log stream encounters an error.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="example" open>
+  <summary>Example</summary>
+  <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># One-shot: get recent logs</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">stream_logs</span><span class="p">(</span><span class="n">tail_lines</span><span class="o">=</span><span class="mi">100</span><span class="p">):</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Follow mode: stream continuously</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">stream_logs</span><span class="p">(</span><span class="n">follow</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Retrieve logs from a stopped sandbox</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">sb</span> <span class="o">=</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">from_id</span><span class="p">(</span><span class="s2">&quot;sbx-abc123&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">sb</span><span class="o">.</span><span class="n">stream_logs</span><span class="p">(</span><span class="n">tail_lines</span><span class="o">=</span><span class="mi">50</span><span class="p">):</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># Async usage</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="k">async</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">stream_logs</span><span class="p">(</span><span class="n">follow</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+</code></pre></div>
+</details>
+
+    </div>
+
+</div>
+
 
 
   </div>
@@ -10682,7 +11032,9 @@ custom classes) but requires trust - only use in trusted environments.</p>
 <div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">StreamReader</span><span class="p">(</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">queue</span><span class="p">:</span> <span class="n"><span title="asyncio.Queue">Queue</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="Exception">Exception</span></span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">loop_manager</span><span class="p">:</span> <span class="n"><span title="cwsandbox._loop_manager._LoopManager">_LoopManager</span></span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">cancel</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[],</span> <span class="n"><span title="object">object</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -10752,6 +11104,27 @@ which are re-raised to the consumer.</p>
               </p>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>cancel</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Optional callback to cancel the background producer.
+Called by <code>close()</code> to stop the stream.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="collections.abc.Callable">Callable</span>[[], <span title="object">object</span>] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -10775,6 +11148,30 @@ which are re-raised to the consumer.</p>
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="cwsandbox.StreamReader.close" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">close</span>
+
+
+<a href="#cwsandbox.StreamReader.close" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">close</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Cancel the background producer and mark the stream as exhausted.</p>
+<p>Safe to call multiple times. After close(), iteration will raise
+StopIteration/StopAsyncIteration on the next call.</p>
+<p>Puts a None sentinel on the queue to unblock any consumer currently
+waiting inside <code>queue.get()</code>.</p>
+
+
+    </div>
+
+</div>
 
 
 

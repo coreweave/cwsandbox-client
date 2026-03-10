@@ -820,6 +820,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#stream-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream logs
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -899,6 +910,34 @@
     
   
     Command Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandbox Logging
   
 
     
@@ -1269,6 +1308,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#stream-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream logs
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1347,24 +1397,30 @@ SPDX-PackageName: cwsandbox-client
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>cwsandbox<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>&lt;sandbox-id&gt;<span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span><span class="w"> </span>make<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <p>The exit code matches the remote command's exit code.</p>
+<h3 id="stream-logs">Stream logs<a class="headerlink" href="#stream-logs" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cwsandbox<span class="w"> </span>logs<span class="w"> </span>&lt;sandbox-id&gt;<span class="w">                       </span><span class="c1"># Recent logs</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>cwsandbox<span class="w"> </span>logs<span class="w"> </span>&lt;sandbox-id&gt;<span class="w"> </span>--follow<span class="w">              </span><span class="c1"># Continuous (like tail -f)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>cwsandbox<span class="w"> </span>logs<span class="w"> </span>&lt;sandbox-id&gt;<span class="w"> </span>--tail<span class="w"> </span><span class="m">50</span><span class="w"> </span>--timestamps
+</code></pre></div>
 <h2 id="json-output-for-scripting">JSON output for scripting<a class="headerlink" href="#json-output-for-scripting" title="Permanent link">&para;</a></h2>
 <p><code>cwsandbox ls -o json</code> returns a JSON array for use with <code>jq</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># List as JSON</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Get sandbox IDs</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.[].sandbox_id&#39;</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># Exec into each running sandbox</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.[].sandbox_id&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>xargs<span class="w"> </span>-I<span class="o">{}</span><span class="w"> </span>cwsandbox<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>hello
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1"># Filter by field</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">&#39;.[] | select(.tower_id == &quot;my-tower&quot;)&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># List as JSON</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Get sandbox IDs</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.[].sandbox_id&#39;</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Exec into each running sandbox</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.[].sandbox_id&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>xargs<span class="w"> </span>-I<span class="o">{}</span><span class="w"> </span>cwsandbox<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>hello
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="c1"># Filter by field</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>cwsandbox<span class="w"> </span>ls<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">&#39;.[] | select(.tower_id == &quot;my-tower&quot;)&#39;</span>
 </code></pre></div>
 <p>Each object contains: <code>sandbox_id</code>, <code>status</code>, <code>tower_id</code>, <code>runway_id</code>, <code>tower_group_id</code>, <code>started_at</code> (ISO 8601 or null).</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../execution/">Command Execution</a> — <code>exec()</code> SDK method details</li>
+<li><a href="../logging/">Sandbox Logging</a> — <code>stream_logs()</code> SDK method details</li>
 </ul>
 
 
