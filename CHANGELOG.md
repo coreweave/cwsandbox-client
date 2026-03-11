@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.8.2 (2026-03-11)
+
+### Bug Fixes
+
+- **auth**: Allow wandb entity and project to be optional
+  ([#76](https://github.com/coreweave/cwsandbox-client/pull/76),
+  [`321a00b`](https://github.com/coreweave/cwsandbox-client/commit/321a00b515bdb055cff4f27c80525a9cab931cc7))
+
+
 ## v0.8.1 (2026-03-11)
 
 ### Bug Fixes
