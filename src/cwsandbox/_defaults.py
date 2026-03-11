@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from cwsandbox._types import NetworkOptions
+    from cwsandbox._types import NetworkOptions, SecretStoreReference
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
@@ -81,6 +83,8 @@ class SandboxDefaults:
         tower_ids: Restrict to specific tower IDs.
         resources: Resource requests (CPU, memory, GPU) as a dict.
         network: Network configuration via ``NetworkOptions``.
+        secret_stores: Optional list of secret store references (each
+            ``SecretStoreReference`` or dict with ``store_name`` and ``secrets``).
         environment_variables: Environment variables injected into the sandbox.
 
     Examples:
@@ -109,6 +113,9 @@ class SandboxDefaults:
     tower_ids: tuple[str, ...] | None = None
     resources: dict[str, Any] | None = None
     network: NetworkOptions | None = None
+    secret_stores: (
+        list[SecretStoreReference] | list[dict[str, Any]] | tuple[SecretStoreReference, ...] | None
+    ) = None
     environment_variables: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:

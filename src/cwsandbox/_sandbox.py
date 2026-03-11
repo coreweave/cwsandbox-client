@@ -52,6 +52,8 @@ from cwsandbox._types import (
     OperationRef,
     Process,
     ProcessResult,
+    SecretMapping,
+    SecretStoreReference,
     StreamReader,
     StreamWriter,
 )
@@ -148,6 +150,58 @@ def _wrap_command_with_cwd(command: Sequence[str], cwd: str) -> list[str]:
     escaped_cwd = shlex.quote(cwd)
     escaped_command = " ".join(shlex.quote(arg) for arg in command)
     return ["/bin/sh", "-c", f"cd {escaped_cwd} && exec {escaped_command}"]
+
+
+def _normalize_secret_stores(
+    stores: (
+        list[SecretStoreReference] | list[dict[str, Any]] | tuple[SecretStoreReference, ...] | None
+    ),
+) -> list[SecretStoreReference]:
+    """Convert secret_stores to a list of SecretStoreReference.
+
+    Accepts list of SecretStoreReference (returned as-is, as new list), or list of
+    dicts with keys store_name and secrets (each secret dict: path, env_var,
+    optional field). Used by Sandbox for consistent storage before start.
+    """
+    if stores is None:
+        return []
+    result: list[SecretStoreReference] = []
+    for item in stores:
+        if isinstance(item, SecretStoreReference):
+            result.append(item)
+        elif isinstance(item, dict):
+            store_name = item.get("store_name")
+            if store_name is None:
+                raise ValueError("secret_stores dict entry must have 'store_name'")
+            raw_secrets = item.get("secrets") or []
+            mappings: list[SecretMapping] = []
+            for s in raw_secrets:
+                if isinstance(s, SecretMapping):
+                    mappings.append(s)
+                elif isinstance(s, dict):
+                    path = s.get("path")
+                    env_var = s.get("env_var")
+                    if path is None or env_var is None:
+                        raise ValueError(
+                            "secret_stores secret entry must have 'path' and 'env_var'"
+                        )
+                    mappings.append(
+                        SecretMapping(
+                            path=path,
+                            env_var=env_var,
+                            field=s.get("field") or "",
+                        )
+                    )
+                else:
+                    raise TypeError(
+                        f"secret_stores secret must be SecretMapping or dict, got {type(s).__name__}"
+                    )
+            result.append(SecretStoreReference(store_name=store_name, secrets=tuple(mappings)))
+        else:
+            raise TypeError(
+                f"secret_stores entry must be SecretStoreReference or dict, got {type(item).__name__}"
+            )
+    return result
 
 
 def _translate_rpc_error(
@@ -342,7 +396,12 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
-        secret_stores: list[dict[str, Any]] | None = None,
+        secret_stores: (
+            list[SecretStoreReference]
+            | list[dict[str, Any]]
+            | tuple[SecretStoreReference, ...]
+            | None
+        ) = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -369,8 +428,9 @@ class Sandbox:
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
             secret_stores: Optional list of secret store references. Each item is a
-                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
-                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
+                ``SecretStoreReference`` or dict: ``{"store_name": str, "secrets": [{"path": str,
+                "env_var": str, "field": str (optional)}, ...]}``. Merged with defaults
+                (defaults first, then this list). Resolved at start and injected as env vars.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -441,8 +501,11 @@ class Sandbox:
             self._start_kwargs["network"] = effective_network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
-        if secret_stores is not None:
-            self._start_kwargs["secret_stores"] = secret_stores
+        default_secret_stores = _normalize_secret_stores(self._defaults.secret_stores)
+        call_secret_stores = (
+            _normalize_secret_stores(secret_stores) if secret_stores is not None else []
+        )
+        self._start_kwargs["secret_stores"] = default_secret_stores + call_secret_stores
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
@@ -500,7 +563,12 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
-        secret_stores: list[dict[str, Any]] | None = None,
+        secret_stores: (
+            list[SecretStoreReference]
+            | list[dict[str, Any]]
+            | tuple[SecretStoreReference, ...]
+            | None
+        ) = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -528,8 +596,9 @@ class Sandbox:
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
             secret_stores: Optional list of secret store references. Each item is a
-                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
-                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
+                ``SecretStoreReference`` or dict: ``{"store_name": str, "secrets": [{"path": str,
+                "env_var": str, "field": str (optional)}, ...]}``. Merged with defaults
+                (defaults first, then this list). Resolved at start and injected as env vars.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -1584,6 +1653,28 @@ class Sandbox:
                 if net_opts.egress_mode is not None:
                     network_dict["egress_mode"] = net_opts.egress_mode
                 request_kwargs["network"] = network_dict
+
+            # Convert SecretStoreReference to dicts for proto (StartSandboxRequest accepts list of dicts)
+            secret_stores = request_kwargs.get("secret_stores")
+            if (
+                secret_stores is not None
+                and secret_stores
+                and isinstance(secret_stores[0], SecretStoreReference)
+            ):
+                request_kwargs["secret_stores"] = [
+                    {
+                        "store_name": ref.store_name,
+                        "secrets": [
+                            {
+                                "path": m.path,
+                                "field": m.field,
+                                "env_var": m.env_var,
+                            }
+                            for m in ref.secrets
+                        ],
+                    }
+                    for ref in secret_stores
+                ]
 
             logger.debug("Starting sandbox with image %s", self._container_image)
 

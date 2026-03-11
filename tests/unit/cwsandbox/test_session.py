@@ -69,7 +69,7 @@ class TestSessionSandbox:
         }
 
     def test_sandbox_passes_secret_stores(self) -> None:
-        """Test session.sandbox passes secret_stores to Sandbox."""
+        """Test session.sandbox passes secret_stores to Sandbox (normalized to SecretStoreReference)."""
         secret_stores = [
             {
                 "store_name": "my-store",
@@ -85,7 +85,13 @@ class TestSessionSandbox:
             secret_stores=secret_stores,
         )
 
-        assert sandbox._start_kwargs["secret_stores"] == secret_stores
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 1
+        assert stored[0].store_name == "my-store"
+        assert len(stored[0].secrets) == 1
+        assert stored[0].secrets[0].path == "path/to/secret"
+        assert stored[0].secrets[0].field == "api_key"
+        assert stored[0].secrets[0].env_var == "API_KEY"
 
 
 class TestSessionContextManager:

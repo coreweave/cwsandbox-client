@@ -14,7 +14,7 @@ import grpc
 import grpc.aio
 import pytest
 
-from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults
+from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, SecretMapping, SecretStoreReference
 from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Terminal
 from cwsandbox.exceptions import SandboxError, SandboxNotFoundError, SandboxNotRunningError
 
@@ -1593,7 +1593,14 @@ class TestSandboxKwargsValidation:
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
         assert sandbox._start_kwargs["network"] == net_opts
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
-        assert sandbox._start_kwargs["secret_stores"] == secret_stores
+        # secret_stores are normalized to list[SecretStoreReference]
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 1
+        assert stored[0].store_name == "my-store"
+        assert len(stored[0].secrets) == 1
+        assert stored[0].secrets[0].path == "path/to/secret"
+        assert stored[0].secrets[0].field == "api_key"
+        assert stored[0].secrets[0].env_var == "API_KEY"
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
     def test_init_with_invalid_kwargs(self) -> None:
@@ -1632,7 +1639,12 @@ class TestSandboxKwargsValidation:
             mock_start.assert_called_once()
             assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
             assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
-            assert sandbox._start_kwargs["secret_stores"] == secret_stores
+            stored = sandbox._start_kwargs["secret_stores"]
+            assert len(stored) == 1 and stored[0].store_name == "x"
+            assert len(stored[0].secrets) == 1
+            assert stored[0].secrets[0].path == "p"
+            assert stored[0].secrets[0].field == "f"
+            assert stored[0].secrets[0].env_var == "e"
 
     def test_run_with_invalid_kwargs(self) -> None:
         """Test Sandbox.run rejects invalid kwargs."""
@@ -2346,6 +2358,72 @@ class TestNetworkOptionsRequestPayload:
 
         # network should not be in _start_kwargs
         assert "network" not in sandbox._start_kwargs
+
+
+class TestSecretStoresTypeGuard:
+    """Tests for secret_stores parameter (SecretStoreReference and dict)."""
+
+    def test_init_secret_stores_none_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts secret_stores=None; merged result is empty list."""
+        sandbox = Sandbox(command="echo", args=["hello"], secret_stores=None)
+        assert sandbox._start_kwargs["secret_stores"] == []
+
+    def test_init_secret_stores_ref_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts list of SecretStoreReference."""
+        ref = SecretStoreReference(
+            store_name="my-store",
+            secrets=(SecretMapping(path="p", env_var="E", field="f"),),
+        )
+        sandbox = Sandbox(command="echo", args=["hello"], secret_stores=[ref])
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 1 and stored[0] is ref
+
+    def test_init_secret_stores_dict_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts list of dicts and normalizes to SecretStoreReference."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            secret_stores=[
+                {"store_name": "x", "secrets": [{"path": "p", "env_var": "E"}]},
+            ],
+        )
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 1
+        assert stored[0].store_name == "x"
+        assert stored[0].secrets[0].path == "p"
+        assert stored[0].secrets[0].env_var == "E"
+        assert stored[0].secrets[0].field == ""
+
+    def test_init_uses_defaults_secret_stores_when_not_specified(self) -> None:
+        """Test Sandbox.__init__ uses defaults.secret_stores when secret_stores is None."""
+        ref = SecretStoreReference(
+            store_name="default-store",
+            secrets=(SecretMapping(path="default/path", env_var="DEFAULT_VAR"),),
+        )
+        defaults = SandboxDefaults(secret_stores=[ref])
+        sandbox = Sandbox(command="echo", args=["hello"], defaults=defaults)
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 1 and stored[0].store_name == "default-store"
+
+    def test_init_merges_defaults_and_explicit_secret_stores(self) -> None:
+        """Test secret_stores from defaults and call-site are merged (defaults first)."""
+        defaults = SandboxDefaults(
+            secret_stores=[
+                {"store_name": "default", "secrets": [{"path": "d", "env_var": "D"}]},
+            ],
+        )
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            secret_stores=[
+                SecretStoreReference("explicit", (SecretMapping("e", "E"),)),
+            ],
+        )
+        stored = sandbox._start_kwargs["secret_stores"]
+        assert len(stored) == 2
+        assert stored[0].store_name == "default"
+        assert stored[1].store_name == "explicit"
 
 
 class TestSandboxExecutionStats:
