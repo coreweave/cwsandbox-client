@@ -1497,14 +1497,15 @@
 <h3 id="option-2-wb-credentials">Option 2: W&amp;B Credentials<a class="headerlink" href="#option-2-wb-credentials" title="Permanent link">&para;</a></h3>
 <p>If you have W&amp;B credentials configured, the SDK can use them:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-wandb-key&quot;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY_NAME</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_PROJECT</span><span class="o">=</span><span class="s2">&quot;your-project&quot;</span>
 </code></pre></div>
 <p>The SDK also reads W&amp;B credentials from <code>~/.netrc</code> if <code>WANDB_API_KEY</code> isn't set:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>machine api.wandb.ai
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  login user
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  password your-wandb-key
 </code></pre></div>
-<p><code>WANDB_ENTITY_NAME</code> is still required when using netrc.</p>
+<p>Both <code>WANDB_ENTITY</code> and <code>WANDB_PROJECT</code> are optional. If <code>WANDB_ENTITY</code> is unset, the SDK does not send the x-entity-id header. If <code>WANDB_PROJECT</code> is unset, the SDK does not send the x-project-name header.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>

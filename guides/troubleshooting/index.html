@@ -1497,8 +1497,8 @@
 <p>The SDK resolves authentication in this order:</p>
 <ol>
 <li><code>CWSANDBOX_API_KEY</code> env var (takes priority)</li>
-<li><code>WANDB_API_KEY</code> + <code>WANDB_ENTITY_NAME</code> env vars</li>
-<li><code>~/.netrc</code> (api.wandb.ai) + <code>WANDB_ENTITY_NAME</code></li>
+<li><code>WANDB_API_KEY</code> + <code>WANDB_ENTITY</code> env vars</li>
+<li><code>~/.netrc</code> (api.wandb.ai) + <code>WANDB_ENTITY</code></li>
 </ol>
 <p>You need <strong>one</strong> of these configured. Check which method you're using:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Option 1: CWSandbox API key</span>
@@ -1506,7 +1506,7 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Option 2: W&amp;B credentials</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$WANDB_API_KEY</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$WANDB_ENTITY_NAME</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$WANDB_ENTITY</span>
 </code></pre></div>
 <h3 id="common-issues">Common Issues<a class="headerlink" href="#common-issues" title="Permanent link">&para;</a></h3>
 <table>
@@ -1527,11 +1527,11 @@
 </tr>
 <tr>
 <td>W&amp;B API key set but entity missing</td>
-<td>Set <code>WANDB_ENTITY_NAME</code> to your W&amp;B entity/team</td>
+<td>Set <code>WANDB_ENTITY</code> to your W&amp;B entity/team</td>
 </tr>
 <tr>
 <td>Using netrc but entity missing</td>
-<td>Set <code>WANDB_ENTITY_NAME</code> - it's always required for W&amp;B</td>
+<td>Set <code>WANDB_ENTITY</code> - it's always required for W&amp;B</td>
 </tr>
 <tr>
 <td>Netrc parse errors</td>
@@ -1705,9 +1705,9 @@
 <td>Check <code>CWSANDBOX_API_KEY</code> is set</td>
 </tr>
 <tr>
-<td><code>WandbAuthError: WANDB_ENTITY_NAME is not set</code></td>
+<td><code>WandbAuthError: WANDB_ENTITY is not set</code></td>
 <td>W&amp;B API key found but entity missing</td>
-<td>Set <code>WANDB_ENTITY_NAME</code> env var</td>
+<td>Set <code>WANDB_ENTITY</code> env var</td>
 </tr>
 <tr>
 <td><code>SandboxNotRunningError</code></td>
