@@ -69,7 +69,7 @@ class TestSessionSandbox:
         }
 
     def test_sandbox_passes_secret_stores(self) -> None:
-        """Test session.sandbox passes secret_stores to Sandbox (normalized to SecretStoreReference)."""
+        """Test session.sandbox passes secret_stores, normalized to SecretStoreReference."""
         secret_stores = [
             {
                 "store_name": "my-store",
