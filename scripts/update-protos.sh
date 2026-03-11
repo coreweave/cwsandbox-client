@@ -15,9 +15,9 @@ set -euo pipefail
 # Version pins - update these when bumping protos
 # ---------------------------------------------------------------------------
 # buf.build plugin versions (prefix differs per package, commit suffix is shared)
-GRPC_VERSION="1.78.1.1.20260220161707+89028200095a"
-PB_VERSION="33.5.0.1.20260220161707+89028200095a"
-PYI_VERSION="33.5.0.1.20260220161707+89028200095a"
+GRPC_VERSION="1.78.1.1.20260306144501+b06c7779a62f"
+PB_VERSION="33.5.0.1.20260306144501+b06c7779a62f"
+PYI_VERSION="33.5.0.1.20260306144501+b06c7779a62f"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -34,6 +34,8 @@ PROTO_FILES=(
     atc_pb2.py
     atc_pb2.pyi
     atc_pb2_grpc.py
+    secrets_pb2.py
+    secrets_pb2.pyi
     streaming_pb2.py
     streaming_pb2.pyi
     streaming_pb2_grpc.py
