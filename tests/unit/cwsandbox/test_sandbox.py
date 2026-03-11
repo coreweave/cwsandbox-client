@@ -839,6 +839,47 @@ class TestSandboxAuth:
         call_kwargs = mock_stub.Start.call_args[1]
         assert call_kwargs["metadata"] == (("authorization", "Bearer test-api-key"),)
 
+    @pytest.mark.asyncio
+    async def test_start_async_includes_secret_stores_in_request(self, mock_api_key: str) -> None:
+        """Test _start_async passes secret_stores into the Start RPC request."""
+        secret_stores = [
+            {
+                "store_name": "my-store",
+                "secrets": [
+                    {"path": "path/to/secret", "field": "api_key", "env_var": "API_KEY"},
+                ],
+            },
+        ]
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            secret_stores=secret_stores,
+        )
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = (("authorization", "Bearer test-api-key"),)
+
+        await sandbox._start_async()
+
+        mock_stub.Start.assert_called_once()
+        request = mock_stub.Start.call_args[0][0]
+        assert len(request.secret_stores) == 1
+        assert request.secret_stores[0].store_name == "my-store"
+        assert len(request.secret_stores[0].secrets) == 1
+        assert request.secret_stores[0].secrets[0].path == "path/to/secret"
+        assert request.secret_stores[0].secrets[0].field == "api_key"
+        assert request.secret_stores[0].secrets[0].env_var == "API_KEY"
+
 
 class TestSandboxCleanup:
     """Tests for Sandbox cleanup and resource warnings."""
@@ -1530,6 +1571,14 @@ class TestSandboxKwargsValidation:
     def test_init_with_valid_kwargs(self) -> None:
         """Test Sandbox.__init__ accepts valid kwargs."""
         net_opts = NetworkOptions(ingress_mode="public")
+        secret_stores = [
+            {
+                "store_name": "my-store",
+                "secrets": [
+                    {"path": "path/to/secret", "field": "api_key", "env_var": "API_KEY"},
+                ],
+            },
+        ]
         sandbox = Sandbox(
             command="echo",
             args=["hello"],
@@ -1538,11 +1587,13 @@ class TestSandboxKwargsValidation:
             network=net_opts,
             max_timeout_seconds=60,
             environment_variables={"TEST_ENV_VAR": "test-value"},
+            secret_stores=secret_stores,
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
         assert sandbox._start_kwargs["network"] == net_opts
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
+        assert sandbox._start_kwargs["secret_stores"] == secret_stores
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
     def test_init_with_invalid_kwargs(self) -> None:
@@ -1567,16 +1618,21 @@ class TestSandboxKwargsValidation:
 
     def test_run_with_valid_kwargs(self) -> None:
         """Test Sandbox.run accepts valid kwargs."""
+        secret_stores = [
+            {"store_name": "x", "secrets": [{"path": "p", "field": "f", "env_var": "e"}]}
+        ]
         with patch.object(Sandbox, "start") as mock_start:
             sandbox = Sandbox.run(
                 "echo",
                 "hello",
                 resources={"cpu": "100m"},
                 ports=[{"container_port": 8080}],
+                secret_stores=secret_stores,
             )
             mock_start.assert_called_once()
             assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
             assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+            assert sandbox._start_kwargs["secret_stores"] == secret_stores
 
     def test_run_with_invalid_kwargs(self) -> None:
         """Test Sandbox.run rejects invalid kwargs."""

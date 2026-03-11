@@ -68,6 +68,25 @@ class TestSessionSandbox:
             "MODEL_NAME": "gpt2",  # Added
         }
 
+    def test_sandbox_passes_secret_stores(self) -> None:
+        """Test session.sandbox passes secret_stores to Sandbox."""
+        secret_stores = [
+            {
+                "store_name": "my-store",
+                "secrets": [
+                    {"path": "path/to/secret", "field": "api_key", "env_var": "API_KEY"},
+                ],
+            },
+        ]
+        session = Session()
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            secret_stores=secret_stores,
+        )
+
+        assert sandbox._start_kwargs["secret_stores"] == secret_stores
+
 
 class TestSessionContextManager:
     """Tests for Session context manager."""
