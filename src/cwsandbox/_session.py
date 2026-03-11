@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._types import ExecOutcome, NetworkOptions, OperationRef, Serialization
+from cwsandbox._types import (
+    ExecOutcome,
+    NetworkOptions,
+    OperationRef,
+    SecretStoreReference,
+    Serialization,
+)
 from cwsandbox._wandb import WandbReporter
 from cwsandbox.exceptions import SandboxError
 
@@ -318,7 +324,12 @@ class Session:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
-        secret_stores: list[dict[str, Any]] | None = None,
+        secret_stores: (
+            list[SecretStoreReference]
+            | list[dict[str, Any]]
+            | tuple[SecretStoreReference, ...]
+            | None
+        ) = None,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
 
@@ -346,8 +357,9 @@ class Session:
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
             secret_stores: Optional list of secret store references. Each item is a
-                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
-                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
+                ``SecretStoreReference`` or dict: ``{"store_name": str, "secrets": [{"path": str,
+                "env_var": str, "field": str (optional)}, ...]}``. Merged with session defaults
+                (defaults first, then this list). Resolved at start and injected as env vars.
 
         Returns:
             An unstarted Sandbox registered with the session.

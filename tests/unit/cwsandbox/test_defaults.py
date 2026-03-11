@@ -8,7 +8,7 @@ import dataclasses
 
 import pytest
 
-from cwsandbox import NetworkOptions, SandboxDefaults
+from cwsandbox import NetworkOptions, SandboxDefaults, SecretMapping, SecretStoreReference
 
 
 class TestSandboxDefaults:
@@ -185,3 +185,26 @@ class TestSandboxDefaults:
 
         assert defaults.network is network1  # original unchanged
         assert new_defaults.network is network2
+
+    def test_secret_stores_can_be_set(self) -> None:
+        """Test secret_stores can be set in SandboxDefaults (dict or SecretStoreReference)."""
+        ref = SecretStoreReference(
+            store_name="my-store",
+            secrets=(SecretMapping(path="path/to/secret", env_var="API_KEY"),),
+        )
+        defaults = SandboxDefaults(secret_stores=[ref])
+
+        assert defaults.secret_stores is not None
+        assert len(defaults.secret_stores) == 1
+        assert defaults.secret_stores[0].store_name == "my-store"
+        assert defaults.secret_stores[0].secrets[0].path == "path/to/secret"
+
+        # Dict form also accepted
+        defaults2 = SandboxDefaults(
+            secret_stores=[
+                {"store_name": "x", "secrets": [{"path": "p", "env_var": "E"}]},
+            ],
+        )
+        assert defaults2.secret_stores is not None
+        assert len(defaults2.secret_stores) == 1
+        assert defaults2.secret_stores[0]["store_name"] == "x"

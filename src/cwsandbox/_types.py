@@ -149,6 +149,54 @@ class NetworkOptions:
             object.__setattr__(self, "exposed_ports", None)
 
 
+@dataclass(frozen=True)
+class SecretMapping:
+    """Mapping of a secret store entry to an environment variable.
+
+    Mirrors the ``SecretMapping`` message in ``cwsandbox._proto.secrets_pb2``.
+
+    Attributes:
+        path: Path to the secret in the store (e.g. secret name or path).
+        field: Optional field name within the secret (default empty string).
+        env_var: Environment variable name to inject the secret value into.
+    """
+
+    path: str
+    env_var: str
+    field: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("SecretMapping.path cannot be empty")
+        if not self.env_var:
+            raise ValueError("SecretMapping.env_var cannot be empty")
+
+
+@dataclass(frozen=True)
+class SecretStoreReference:
+    """Reference to a secret store and which secrets to inject as env vars.
+
+    Mirrors the ``SecretStoreReference`` message in ``cwsandbox._proto.secrets_pb2``.
+    The proto type lives in a different module, so no name collision in normal use.
+
+    Attributes:
+        store_name: Name of the secret store (e.g. W&B team secrets store).
+        secrets: Tuple of secret mappings (path/field → env_var).
+    """
+
+    store_name: str
+    secrets: tuple[SecretMapping, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.store_name:
+            raise ValueError("SecretStoreReference.store_name cannot be empty")
+        # Normalize list to tuple for immutability
+        if isinstance(self.secrets, list):
+            object.__setattr__(self, "secrets", tuple(self.secrets))
+        if not self.secrets:
+            raise ValueError("SecretStoreReference.secrets cannot be empty")
+
+
 @dataclass
 class ProcessResult:
     """Result from a completed streaming exec operation.
