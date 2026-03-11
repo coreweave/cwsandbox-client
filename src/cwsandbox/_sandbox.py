@@ -343,6 +343,7 @@ class Sandbox:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        secret_stores: list[dict[str, Any]] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -371,6 +372,9 @@ class Sandbox:
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
+            secret_stores: Optional list of secret store references. Each item is a
+                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
+                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -442,6 +446,8 @@ class Sandbox:
             self._start_kwargs["network"] = effective_network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
+        if secret_stores is not None:
+            self._start_kwargs["secret_stores"] = secret_stores
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
@@ -500,6 +506,7 @@ class Sandbox:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        secret_stores: list[dict[str, Any]] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -529,6 +536,9 @@ class Sandbox:
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
+            secret_stores: Optional list of secret store references. Each item is a
+                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
+                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -579,6 +589,7 @@ class Sandbox:
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             annotations=annotations,
+            secret_stores=secret_stores,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()

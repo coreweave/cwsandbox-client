@@ -318,6 +318,7 @@ class Session:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        secret_stores: list[dict[str, Any]] | None = None,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
 
@@ -344,6 +345,9 @@ class Session:
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
+            secret_stores: Optional list of secret store references. Each item is a
+                dict: ``{"store_name": str, "secrets": [{"path": str, "field": str,
+                "env_var": str}, ...]}``. Resolved at start and injected as env vars.
 
         Returns:
             An unstarted Sandbox registered with the session.
@@ -396,6 +400,7 @@ class Session:
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             annotations=annotations,
+            secret_stores=secret_stores,
             defaults=self._defaults,
             _session=self,
         )
