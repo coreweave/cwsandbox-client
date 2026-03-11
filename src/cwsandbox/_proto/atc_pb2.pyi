@@ -3,6 +3,7 @@
 # SPDX-PackageName: cwsandbox-client
 import datetime
 
+from cwsandbox._proto import secrets_pb2 as _secrets_pb2
 from google.api import annotations_pb2 as _annotations_pb2
 from google.api import field_behavior_pb2 as _field_behavior_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
@@ -47,6 +48,12 @@ class EgressType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     EGRESS_TYPE_ORG: _ClassVar[EgressType]
     EGRESS_TYPE_RUNWAY: _ClassVar[EgressType]
     EGRESS_TYPE_ALLOWLIST: _ClassVar[EgressType]
+
+class ObjectStoragePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    OBJECT_STORAGE_PERMISSION_UNSPECIFIED: _ClassVar[ObjectStoragePermission]
+    OBJECT_STORAGE_PERMISSION_READ: _ClassVar[ObjectStoragePermission]
+    OBJECT_STORAGE_PERMISSION_READ_WRITE: _ClassVar[ObjectStoragePermission]
 SANDBOX_STATUS_UNSPECIFIED: SandboxStatus
 SANDBOX_STATUS_CREATING: SandboxStatus
 SANDBOX_STATUS_RUNNING: SandboxStatus
@@ -71,6 +78,9 @@ EGRESS_TYPE_USER: EgressType
 EGRESS_TYPE_ORG: EgressType
 EGRESS_TYPE_RUNWAY: EgressType
 EGRESS_TYPE_ALLOWLIST: EgressType
+OBJECT_STORAGE_PERMISSION_UNSPECIFIED: ObjectStoragePermission
+OBJECT_STORAGE_PERMISSION_READ: ObjectStoragePermission
+OBJECT_STORAGE_PERMISSION_READ_WRITE: ObjectStoragePermission
 
 class MountedFile(_message.Message):
     __slots__ = ("mount_path", "file_content")
@@ -126,6 +136,22 @@ class NetworkOptions(_message.Message):
     egress_mode: str
     def __init__(self, ingress_mode: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[int]] = ..., egress_mode: _Optional[str] = ...) -> None: ...
 
+class KubernetesSecretSource(_message.Message):
+    __slots__ = ("secret_name", "secret_key")
+    SECRET_NAME_FIELD_NUMBER: _ClassVar[int]
+    SECRET_KEY_FIELD_NUMBER: _ClassVar[int]
+    secret_name: str
+    secret_key: str
+    def __init__(self, secret_name: _Optional[str] = ..., secret_key: _Optional[str] = ...) -> None: ...
+
+class TowerClusterSecretReference(_message.Message):
+    __slots__ = ("kubernetes", "env_var")
+    KUBERNETES_FIELD_NUMBER: _ClassVar[int]
+    ENV_VAR_FIELD_NUMBER: _ClassVar[int]
+    kubernetes: KubernetesSecretSource
+    env_var: str
+    def __init__(self, kubernetes: _Optional[_Union[KubernetesSecretSource, _Mapping]] = ..., env_var: _Optional[str] = ...) -> None: ...
+
 class S3Mount(_message.Message):
     __slots__ = ("bucket", "directory", "mount_path")
     BUCKET_FIELD_NUMBER: _ClassVar[int]
@@ -164,9 +190,24 @@ class ResourceUsage(_message.Message):
     gpu_count_used: int
     def __init__(self, cpu_millicores_used: _Optional[int] = ..., memory_mb_used: _Optional[int] = ..., gpu_count_used: _Optional[int] = ...) -> None: ...
 
+class ObjectStorageAccess(_message.Message):
+    __slots__ = ("buckets", "permission")
+    BUCKETS_FIELD_NUMBER: _ClassVar[int]
+    PERMISSION_FIELD_NUMBER: _ClassVar[int]
+    buckets: _containers.RepeatedScalarFieldContainer[str]
+    permission: ObjectStoragePermission
+    def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
+
 class StartSandboxRequest(_message.Message):
-    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "runway_ids", "tower_ids", "max_lifetime_seconds", "max_timeout_seconds")
+    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "runway_ids", "tower_ids", "max_lifetime_seconds", "max_timeout_seconds", "tower_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores")
     class EnvironmentVariablesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class PodAnnotationsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
         VALUE_FIELD_NUMBER: _ClassVar[int]
@@ -187,6 +228,10 @@ class StartSandboxRequest(_message.Message):
     TOWER_IDS_FIELD_NUMBER: _ClassVar[int]
     MAX_LIFETIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    TOWER_CLUSTER_SECRETS_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_STORAGE_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    POD_ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
+    SECRET_STORES_FIELD_NUMBER: _ClassVar[int]
     command: str
     args: _containers.RepeatedScalarFieldContainer[str]
     tags: _containers.RepeatedScalarFieldContainer[str]
@@ -201,7 +246,11 @@ class StartSandboxRequest(_message.Message):
     tower_ids: _containers.RepeatedScalarFieldContainer[str]
     max_lifetime_seconds: int
     max_timeout_seconds: int
-    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+    tower_cluster_secrets: _containers.RepeatedCompositeFieldContainer[TowerClusterSecretReference]
+    object_storage_access: ObjectStorageAccess
+    pod_annotations: _containers.ScalarMap[str, str]
+    secret_stores: _containers.RepeatedCompositeFieldContainer[_secrets_pb2.SecretStoreReference]
+    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., tower_cluster_secrets: _Optional[_Iterable[_Union[TowerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ...) -> None: ...
 
 class StartSandboxResponse(_message.Message):
     __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "runway_id", "tower_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode")
