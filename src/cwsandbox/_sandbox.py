@@ -194,12 +194,14 @@ def _normalize_secret_stores(
                     )
                 else:
                     raise TypeError(
-                        f"secret_stores secret must be SecretMapping or dict, got {type(s).__name__}"
+                        "secret_stores secret must be SecretMapping or dict, "
+                        f"got {type(s).__name__}"
                     )
             result.append(SecretStoreReference(store_name=store_name, secrets=tuple(mappings)))
         else:
             raise TypeError(
-                f"secret_stores entry must be SecretStoreReference or dict, got {type(item).__name__}"
+                "secret_stores entry must be SecretStoreReference or dict, "
+                f"got {type(item).__name__}"
             )
     return result
 
@@ -1654,7 +1656,8 @@ class Sandbox:
                     network_dict["egress_mode"] = net_opts.egress_mode
                 request_kwargs["network"] = network_dict
 
-            # Convert SecretStoreReference to dicts for proto (StartSandboxRequest accepts list of dicts)
+            # Convert SecretStoreReference to dicts for proto
+            # (StartSandboxRequest accepts list of dicts)
             secret_stores = request_kwargs.get("secret_stores")
             if (
                 secret_stores is not None
