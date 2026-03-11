@@ -9,8 +9,8 @@ This guide covers common issues and their solutions when working with the CWSand
 The SDK resolves authentication in this order:
 
 1. `CWSANDBOX_API_KEY` env var (takes priority)
-2. `WANDB_API_KEY` + `WANDB_ENTITY_NAME` env vars
-3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY_NAME`
+2. `WANDB_API_KEY` + `WANDB_ENTITY` env vars
+3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY`
 
 You need **one** of these configured. Check which method you're using:
 
@@ -20,7 +20,7 @@ echo $CWSANDBOX_API_KEY
 
 # Option 2: W&B credentials
 echo $WANDB_API_KEY
-echo $WANDB_ENTITY_NAME
+echo $WANDB_ENTITY
 ```
 
 ### Common Issues
@@ -29,8 +29,8 @@ echo $WANDB_ENTITY_NAME
 |-------|----------|
 | No credentials configured | Set `CWSANDBOX_API_KEY` or W&B credentials |
 | Invalid or expired API key | Contact your administrator for a new key |
-| W&B API key set but entity missing | Set `WANDB_ENTITY_NAME` to your W&B entity/team |
-| Using netrc but entity missing | Set `WANDB_ENTITY_NAME` - it's always required for W&B |
+| W&B API key set but entity missing | Set `WANDB_ENTITY` to your W&B entity/team |
+| Using netrc but entity missing | Set `WANDB_ENTITY` - it's always required for W&B |
 | Netrc parse errors | Check `~/.netrc` file syntax and permissions |
 
 ---
@@ -184,7 +184,7 @@ See [Cleanup Patterns - Orphan Management](cleanup-patterns.md#orphan-management
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `CWSandboxAuthenticationError` | Missing or invalid credentials | Check `CWSANDBOX_API_KEY` is set |
-| `WandbAuthError: WANDB_ENTITY_NAME is not set` | W&B API key found but entity missing | Set `WANDB_ENTITY_NAME` env var |
+| `WandbAuthError: WANDB_ENTITY is not set` | W&B API key found but entity missing | Set `WANDB_ENTITY` env var |
 | `SandboxNotRunningError` | Operation on stopped sandbox | Check `sandbox.status` before operations |
 | `SandboxTimeoutError` | Operation exceeded timeout | Increase `timeout_seconds` or optimize command |
 | `SandboxTerminatedError` | Sandbox killed externally | Check `max_lifetime_seconds` or external termination |

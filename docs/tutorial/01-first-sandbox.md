@@ -18,7 +18,7 @@ export CWSANDBOX_API_KEY="your-api-key"
 
 # Option 2: W&B credentials
 export WANDB_API_KEY="your-wandb-key"
-export WANDB_ENTITY_NAME="your-entity"
+export WANDB_ENTITY="your-entity"
 ```
 
 ## Run Your First Sandbox
