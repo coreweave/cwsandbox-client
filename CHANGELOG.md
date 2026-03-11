@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.8.1 (2026-03-11)
+
+### Bug Fixes
+
+- Bump vendored protos to b06c7779a62f
+  ([#77](https://github.com/coreweave/cwsandbox-client/pull/77),
+  [`69aed76`](https://github.com/coreweave/cwsandbox-client/commit/69aed7617350c001c0baa6258d62793bf7fdd1bc))
+
+
 ## v0.8.0 (2026-03-10)
 
 ### Bug Fixes
