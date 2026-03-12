@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-03-12)
+
+### Chores
+
+- **ci**: Remove uv install step for pypi publish job
+  ([#79](https://github.com/coreweave/cwsandbox-client/pull/79),
+  [`db69a2e`](https://github.com/coreweave/cwsandbox-client/commit/db69a2ef0c38ba12b4472835e5569eda5f741b14))
+
+- **ci**: Update job name ([#79](https://github.com/coreweave/cwsandbox-client/pull/79),
+  [`db69a2e`](https://github.com/coreweave/cwsandbox-client/commit/db69a2ef0c38ba12b4472835e5569eda5f741b14))
+
+### Features
+
+- **ci**: Publish to pypi ([#79](https://github.com/coreweave/cwsandbox-client/pull/79),
+  [`db69a2e`](https://github.com/coreweave/cwsandbox-client/commit/db69a2ef0c38ba12b4472835e5569eda5f741b14))
+
+
 ## v0.8.2 (2026-03-11)
 
 ### Bug Fixes
