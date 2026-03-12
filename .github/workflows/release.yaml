@@ -118,7 +118,7 @@ jobs:
   # ──────────────────────────────────────────────────
   # Job 3: Publish to PyPI (isolated OIDC scope)
   # ──────────────────────────────────────────────────
-  publish-cloudsmith:
+  publish-pypi:
     needs: release
     if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
