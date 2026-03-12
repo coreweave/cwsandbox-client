@@ -67,6 +67,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
 - `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)
+- `secrets` - Secrets to inject from secret stores as environment variables, via `Secret` or dict
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
 - `environment_variables` - Environment variables to inject (merges with defaults)
 - `annotations` - Kubernetes pod annotations (merges with defaults, explicit keys win)
@@ -110,6 +111,7 @@ Fields (all optional with sensible defaults):
 - `runway_ids`, `tower_ids` - Infrastructure filtering (optional tuple of IDs)
 - `resources` - Resource requests (CPU, memory, GPU)
 - `network` - Network configuration via `NetworkOptions`
+- `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
 - `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
 
@@ -177,6 +179,38 @@ sandbox = Sandbox.run(
 # Using dict (convenient for quick scripts)
 sandbox = Sandbox.run(
     network={"ingress_mode": "public", "exposed_ports": [8080]},
+)
+```
+
+**`Secret`** (`_types.py`): Frozen dataclass for injecting secrets from secret stores into sandbox environment variables. The `secrets` parameter accepts `Secret` instances or plain dicts (which are automatically converted via `Secret(**d)`).
+
+Fields:
+- `store: str` - Name of the secret store (e.g. `"wandb"`).
+- `name: str` - Name of the secret in the store.
+- `field: str` - Specific field within a structured secret (optional, defaults to `""`).
+- `env_var: str | None` - Environment variable name the secret is injected as (defaults to `name`).
+
+Duplicate `env_var` targets across secrets raise `ValueError` at merge time.
+
+Usage:
+```python
+from cwsandbox import Secret
+
+# Minimal: env_var defaults to name
+sandbox = Sandbox.run(
+    secrets=[Secret(store="wandb", name="HF_TOKEN")],
+)
+
+# Extracting a field from a structured secret
+sandbox = Sandbox.run(
+    secrets=[
+        Secret(store="wandb", name="db-credentials", field="password", env_var="DB_PASS"),
+    ],
+)
+
+# Using dicts (convenient for config files)
+sandbox = Sandbox.run(
+    secrets=[{"store": "wandb", "name": "HF_TOKEN"}],
 )
 ```
 
