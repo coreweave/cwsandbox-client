@@ -9,7 +9,7 @@ import concurrent.futures
 import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from cwsandbox.exceptions import SandboxExecutionError
@@ -95,7 +95,7 @@ class OperationRef(Generic[T]):
         return asyncio.wrap_future(self._future).__await__()
 
 
-class Serialization(str, Enum):
+class Serialization(StrEnum):
     """Serialization modes for sandbox function execution.
 
     Attributes:
@@ -123,7 +123,7 @@ class ExecOutcome(StrEnum):
     FAILURE = "failure"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class NetworkOptions:
     """Network configuration for sandbox ingress/egress.
 
@@ -149,52 +149,50 @@ class NetworkOptions:
             object.__setattr__(self, "exposed_ports", None)
 
 
-@dataclass(frozen=True)
-class SecretMapping:
-    """Mapping of a secret store entry to an environment variable.
+@dataclass(frozen=True, kw_only=True)
+class Secret:
+    """A secret to inject from a store into a sandbox environment variable.
 
-    Mirrors the ``SecretMapping`` message in ``cwsandbox._proto.secrets_pb2``.
+    All fields are keyword-only. When ``env_var`` is not specified it defaults
+    to ``name``. Plain dicts with matching keys are also accepted and
+    converted automatically.
 
     Attributes:
-        path: Path to the secret in the store (e.g. secret name or path).
-        field: Optional field name within the secret (default empty string).
-        env_var: Environment variable name to inject the secret value into.
+        store: Name of the secret store (e.g. "wandb").
+        name: Name of the secret in the store.
+        field: Specific field within a structured secret (optional).
+        env_var: Environment variable the secret is injected as (defaults to name).
+
+    Examples:
+        Minimal usage (env_var defaults to name)::
+
+            Secret(store="wandb", name="HF_TOKEN")
+
+        Extracting a field from a structured secret::
+
+            Secret(
+                store="wandb",
+                name="db-credentials",
+                field="password",
+                env_var="DB_PASS",
+            )
     """
 
-    path: str
-    env_var: str
+    store: str
+    name: str
     field: str = ""
+    env_var: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.path:
-            raise ValueError("SecretMapping.path cannot be empty")
+        # Default env_var to name and validate required fields.
+        if self.env_var is None:
+            object.__setattr__(self, "env_var", self.name)
+        if not self.store:
+            raise ValueError("Secret.store cannot be empty")
+        if not self.name:
+            raise ValueError("Secret.name cannot be empty")
         if not self.env_var:
-            raise ValueError("SecretMapping.env_var cannot be empty")
-
-
-@dataclass(frozen=True)
-class SecretStoreReference:
-    """Reference to a secret store and which secrets to inject as env vars.
-
-    Mirrors the ``SecretStoreReference`` message in ``cwsandbox._proto.secrets_pb2``.
-    The proto type lives in a different module, so no name collision in normal use.
-
-    Attributes:
-        store_name: Name of the secret store (e.g. W&B team secrets store).
-        secrets: Tuple of secret mappings (path/field → env_var).
-    """
-
-    store_name: str
-    secrets: tuple[SecretMapping, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.store_name:
-            raise ValueError("SecretStoreReference.store_name cannot be empty")
-        # Normalize list to tuple for immutability
-        if isinstance(self.secrets, list):
-            object.__setattr__(self, "secrets", tuple(self.secrets))
-        if not self.secrets:
-            raise ValueError("SecretStoreReference.secrets cannot be empty")
+            raise ValueError("Secret.env_var cannot be empty")
 
 
 @dataclass
