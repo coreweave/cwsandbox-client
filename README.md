@@ -4,7 +4,7 @@ A Python client library for CWSandboxes.
 
 ## Documentation
 
-See the [documentation site](https://coreweave.github.io/cwsandbox-client/) for the full tutorial, guides, and API reference.
+See the [documentation site](https://docs.coreweave.com/products/coreweave-sandbox) for the full tutorial, guides, and API reference.
 
 ## Quick Start
 
