@@ -28,9 +28,9 @@ async with Sandbox.run("sleep", "infinity") as sb:
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for setup and workflow.
+See [DEVELOPMENT.md](https://github.com/coreweave/cwsandbox-client/blob/main/DEVELOPMENT.md) for setup and workflow.
 
-For code standards and commit guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For code standards and commit guidelines, see [CONTRIBUTING.md](https://github.com/coreweave/cwsandbox-client/blob/main/CONTRIBUTING.md).
 
 ## License
 - The CWSandbox Client library is licensed under the Apache-2.0 license.
