@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, replace
+from typing import Any
 
-if TYPE_CHECKING:
-    from cwsandbox._types import NetworkOptions
+from cwsandbox._types import NetworkOptions, Secret
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
@@ -81,6 +81,7 @@ class SandboxDefaults:
         tower_ids: Restrict to specific tower IDs.
         resources: Resource requests (CPU, memory, GPU) as a dict.
         network: Network configuration via ``NetworkOptions``.
+        secrets: Secrets to inject as environment variables.
         environment_variables: Environment variables injected into the sandbox.
 
     Examples:
@@ -109,6 +110,7 @@ class SandboxDefaults:
     tower_ids: tuple[str, ...] | None = None
     resources: dict[str, Any] | None = None
     network: NetworkOptions | None = None
+    secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:
@@ -135,3 +137,60 @@ class SandboxDefaults:
     def with_overrides(self, **kwargs: Any) -> SandboxDefaults:
         """Create new defaults with some values overridden."""
         return replace(self, **kwargs)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any] | None) -> SandboxDefaults:
+        """Build ``SandboxDefaults`` from a mapping, coercing nested fields.
+
+        Accepts plain dicts or OmegaConf ``DictConfig`` objects.  Unknown
+        keys are silently ignored so callers can pass a config section
+        that may contain extra fields.
+
+        Coercions applied:
+        - ``network`` dict -> ``NetworkOptions``
+        - ``secrets`` list of dicts -> tuple of ``Secret``
+        - ``args``, ``tags``, ``runway_ids``, ``tower_ids`` lists -> tuples
+        - ``resources``, ``environment_variables`` -> plain ``dict``
+        """
+        if d is None:
+            return cls()
+        valid = {f.name for f in fields(cls)}
+        kwargs: dict[str, Any] = {k: v for k, v in d.items() if k in valid}
+        # Drop None values for non-optional fields so they fall back to
+        # dataclass defaults rather than creating invalid instances.
+        _non_optional = (
+            "container_image",
+            "command",
+            "args",
+            "base_url",
+            "request_timeout_seconds",
+            "temp_dir",
+            "tags",
+            "environment_variables",
+        )
+        for key in _non_optional:
+            if key in kwargs and kwargs[key] is None:
+                del kwargs[key]
+        # Coerce network dict -> NetworkOptions (preserve None)
+        net = kwargs.get("network")
+        if net is not None and not isinstance(net, NetworkOptions):
+            kwargs["network"] = NetworkOptions(**net)
+        # Coerce secrets list of dicts -> tuple of Secret (preserve None)
+        secrets = kwargs.get("secrets")
+        if secrets is not None:
+            kwargs["secrets"] = tuple(
+                Secret(**s) if not isinstance(s, Secret) else s for s in secrets
+            )
+        # Coerce sequences -> tuples for tuple fields (reject bare strings)
+        for key in ("args", "tags", "runway_ids", "tower_ids"):
+            val = kwargs.get(key)
+            if val is None or isinstance(val, tuple):
+                continue
+            if isinstance(val, str):
+                raise TypeError(f"{key} must be a sequence of strings, not a bare string")
+            kwargs[key] = tuple(val)
+        # Coerce mapping types -> plain dicts for protobuf compat
+        for key in ("resources", "environment_variables"):
+            if key in kwargs and kwargs[key] is not None and not isinstance(kwargs[key], dict):
+                kwargs[key] = dict(kwargs[key])
+        return cls(**kwargs)

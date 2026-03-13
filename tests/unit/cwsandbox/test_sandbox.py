@@ -14,7 +14,7 @@ import grpc
 import grpc.aio
 import pytest
 
-from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults
+from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
 from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Terminal
 from cwsandbox.exceptions import SandboxError, SandboxNotFoundError, SandboxNotRunningError
 
@@ -839,6 +839,41 @@ class TestSandboxAuth:
         call_kwargs = mock_stub.Start.call_args[1]
         assert call_kwargs["metadata"] == (("authorization", "Bearer test-api-key"),)
 
+    @pytest.mark.asyncio
+    async def test_start_async_includes_secrets_in_request(self, mock_api_key: str) -> None:
+        """Test _start_async passes secrets into the Start RPC request."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            secrets=[
+                Secret(store="wandb", name="HF_TOKEN", field="api_key", env_var="HF_TOKEN"),
+            ],
+        )
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = (("authorization", "Bearer test-api-key"),)
+
+        await sandbox._start_async()
+
+        mock_stub.Start.assert_called_once()
+        request = mock_stub.Start.call_args[0][0]
+        assert len(request.secret_stores) == 1
+        assert request.secret_stores[0].store_name == "wandb"
+        assert len(request.secret_stores[0].secrets) == 1
+        assert request.secret_stores[0].secrets[0].path == "HF_TOKEN"
+        assert request.secret_stores[0].secrets[0].field == "api_key"
+        assert request.secret_stores[0].secrets[0].env_var == "HF_TOKEN"
+
 
 class TestSandboxCleanup:
     """Tests for Sandbox cleanup and resource warnings."""
@@ -1530,6 +1565,9 @@ class TestSandboxKwargsValidation:
     def test_init_with_valid_kwargs(self) -> None:
         """Test Sandbox.__init__ accepts valid kwargs."""
         net_opts = NetworkOptions(ingress_mode="public")
+        secrets = [
+            Secret(store="wandb", name="HF_TOKEN", field="api_key", env_var="HF_TOKEN"),
+        ]
         sandbox = Sandbox(
             command="echo",
             args=["hello"],
@@ -1538,11 +1576,18 @@ class TestSandboxKwargsValidation:
             network=net_opts,
             max_timeout_seconds=60,
             environment_variables={"TEST_ENV_VAR": "test-value"},
+            secrets=secrets,
         )
         assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
         assert sandbox._start_kwargs["network"] == net_opts
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1
+        assert stored[0].store == "wandb"
+        assert stored[0].name == "HF_TOKEN"
+        assert stored[0].field == "api_key"
+        assert stored[0].env_var == "HF_TOKEN"
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
     def test_init_with_invalid_kwargs(self) -> None:
@@ -1567,16 +1612,25 @@ class TestSandboxKwargsValidation:
 
     def test_run_with_valid_kwargs(self) -> None:
         """Test Sandbox.run accepts valid kwargs."""
+        secrets = [
+            Secret(store="wandb", name="OPENAI_API_KEY", field="api_key", env_var="OPENAI_KEY"),
+        ]
         with patch.object(Sandbox, "start") as mock_start:
             sandbox = Sandbox.run(
                 "echo",
                 "hello",
                 resources={"cpu": "100m"},
                 ports=[{"container_port": 8080}],
+                secrets=secrets,
             )
             mock_start.assert_called_once()
             assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
             assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
+            stored = sandbox._start_kwargs["secrets"]
+            assert len(stored) == 1 and stored[0].store == "wandb"
+            assert stored[0].name == "OPENAI_API_KEY"
+            assert stored[0].field == "api_key"
+            assert stored[0].env_var == "OPENAI_KEY"
 
     def test_run_with_invalid_kwargs(self) -> None:
         """Test Sandbox.run rejects invalid kwargs."""
@@ -2290,6 +2344,133 @@ class TestNetworkOptionsRequestPayload:
 
         # network should not be in _start_kwargs
         assert "network" not in sandbox._start_kwargs
+
+
+class TestSecretsParameter:
+    """Tests for secrets parameter."""
+
+    def test_init_secrets_none_omits_from_kwargs(self) -> None:
+        """Test Sandbox.__init__ omits secrets when None and no defaults."""
+        sandbox = Sandbox(command="echo", args=["hello"], secrets=None)
+        assert "secrets" not in sandbox._start_kwargs
+
+    def test_init_secrets_accepted(self) -> None:
+        """Test Sandbox.__init__ accepts list of Secret."""
+        secret = Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN", field="api_key")
+        sandbox = Sandbox(command="echo", args=["hello"], secrets=[secret])
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1 and stored[0] is secret
+
+    def test_init_secret_env_var_defaults_to_name(self) -> None:
+        """Test Secret.env_var defaults to name when not specified."""
+        secret = Secret(store="wandb", name="WANDB_API_KEY")
+        sandbox = Sandbox(command="echo", args=["hello"], secrets=[secret])
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1
+        assert stored[0].store == "wandb"
+        assert stored[0].name == "WANDB_API_KEY"
+        assert stored[0].env_var == "WANDB_API_KEY"
+        assert stored[0].field == ""
+
+    def test_init_uses_defaults_secrets_when_not_specified(self) -> None:
+        """Test Sandbox.__init__ uses defaults.secrets when secrets is None."""
+        secret = Secret(store="wandb", name="HF_TOKEN")
+        defaults = SandboxDefaults(secrets=(secret,))
+        sandbox = Sandbox(command="echo", args=["hello"], defaults=defaults)
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1 and stored[0].store == "wandb"
+
+    def test_init_merges_defaults_and_explicit_secrets(self) -> None:
+        """Test secrets from defaults and call-site are merged (defaults first)."""
+        default_secret = Secret(store="wandb", name="HF_TOKEN")
+        defaults = SandboxDefaults(secrets=(default_secret,))
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            secrets=[
+                Secret(store="vault", name="OPENAI_API_KEY", env_var="OPENAI_KEY"),
+            ],
+        )
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 2
+        assert stored[0].store == "wandb"
+        assert stored[1].store == "vault"
+
+    def test_init_raises_on_conflicting_env_var(self) -> None:
+        """Test that conflicting secrets targeting the same env_var raise ValueError."""
+        defaults = SandboxDefaults(
+            secrets=(Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN"),)
+        )
+        with pytest.raises(ValueError, match="Conflicting secrets for env_var 'HF_TOKEN'"):
+            Sandbox(
+                command="echo",
+                args=["hello"],
+                defaults=defaults,
+                secrets=[Secret(store="vault", name="hf-token", env_var="HF_TOKEN")],
+            )
+
+    def test_init_allows_identical_duplicate_secrets(self) -> None:
+        """Test that identical secrets targeting the same env_var are allowed."""
+        secret = Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")
+        defaults = SandboxDefaults(secrets=(secret,))
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            secrets=[Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")],
+        )
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 2
+        assert all(s.store == "wandb" and s.env_var == "HF_TOKEN" for s in stored)
+
+    def test_init_raises_on_conflicting_field(self) -> None:
+        """Test that secrets differing only in field raise ValueError."""
+        with pytest.raises(ValueError, match="Conflicting secrets for env_var"):
+            Sandbox(
+                command="echo",
+                args=["hello"],
+                secrets=[
+                    Secret(store="vault", name="creds", field="password", env_var="DB_PASS"),
+                    Secret(store="vault", name="creds", field="token", env_var="DB_PASS"),
+                ],
+            )
+
+    def test_init_coerces_dicts_to_secret(self) -> None:
+        """Test Sandbox.__init__ converts dicts to Secret objects."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            secrets=[{"store": "wandb", "name": "HF_TOKEN"}],
+        )
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1
+        assert isinstance(stored[0], Secret)
+        assert stored[0].store == "wandb"
+        assert stored[0].name == "HF_TOKEN"
+        assert stored[0].env_var == "HF_TOKEN"
+
+    def test_init_coerces_dicts_with_all_fields(self) -> None:
+        """Test dict coercion works with all Secret fields specified."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            secrets=[
+                {"store": "wandb", "name": "db-creds", "field": "password", "env_var": "DB_PASS"},
+            ],
+        )
+        stored = sandbox._start_kwargs["secrets"]
+        assert stored[0].field == "password"
+        assert stored[0].env_var == "DB_PASS"
+
+    def test_init_rejects_dict_with_bad_keys(self) -> None:
+        """Test dict coercion raises TypeError on invalid keys."""
+        with pytest.raises(TypeError):
+            Sandbox(
+                command="echo",
+                args=["hello"],
+                secrets=[{"store_name": "wandb", "secrets": []}],
+            )
 
 
 class TestSandboxExecutionStats:

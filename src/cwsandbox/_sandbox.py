@@ -13,7 +13,7 @@ import shlex
 import threading
 import time
 import warnings
-from collections.abc import AsyncIterator, Generator, Sequence
+from collections.abc import AsyncIterator, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -52,6 +52,7 @@ from cwsandbox._types import (
     OperationRef,
     Process,
     ProcessResult,
+    Secret,
     StreamReader,
     StreamWriter,
 )
@@ -342,6 +343,7 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        secrets: Sequence[Secret | dict[str, Any]] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -367,6 +369,8 @@ class Sandbox:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            secrets: Secrets to inject as environment variables.
+                Merged with defaults (defaults first, then this list).
         """
         if network is not None:
             if isinstance(network, dict):
@@ -437,6 +441,24 @@ class Sandbox:
             self._start_kwargs["network"] = effective_network
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
+        merged_secrets = list(self._defaults.secrets or ()) + [
+            Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
+        ]
+        if merged_secrets:
+            seen: dict[str, Secret] = {}
+            for secret in merged_secrets:
+                env_var = secret.env_var
+                assert env_var is not None  # guaranteed by Secret.__post_init__
+                if env_var in seen and secret != seen[env_var]:
+                    raise ValueError(
+                        f"Conflicting secrets for env_var {env_var!r}: "
+                        f"Secret(store={seen[env_var].store!r}, name={seen[env_var].name!r}, "
+                        f"field={seen[env_var].field!r}) vs "
+                        f"Secret(store={secret.store!r}, name={secret.name!r}, "
+                        f"field={secret.field!r})"
+                    )
+                seen[env_var] = secret
+            self._start_kwargs["secrets"] = merged_secrets
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
@@ -494,6 +516,7 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        secrets: Sequence[Secret | dict[str, Any]] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -520,6 +543,8 @@ class Sandbox:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            secrets: Secrets to inject as environment variables.
+                Merged with defaults (defaults first, then this list).
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -569,6 +594,7 @@ class Sandbox:
             network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
+            secrets=secrets,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
@@ -577,7 +603,7 @@ class Sandbox:
     @classmethod
     def session(
         cls,
-        defaults: SandboxDefaults | None = None,
+        defaults: SandboxDefaults | Mapping[str, Any] | None = None,
     ) -> Session:
         """Create a session for managing multiple sandboxes.
 
@@ -1573,6 +1599,19 @@ class Sandbox:
                 if net_opts.egress_mode is not None:
                     network_dict["egress_mode"] = net_opts.egress_mode
                 request_kwargs["network"] = network_dict
+
+            # Convert flat Secret list to grouped proto SecretStoreReference dicts
+            secrets = request_kwargs.pop("secrets", None)
+            if secrets is not None and secrets and isinstance(secrets[0], Secret):
+                grouped: dict[str, list[dict[str, str]]] = {}
+                for s in secrets:
+                    grouped.setdefault(s.store, []).append(
+                        {"path": s.name, "field": s.field, "env_var": s.env_var}
+                    )
+                request_kwargs["secret_stores"] = [
+                    {"store_name": store, "secrets": mappings}
+                    for store, mappings in grouped.items()
+                ]
 
             logger.debug("Starting sandbox with image %s", self._container_image)
 
