@@ -131,6 +131,41 @@ class TestSandboxDefaults:
             "MODEL": "gpt2",  # Added
         }
 
+    def test_annotations_default_empty(self) -> None:
+        """Test annotations defaults to empty dict."""
+        defaults = SandboxDefaults()
+        assert defaults.annotations == {}
+
+    def test_annotations_can_be_set(self) -> None:
+        """Test annotations can be set on construction."""
+        defaults = SandboxDefaults(annotations={"team": "platform", "env": "staging"})
+        assert defaults.annotations == {"team": "platform", "env": "staging"}
+
+    def test_annotations_immutable(self) -> None:
+        """Test annotations field cannot be reassigned."""
+        defaults = SandboxDefaults(annotations={"team": "platform"})
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            defaults.annotations = {"team": "other"}  # type: ignore[misc]
+
+    def test_merge_annotations_delegates_to_merge_dicts(self) -> None:
+        """Test merge_annotations uses same logic as merge_environment_variables."""
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+        result = defaults.merge_annotations({"env": "production", "version": "v2"})
+        assert result == {
+            "team": "platform",
+            "env": "production",
+            "version": "v2",
+        }
+
+    def test_with_overrides_annotations(self) -> None:
+        """Test with_overrides can change annotations."""
+        defaults = SandboxDefaults(annotations={"team": "platform"})
+        new_defaults = defaults.with_overrides(annotations={"team": "infra"})
+        assert defaults.annotations == {"team": "platform"}
+        assert new_defaults.annotations == {"team": "infra"}
+
     def test_network_can_be_set(self) -> None:
         """Test network can be set in SandboxDefaults."""
         network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))

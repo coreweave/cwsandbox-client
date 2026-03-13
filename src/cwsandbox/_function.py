@@ -93,6 +93,7 @@ class RemoteFunction(Generic[P, R]):
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> None:
         """Initialize RemoteFunction with function and execution configuration.
 
@@ -113,6 +114,9 @@ class RemoteFunction(Generic[P, R]):
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            annotations: Kubernetes pod annotations for the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive metadata only.
         """
         unwrapped = fn
         while hasattr(unwrapped, "__wrapped__"):
@@ -148,6 +152,7 @@ class RemoteFunction(Generic[P, R]):
         self._network = network
         self._max_timeout_seconds = max_timeout_seconds
         self._environment_variables = environment_variables
+        self._annotations = annotations
         # Preserve function metadata
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
@@ -269,6 +274,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
         if self._environment_variables is not None:
             sandbox_kwargs["environment_variables"] = self._environment_variables
+        if self._annotations is not None:
+            sandbox_kwargs["annotations"] = self._annotations
 
         # Import here to avoid circular import
         from cwsandbox._sandbox import Sandbox

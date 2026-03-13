@@ -342,6 +342,7 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -367,6 +368,9 @@ class Sandbox:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            annotations: Kubernetes pod annotations for the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive metadata only.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -403,6 +407,7 @@ class Sandbox:
         self._environment_variables = self._defaults.merge_environment_variables(
             environment_variables
         )
+        self._annotations = self._defaults.merge_annotations(annotations)
 
         self._runway_ids: list[str] | None
         if runway_ids is not None:
@@ -494,6 +499,7 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -520,6 +526,9 @@ class Sandbox:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            annotations: Kubernetes pod annotations for the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive metadata only.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -569,6 +578,7 @@ class Sandbox:
             network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
+            annotations=annotations,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
@@ -631,6 +641,7 @@ class Sandbox:
         sandbox._runway_ids = None
         sandbox._tower_ids = None
         sandbox._environment_variables = {}
+        sandbox._annotations = {}
         sandbox._channel = None
         sandbox._stub = None
         sandbox._auth_metadata = ()
@@ -1558,6 +1569,8 @@ class Sandbox:
                 request_kwargs["tower_ids"] = self._tower_ids
             if self._environment_variables:
                 request_kwargs["environment_variables"] = self._environment_variables
+            if self._annotations:
+                request_kwargs["pod_annotations"] = self._annotations
 
             request_kwargs.update(self._start_kwargs)
 
