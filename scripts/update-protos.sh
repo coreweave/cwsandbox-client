@@ -36,6 +36,7 @@ PROTO_FILES=(
     atc_pb2_grpc.py
     secrets_pb2.py
     secrets_pb2.pyi
+    secrets_pb2_grpc.py
     streaming_pb2.py
     streaming_pb2.pyi
     streaming_pb2_grpc.py
@@ -140,6 +141,7 @@ copy_from_buf() {
 inject_spdx_header() {
     for f in "${PROTO_FILES[@]}"; do
         local filepath="$PROTO_DIR/$f"
+        [[ -f "$filepath" ]] || continue
         # Skip if header already present
         if head -1 "$filepath" | grep -q "SPDX-FileCopyrightText"; then
             continue
@@ -158,6 +160,7 @@ rewrite_imports() {
     # protocol-level identifiers and must NOT be rewritten.
     for f in "${PROTO_FILES[@]}"; do
         local filepath="$PROTO_DIR/$f"
+        [[ -f "$filepath" ]] || continue
         local tmp
         tmp="$(mktemp)"
         sed 's/from coreweave\.aviato\.v1beta1 import/from cwsandbox._proto import/g' "$filepath" > "$tmp"
@@ -187,15 +190,15 @@ validate_protobuf_version() {
         log "WARN: could not find Protobuf Python Version in generated files"
         return
     fi
-    if ! echo "$version_line" | grep -q "6\."; then
-        log "FAIL: generated files do not target protobuf 6.x"
+    if ! echo "$version_line" | grep -qE "(6|7)\."; then
+        log "FAIL: generated files do not target protobuf 6.x or 7.x"
         log "  Found: $version_line"
-        log "  Expected: Protobuf Python Version: 6.x.x"
+        log "  Expected: Protobuf Python Version: 6.x.x or 7.x.x"
         exit 1
     fi
     local version
     version=$(echo "$version_line" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
-    log "OK: protobuf version $version (6.x series)"
+    log "OK: protobuf version $version"
 }
 
 # ---------------------------------------------------------------------------
