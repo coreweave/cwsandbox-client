@@ -2,7 +2,7 @@
 
 This guide covers how to use environment variables in sandboxes.
 
-> **Security Note:** Environment variables should **not** be used for sensitive information like API keys, passwords, or other secrets.
+> **Security Note:** Environment variables should **not** be used for sensitive information like API keys, passwords, or other secrets. Use the [`Secret`](sandbox-configuration.md#secrets) type instead - secrets are resolved server-side and never pass through the client in plaintext.
 
 ## Basic Usage
 

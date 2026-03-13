@@ -184,6 +184,105 @@ with Session(defaults) as session:
     sb3 = session.sandbox(network=NetworkOptions(egress_mode="user"))
 ```
 
+## Secrets
+
+Inject secrets from secret stores as environment variables using the `Secret` type:
+
+```python
+from cwsandbox import Sandbox, Secret
+
+with Sandbox.run(
+    "pip", "install", "huggingface_hub",
+    secrets=[
+        Secret(store="wandb", name="HF_TOKEN"),
+    ],
+) as sandbox:
+    sandbox.wait()
+    result = sandbox.exec([
+        "python", "-c",
+        "from huggingface_hub import whoami; print(whoami()['name'])",
+    ]).result()
+    print(result.stdout.strip())  # Your Hugging Face username
+```
+
+Unlike `environment_variables`, secrets are never passed in plaintext - they are resolved
+server-side from the named store and injected securely.
+
+The `store` field refers to a secret store provider configured on the towers you are
+using. Available stores depend on your tower configuration - contact your platform
+administrator to find out which stores are available and what secrets they contain.
+For example, towers with the W&B integration have a `"wandb"` store that provides
+access to W&B team secrets.
+
+### Secret Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `store` | `str` | required | Secret store provider configured on your tower (e.g. `"wandb"`) |
+| `name` | `str` | required | Name of the secret in the store |
+| `field` | `str` | `""` | Specific field within a structured secret |
+| `env_var` | `str` | same as `name` | Environment variable the secret is injected as |
+
+### Common Patterns
+
+```python
+from cwsandbox import Secret
+
+# Minimal: env_var defaults to name
+Secret(store="wandb", name="HF_TOKEN")
+# -> injected as HF_TOKEN
+
+# Custom env_var name
+Secret(store="wandb", name="HF_TOKEN", env_var="HUGGINGFACE_TOKEN")
+# -> injected as HUGGINGFACE_TOKEN
+
+# Extracting a field from a structured secret
+Secret(store="wandb", name="db-credentials", field="password", env_var="DB_PASS")
+# -> injected as DB_PASS
+```
+
+### Setting Secrets in SandboxDefaults
+
+Share secrets across all sandboxes in a session:
+
+```python
+from cwsandbox import SandboxDefaults, Secret, Session
+
+defaults = SandboxDefaults(
+    secrets=(
+        Secret(store="wandb", name="HF_TOKEN"),
+        Secret(store="wandb", name="OPENAI_API_KEY"),
+    ),
+)
+
+with Session(defaults) as session:
+    # All sandboxes get both secrets
+    sb1 = session.sandbox()
+    sb2 = session.sandbox()
+
+    # Add more secrets for a specific sandbox
+    sb3 = session.sandbox(
+        secrets=[Secret(store="vault", name="DB_PASS")],
+    )
+    # sb3 gets all three secrets (defaults + explicit merged)
+```
+
+### Duplicate Detection
+
+If two secrets target the same `env_var` but differ in store, name, or field, a `ValueError`
+is raised at sandbox creation time. Identical duplicates (same store, name, field, env_var)
+are allowed silently:
+
+```python
+# Raises ValueError: conflicting secrets for env_var 'HF_TOKEN'
+Sandbox.run(
+    defaults=SandboxDefaults(
+        secrets=(Secret(store="wandb", name="HF_TOKEN"),),
+    ),
+    secrets=[Secret(store="vault", name="hf-token", env_var="HF_TOKEN")],
+)
+```
+
 ## Timeouts
 
 ### timeout_seconds
@@ -220,14 +319,15 @@ This is a server-side limit. The sandbox will be terminated when it reaches this
 ## Complete Example
 
 ```python
-from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults
+from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
 
 defaults = SandboxDefaults(
     container_image="python:3.11",
     max_lifetime_seconds=1800,  # 30 minutes
     tags=("production", "ml-pipeline"),
     resources={"cpu": "2000m", "memory": "4Gi"},
-    network=NetworkOptions(egress_mode="internet")
+    network=NetworkOptions(egress_mode="internet"),
+    secrets=(Secret(store="wandb", name="HF_TOKEN"),),
 )
 
 with Sandbox.run(

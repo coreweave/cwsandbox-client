@@ -16,7 +16,7 @@ cwsandbox/
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
-├── _types.py         # OperationRef, ProcessResult, Process, StreamReader
+├── _types.py         # OperationRef, ProcessResult, Process, StreamReader, Secret
 ├── _defaults.py      # SandboxDefaults configuration dataclass
 ├── _auth.py          # Authentication resolution (API key, W&B, netrc)
 ├── _loop_manager.py  # Background asyncio event loop singleton
