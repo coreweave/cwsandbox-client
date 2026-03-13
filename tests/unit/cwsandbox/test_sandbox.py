@@ -1386,6 +1386,162 @@ class TestSandboxEnvironmentVariables:
         assert sandbox._environment_variables == {"API_KEY": "secret"}
 
 
+class TestSandboxAnnotations:
+    """Tests for annotations merging behavior."""
+
+    def test_init_with_annotations(self) -> None:
+        """Test sandbox stores annotations when provided."""
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            annotations={"prometheus.io/scrape": "true"},
+        )
+
+        assert sandbox._annotations == {"prometheus.io/scrape": "true"}
+
+    def test_init_annotations_defaults_fallback(self) -> None:
+        """Test sandbox inherits annotations from defaults when not specified."""
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+        )
+
+        assert sandbox._annotations == {"team": "platform", "env": "staging"}
+
+    def test_init_annotations_merge(self) -> None:
+        """Test explicit annotations merge with defaults."""
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            annotations={"tier": "frontend"},
+        )
+
+        assert sandbox._annotations == {
+            "team": "platform",
+            "env": "staging",
+            "tier": "frontend",
+        }
+
+    def test_init_annotations_explicit_overrides_default_keys(self) -> None:
+        """Test explicit annotations override defaults on key collision."""
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+
+        sandbox = Sandbox(
+            command="echo",
+            args=["hello"],
+            defaults=defaults,
+            annotations={"env": "production", "tier": "backend"},
+        )
+
+        assert sandbox._annotations == {
+            "team": "platform",
+            "env": "production",
+            "tier": "backend",
+        }
+
+    def test_init_annotations_empty_when_no_defaults_or_params(self) -> None:
+        """Test annotations is empty dict when nothing specified."""
+        sandbox = Sandbox(command="echo", args=["hello"])
+
+        assert sandbox._annotations == {}
+
+    def test_run_with_annotations(self) -> None:
+        """Test Sandbox.run() passes annotations through to __init__."""
+        with patch.object(Sandbox, "start") as mock_start:
+            mock_start.return_value = MagicMock(result=MagicMock(return_value=None))
+            sandbox = Sandbox.run(
+                "echo",
+                "hello",
+                annotations={"team": "platform"},
+            )
+
+        assert sandbox._annotations == {"team": "platform"}
+
+    @pytest.mark.asyncio
+    async def test_start_async_maps_to_pod_annotations(self) -> None:
+        """Test _start_async maps annotations to pod_annotations in request."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            annotations={"team": "platform"},
+        )
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = ()
+
+        await sandbox._start_async()
+
+        mock_stub.Start.assert_called_once()
+        call_args = mock_stub.Start.call_args
+        request = call_args[0][0]
+        assert request.pod_annotations == {"team": "platform"}
+
+    @pytest.mark.asyncio
+    async def test_start_async_empty_annotations_not_sent(self) -> None:
+        """Test _start_async omits pod_annotations when annotations is empty."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = ()
+
+        await sandbox._start_async()
+
+        mock_stub.Start.assert_called_once()
+        call_args = mock_stub.Start.call_args
+        request = call_args[0][0]
+        assert len(request.pod_annotations) == 0
+
+    def test_from_sandbox_info_initializes_annotations(self) -> None:
+        """Test _from_sandbox_info sets _annotations to empty dict."""
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "test-id"
+        mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
+        mock_info.started_at_time = None
+        mock_info.tower_id = None
+        mock_info.runway_id = None
+        mock_info.tower_group_id = None
+
+        sandbox = Sandbox._from_sandbox_info(
+            mock_info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+
+        assert sandbox._annotations == {}
+
+
 class TestSandboxStop:
     """Tests for Sandbox.stop method."""
 

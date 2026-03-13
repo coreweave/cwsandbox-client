@@ -781,3 +781,73 @@ class TestSessionFunctionDecorator:
             return x * 2
 
         assert my_special_function.__name__ == "my_special_function"
+
+
+class TestRemoteFunctionAnnotations:
+    """Tests for annotations passthrough in RemoteFunction."""
+
+    def test_function_with_annotations(self) -> None:
+        """Test RemoteFunction stores annotations."""
+        from cwsandbox import Session
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(
+            add,
+            session=session,
+            annotations={"team": "platform"},
+        )
+
+        assert remote_fn._annotations == {"team": "platform"}
+
+    @pytest.mark.asyncio
+    async def test_function_annotations_in_sandbox_kwargs(self) -> None:
+        """Test annotations are passed to sandbox creation in _execute_async."""
+        from cwsandbox import Session
+        from cwsandbox._types import Serialization
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(
+            add,
+            session=session,
+            serialization=Serialization.JSON,
+            annotations={"team": "platform"},
+        )
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
+        mock_sandbox.sandbox_id = "test-sandbox-id"
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
+
+        result_json = json.dumps(5).encode()
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
+
+        with patch("cwsandbox._sandbox.Sandbox") as MockSandbox:
+            MockSandbox.return_value = mock_sandbox
+            await remote_fn._execute_async(2, 3)
+
+            call_kwargs = MockSandbox.call_args[1]
+            assert call_kwargs["annotations"] == {"team": "platform"}
+
+    def test_session_function_decorator_with_annotations(self) -> None:
+        """Test @session.function(annotations=...) passes annotations to RemoteFunction."""
+        from cwsandbox import Session
+
+        session = Session()
+
+        @session.function(annotations={"team": "platform"})
+        def compute(x: int, y: int) -> int:
+            return x + y
+
+        assert isinstance(compute, RemoteFunction)
+        assert compute._annotations == {"team": "platform"}

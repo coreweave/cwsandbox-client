@@ -1,6 +1,6 @@
 # Sandbox Configuration Guide
 
-This guide covers sandbox configuration options: resources, mounted files, ports, and timeouts.
+This guide covers sandbox configuration options: resources, mounted files, ports, annotations, and timeouts.
 
 ## Overview
 
@@ -184,6 +184,75 @@ with Session(defaults) as session:
     sb3 = session.sandbox(network=NetworkOptions(egress_mode="user"))
 ```
 
+## Annotations
+
+Add Kubernetes pod annotations to sandboxes. Annotations are key-value string pairs
+attached to the underlying pod, useful for integrations that read pod metadata.
+
+```python
+sandbox = Sandbox.run(
+    annotations={
+        "team": "ml-infra",
+        "experiment": "training-run-42",
+    },
+)
+```
+
+### Session-Level Defaults
+
+Set default annotations for all sandboxes in a session:
+
+```python
+defaults = SandboxDefaults(
+    annotations={
+        "team": "ml-infra",
+        "managed-by": "aviato-sdk",
+    },
+)
+
+with Session(defaults) as session:
+    # Inherits default annotations
+    sb1 = session.sandbox()
+
+    # Merge: explicit annotations override defaults on key collision
+    sb2 = session.sandbox(
+        annotations={"experiment": "run-42", "team": "ml-research"},
+    )
+    # sb2 gets: team=ml-research, managed-by=aviato-sdk, experiment=run-42
+```
+
+### Merge Behavior
+
+When both `SandboxDefaults.annotations` and per-sandbox `annotations` are provided,
+they are merged. Explicit per-sandbox values win on key collision, matching the
+same semantics as `environment_variables`.
+
+### SUNK Integration
+
+A common use case is passing Slurm context as pod annotations for SUNK
+(Slurm on Kubernetes) integration:
+
+```python
+import os
+from cwsandbox import Sandbox, SandboxDefaults, Session
+
+defaults = SandboxDefaults(
+    annotations={
+        "sunk.coreweave.com/partition": os.environ["SLURM_JOB_PARTITION"],
+        "sunk.coreweave.com/user-id": os.environ["SLURM_USER_ID"],
+    },
+)
+
+with Session(defaults) as session:
+    sb = session.sandbox()
+    sb.exec(["python", "train.py"]).result()
+```
+
+### Validation
+
+The SDK does not validate annotation keys or values. The server handles validation
+of reserved key prefixes, value format, and maximum entry count.
+
 ## Timeouts
 
 ### timeout_seconds
@@ -227,7 +296,8 @@ defaults = SandboxDefaults(
     max_lifetime_seconds=1800,  # 30 minutes
     tags=("production", "ml-pipeline"),
     resources={"cpu": "2000m", "memory": "4Gi"},
-    network=NetworkOptions(egress_mode="internet")
+    network=NetworkOptions(egress_mode="internet"),
+    annotations={"team": "ml-infra"},
 )
 
 with Sandbox.run(

@@ -317,6 +317,7 @@ class Session:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
 
@@ -340,6 +341,9 @@ class Session:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            annotations: Kubernetes pod annotations for the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive metadata only.
 
         Returns:
             An unstarted Sandbox registered with the session.
@@ -391,6 +395,7 @@ class Session:
             network=network,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
+            annotations=annotations,
             defaults=self._defaults,
             _session=self,
         )
@@ -621,6 +626,7 @@ class Session:
         network: NetworkOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
 
@@ -647,6 +653,9 @@ class Session:
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
+            annotations: Kubernetes pod annotations for the sandbox.
+                Merges with and overrides matching keys from the session defaults.
+                Use for non-sensitive metadata only.
 
         Returns:
             A decorator that wraps a function as a RemoteFunction
@@ -702,6 +711,7 @@ class Session:
                 network=network,
                 max_timeout_seconds=max_timeout_seconds,
                 environment_variables=environment_variables,
+                annotations=annotations,
             )
 
         return decorator

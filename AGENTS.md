@@ -68,6 +68,8 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `ports` - Port mappings for the sandbox
 - `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
+- `environment_variables` - Environment variables to inject (merges with defaults)
+- `annotations` - Kubernetes pod annotations (merges with defaults, explicit keys win)
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
@@ -109,9 +111,12 @@ Fields (all optional with sensible defaults):
 - `resources` - Resource requests (CPU, memory, GPU)
 - `network` - Network configuration via `NetworkOptions`
 - `environment_variables` - Environment variables to inject
+- `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
 
 Utility methods:
 - `merge_tags(additional)` - Combine default tags with additional tags list
+- `merge_annotations(additional)` - Combine default annotations with additional dict (explicit keys win)
+- `merge_environment_variables(additional)` - Combine default env vars with additional dict (explicit keys win)
 - `with_overrides(**kwargs)` - Create new defaults with some values overridden
 
 Key constants (from `_defaults.py`):
