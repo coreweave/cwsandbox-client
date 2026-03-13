@@ -53,6 +53,14 @@ STREAMING_OUTPUT_QUEUE_SIZE: int = 4096
 MAX_LINE_BUFFER_BYTES: int = 1024 * 1024  # 1 MB
 
 
+def _merge_dicts(base: dict[str, str], additional: dict[str, str] | None) -> dict[str, str]:
+    """Merge two string dicts, with additional values overriding base on collision."""
+    merged = dict(base)
+    if additional:
+        merged.update(additional)
+    return merged
+
+
 @dataclass(frozen=True)
 class SandboxDefaults:
     """Immutable configuration defaults for sandbox creation.
@@ -82,6 +90,9 @@ class SandboxDefaults:
         resources: Resource requests (CPU, memory, GPU) as a dict.
         network: Network configuration via ``NetworkOptions``.
         environment_variables: Environment variables injected into the sandbox.
+        annotations: Kubernetes pod annotations (key-value string pairs).
+            Merged with per-sandbox annotations; explicit values override defaults.
+            Use for non-sensitive metadata only.
 
     Examples:
         ```python
@@ -93,6 +104,7 @@ class SandboxDefaults:
             max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
             tags=("my-workload", "experiment-42"),
             environment_variables={"LOG_LEVEL": "info", "REGION": "us-west"},
+            annotations={"team": "ml-infra"},
         )
         ```
     """
@@ -110,6 +122,7 @@ class SandboxDefaults:
     resources: dict[str, Any] | None = None
     network: NetworkOptions | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
+    annotations: dict[str, str] = field(default_factory=dict)
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:
         """Combine default tags with additional tags.
@@ -127,10 +140,14 @@ class SandboxDefaults:
 
         Additional environment variables override defaults with the same key.
         """
-        merged = dict(self.environment_variables)
-        if additional:
-            merged.update(additional)
-        return merged
+        return _merge_dicts(self.environment_variables, additional)
+
+    def merge_annotations(self, additional: dict[str, str] | None) -> dict[str, str]:
+        """Combine default annotations with additional ones.
+
+        Additional annotations override defaults with the same key.
+        """
+        return _merge_dicts(self.annotations, additional)
 
     def with_overrides(self, **kwargs: Any) -> SandboxDefaults:
         """Create new defaults with some values overridden."""

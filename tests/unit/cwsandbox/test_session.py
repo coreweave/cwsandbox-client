@@ -69,6 +69,67 @@ class TestSessionSandbox:
         }
 
 
+class TestSessionAnnotations:
+    """Tests for session.sandbox() annotations passthrough."""
+
+    def test_sandbox_with_annotations(self) -> None:
+        """Test session.sandbox() passes annotations to Sandbox."""
+        from cwsandbox import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            annotations={"team": "platform"},
+        )
+
+        session = Session(defaults)
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            annotations={"env": "production"},
+        )
+
+        assert sandbox._annotations == {
+            "team": "platform",
+            "env": "production",
+        }
+
+    def test_sandbox_inherits_annotations_from_session_defaults(self) -> None:
+        """Test session.sandbox inherits annotations from session defaults."""
+        from cwsandbox import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+
+        session = Session(defaults)
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox._annotations == {
+            "team": "platform",
+            "env": "staging",
+        }
+
+    def test_sandbox_overrides_session_annotations(self) -> None:
+        """Test sandbox-specific annotations override session defaults."""
+        from cwsandbox import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            annotations={"team": "platform", "env": "staging"},
+        )
+
+        session = Session(defaults)
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            annotations={"env": "production", "tier": "backend"},
+        )
+
+        assert sandbox._annotations == {
+            "team": "platform",
+            "env": "production",
+            "tier": "backend",
+        }
+
+
 class TestSessionContextManager:
     """Tests for Session context manager."""
 
