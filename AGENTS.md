@@ -50,6 +50,7 @@ Key methods:
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
+- `shell(command=None, *, width=None, height=None)`: Start an interactive TTY session, return `TerminalSession`. Always allocates a TTY and enables stdin. Output is raw bytes (merged stdout/stderr) with no buffering — safe for long-running interactive sessions. Defaults to `["/bin/bash"]`.
 - `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
@@ -148,6 +149,11 @@ data = await ref
 - `StreamReader`: Dual sync/async iterable wrapping asyncio.Queue. Supports both `for line in reader` and `async for line in reader`. Parameterized: `StreamReader[str]` for text (exec output, logs), `StreamReader[bytes]` for raw bytes (TTY output). Call `close()` to stop the underlying producer and end iteration.
 - `StreamWriter`: Writable stream for stdin. Methods: `write(data: bytes)`, `writeline(text: str)`, `close()`. All return `OperationRef[None]`. Property: `closed` (bool). Uses bounded queue (16 items, ~1MB with 64KB chunks) for backpressure.
 - `ProcessResult`: Dataclass with `stdout`, `stderr`, `returncode`, `command`, plus raw byte variants (`stdout_bytes`, `stderr_bytes`).
+
+**Terminal Types** (`_types.py`): Types for interactive TTY sessions, returned by `Sandbox.shell()`:
+
+- `TerminalSession`: Handle for an interactive TTY session. Extends `OperationRef[TerminalResult]`. Properties: `output` (StreamReader[bytes] — merged stdout/stderr as raw bytes), `stdin` (StreamWriter — always present), `command` (list executed). Methods: `resize(width, height)` (fire-and-forget), `wait(timeout)` (blocks until session ends, returns exit code), `result(timeout)` (returns TerminalResult). Awaitable in async contexts.
+- `TerminalResult`: Frozen dataclass with `returncode` and `command`. Unlike `ProcessResult`, does not contain captured stdout/stderr because TTY sessions do not buffer output.
 
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
