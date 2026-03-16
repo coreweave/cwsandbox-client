@@ -54,13 +54,6 @@ dev = [
     "httpx>=0.27.0",  # For integration tests (network connectivity testing)
     "python-semantic-release>=9.15.1",
 ]
-docs = [
-    "mkdocs>=1.6.0",
-    "mkdocs-material>=9.5.0",
-    "mkdocstrings[python]>=0.27.0",
-    "mkdocs-include-markdown-plugin>=7.0.0",
-]
-
 [tool.ruff]
 line-length = 100
 target-version = "py311"

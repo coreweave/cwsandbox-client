@@ -88,10 +88,10 @@ uv run python examples/rl_training/art/train.py \
 
 ## W&B Metrics
 
-When `WANDB_API_KEY` is set, cwsandbox automatically logs sandbox execution metrics (success rate, error rate, exec counts) to your wandb run. See the [W&B Metrics Integration](../../../docs/guides/rl-training.md#wb-metrics-integration) section of the RL Training Guide for details.
+When `WANDB_API_KEY` is set, cwsandbox automatically logs sandbox execution metrics (success rate, error rate, exec counts) to your wandb run. See the [RL Training Guide](https://docs.coreweave.com/products/coreweave-sandbox/client/guides/rl-training) for details.
 
 ## Further Reading
 
 - [ART Documentation](https://github.com/OpenPipe/ART)
-- [RL Training Guide](../../../docs/guides/rl-training.md)
+- [RL Training Guide](https://docs.coreweave.com/products/coreweave-sandbox/client/guides/rl-training)
 - [MBPP Dataset](https://huggingface.co/datasets/google-research-datasets/mbpp)

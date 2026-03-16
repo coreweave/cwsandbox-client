@@ -28,9 +28,6 @@ coverage.xml
 # Linting
 .ruff_cache/
 
-# mkdocs
-/site
-
 # IDE
 .idea/
 .vscode/

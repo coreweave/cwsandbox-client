@@ -8,4 +8,4 @@ SPDX-PackageName: cwsandbox-client
 
 Run SWE-bench evaluations using CWSandbox's parallel sandbox execution.
 
-See the [SWE-bench evaluation guide](../../docs/guides/swebench.md) for setup instructions, usage examples, and troubleshooting.
+See the [SWE-bench evaluation guide](https://docs.coreweave.com/products/coreweave-sandbox/client/guides/swebench) for setup instructions, usage examples, and troubleshooting.
