@@ -15,7 +15,9 @@ import click
 DEFAULT_SECRET_NAME = "sandbox-tower-join-token"
 DEFAULT_SECRET_KEY = "token"
 DEFAULT_NAMESPACE = "sandbox-system"
-DEFAULT_ATC_SERVER = "https://atc.cw-sandbox.com"
+from cwsandbox._defaults import DEFAULT_BASE_URL
+
+DEFAULT_ATC_SERVER = DEFAULT_BASE_URL
 
 
 @click.command("create-join-token")
@@ -39,14 +41,14 @@ DEFAULT_ATC_SERVER = "https://atc.cw-sandbox.com"
 @click.option("--description", default=None, help="Human-readable description for the token.")
 @click.option(
     "--atc-server",
-    envvar="BOX_ATC_SERVER",
+    envvar="CWSANDBOX_BASE_URL",
     default=DEFAULT_ATC_SERVER,
     show_envvar=True,
     help="ATC server address.",
 )
 @click.option(
     "--api-key",
-    envvar="BOX_API_KEY",
+    envvar="CWSANDBOX_API_KEY",
     default=None,
     show_envvar=True,
     help="API key for ATC authentication.",
@@ -118,7 +120,7 @@ def create_join_token(
         cwsandbox tower create-join-token --tower-id=my-tower --generate-only
     """
     if not api_key:
-        raise click.ClickException("--api-key or BOX_API_KEY is required")
+        raise click.ClickException("--api-key or CWSANDBOX_API_KEY is required")
 
     # If --json is provided, parse and use as base values (flags override)
     if json_payload is not None:
@@ -131,11 +133,11 @@ def create_join_token(
 
     # Build the API request body
     body: dict[str, Any] = {"tower_id": tower_id}
-    if tower_group_id:
+    if tower_group_id is not None:
         body["tower_group_id"] = tower_group_id
     if ttl_seconds is not None:
         body["ttl_seconds"] = ttl_seconds
-    if description:
+    if description is not None:
         body["description"] = description
 
     token_resp = _create_token(atc_server, api_key, body)
@@ -156,8 +158,12 @@ def create_join_token(
         err=True,
     )
 
+    token = token_resp.get("token")
+    if not token:
+        raise click.ClickException("ATC returned invalid response: missing 'token' field")
+
     _store_token_in_secret(
-        token=token_resp["token"],
+        token=token,
         kubeconfig=kubeconfig,
         namespace=namespace,
         secret_name=secret_name,
@@ -188,13 +194,13 @@ def _apply_json_payload(
     except json.JSONDecodeError as e:
         raise click.ClickException(f"Invalid JSON: {e}") from None
 
-    if tower_id is None and req.get("tower_id"):
+    if tower_id is None and req.get("tower_id") is not None:
         tower_id = req["tower_id"]
-    if tower_group_id is None and req.get("tower_group_id"):
+    if tower_group_id is None and req.get("tower_group_id") is not None:
         tower_group_id = req["tower_group_id"]
-    if ttl_seconds is None and req.get("ttl_seconds"):
+    if ttl_seconds is None and req.get("ttl_seconds") is not None:
         ttl_seconds = req["ttl_seconds"]
-    if description is None and req.get("description"):
+    if description is None and req.get("description") is not None:
         description = req["description"]
 
     return tower_id, tower_group_id, ttl_seconds, description
