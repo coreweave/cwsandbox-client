@@ -12,11 +12,11 @@ from typing import Any
 
 import click
 
+from cwsandbox._defaults import DEFAULT_BASE_URL
+
 DEFAULT_SECRET_NAME = "sandbox-tower-join-token"
 DEFAULT_SECRET_KEY = "token"
 DEFAULT_NAMESPACE = "sandbox-system"
-from cwsandbox._defaults import DEFAULT_BASE_URL
-
 DEFAULT_ATC_SERVER = DEFAULT_BASE_URL
 
 
