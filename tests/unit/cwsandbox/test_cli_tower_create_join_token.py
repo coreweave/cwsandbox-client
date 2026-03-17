@@ -66,10 +66,13 @@ class TestCreateJoinTokenValidation:
     def test_api_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CWSANDBOX_API_KEY env var is accepted."""
         monkeypatch.setenv("CWSANDBOX_API_KEY", "env-key")
-        with patch(
-            "cwsandbox.cli.tower_create_join_token._create_token",
-            return_value=_TOKEN_RESPONSE,
-        ), patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret"):
+        with (
+            patch(
+                "cwsandbox.cli.tower_create_join_token._create_token",
+                return_value=_TOKEN_RESPONSE,
+            ),
+            patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret"),
+        ):
             result = _invoke(["--tower-id=my-tower"])
         assert result.exit_code == 0
 
@@ -116,17 +119,17 @@ class TestCreateJoinTokenNormalFlow:
 
     @patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret")
     @patch("cwsandbox.cli.tower_create_join_token._create_token", return_value=_TOKEN_RESPONSE)
-    def test_custom_k8s_options(
-        self, mock_create: MagicMock, mock_store: MagicMock
-    ) -> None:
-        result = _invoke([
-            "--tower-id=my-tower",
-            "--api-key=test-key",
-            "--namespace=custom-ns",
-            "--secret-name=my-secret",
-            "--secret-key=my-key",
-            "--kubeconfig=/tmp/kubeconfig",
-        ])
+    def test_custom_k8s_options(self, mock_create: MagicMock, mock_store: MagicMock) -> None:
+        result = _invoke(
+            [
+                "--tower-id=my-tower",
+                "--api-key=test-key",
+                "--namespace=custom-ns",
+                "--secret-name=my-secret",
+                "--secret-key=my-key",
+                "--kubeconfig=/tmp/kubeconfig",
+            ]
+        )
         assert result.exit_code == 0
         mock_store.assert_called_once_with(
             token="secret-join-token-value",
@@ -141,13 +144,15 @@ class TestCreateJoinTokenNormalFlow:
     def test_request_body_includes_optional_fields(
         self, mock_create: MagicMock, mock_store: MagicMock
     ) -> None:
-        result = _invoke([
-            "--tower-id=my-tower",
-            "--api-key=test-key",
-            "--tower-group-id=gpu-group",
-            "--ttl=3600",
-            "--description=test token",
-        ])
+        result = _invoke(
+            [
+                "--tower-id=my-tower",
+                "--api-key=test-key",
+                "--tower-group-id=gpu-group",
+                "--ttl=3600",
+                "--description=test token",
+            ]
+        )
         assert result.exit_code == 0
         body = mock_create.call_args[0][2]
         assert body == {
@@ -159,9 +164,7 @@ class TestCreateJoinTokenNormalFlow:
 
     @patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret")
     @patch("cwsandbox.cli.tower_create_join_token._create_token")
-    def test_missing_token_in_response(
-        self, mock_create: MagicMock, mock_store: MagicMock
-    ) -> None:
+    def test_missing_token_in_response(self, mock_create: MagicMock, mock_store: MagicMock) -> None:
         mock_create.return_value = {"tower_id": "my-tower"}
         result = _invoke(["--tower-id=my-tower", "--api-key=test-key"])
         assert result.exit_code == 1
@@ -174,13 +177,13 @@ class TestJsonPayload:
 
     @patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret")
     @patch("cwsandbox.cli.tower_create_join_token._create_token", return_value=_TOKEN_RESPONSE)
-    def test_json_provides_tower_id(
-        self, mock_create: MagicMock, mock_store: MagicMock
-    ) -> None:
-        result = _invoke([
-            "--api-key=test-key",
-            '--json={"tower_id":"json-tower","ttl_seconds":7200}',
-        ])
+    def test_json_provides_tower_id(self, mock_create: MagicMock, mock_store: MagicMock) -> None:
+        result = _invoke(
+            [
+                "--api-key=test-key",
+                '--json={"tower_id":"json-tower","ttl_seconds":7200}',
+            ]
+        )
         assert result.exit_code == 0
         body = mock_create.call_args[0][2]
         assert body["tower_id"] == "json-tower"
@@ -188,14 +191,14 @@ class TestJsonPayload:
 
     @patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret")
     @patch("cwsandbox.cli.tower_create_join_token._create_token", return_value=_TOKEN_RESPONSE)
-    def test_flags_override_json(
-        self, mock_create: MagicMock, mock_store: MagicMock
-    ) -> None:
-        result = _invoke([
-            "--tower-id=flag-tower",
-            "--api-key=test-key",
-            '--json={"tower_id":"json-tower","ttl_seconds":7200}',
-        ])
+    def test_flags_override_json(self, mock_create: MagicMock, mock_store: MagicMock) -> None:
+        result = _invoke(
+            [
+                "--tower-id=flag-tower",
+                "--api-key=test-key",
+                '--json={"tower_id":"json-tower","ttl_seconds":7200}',
+            ]
+        )
         assert result.exit_code == 0
         body = mock_create.call_args[0][2]
         assert body["tower_id"] == "flag-tower"
@@ -213,14 +216,14 @@ class TestJsonPayload:
 
     @patch("cwsandbox.cli.tower_create_join_token._store_token_in_secret")
     @patch("cwsandbox.cli.tower_create_join_token._create_token", return_value=_TOKEN_RESPONSE)
-    def test_json_ttl_zero_not_dropped(
-        self, mock_create: MagicMock, mock_store: MagicMock
-    ) -> None:
+    def test_json_ttl_zero_not_dropped(self, mock_create: MagicMock, mock_store: MagicMock) -> None:
         """ttl_seconds=0 in JSON should not be silently dropped."""
-        result = _invoke([
-            "--api-key=test-key",
-            '--json={"tower_id":"my-tower","ttl_seconds":0}',
-        ])
+        result = _invoke(
+            [
+                "--api-key=test-key",
+                '--json={"tower_id":"my-tower","ttl_seconds":0}',
+            ]
+        )
         assert result.exit_code == 0
         body = mock_create.call_args[0][2]
         assert body["ttl_seconds"] == 0
@@ -231,10 +234,12 @@ class TestJsonPayload:
         self, mock_create: MagicMock, mock_store: MagicMock
     ) -> None:
         """Empty string description from JSON should be passed through."""
-        result = _invoke([
-            "--api-key=test-key",
-            '--json={"tower_id":"my-tower","description":""}',
-        ])
+        result = _invoke(
+            [
+                "--api-key=test-key",
+                '--json={"tower_id":"my-tower","description":""}',
+            ]
+        )
         assert result.exit_code == 0
         body = mock_create.call_args[0][2]
         assert body["description"] == ""
@@ -277,8 +282,9 @@ class TestStoreTokenInSecret:
     def test_secret_creation_success(self, mock_create: MagicMock) -> None:
         from kubernetes.client import CoreV1Api
 
-        with patch.object(CoreV1Api, "create_namespaced_secret") as mock_create_secret, patch(
-            "kubernetes.config.load_kube_config"
+        with (
+            patch.object(CoreV1Api, "create_namespaced_secret") as mock_create_secret,
+            patch("kubernetes.config.load_kube_config"),
         ):
             result = _invoke(["--tower-id=my-tower", "--api-key=test-key"])
 
@@ -292,11 +298,11 @@ class TestStoreTokenInSecret:
 
         api_exc = ApiException(status=409, reason="Conflict")
 
-        with patch.object(
-            CoreV1Api, "create_namespaced_secret", side_effect=api_exc
-        ), patch.object(
-            CoreV1Api, "replace_namespaced_secret"
-        ) as mock_replace, patch("kubernetes.config.load_kube_config"):
+        with (
+            patch.object(CoreV1Api, "create_namespaced_secret", side_effect=api_exc),
+            patch.object(CoreV1Api, "replace_namespaced_secret") as mock_replace,
+            patch("kubernetes.config.load_kube_config"),
+        ):
             result = _invoke(["--tower-id=my-tower", "--api-key=test-key"])
 
         assert result.exit_code == 0
