@@ -13,7 +13,6 @@ from click.testing import CliRunner
 
 from cwsandbox.cli import cli
 
-
 # Shared mock API response
 _TOKEN_RESPONSE = {
     "tower_id": "my-tower",
