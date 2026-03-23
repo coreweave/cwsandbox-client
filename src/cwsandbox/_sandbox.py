@@ -2216,8 +2216,6 @@ class Sandbox:
 
             line_parts: list[str] = []
             line_parts_bytes = 0
-            cancelled = False
-
             try:
                 while True:
                     item = await response_queue.get()
@@ -2272,15 +2270,13 @@ class Sandbox:
                 if line_parts:
                     await output_queue.put("".join(line_parts))
             except asyncio.CancelledError:
-                cancelled = True
                 raise
             finally:
                 shutdown_event.set()
                 collect_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await collect_task
-                if not cancelled:
-                    await output_queue.put(None)
+                await output_queue.put(None)
         except Exception as exc:
             # Early failures (before the inner try/finally) must propagate to
             # the consumer so it doesn't hang waiting on a sentinel that never
@@ -2464,7 +2460,6 @@ class Sandbox:
 
             collect_task = asyncio.create_task(collect_responses())
 
-            cancelled = False
             try:
                 while True:
                     item = await response_queue.get()
@@ -2505,7 +2500,6 @@ class Sandbox:
                             f"Exec stream error: {response.error.message}",
                         )
             except asyncio.CancelledError:
-                cancelled = True
                 raise
             finally:
                 ready_event.set()
@@ -2514,8 +2508,7 @@ class Sandbox:
                 with contextlib.suppress(asyncio.CancelledError):
                     await collect_task
                 stdin_writer.set_exception(SandboxExecutionError("Terminal session has ended"))
-                if not cancelled:
-                    await output_queue.put(None)
+                await output_queue.put(None)
 
             if request_error is not None:
                 raise request_error
