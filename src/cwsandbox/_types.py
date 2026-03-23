@@ -123,7 +123,7 @@ class ExecOutcome(StrEnum):
     FAILURE = "failure"
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True)
 class NetworkOptions:
     """Network configuration for sandbox ingress/egress.
 
@@ -149,7 +149,7 @@ class NetworkOptions:
             object.__setattr__(self, "exposed_ports", None)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True)
 class Secret:
     """A secret to inject from a store into a sandbox environment variable.
 
