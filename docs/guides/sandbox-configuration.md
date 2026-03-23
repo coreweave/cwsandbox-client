@@ -217,6 +217,60 @@ with Sandbox.run(defaults=defaults) as sandbox:
 
 This is a server-side limit. The sandbox will be terminated when it reaches this age, regardless of activity.
 
+## Tags
+
+Tags are user-defined strings attached to sandboxes for organization and filtering.
+
+### Setting tags
+
+```python
+# Via Sandbox.run()
+sandbox = Sandbox.run("sleep", "infinity", tags=["gpu", "my-project"])
+
+# Via SandboxDefaults (applied to all sandboxes)
+defaults = SandboxDefaults(tags=("production", "ml-pipeline"))
+
+# Per-sandbox tags merge with defaults
+sandbox = Sandbox.run(defaults=defaults, tags=["run-42"])
+# Result: ("production", "ml-pipeline", "run-42")
+```
+
+### Filtering by tags
+
+```python
+# List sandboxes with a specific tag
+sandboxes = Sandbox.list(tags=["my-project"]).result()
+
+# AND semantics — sandbox must have ALL specified tags
+sandboxes = Sandbox.list(tags=["gpu", "production"]).result()
+```
+
+### Reading tags
+
+```python
+sandbox = Sandbox.from_id("abc-123").result()
+print(sandbox.tags)  # ("gpu", "my-project")
+```
+
+### Tag constraints
+
+Each tag must:
+
+- Contain only alphanumeric characters, `-`, `_`, or `.`
+- Start and end with an alphanumeric character
+- Be at most 63 characters
+
+Invalid tags are rejected at creation time with a descriptive error.
+
+### CLI
+
+```bash
+cwsandbox ls --show-tags                  # Show tags column
+cwsandbox ls --tag gpu                    # Filter by tag
+cwsandbox ls --tag gpu --tag production   # AND filter
+cwsandbox ls -o json                      # Tags included in JSON output
+```
+
 ## Complete Example
 
 ```python

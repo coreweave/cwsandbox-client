@@ -35,6 +35,8 @@ cwsandbox --help
 cwsandbox ls                                      # All sandboxes
 cwsandbox ls --status running                     # Filter by status
 cwsandbox ls --tag my-project                     # Filter by tag
+cwsandbox ls --tag gpu --tag dev                  # AND filter (must have both)
+cwsandbox ls --show-tags                          # Show tags column
 cwsandbox ls --runway-id default --tower-id t1    # Filter by infrastructure
 ```
 
@@ -74,7 +76,7 @@ cwsandbox ls -o json | jq -r '.[].sandbox_id' | xargs -I{} cwsandbox exec {} ech
 cwsandbox ls -o json | jq '.[] | select(.tower_id == "my-tower")'
 ```
 
-Each object contains: `sandbox_id`, `status`, `tower_id`, `runway_id`, `tower_group_id`, `started_at` (ISO 8601 or null).
+Each object contains: `sandbox_id`, `status`, `tower_id`, `runway_id`, `tower_group_id`, `started_at` (ISO 8601 or null), `tags` (array of strings).
 
 ## See also
 
