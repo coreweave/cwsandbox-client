@@ -2910,18 +2910,12 @@ class TestExecStdinReadySignal:
 class TestShellCancellation:
     """Tests for TTY shell session cancellation behavior."""
 
-    @pytest.mark.xfail(
-        reason="Bug: CancelledError path skips output_queue sentinel, "
-        "leaving StreamReader consumers hanging forever. "
-        "Fix: remove `if not cancelled` guard at _sandbox.py:2466.",
-        strict=True,
-    )
     def test_shell_cancel_terminates_output_stream(self) -> None:
         """Cancelled shell session must deliver a sentinel to the output stream.
 
         When a TerminalSession future is cancelled, _exec_streaming_tty_async
-        receives CancelledError. The finally block currently gates the output
-        sentinel behind `if not cancelled`, so StreamReader consumers block
+        receives CancelledError. The finally block must always enqueue the
+        sentinel so StreamReader consumers don't block
         forever waiting for a termination signal that never arrives.
         """
         import threading
