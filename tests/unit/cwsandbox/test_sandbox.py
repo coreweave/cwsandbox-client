@@ -2577,8 +2577,57 @@ class TestSecretsParameter:
             secrets=[Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")],
         )
         stored = sandbox._start_kwargs["secrets"]
-        assert len(stored) == 2
-        assert all(s.store == "wandb" and s.env_var == "HF_TOKEN" for s in stored)
+        assert len(stored) == 1
+        assert stored[0].store == "wandb" and stored[0].env_var == "HF_TOKEN"
+
+    @pytest.mark.asyncio
+    async def test_identical_duplicate_secrets_deduplicated_in_proto(
+        self, mock_api_key: str
+    ) -> None:
+        """Identical secrets in defaults + explicit are deduplicated before proto serialization.
+
+        When the same Secret appears in both SandboxDefaults and the per-sandbox
+        secrets list, the merge logic deduplicates them so only one copy is
+        serialized into the proto request, avoiding backend rejection of duplicate
+        env_var targets.
+        """
+        # Same secret in defaults AND explicit — a natural "belt and suspenders" pattern
+        shared_secret = Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")
+        defaults = SandboxDefaults(secrets=(shared_secret,))
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            defaults=defaults,
+            secrets=[Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")],
+        )
+
+        # Step 1: Merge logic deduplicates identical secrets
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1, "Identical secrets should be deduplicated during merge"
+
+        # Step 2: Wire up mock to reach proto conversion in _start_async
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = (("authorization", "Bearer test-api-key"),)
+
+        await sandbox._start_async()
+
+        # Step 3: Inspect the proto request — only one entry, no duplicate
+        request = mock_stub.Start.call_args[0][0]
+        assert len(request.secret_stores) == 1, "Both secrets share store 'wandb'"
+        wandb_store = request.secret_stores[0]
+        assert wandb_store.store_name == "wandb"
+        assert len(wandb_store.secrets) == 1, "Deduplicated: only one SecretMapping entry"
+        assert wandb_store.secrets[0].path == "HF_TOKEN"
+        assert wandb_store.secrets[0].env_var == "HF_TOKEN"
 
     def test_init_raises_on_conflicting_field(self) -> None:
         """Test that secrets differing only in field raise ValueError."""

@@ -463,7 +463,7 @@ class Sandbox:
                         f"field={secret.field!r})"
                     )
                 seen[env_var] = secret
-            self._start_kwargs["secrets"] = merged_secrets
+            self._start_kwargs["secrets"] = list(seen.values())
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: atc_pb2_grpc.ATCServiceStub | None = None
