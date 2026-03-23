@@ -1140,3 +1140,85 @@ def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> N
     recovered = Sandbox.from_id(sandbox_id).result()
     assert recovered.sandbox_id == sandbox_id
     assert recovered.status in ("completed", "terminated", "failed", "unspecified")
+
+
+# Tag integration tests
+
+
+def test_sandbox_tags_round_trip(sandbox_defaults: SandboxDefaults) -> None:
+    """Test tags set at creation are returned via from_id."""
+    unique = uuid.uuid4().hex[:8]
+    custom_tags = [f"tag-a-{unique}", f"tag-b-{unique}"]
+
+    with Sandbox.run(
+        "sleep", "infinity", defaults=sandbox_defaults, tags=custom_tags
+    ) as sandbox:
+        sandbox.wait()
+
+        recovered = Sandbox.from_id(sandbox.sandbox_id).result()
+
+        # Tags from defaults (integration-test, session tag) plus custom tags
+        for tag in custom_tags:
+            assert tag in recovered.tags
+
+
+def test_sandbox_list_filter_by_tags(sandbox_defaults: SandboxDefaults) -> None:
+    """Test Sandbox.list filters by tags (AND semantics)."""
+    unique = uuid.uuid4().hex[:8]
+    shared_tag = f"shared-{unique}"
+    only_a_tag = f"only-a-{unique}"
+    only_b_tag = f"only-b-{unique}"
+
+    # Create sequentially to avoid resource pressure on local clusters
+    with Sandbox.run(
+        "sleep", "infinity", defaults=sandbox_defaults, tags=[shared_tag, only_a_tag]
+    ) as sb_a:
+        sb_a.wait()
+
+        with Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=[shared_tag, only_b_tag]
+        ) as sb_b:
+            sb_b.wait()
+
+            # Filter by shared tag — both should appear
+            shared_results = Sandbox.list(tags=[shared_tag]).result()
+            shared_ids = {s.sandbox_id for s in shared_results}
+            assert sb_a.sandbox_id in shared_ids
+            assert sb_b.sandbox_id in shared_ids
+
+            # Filter by only_a — only sb_a should appear
+            a_results = Sandbox.list(tags=[only_a_tag]).result()
+            a_ids = {s.sandbox_id for s in a_results}
+            assert sb_a.sandbox_id in a_ids
+            assert sb_b.sandbox_id not in a_ids
+
+            # AND semantics — filter by both shared + only_a
+            and_results = Sandbox.list(tags=[shared_tag, only_a_tag]).result()
+            and_ids = {s.sandbox_id for s in and_results}
+            assert sb_a.sandbox_id in and_ids
+            assert sb_b.sandbox_id not in and_ids
+
+
+def test_sandbox_rejects_invalid_tags(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that tags with invalid characters are rejected by the server."""
+    from cwsandbox.exceptions import SandboxError
+
+    # Tags with spaces are invalid K8s label name segments
+    with pytest.raises(SandboxError, match="invalid tag"):
+        sandbox = Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=["has space"]
+        )
+        sandbox.wait()
+
+
+def test_sandbox_rejects_too_long_tag(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that tags exceeding K8s label length limit are rejected."""
+    from cwsandbox.exceptions import SandboxError
+
+    # K8s label name segment max is 63 chars; prefix eats 24, so tag > 39 chars overflows
+    long_tag = "a" * 64
+    with pytest.raises(SandboxError, match="invalid tag"):
+        sandbox = Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=[long_tag]
+        )
+        sandbox.wait()
