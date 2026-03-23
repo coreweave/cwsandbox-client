@@ -3293,6 +3293,101 @@ class TestExecStdinReadySignal:
             assert process.stdin is None
 
 
+class TestShellCancellation:
+    """Tests for TTY shell session cancellation behavior."""
+
+    @pytest.mark.xfail(
+        reason="Bug: CancelledError path skips output_queue sentinel, "
+        "leaving StreamReader consumers hanging forever. "
+        "Fix: remove `if not cancelled` guard at _sandbox.py:2466.",
+        strict=True,
+    )
+    def test_shell_cancel_terminates_output_stream(self) -> None:
+        """Cancelled shell session must deliver a sentinel to the output stream.
+
+        When a TerminalSession future is cancelled, _exec_streaming_tty_async
+        receives CancelledError. The finally block currently gates the output
+        sentinel behind `if not cancelled`, so StreamReader consumers block
+        forever waiting for a termination signal that never arrives.
+        """
+        import threading
+        import time
+
+        from google.protobuf import timestamp_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        # Simulate a long-running shell: ready → output → hang forever
+        hang_event = asyncio.Event()
+
+        async def response_generator() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda field: field == "ready"
+            ready.ready.ready_at = timestamp_pb2.Timestamp(seconds=1234567890)
+            yield ready
+
+            output = MagicMock()
+            output.HasField = lambda field: field == "output"
+            output.output.data = b"bash-5.2$ "
+            yield output
+
+            # Block indefinitely — simulates ongoing interactive session
+            await hang_event.wait()
+
+        mock_call = MockBidirectionalStreamCall(response_generator=response_generator)
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            session = sandbox.shell(["/bin/bash"])
+
+            # Drain output in a background thread (like a real consumer would)
+            output_chunks: list[bytes] = []
+            output_done = threading.Event()
+
+            def drain_output() -> None:
+                try:
+                    for chunk in session.output:
+                        output_chunks.append(chunk)
+                except Exception:
+                    pass
+                output_done.set()
+
+            reader = threading.Thread(target=drain_output, daemon=True)
+            reader.start()
+
+            # Wait for the first chunk so we know the session is active
+            time.sleep(1.0)
+            assert len(output_chunks) >= 1, "Should have received the prompt chunk"
+
+            # Cancel the session future — sends CancelledError to the coroutine
+            session._future.cancel()
+
+            # The output consumer MUST terminate after cancellation.
+            # Bug: it hangs forever because the sentinel is skipped.
+            finished = output_done.wait(timeout=5.0)
+            if not finished:
+                # Force cleanup so the test doesn't hang the suite
+                session.output.close()
+                output_done.wait(timeout=2.0)
+            assert finished, (
+                "Output stream did not terminate after cancellation — "
+                "CancelledError path skipped the output_queue sentinel"
+            )
+
+
 class TestCrossLoopRegression:
     """Regression tests for cross-event-loop bug.
 
