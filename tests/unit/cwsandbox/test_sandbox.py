@@ -3141,3 +3141,102 @@ class TestTerminalStateProperties:
             sandbox_id="sb-1", status=SandboxStatus.COMPLETED, runway_id="runway-99"
         )
         assert sandbox.runway_id == "runway-99"
+
+
+class TestSandboxTags:
+    """Tests for the Sandbox.tags property and tags parsing from proto."""
+
+    def test_tags_property_returns_tuple(self) -> None:
+        """Sandbox.tags returns a tuple when tags are set."""
+        sandbox = Sandbox(command="sleep", args=["infinity"], tags=["a", "b"])
+        assert sandbox.tags == ("a", "b")
+
+    def test_tags_property_returns_empty_tuple_when_no_tags(self) -> None:
+        """Sandbox.tags returns empty tuple when no tags are provided."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox.tags == ()
+
+    def test_from_sandbox_info_parses_tags(self) -> None:
+        """_from_sandbox_info populates tags from proto response."""
+        from unittest.mock import MagicMock
+
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
+
+        info = MagicMock()
+        info.sandbox_id = "test-123"
+        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
+        info.tower_id = "tower-1"
+        info.tower_group_id = "group-1"
+        info.runway_id = "runway-1"
+        info.tags = ["tag-a", "tag-b"]
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert sandbox.tags == ("tag-a", "tag-b")
+
+    def test_from_sandbox_info_empty_tags(self) -> None:
+        """_from_sandbox_info returns empty tuple when proto has empty tags list."""
+        from unittest.mock import MagicMock
+
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
+
+        info = MagicMock()
+        info.sandbox_id = "test-123"
+        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
+        info.tower_id = "tower-1"
+        info.tower_group_id = "group-1"
+        info.runway_id = "runway-1"
+        info.tags = []
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert sandbox.tags == ()
+
+    def test_apply_sandbox_info_updates_tags_when_proto_has_field(self) -> None:
+        """_apply_sandbox_info updates _tags when proto response has tags field (even if empty)."""
+        from unittest.mock import MagicMock
+
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
+
+        # Create a sandbox with existing tags
+        info = MagicMock()
+        info.sandbox_id = "test-123"
+        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
+        info.tower_id = "tower-1"
+        info.tower_group_id = "group-1"
+        info.runway_id = "runway-1"
+        info.tags = ["old-tag"]
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert sandbox.tags == ("old-tag",)
+
+        # Poll response with empty tags list (field present but empty)
+        update_info = MagicMock()
+        update_info.sandbox_id = "test-123"
+        update_info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        update_info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
+        update_info.tower_id = "tower-1"
+        update_info.tower_group_id = "group-1"
+        update_info.runway_id = "runway-1"
+        update_info.tags = []
+
+        sandbox._apply_sandbox_info(update_info, source="poll")
+
+        # Tags should be updated to empty tuple
+        assert sandbox.tags == ()

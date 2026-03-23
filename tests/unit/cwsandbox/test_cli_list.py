@@ -33,6 +33,7 @@ class TestListCommand:
         mock_sb.status.value = "running"
         mock_sb.tower_id = "tower-1"
         mock_sb.runway_id = "runway-1"
+        mock_sb.tags = ("dev", "test")
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -101,6 +102,7 @@ class TestListCommand:
         mock_sb.tower_id = "tower-1"
         mock_sb.runway_id = "runway-1"
         mock_sb.tower_group_id = "tg-1"
+        mock_sb.tags = ("dev", "test")
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -122,6 +124,7 @@ class TestListCommand:
                     "runway_id": "runway-1",
                     "tower_group_id": "tg-1",
                     "started_at": "2026-01-15T10:30:00+00:00",
+                    "tags": ["dev", "test"],
                 }
             ],
             indent=2,
@@ -141,6 +144,30 @@ class TestListCommand:
 
         assert result.exit_code == 0
         assert result.output.strip() == "[]"
+
+    def test_list_json_no_tags(self) -> None:
+        """cwsandbox ls --output json emits empty list for sandbox with no tags."""
+        mock_sb = MagicMock()
+        mock_sb.sandbox_id = "abc-123"
+        mock_sb.status.value = "running"
+        mock_sb.tower_id = "tower-1"
+        mock_sb.runway_id = "runway-1"
+        mock_sb.tower_group_id = "tg-1"
+        mock_sb.tags = None
+        mock_sb.started_at = None
+
+        mock_op_ref = MagicMock()
+        mock_op_ref.result.return_value = [mock_sb]
+
+        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.list.return_value = mock_op_ref
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ls", "--output", "json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data[0]["tags"] == []
 
     def test_list_api_error(self) -> None:
         """cwsandbox ls shows clean error for CWSandboxError from API failure."""
