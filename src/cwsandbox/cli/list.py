@@ -38,12 +38,14 @@ _STATUS_CHOICES = [s.value for s in SandboxStatus if s != SandboxStatus.UNSPECIF
     type=click.Choice(["table", "json"], case_sensitive=False),
     help="Output format.",
 )
+@click.option("--show-tags", is_flag=True, default=False, help="Show tags column in table output.")
 def list_sandboxes(
     status: str | None,
     tags: tuple[str, ...],
     runway_ids: tuple[str, ...],
     tower_ids: tuple[str, ...],
     output_format: str,
+    show_tags: bool,
 ) -> None:
     """List sandboxes.
 
@@ -65,6 +67,7 @@ def list_sandboxes(
                 "runway_id": sb.runway_id,
                 "tower_group_id": sb.tower_group_id,
                 "started_at": sb.started_at.isoformat() if sb.started_at else None,
+                "tags": list(sb.tags) if sb.tags else [],
             }
             for sb in sandboxes
         ]
@@ -75,8 +78,13 @@ def list_sandboxes(
         click.echo("No sandboxes found.")
         return
 
-    click.echo(f"{'SANDBOX ID':<40} {'STATUS':<14} {'TOWER':<20} {'RUNWAY':<20} {'STARTED AT'}")
-    click.echo(f"{'-' * 40} {'-' * 14} {'-' * 20} {'-' * 20} {'-' * 24}")
+    header = f"{'SANDBOX ID':<40} {'STATUS':<14} {'TOWER':<20} {'RUNWAY':<20} {'STARTED AT':<24}"
+    sep = f"{'-' * 40} {'-' * 14} {'-' * 20} {'-' * 20} {'-' * 24}"
+    if show_tags:
+        header += f" {'TAGS'}"
+        sep += f" {'-' * 40}"
+    click.echo(header)
+    click.echo(sep)
 
     for sb in sandboxes:
         sid = sb.sandbox_id or "-"
@@ -84,4 +92,7 @@ def list_sandboxes(
         tower = sb.tower_id or "-"
         runway = sb.runway_id or "-"
         started = sb.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if sb.started_at else "-"
-        click.echo(f"{sid:<40} {st:<14} {tower:<20} {runway:<20} {started}")
+        line = f"{sid:<40} {st:<14} {tower:<20} {runway:<20} {started:<24}"
+        if show_tags:
+            line += f" {','.join(sb.tags) if sb.tags else '<none>'}"
+        click.echo(line)
