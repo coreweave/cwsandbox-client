@@ -2424,6 +2424,67 @@ class TestSecretsParameter:
         assert len(stored) == 2
         assert all(s.store == "wandb" and s.env_var == "HF_TOKEN" for s in stored)
 
+    @pytest.mark.asyncio
+    async def test_identical_duplicate_secrets_produce_duplicate_proto_entries(
+        self, mock_api_key: str
+    ) -> None:
+        """Prove that identical secrets in defaults + explicit create duplicate proto entries.
+
+        When the same Secret appears in both SandboxDefaults and the per-sandbox
+        secrets list, both copies survive the merge logic (len == 2) and are
+        serialized as duplicate SecretMapping entries within the same
+        SecretStoreReference. The backend rejects duplicate env_var targets
+        across secret_stores before resolution, causing a start failure for
+        what looks like a natural usage pattern.
+        """
+        # Same secret in defaults AND explicit — a natural "belt and suspenders" pattern
+        shared_secret = Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")
+        defaults = SandboxDefaults(secrets=(shared_secret,))
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            defaults=defaults,
+            secrets=[Secret(store="wandb", name="HF_TOKEN", env_var="HF_TOKEN")],
+        )
+
+        # Step 1: Merge logic preserves both copies
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 2, (
+            "Expected merge to preserve both identical secrets — "
+            "this is the root cause of the bug"
+        )
+
+        # Step 2: Wire up mock to reach proto conversion in _start_async
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = (("authorization", "Bearer test-api-key"),)
+
+        await sandbox._start_async()
+
+        # Step 3: Inspect the proto request — duplicates are serialized
+        request = mock_stub.Start.call_args[0][0]
+        assert len(request.secret_stores) == 1, "Both secrets share store 'wandb'"
+        wandb_store = request.secret_stores[0]
+        assert wandb_store.store_name == "wandb"
+
+        # BUG: Two identical SecretMapping entries for the same env_var.
+        # The backend rejects this with a duplicate env_var error.
+        assert len(wandb_store.secrets) == 2, (
+            "Both copies survived into proto — the backend will reject "
+            "duplicate env_var 'HF_TOKEN' in the same secret_stores request"
+        )
+        assert wandb_store.secrets[0].path == "HF_TOKEN"
+        assert wandb_store.secrets[1].path == "HF_TOKEN"
+        assert wandb_store.secrets[0].env_var == wandb_store.secrets[1].env_var
+
     def test_init_raises_on_conflicting_field(self) -> None:
         """Test that secrets differing only in field raise ValueError."""
         with pytest.raises(ValueError, match="Conflicting secrets for env_var"):
