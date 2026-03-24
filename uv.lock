@@ -136,14 +136,14 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.1.8"
+version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz", hash = "sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a", size = 295065, upload-time = "2025-11-15T20:45:42.706Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188, upload-time = "2024-12-21T18:38:41.666Z" },
+    { url = "https://files.pythonhosted.org/packages/98/78/01c019cdb5d6498122777c1a43056ebb3ebfeef2076d9d026bfe15583b2b/click-8.3.1-py3-none-any.whl", hash = "sha256:981153a64e25f12d547d3426c367a4857371575ee7ad18df2a6183ab0545b2a6", size = 108274, upload-time = "2025-11-15T20:45:41.139Z" },
 ]
 
 [[package]]
@@ -273,8 +273,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", marker = "extra == 'cli'", specifier = ">=8.0" },
-    { name = "click", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "click", marker = "extra == 'cli'", specifier = ">=8.2" },
+    { name = "click", marker = "extra == 'dev'", specifier = ">=8.2" },
     { name = "googleapis-common-protos", specifier = ">=1.63.0" },
     { name = "grpc-stubs", marker = "extra == 'dev'", specifier = ">=1.53.0" },
     { name = "grpcio", specifier = ">=1.78.0" },
@@ -1134,20 +1134,20 @@ wheels = [
 
 [[package]]
 name = "python-gitlab"
-version = "6.5.0"
+version = "5.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "requests-toolbelt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/bd/b30f1d3b303cb5d3c72e2d57a847d699e8573cbdfd67ece5f1795e49da1c/python_gitlab-6.5.0.tar.gz", hash = "sha256:97553652d94b02de343e9ca92782239aa2b5f6594c5482331a9490d9d5e8737d", size = 400591, upload-time = "2025-10-17T21:40:02.89Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/08/d35d0f28549c43611e942f39b6321a7b35c02189d5badceefe601c0207ce/python_gitlab-5.6.0.tar.gz", hash = "sha256:bc531e8ba3e5641b60409445d4919ace68a2c18cb0ec6d48fbced6616b954166", size = 396148, upload-time = "2025-01-28T16:33:39.136Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/bd/b0d440685fbcafee462bed793a74aea88541887c4c30556a55ac64914b8d/python_gitlab-6.5.0-py3-none-any.whl", hash = "sha256:494e1e8e5edd15286eaf7c286f3a06652688f1ee20a49e2a0218ddc5cc475e32", size = 144419, upload-time = "2025-10-17T21:40:01.233Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/5e/2e1ed7145835afaad87664b2f675a1d7b6e1211ad6ecfe57e200ae45f0bd/python_gitlab-5.6.0-py3-none-any.whl", hash = "sha256:68980cd70929fc7f8f06d8a7b09bd046a6b79e1995c19d61249f046005099100", size = 148836, upload-time = "2025-01-28T16:33:36.818Z" },
 ]
 
 [[package]]
 name = "python-semantic-release"
-version = "10.5.3"
+version = "9.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1164,9 +1164,9 @@ dependencies = [
     { name = "shellingham" },
     { name = "tomlkit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/3a/7332b822825ed0e902c6e950e0d1e90e8f666fd12eb27855d1c8b6677eff/python_semantic_release-10.5.3.tar.gz", hash = "sha256:de4da78635fa666e5774caaca2be32063cae72431eb75e2ac23b9f2dfd190785", size = 618034, upload-time = "2025-12-14T22:37:29.782Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/ae/3ac172d9cb71dcf25be15c727ce84b3b16f31df98e8015a0a73fe3e29e1c/python_semantic_release-9.21.1.tar.gz", hash = "sha256:b5c509a573899e88e8f29504d2f83e9ddab9a66af861ec1baf39f2b86bbf3517", size = 308463, upload-time = "2025-05-05T04:29:12.818Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/01/ada29a1215df601bded0a2efd3b6d53864a0a9e0a9ea52aeaebe14fd03fd/python_semantic_release-10.5.3-py3-none-any.whl", hash = "sha256:1be0e07c36fa1f1ec9da4f438c1f6bbd7bc10eb0d6ac0089b0643103708c2823", size = 152716, upload-time = "2025-12-14T22:37:28.089Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/af/b7c6e77142586c4809cb93b636f62cecda73fa543ec4bd00a89eb3e1d4f3/python_semantic_release-9.21.1-py3-none-any.whl", hash = "sha256:e69afe5100106390eec9e800132c947ed774bdcf9aa8f0df29589ea9ef375a21", size = 132726, upload-time = "2025-05-05T04:29:10.698Z" },
 ]
 
 [[package]]

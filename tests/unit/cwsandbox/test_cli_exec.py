@@ -109,7 +109,7 @@ class TestExecCommand:
         )
 
         with _patch_sandbox(process):
-            runner = CliRunner(mix_stderr=False)
+            runner = CliRunner()
             result = runner.invoke(cli, ["exec", "test-sandbox-id", "some-cmd"])
 
         assert result.exit_code == 0
@@ -127,7 +127,7 @@ class TestExecCommand:
         )
 
         with _patch_sandbox(process):
-            runner = CliRunner(mix_stderr=False)
+            runner = CliRunner()
             result = runner.invoke(cli, ["exec", "test-sandbox-id", "bad-cmd"])
 
         assert result.exit_code == 1
