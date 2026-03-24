@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cwsandbox import Sandbox, Session
+from cwsandbox import Sandbox, Secret, Session
 from cwsandbox._sandbox import _Running
 from tests.unit.cwsandbox.conftest import make_operation_ref, make_process
 
@@ -67,6 +67,39 @@ class TestSessionSandbox:
             "LOG_LEVEL": "debug",  # Overridden
             "MODEL_NAME": "gpt2",  # Added
         }
+
+    def test_sandbox_passes_secrets(self) -> None:
+        """Test session.sandbox passes secrets."""
+        secrets = [
+            Secret(store="wandb", name="HF_TOKEN", field="api_key", env_var="HF_TOKEN"),
+        ]
+        session = Session()
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            secrets=secrets,
+        )
+
+        stored = sandbox._start_kwargs["secrets"]
+        assert len(stored) == 1
+        assert stored[0].store == "wandb"
+        assert stored[0].name == "HF_TOKEN"
+        assert stored[0].field == "api_key"
+        assert stored[0].env_var == "HF_TOKEN"
+
+    def test_session_accepts_dict_defaults(self) -> None:
+        """Test Session.__init__ accepts a dict and coerces to SandboxDefaults."""
+        session = Session(
+            {
+                "container_image": "ubuntu:22.04",
+                "tags": ["test"],
+                "secrets": [{"store": "wandb", "name": "HF_TOKEN"}],
+            }
+        )
+        assert session._defaults.container_image == "ubuntu:22.04"
+        assert session._defaults.tags == ("test",)
+        assert session._defaults.secrets is not None
+        assert session._defaults.secrets[0].store == "wandb"
 
 
 class TestSessionAnnotations:

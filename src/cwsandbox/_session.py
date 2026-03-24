@@ -7,12 +7,19 @@ from __future__ import annotations
 import asyncio
 import builtins
 import logging
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._types import ExecOutcome, NetworkOptions, OperationRef, Serialization
+from cwsandbox._types import (
+    ExecOutcome,
+    NetworkOptions,
+    OperationRef,
+    Secret,
+    Serialization,
+)
 from cwsandbox._wandb import WandbReporter
 from cwsandbox.exceptions import SandboxError
 
@@ -91,10 +98,17 @@ class Session:
 
     def __init__(
         self,
-        defaults: SandboxDefaults | None = None,
+        defaults: SandboxDefaults | Mapping[str, Any] | None = None,
         report_to: list[str] | None = None,
     ) -> None:
-        self._defaults = defaults or SandboxDefaults()
+        if isinstance(defaults, SandboxDefaults):
+            self._defaults = defaults
+        elif isinstance(defaults, Mapping) or defaults is None:
+            self._defaults = SandboxDefaults.from_dict(defaults)
+        else:
+            raise TypeError(
+                f"defaults must be SandboxDefaults, Mapping, or None, got {type(defaults).__name__}"
+            )
         self._sandboxes: dict[int, Sandbox] = {}
         self._closed = False
         self._loop_manager = _LoopManager.get()
@@ -318,6 +332,7 @@ class Session:
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        secrets: Sequence[Secret | dict[str, Any]] | None = None,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
 
@@ -344,6 +359,8 @@ class Session:
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
+            secrets: Secrets to inject as environment variables.
+                Merged with session defaults (defaults first, then this list).
 
         Returns:
             An unstarted Sandbox registered with the session.
@@ -396,6 +413,7 @@ class Session:
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             annotations=annotations,
+            secrets=secrets,
             defaults=self._defaults,
             _session=self,
         )
