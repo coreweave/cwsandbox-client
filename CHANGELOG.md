@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.11.2 (2026-03-24)
+
+### Bug Fixes
+
+- Enforce keyword args on NetworkOptions and Secret
+  ([#90](https://github.com/coreweave/cwsandbox-client/pull/90),
+  [`60d8fd7`](https://github.com/coreweave/cwsandbox-client/commit/60d8fd72d1a9e14087e5ffcaaa247d1130b329e4))
+
+
 ## v0.11.1 (2026-03-24)
 
 ### Bug Fixes
