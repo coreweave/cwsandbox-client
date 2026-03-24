@@ -305,7 +305,7 @@ class GetSandboxRequest(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class GetSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode", "tags")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -317,6 +317,7 @@ class GetSandboxResponse(_message.Message):
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
@@ -328,7 +329,8 @@ class GetSandboxResponse(_message.Message):
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
     __slots__ = ("tags", "status", "runway_ids", "tower_ids", "max_timeout_seconds", "include_stopped")
@@ -353,7 +355,7 @@ class ListSandboxesResponse(_message.Message):
     def __init__(self, sandboxes: _Optional[_Iterable[_Union[SandboxInfo, _Mapping]]] = ...) -> None: ...
 
 class SandboxInfo(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode", "tags")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -365,6 +367,7 @@ class SandboxInfo(_message.Message):
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
@@ -376,7 +379,8 @@ class SandboxInfo(_message.Message):
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DeleteSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
