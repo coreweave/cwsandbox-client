@@ -933,6 +933,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../guides/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../guides/cleanup-patterns/" class="md-nav__link">
         
   
@@ -1201,6 +1229,17 @@
     <span class="md-ellipsis">
       
         with_overrides
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cwsandbox.SandboxDefaults.from_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_dict
       
     </span>
   </a>
@@ -1858,6 +1897,17 @@
     <span class="md-ellipsis">
       
         ProcessResult
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cwsandbox.Secret" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret
       
     </span>
   </a>
@@ -2258,6 +2308,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cwsandbox.SandboxDefaults.from_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_dict
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2916,6 +2977,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cwsandbox.Secret" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cwsandbox.Serialization" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3295,9 +3367,15 @@
   
       dataclass
    (cwsandbox._types.NetworkOptions)" href="#cwsandbox.NetworkOptions">NetworkOptions</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">environment_variables</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">=</span> <span class="n"><span title="dict">dict</span></span><span class="p">(),</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">=</span> <span class="n"><span title="dict">dict</span></span><span class="p">(),</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="p">)</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">secrets</span><span class="p">:</span> <span class="n"><span title="tuple">tuple</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a></span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">environment_variables</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">=</span> <span class="n"><span title="dict">dict</span></span><span class="p">(),</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">=</span> <span class="n"><span title="dict">dict</span></span><span class="p">(),</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -3497,6 +3575,25 @@ None lets the backend control the default.</p>
             </td>
           </tr>
           <tr class="doc-section-item">
+            <td><code><span title="cwsandbox.SandboxDefaults.secrets">secrets</span></code></td>
+            <td class="doc-attribute-details">
+              <div class="doc-md-description">
+                <p>Secrets to inject as environment variables.</p>
+              </div>
+              <p>
+                  <span class="doc-attribute-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="tuple">tuple</span>[<a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a>, ...] | None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
             <td><code><span title="cwsandbox.SandboxDefaults.environment_variables">environment_variables</span></code></td>
             <td class="doc-attribute-details">
               <div class="doc-md-description">
@@ -3651,6 +3748,43 @@ then additional tags appended.</p>
     <div class="doc doc-contents ">
 
         <p>Create new defaults with some values overridden.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="cwsandbox.SandboxDefaults.from_dict" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">from_dict</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#cwsandbox.SandboxDefaults.from_dict" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">from_dict</span><span class="p">(</span><span class="n">d</span><span class="p">:</span> <span class="n"><span title="collections.abc.Mapping">Mapping</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            SandboxDefaults
+
+
+  
+      dataclass
+   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Build <code>SandboxDefaults</code> from a mapping, coercing nested fields.</p>
+<p>Accepts plain dicts or OmegaConf <code>DictConfig</code> objects.  Unknown
+keys are silently ignored so callers can pass a config section
+that may contain extra fields.</p>
+<p>Coercions applied:
+- <code>network</code> dict -&gt; <code>NetworkOptions</code>
+- <code>secrets</code> list of dicts -&gt; tuple of <code>Secret</code>
+- <code>args</code>, <code>tags</code>, <code>runway_ids</code>, <code>tower_ids</code> lists -&gt; tuples
+- <code>resources</code>, <code>environment_variables</code> -&gt; plain <code>dict</code></p>
 
 
     </div>
@@ -4475,8 +4609,15 @@ directly in the current Python process.</p>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">max_timeout_seconds</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="n">environment_variables</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">_session</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            Session (cwsandbox._session.Session)" href="#cwsandbox.Session">Session</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="p">)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">secrets</span><span class="p">:</span> <span class="n"><span title="collections.abc.Sequence">Sequence</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]]</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    <span class="n">_session</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            Session (cwsandbox._session.Session)" href="#cwsandbox.Session">Session</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -5046,6 +5187,32 @@ Use for non-sensitive metadata only.</p>
               </p>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>secrets</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Secrets to inject as environment variables.
+Merged with defaults (defaults first, then this list).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="collections.abc.Sequence">Sequence</span>[<a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a> | <span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -5552,7 +5719,14 @@ SandboxExecutionError from check=True with non-zero exit)</li>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">max_timeout_seconds</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">environment_variables</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (cwsandbox._sandbox.Sandbox)" href="#cwsandbox.Sandbox">Sandbox</a></span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">secrets</span><span class="p">:</span> <span class="n"><span title="collections.abc.Sequence">Sequence</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]]</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (cwsandbox._sandbox.Sandbox)" href="#cwsandbox.Sandbox">Sandbox</a></span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -5931,6 +6105,32 @@ Use for non-sensitive metadata only.</p>
               </p>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>secrets</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Secrets to inject as environment variables.
+Merged with defaults (defaults first, then this list).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="collections.abc.Sequence">Sequence</span>[<a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a> | <span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
       </tbody>
     </table>
         <p>Returns:
@@ -5971,12 +6171,16 @@ Use for non-sensitive metadata only.</p>
   </span>
 
 <a href="#cwsandbox.Sandbox.session" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">session</span><span class="p">(</span><span class="n">defaults</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            SandboxDefaults
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">session</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">defaults</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            SandboxDefaults
 
 
   
       dataclass
-   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Session (cwsandbox._session.Session)" href="#cwsandbox.Session">Session</a></span>
+   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a></span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">|</span> <span class="n"><span title="collections.abc.Mapping">Mapping</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Session (cwsandbox._session.Session)" href="#cwsandbox.Session">Session</a></span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -6012,7 +6216,7 @@ Use for non-sensitive metadata only.</p>
 
   
       dataclass
-   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a> | None</code>
+   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a> | <span title="collections.abc.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
                   </span>
                   <span class="doc-param-default">
                     <b>DEFAULT:</b>
@@ -8235,9 +8439,11 @@ been stopped.</p>
 
   
       dataclass
-   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">report_to</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            list (cwsandbox._session.Session.list)" href="#cwsandbox.Session.list">list</a></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
+   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a></span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">|</span> <span class="n"><span title="collections.abc.Mapping">Mapping</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">report_to</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            list (cwsandbox._session.Session.list)" href="#cwsandbox.Session.list">list</a></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -8276,7 +8482,7 @@ created by this session.</p>
 
   
       dataclass
-   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a> | None</code>
+   (cwsandbox._defaults.SandboxDefaults)" href="#cwsandbox.SandboxDefaults">SandboxDefaults</a> | <span title="collections.abc.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
                   </span>
                   <span class="doc-param-default">
                     <b>DEFAULT:</b>
@@ -8684,7 +8890,14 @@ Set to False to keep accumulating regardless.</p>
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">max_timeout_seconds</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">environment_variables</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (cwsandbox._sandbox.Sandbox)" href="#cwsandbox.Sandbox">Sandbox</a></span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">secrets</span><span class="p">:</span> <span class="n"><span title="collections.abc.Sequence">Sequence</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]]</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            Sandbox (cwsandbox._sandbox.Sandbox)" href="#cwsandbox.Sandbox">Sandbox</a></span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -8984,6 +9197,32 @@ Use for non-sensitive metadata only.</p>
                   <span class="doc-param-annotation">
                     <b>TYPE:</b>
                       <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="str">str</span>] | None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>secrets</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Secrets to inject as environment variables.
+Merged with session defaults (defaults first, then this list).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="collections.abc.Sequence">Sequence</span>[<a class="autorefs autorefs-internal" title="            Secret
+
+
+  
+      dataclass
+   (cwsandbox._types.Secret)" href="#cwsandbox.Secret">Secret</a> | <span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]] | None</code>
                   </span>
                   <span class="doc-param-default">
                     <b>DEFAULT:</b>
@@ -11087,6 +11326,147 @@ along with the exit code and original command.</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">else</span><span class="p">:</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="cwsandbox.Secret" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">Secret</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#cwsandbox.Secret" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Secret</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">store</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">name</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">field</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">env_var</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>A secret to inject from a store into a sandbox environment variable.</p>
+<p>All fields are keyword-only. When <code>env_var</code> is not specified it defaults
+to <code>name</code>. Plain dicts with matching keys are also accepted and
+converted automatically.</p>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">ATTRIBUTE</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="cwsandbox.Secret.store">store</span></code></td>
+            <td class="doc-attribute-details">
+              <div class="doc-md-description">
+                <p>Name of the secret store (e.g. "wandb").</p>
+              </div>
+              <p>
+                  <span class="doc-attribute-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="cwsandbox.Secret.name">name</span></code></td>
+            <td class="doc-attribute-details">
+              <div class="doc-md-description">
+                <p>Name of the secret in the store.</p>
+              </div>
+              <p>
+                  <span class="doc-attribute-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="cwsandbox.Secret.field">field</span></code></td>
+            <td class="doc-attribute-details">
+              <div class="doc-md-description">
+                <p>Specific field within a structured secret (optional).</p>
+              </div>
+              <p>
+                  <span class="doc-attribute-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="cwsandbox.Secret.env_var">env_var</span></code></td>
+            <td class="doc-attribute-details">
+              <div class="doc-md-description">
+                <p>Environment variable the secret is injected as (defaults to name).</p>
+              </div>
+              <p>
+                  <span class="doc-attribute-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span> | None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <p>Minimal usage (env_var defaults to name)::</p>
+<div class="highlight"><pre><span></span><code>Secret(store=&quot;wandb&quot;, name=&quot;HF_TOKEN&quot;)
+</code></pre></div>
+<p>Extracting a field from a structured secret::</p>
+<div class="highlight"><pre><span></span><code>Secret(
+    store=&quot;wandb&quot;,
+    name=&quot;db-credentials&quot;,
+    field=&quot;password&quot;,
+    env_var=&quot;DB_PASS&quot;,
+)
 </code></pre></div>
 
 

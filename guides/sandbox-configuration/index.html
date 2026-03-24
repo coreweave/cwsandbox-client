@@ -16,7 +16,7 @@
         <link rel="prev" href="../remote-functions/">
       
       
-        <link rel="next" href="../cleanup-patterns/">
+        <link rel="next" href="../environment-variables/">
       
       
         
@@ -1189,6 +1189,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Secrets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#secret-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setting-secrets-in-sandboxdefaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Secrets in SandboxDefaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#duplicate-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Duplicate Detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#timeouts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1242,6 +1303,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1665,6 +1754,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Secrets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#secret-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setting-secrets-in-sandboxdefaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Secrets in SandboxDefaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#duplicate-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Duplicate Detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#timeouts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2020,61 +2170,172 @@ same semantics as <code>environment_variables</code>.</p>
 <h3 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h3>
 <p>The SDK does not validate annotation keys or values. The server handles validation
 of reserved key prefixes, value format, and maximum entry count.</p>
+<h2 id="secrets">Secrets<a class="headerlink" href="#secrets" title="Permanent link">&para;</a></h2>
+<p>Inject secrets from secret stores as environment variables using the <code>Secret</code> type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span><span class="p">,</span> <span class="n">Secret</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="s2">&quot;pip&quot;</span><span class="p">,</span> <span class="s2">&quot;install&quot;</span><span class="p">,</span> <span class="s2">&quot;huggingface_hub&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">secrets</span><span class="o">=</span><span class="p">[</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>        <span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">),</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="p">],</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>        <span class="s2">&quot;from huggingface_hub import whoami; print(whoami()[&#39;name&#39;])&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    <span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>  <span class="c1"># Your Hugging Face username</span>
+</code></pre></div>
+<p>Unlike <code>environment_variables</code>, secrets are never passed in plaintext - they are resolved
+server-side from the named store and injected securely.</p>
+<p>The <code>store</code> field refers to a secret store provider configured on the towers you are
+using. Available stores depend on your tower configuration - contact your platform
+administrator to find out which stores are available and what secrets they contain.
+For example, towers with the W&amp;B integration have a <code>"wandb"</code> store that provides
+access to W&amp;B team secrets.</p>
+<h3 id="secret-fields">Secret Fields<a class="headerlink" href="#secret-fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>store</code></td>
+<td><code>str</code></td>
+<td>required</td>
+<td>Secret store provider configured on your tower (e.g. <code>"wandb"</code>)</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>str</code></td>
+<td>required</td>
+<td>Name of the secret in the store</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>str</code></td>
+<td><code>""</code></td>
+<td>Specific field within a structured secret</td>
+</tr>
+<tr>
+<td><code>env_var</code></td>
+<td><code>str</code></td>
+<td>same as <code>name</code></td>
+<td>Environment variable the secret is injected as</td>
+</tr>
+</tbody>
+</table>
+<h3 id="common-patterns">Common Patterns<a class="headerlink" href="#common-patterns" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">Secret</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># Minimal: env_var defaults to name</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">)</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># -&gt; injected as HF_TOKEN</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># Custom env_var name</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">,</span> <span class="n">env_var</span><span class="o">=</span><span class="s2">&quot;HUGGINGFACE_TOKEN&quot;</span><span class="p">)</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1"># -&gt; injected as HUGGINGFACE_TOKEN</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># Extracting a field from a structured secret</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;db-credentials&quot;</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">&quot;password&quot;</span><span class="p">,</span> <span class="n">env_var</span><span class="o">=</span><span class="s2">&quot;DB_PASS&quot;</span><span class="p">)</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="c1"># -&gt; injected as DB_PASS</span>
+</code></pre></div>
+<h3 id="setting-secrets-in-sandboxdefaults">Setting Secrets in SandboxDefaults<a class="headerlink" href="#setting-secrets-in-sandboxdefaults" title="Permanent link">&para;</a></h3>
+<p>Share secrets across all sandboxes in a session:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">SandboxDefaults</span><span class="p">,</span> <span class="n">Secret</span><span class="p">,</span> <span class="n">Session</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">secrets</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>        <span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">),</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="p">),</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="p">),</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="p">)</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="c1"># All sandboxes get both secrets</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">sb1</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">()</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    <span class="n">sb2</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">()</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>    <span class="c1"># Add more secrets for a specific sandbox</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    <span class="n">sb3</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">sandbox</span><span class="p">(</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>        <span class="n">secrets</span><span class="o">=</span><span class="p">[</span><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;vault&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;DB_PASS&quot;</span><span class="p">)],</span>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="p">)</span>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="c1"># sb3 gets all three secrets (defaults + explicit merged)</span>
+</code></pre></div>
+<h3 id="duplicate-detection">Duplicate Detection<a class="headerlink" href="#duplicate-detection" title="Permanent link">&para;</a></h3>
+<p>If two secrets target the same <code>env_var</code> but differ in store, name, or field, a <code>ValueError</code>
+is raised at sandbox creation time. Identical duplicates (same store, name, field, env_var)
+are allowed silently:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Raises ValueError: conflicting secrets for env_var &#39;HF_TOKEN&#39;</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">defaults</span><span class="o">=</span><span class="n">SandboxDefaults</span><span class="p">(</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>        <span class="n">secrets</span><span class="o">=</span><span class="p">(</span><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">),),</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="p">),</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">secrets</span><span class="o">=</span><span class="p">[</span><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;vault&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;hf-token&quot;</span><span class="p">,</span> <span class="n">env_var</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">)],</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="p">)</span>
+</code></pre></div>
 <h2 id="timeouts">Timeouts<a class="headerlink" href="#timeouts" title="Permanent link">&para;</a></h2>
 <h3 id="timeout_seconds">timeout_seconds<a class="headerlink" href="#timeout_seconds" title="Permanent link">&para;</a></h3>
 <p>Per-command timeout:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Per-exec timeout</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;long_script.py&quot;</span><span class="p">],</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>  <span class="c1"># 5 minute timeout</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Per-exec timeout</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;long_script.py&quot;</span><span class="p">],</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>  <span class="c1"># 5 minute timeout</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </code></pre></div>
 <p>This controls how long the client waits for a response. If exceeded, raises <code>SandboxTimeoutError</code>.</p>
 <h3 id="max_lifetime_seconds">max_lifetime_seconds<a class="headerlink" href="#max_lifetime_seconds" title="Permanent link">&para;</a></h3>
 <p>Maximum sandbox lifetime (set in SandboxDefaults):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">container_image</span><span class="o">=</span><span class="s2">&quot;python:3.11&quot;</span><span class="p">,</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">max_lifetime_seconds</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span>  <span class="c1"># 1 hour max lifetime</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="p">)</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">defaults</span><span class="o">=</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="c1"># Sandbox automatically terminates after 1 hour</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="k">pass</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="n">container_image</span><span class="o">=</span><span class="s2">&quot;python:3.11&quot;</span><span class="p">,</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">max_lifetime_seconds</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span>  <span class="c1"># 1 hour max lifetime</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="p">)</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">defaults</span><span class="o">=</span><span class="n">defaults</span><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="c1"># Sandbox automatically terminates after 1 hour</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="k">pass</span>
 </code></pre></div>
 <p>This is a server-side limit. The sandbox will be terminated when it reaches this age, regardless of activity.</p>
 <h2 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">NetworkOptions</span><span class="p">,</span> <span class="n">Sandbox</span><span class="p">,</span> <span class="n">SandboxDefaults</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">container_image</span><span class="o">=</span><span class="s2">&quot;python:3.11&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">max_lifetime_seconds</span><span class="o">=</span><span class="mi">1800</span><span class="p">,</span>  <span class="c1"># 30 minutes</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">tags</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;production&quot;</span><span class="p">,</span> <span class="s2">&quot;ml-pipeline&quot;</span><span class="p">),</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="n">resources</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cpu&quot;</span><span class="p">:</span> <span class="s2">&quot;2000m&quot;</span><span class="p">,</span> <span class="s2">&quot;memory&quot;</span><span class="p">:</span> <span class="s2">&quot;4Gi&quot;</span><span class="p">},</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">network</span><span class="o">=</span><span class="n">NetworkOptions</span><span class="p">(</span><span class="n">egress_mode</span><span class="o">=</span><span class="s2">&quot;internet&quot;</span><span class="p">),</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">annotations</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;team&quot;</span><span class="p">:</span> <span class="s2">&quot;ml-infra&quot;</span><span class="p">},</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="p">)</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    <span class="n">defaults</span><span class="o">=</span><span class="n">defaults</span><span class="p">,</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>    <span class="n">mounted_files</span><span class="o">=</span><span class="p">[</span>
-<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>        <span class="p">{</span>
-<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>            <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;/app/config.yaml&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;model: gpt-4</span><span class="se">\n</span><span class="s2">max_tokens: 1000&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>        <span class="p">},</span>
-<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="p">],</span>
-<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>    <span class="n">ports</span><span class="o">=</span><span class="p">[</span>
-<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>        <span class="p">{</span><span class="s2">&quot;container_port&quot;</span><span class="p">:</span> <span class="mi">8000</span><span class="p">},</span>
-<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="p">],</span>
-<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
-<a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="c1"># Install dependencies</span>
-<a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;pip&quot;</span><span class="p">,</span> <span class="s2">&quot;install&quot;</span><span class="p">,</span> <span class="s2">&quot;fastapi&quot;</span><span class="p">,</span> <span class="s2">&quot;uvicorn&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-<a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>
-<a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="c1"># Run application</span>
-<a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span>
-<a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>        <span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;print(&#39;Server started&#39;)&quot;</span><span class="p">],</span>
-<a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>        <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
-<a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-<a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">NetworkOptions</span><span class="p">,</span> <span class="n">Sandbox</span><span class="p">,</span> <span class="n">SandboxDefaults</span><span class="p">,</span> <span class="n">Secret</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">defaults</span> <span class="o">=</span> <span class="n">SandboxDefaults</span><span class="p">(</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">container_image</span><span class="o">=</span><span class="s2">&quot;python:3.11&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">max_lifetime_seconds</span><span class="o">=</span><span class="mi">1800</span><span class="p">,</span>  <span class="c1"># 30 minutes</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">tags</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;production&quot;</span><span class="p">,</span> <span class="s2">&quot;ml-pipeline&quot;</span><span class="p">),</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="n">resources</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cpu&quot;</span><span class="p">:</span> <span class="s2">&quot;2000m&quot;</span><span class="p">,</span> <span class="s2">&quot;memory&quot;</span><span class="p">:</span> <span class="s2">&quot;4Gi&quot;</span><span class="p">},</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>    <span class="n">network</span><span class="o">=</span><span class="n">NetworkOptions</span><span class="p">(</span><span class="n">egress_mode</span><span class="o">=</span><span class="s2">&quot;internet&quot;</span><span class="p">),</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>    <span class="n">annotations</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;team&quot;</span><span class="p">:</span> <span class="s2">&quot;ml-infra&quot;</span><span class="p">},</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>    <span class="n">secrets</span><span class="o">=</span><span class="p">(</span><span class="n">Secret</span><span class="p">(</span><span class="n">store</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">),),</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="p">)</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>    <span class="n">defaults</span><span class="o">=</span><span class="n">defaults</span><span class="p">,</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>    <span class="n">mounted_files</span><span class="o">=</span><span class="p">[</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>        <span class="p">{</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>            <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;/app/config.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;model: gpt-4</span><span class="se">\n</span><span class="s2">max_tokens: 1000&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a>        <span class="p">},</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>    <span class="p">],</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>    <span class="n">ports</span><span class="o">=</span><span class="p">[</span>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a>        <span class="p">{</span><span class="s2">&quot;container_port&quot;</span><span class="p">:</span> <span class="mi">8000</span><span class="p">},</span>
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a>    <span class="p">],</span>
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a><span class="p">)</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a>    <span class="c1"># Install dependencies</span>
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a>    <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;pip&quot;</span><span class="p">,</span> <span class="s2">&quot;install&quot;</span><span class="p">,</span> <span class="s2">&quot;fastapi&quot;</span><span class="p">,</span> <span class="s2">&quot;uvicorn&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a>
+<a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a>    <span class="c1"># Run application</span>
+<a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span>
+<a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a>        <span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;print(&#39;Server started&#39;)&quot;</span><span class="p">],</span>
+<a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a>        <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
+<a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a>    <span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
 </code></pre></div>
 
 
