@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-03-24)
+
+### Documentation
+
+- Broken relative links in PyPI readme
+  ([#80](https://github.com/coreweave/cwsandbox-client/pull/80),
+  [`cc9a9d5`](https://github.com/coreweave/cwsandbox-client/commit/cc9a9d5c6ba3f34886741c71901a8209c9abcc8d))
+
+### Features
+
+- Add annotations support to Sandbox, Session, and Function
+  ([`0dcac5d`](https://github.com/coreweave/cwsandbox-client/commit/0dcac5de7891b0abbcf3a0dfec20480e059c1008))
+
+
 ## v0.9.0 (2026-03-12)
 
 ### Chores
