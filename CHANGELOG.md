@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.11.0 (2026-03-24)
+
+### Features
+
+- Add secrets support on Session and Sandbox
+  ([#78](https://github.com/coreweave/cwsandbox-client/pull/78),
+  [`061b32d`](https://github.com/coreweave/cwsandbox-client/commit/061b32d465a6a16ff40e5a34982dbf1d428ddedd))
+
+
 ## v0.10.0 (2026-03-24)
 
 ### Documentation
