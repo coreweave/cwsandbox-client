@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://coreweave.github.io/cwsandbox-client/guides/CLAUDE/">
+        <link rel="canonical" href="https://coreweave.github.io/cwsandbox-client/guides/interactive-shells/">
       
       
+        <link rel="prev" href="../logging/">
+      
+      
+        <link rel="next" href="../file-operations/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>How-To Guides - CoreWeave Sandbox Client</title>
+        <title>Interactive Shells - CoreWeave Sandbox Client</title>
       
     
     
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#how-to-guides" class="md-skip">
+        <a href="#interactive-shells-and-tty" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              How-To Guides
+              Interactive Shells
             
           </span>
         </div>
@@ -260,10 +264,12 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../cli/" class="md-tabs__link">
           
   
@@ -652,24 +658,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -687,7 +698,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -814,10 +825,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../interactive-shells/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shells
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -833,6 +871,92 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#shell-session-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell session (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#send-commands-and-read-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Send commands and read output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#terminal-resize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminal resize
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exiting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use what
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1179,10 +1303,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#files" class="md-nav__link">
+  <a href="#shell-session-recommended" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Files
+        Shell session (recommended)
       
     </span>
   </a>
@@ -1190,10 +1314,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#key-patterns" class="md-nav__link">
+  <a href="#send-commands-and-read-output" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key Patterns
+        Send commands and read output
       
     </span>
   </a>
@@ -1201,10 +1325,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#writing-new-guides" class="md-nav__link">
+  <a href="#terminal-resize" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writing New Guides
+        Terminal resize
       
     </span>
   </a>
@@ -1212,10 +1336,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#relationship-to-other-docs" class="md-nav__link">
+  <a href="#exiting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to Other Docs
+        Exiting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use what
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -1242,87 +1388,86 @@
   
 
 
-<h1 id="how-to-guides">How-To Guides<a class="headerlink" href="#how-to-guides" title="Permanent link">&para;</a></h1>
-<p>Task-oriented guides for common operations. Each guide answers "How do I...?"</p>
-<h2 id="files">Files<a class="headerlink" href="#files" title="Permanent link">&para;</a></h2>
+<!--
+SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+SPDX-License-Identifier: Apache-2.0
+SPDX-PackageName: cwsandbox-client
+-->
+
+<h1 id="interactive-shells-and-tty">Interactive Shells and TTY<a class="headerlink" href="#interactive-shells-and-tty" title="Permanent link">&para;</a></h1>
+<p>Use <code>Sandbox.shell()</code> for interactive TTY sessions. It returns a <code>TerminalSession</code> with raw byte streaming and no output buffering — purpose-built for interactive use. For batch command execution, use <code>exec()</code> instead.</p>
+<h2 id="shell-session-recommended">Shell session (recommended)<a class="headerlink" href="#shell-session-recommended" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">session</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">shell</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="p">[</span><span class="s2">&quot;/bin/bash&quot;</span><span class="p">],</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">width</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">height</span><span class="o">=</span><span class="mi">24</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>shell()</code> always allocates a TTY and enables stdin. The returned <code>TerminalSession</code> streams raw bytes (no UTF-8 decode/encode round-trip), making it safe for terminal escape sequences and binary output.</p>
+<h2 id="send-commands-and-read-output">Send commands and read output<a class="headerlink" href="#send-commands-and-read-output" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">session</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">writeline</span><span class="p">(</span><span class="s2">&quot;echo hello&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">session</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">writeline</span><span class="p">(</span><span class="s2">&quot;ls -la /tmp&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">session</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">writeline</span><span class="p">(</span><span class="s2">&quot;exit&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Iterate raw byte output</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">output</span><span class="p">:</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># Get exit code</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">exit_code</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+</code></pre></div>
+<p><code>TerminalSession</code> does not buffer output — stdout and stderr are merged into a single raw byte stream on <code>session.output</code> (there are no separate <code>stdout</code>/<code>stderr</code> attributes on the result). Consume <code>session.output</code> continuously; if you stop reading, backpressure from the bounded queue will stall the remote session.</p>
+<h2 id="terminal-resize">Terminal resize<a class="headerlink" href="#terminal-resize" title="Permanent link">&para;</a></h2>
+<p>Send resize messages when the terminal dimensions change.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">session</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="mi">120</span><span class="p">,</span> <span class="mi">40</span><span class="p">)</span>
+</code></pre></div>
+<p><code>resize()</code> is fire-and-forget on <code>TerminalSession</code>.</p>
+<h2 id="exiting">Exiting<a class="headerlink" href="#exiting" title="Permanent link">&para;</a></h2>
+<p>End a shell session by closing stdin or sending an exit command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">session</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">writeline</span><span class="p">(</span><span class="s2">&quot;exit&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>  <span class="c1"># Ask the remote shell to exit</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># or</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">session</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">close</span><span class="p">()</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>            <span class="c1"># Close the stdin stream</span>
+</code></pre></div>
+<p>The session completes when the remote process exits. Call <code>session.wait()</code> or <code>session.result()</code> to block for the exit code.</p>
+<h2 id="when-to-use-what">When to use what<a class="headerlink" href="#when-to-use-what" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Guide</th>
-<th>Task</th>
+<th>Use case</th>
+<th>Approach</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>sandbox-lifecycle.md</code></td>
-<td>Understand sandbox states, creation, starting, waiting, and stopping</td>
+<td>One-off command from terminal</td>
+<td><code>cwsandbox exec &lt;id&gt; echo hello</code></td>
 </tr>
 <tr>
-<td><code>execution.md</code></td>
-<td>Run commands with <code>exec()</code> - buffered and streaming modes</td>
+<td>Interactive shell from terminal</td>
+<td><code>cwsandbox sh &lt;id&gt;</code></td>
 </tr>
 <tr>
-<td><code>file-operations.md</code></td>
-<td>Read and write files in sandboxes</td>
+<td>Run a script, capture output (SDK)</td>
+<td><code>exec(["python", "script.py"])</code></td>
 </tr>
 <tr>
-<td><code>sessions.md</code></td>
-<td>Manage multiple sandboxes with shared configuration</td>
+<td>Interactive shell session (SDK)</td>
+<td><code>shell(["/bin/bash"])</code></td>
 </tr>
 <tr>
-<td><code>remote-functions.md</code></td>
-<td>Execute Python functions remotely with <code>@session.function()</code></td>
+<td>Send input to a command (SDK)</td>
+<td><code>exec(["cat"], stdin=True)</code></td>
 </tr>
 <tr>
-<td><code>cleanup-patterns.md</code></td>
-<td>Resource management and graceful shutdown</td>
-</tr>
-<tr>
-<td><code>sync-vs-async.md</code></td>
-<td>When to use sync vs async patterns, calling async from sync</td>
-</tr>
-<tr>
-<td><code>sandbox-config.md</code></td>
-<td>Configure resources, mounted files, ports, timeouts</td>
-</tr>
-<tr>
-<td><code>troubleshooting.md</code></td>
-<td>Debug common issues - sandbox failures, auth errors, timeouts</td>
-</tr>
-<tr>
-<td><code>environment-variables.md</code></td>
-<td>Use environment variables in sandboxes</td>
-</tr>
-<tr>
-<td><code>swebench.md</code></td>
-<td>Run SWE-bench evaluations with parallel CWSandboxes</td>
-</tr>
-<tr>
-<td><code>rl-training.md</code></td>
-<td>RL training with code execution rewards, TRL integration</td>
+<td>Terminal application (vim, htop)</td>
+<td><code>shell(["vim"])</code> + CLI raw mode</td>
 </tr>
 </tbody>
 </table>
-<h2 id="key-patterns">Key Patterns<a class="headerlink" href="#key-patterns" title="Permanent link">&para;</a></h2>
-<p>All guides follow these conventions:</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Process for exec</strong>: <code>exec()</code> returns a <code>Process</code> (inherits from OperationRef) - call <code>.result()</code> to block for the result</li>
-<li><strong>OperationRef for other ops</strong>: <code>read_file()</code>, <code>write_file()</code>, <code>stop()</code> return <code>OperationRef</code> - call <code>.result()</code> to block</li>
-<li><strong>Context managers</strong>: Use <code>with</code> statements for automatic cleanup</li>
-</ul>
-<h2 id="writing-new-guides">Writing New Guides<a class="headerlink" href="#writing-new-guides" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Focus on a single task ("How do I X?")</li>
-<li>Start with the simplest working example</li>
-<li>Add variations for common needs</li>
-<li>Include error handling where relevant</li>
-<li>Link to reference docs for parameter details</li>
-<li>Use <code>.result()</code> consistently for both Process and OperationRef</li>
-<li>Update <code>mkdocs.yml</code> nav section to include the new guide</li>
-</ol>
-<h2 id="relationship-to-other-docs">Relationship to Other Docs<a class="headerlink" href="#relationship-to-other-docs" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Examples</strong> (<code>examples/</code>): Runnable Python scripts</li>
+<li><a href="../execution/">Command Execution</a> — running commands with <code>exec()</code></li>
+<li><a href="../logging/">Sandbox Logging</a> — streaming container logs</li>
 </ul>
 
 
