@@ -3293,8 +3293,244 @@ class TestExecStdinReadySignal:
             assert process.stdin is None
 
 
-class TestShellCancellation:
-    """Tests for TTY shell session cancellation behavior."""
+class TestShellStreamingTTY:
+    """Tests for _exec_streaming_tty_async via the Sandbox.shell() public API."""
+
+    @staticmethod
+    def _make_sandbox() -> Sandbox:
+        """Create a sandbox pre-configured in RUNNING state for shell tests."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        return sandbox
+
+    @staticmethod
+    def _streaming_patches(sandbox: Sandbox, mock_call: MockBidirectionalStreamCall):  # type: ignore[no-untyped-def]
+        """Return a context manager that patches streaming infra for shell tests."""
+        from contextlib import ExitStack
+
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+
+        stack = ExitStack()
+        stack.enter_context(
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock)
+        )
+        stack.enter_context(patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()))
+        stack.enter_context(
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True))
+        )
+        stack.enter_context(patch("cwsandbox._sandbox.create_channel", return_value=mock_channel))
+        stack.enter_context(
+            patch(
+                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                return_value=mock_stub,
+            )
+        )
+        return stack
+
+    def test_shell_happy_path_returns_terminal_result(self) -> None:
+        """shell() returns TerminalResult with exit code on normal completion."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._types import TerminalResult
+
+        sandbox = self._make_sandbox()
+
+        async def responses() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = timestamp_pb2.Timestamp(seconds=1)
+            yield ready
+
+            out = MagicMock()
+            out.HasField = lambda f: f == "output"
+            out.output.data = b"hello\r\n"
+            yield out
+
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 0
+            yield exit_resp
+
+        mock_call = MockBidirectionalStreamCall(response_generator=responses)
+        with self._streaming_patches(sandbox, mock_call):
+            session = sandbox.shell(["/bin/bash"], width=80, height=24)
+
+            chunks: list[bytes] = []
+            for chunk in session.output:
+                chunks.append(chunk)
+
+            result = session.result()
+
+        assert isinstance(result, TerminalResult)
+        assert result.returncode == 0
+        assert result.command == ["/bin/bash"]
+        assert b"hello\r\n" in chunks
+
+    def test_shell_server_error_raises(self) -> None:
+        """Server error response raises SandboxExecutionError."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox.exceptions import SandboxExecutionError
+
+        sandbox = self._make_sandbox()
+
+        async def responses() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = timestamp_pb2.Timestamp(seconds=1)
+            yield ready
+
+            err = MagicMock()
+            err.HasField = lambda f: f == "error"
+            err.error.message = "command not found"
+            yield err
+
+        mock_call = MockBidirectionalStreamCall(response_generator=responses)
+        with self._streaming_patches(sandbox, mock_call):
+            session = sandbox.shell(["/bin/bash"])
+            # Drain output — error propagates as exception in StreamReader
+            chunks: list[bytes] = []
+            try:
+                for chunk in session.output:
+                    chunks.append(chunk)
+            except SandboxExecutionError:
+                pass
+
+            with pytest.raises(SandboxExecutionError, match="command not found"):
+                session.result()
+
+    def test_shell_grpc_error_propagates(self) -> None:
+        """gRPC error during streaming is translated and raised."""
+        sandbox = self._make_sandbox()
+
+        mock_call = MockBidirectionalStreamCall(
+            error_on_read=MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "connection lost"),
+        )
+        with self._streaming_patches(sandbox, mock_call):
+            session = sandbox.shell(["/bin/bash"])
+
+            # The error surfaces through the output stream or result
+            try:
+                list(session.output)
+            except SandboxError:
+                pass
+
+            with pytest.raises(SandboxError):
+                session.result()
+
+    def test_shell_stdin_forwarding(self) -> None:
+        """stdin.write() sends data chunks to the server."""
+        from google.protobuf import timestamp_pb2
+
+        sandbox = self._make_sandbox()
+
+        stdin_received: list[bytes] = []
+
+        def on_write(request: Any) -> None:
+            if hasattr(request, "stdin") and request.HasField("stdin"):
+                stdin_received.append(request.stdin.data)
+
+        close_event = asyncio.Event()
+
+        def on_write_with_close(request: Any) -> None:
+            on_write(request)
+            if hasattr(request, "close") and request.HasField("close"):
+                close_event.set()
+
+        async def responses() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = timestamp_pb2.Timestamp(seconds=1)
+            yield ready
+
+            try:
+                await asyncio.wait_for(close_event.wait(), timeout=5.0)
+            except TimeoutError:
+                pass
+
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 0
+            yield exit_resp
+
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=responses, on_write=on_write_with_close
+        )
+        with self._streaming_patches(sandbox, mock_call):
+            session = sandbox.shell(["/bin/bash"])
+            session.stdin.write(b"echo hello\n").result()
+            session.stdin.close().result()
+            list(session.output)
+            result = session.result()
+
+        assert result.returncode == 0
+        assert b"echo hello\n" in stdin_received
+
+    def test_shell_resize_sends_message(self) -> None:
+        """session.resize() sends a resize request to the server."""
+        from google.protobuf import timestamp_pb2
+
+        sandbox = self._make_sandbox()
+
+        resize_received: list[tuple[int, int]] = []
+
+        def on_write(request: Any) -> None:
+            if hasattr(request, "resize") and request.HasField("resize"):
+                resize_received.append((request.resize.width, request.resize.height))
+
+        resize_done = asyncio.Event()
+
+        def on_write_with_resize(request: Any) -> None:
+            on_write(request)
+            if hasattr(request, "resize") and request.HasField("resize"):
+                resize_done.set()
+
+        async def responses() -> AsyncIterator[Any]:
+            ready = MagicMock()
+            ready.HasField = lambda f: f == "ready"
+            ready.ready.ready_at = timestamp_pb2.Timestamp(seconds=1)
+            yield ready
+
+            # Wait for resize to be received before sending exit
+            try:
+                await asyncio.wait_for(resize_done.wait(), timeout=5.0)
+            except TimeoutError:
+                pass
+
+            exit_resp = MagicMock()
+            exit_resp.HasField = lambda f: f == "exit"
+            exit_resp.exit.exit_code = 0
+            yield exit_resp
+
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=responses, on_write=on_write_with_resize
+        )
+        with self._streaming_patches(sandbox, mock_call):
+            session = sandbox.shell(["/bin/bash"], width=80, height=24)
+            session.resize(120, 40)
+            list(session.output)
+            session.result()
+
+        assert (120, 40) in resize_received
+
+    def test_shell_early_failure_unblocks_output_stream(self) -> None:
+        """Failure before gRPC call propagates to output queue so readers don't hang."""
+        sandbox = self._make_sandbox()
+
+        # Patch _ensure_started_async to raise — simulates an auth or network
+        # failure before the gRPC stream is established.
+        async def fail_start() -> None:
+            raise SandboxNotRunningError("Sandbox has been stopped")
+
+        with patch.object(sandbox, "_ensure_started_async", side_effect=fail_start):
+            session = sandbox.shell(["/bin/bash"])
+
+            # The output stream must terminate (with an exception), not hang
+            with pytest.raises(SandboxNotRunningError):
+                list(session.output)
 
     def test_shell_cancel_terminates_output_stream(self) -> None:
         """Cancelled shell session must deliver a sentinel to the output stream.
@@ -3309,11 +3545,7 @@ class TestShellCancellation:
 
         from google.protobuf import timestamp_pb2
 
-        sandbox = Sandbox(command="sleep", args=["infinity"])
-        sandbox._sandbox_id = "test-id"
-        sandbox._state = _Running(sandbox_id="test-id")
-        sandbox._channel = MagicMock()
-        sandbox._stub = MagicMock()
+        sandbox = self._make_sandbox()
 
         # Simulate a long-running shell: ready → output → hang forever
         hang_event = asyncio.Event()
@@ -3333,18 +3565,7 @@ class TestShellCancellation:
             await hang_event.wait()
 
         mock_call = MockBidirectionalStreamCall(response_generator=response_generator)
-        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
-
-        with (
-            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
-            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
-            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
-                return_value=mock_stub,
-            ),
-        ):
+        with self._streaming_patches(sandbox, mock_call):
             session = sandbox.shell(["/bin/bash"])
 
             # Drain output in a background thread (like a real consumer would)
