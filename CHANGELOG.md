@@ -1,6 +1,73 @@
 # CHANGELOG
 
 
+## v0.12.0 (2026-03-25)
+
+### Bug Fixes
+
+- **sandbox**: Always enqueue output sentinel on cancellation
+  ([`e680f4c`](https://github.com/coreweave/cwsandbox-client/commit/e680f4c3751eb2793f06d8ad8ec1fec57818369f))
+
+CancelledError is a BaseException, bypassing the except Exception handler. The `if not cancelled`
+  guard in the finally block skipped the output_queue sentinel, leaving StreamReader consumers
+  hanging forever. Remove the guard so the sentinel is always enqueued.
+
+Fixes both _exec_streaming_async and _exec_streaming_tty_async.
+
+### Documentation
+
+- Add interactive shells guide
+  ([`1ecd912`](https://github.com/coreweave/cwsandbox-client/commit/1ecd91289362164060488f425b358bafcab6ef2d))
+
+Cover SDK shell() usage, terminal resize, stdin/stdout streaming, and a comparison table for
+  choosing between exec and shell.
+
+### Features
+
+- **cli**: Add shell command
+  ([`0838e2a`](https://github.com/coreweave/cwsandbox-client/commit/0838e2a15ef2c4232db9a63bffc8c923b69d2107))
+
+Remote debugging and interactive workflows need direct terminal access to sandboxes without writing
+  Python.
+
+Add `cwsandbox sh` with raw mode, SIGWINCH resize, and terminal state restore on exit.
+
+- **sandbox**: Add TTY exec and shell method
+  ([`8ff5de4`](https://github.com/coreweave/cwsandbox-client/commit/8ff5de4106c47895f70297aa3ac14c2c2f5d8483))
+
+Add _exec_streaming_tty_async for raw-byte TTY streaming with resize support, and the public shell()
+  method that returns a TerminalSession. Widen _on_exec_complete to accept TerminalResult.
+
+- **types**: Add terminal types
+  ([`94e55a5`](https://github.com/coreweave/cwsandbox-client/commit/94e55a53e858b66074ae6a8a8bdf778bf00cb612))
+
+Make StreamReader a Generic[_S] parameterized over str (text streams) and bytes (raw TTY output).
+  Add TerminalResult and TerminalSession types for interactive TTY sessions. Update Waitable type
+  alias and __all__ exports.
+
+### Testing
+
+- **sandbox**: Add TTY streaming tests
+  ([`2602959`](https://github.com/coreweave/cwsandbox-client/commit/2602959d7ce458cb4dfafd9656a52d98447b0af5))
+
+Cover _exec_streaming_tty_async paths: happy path, server errors, gRPC transport errors, stdin
+  forwarding, resize, and early failure propagation. Fold TestShellCancellation into the new class
+  with shared helpers to reduce setup duplication.
+
+- **sandbox**: Add xfail test for cancelled TTY session output hang
+  ([`8d665d8`](https://github.com/coreweave/cwsandbox-client/commit/8d665d87ebdc19fe3026adab742dd394ec2e12ff))
+
+Demonstrates a bug where cancelling a TerminalSession future leaves the output StreamReader hanging
+  forever. The CancelledError path in _exec_streaming_tty_async skips the output_queue sentinel (`if
+  not cancelled`), so consumers block indefinitely.
+
+The fix is to remove the `if not cancelled` guard so the sentinel is always enqueued. Cross-review
+  confirmed no double-sentinel risk.
+
+Marked xfail(strict=True) — will flip to XPASS once the guard is removed, signaling the marker
+  should be dropped.
+
+
 ## v0.11.2 (2026-03-24)
 
 ### Bug Fixes
