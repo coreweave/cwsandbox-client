@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.12.1 (2026-03-26)
+
+### Bug Fixes
+
+- Widen protobuf dependency to >=5,<7 ([#92](https://github.com/coreweave/cwsandbox-client/pull/92),
+  [`b8e5e5a`](https://github.com/coreweave/cwsandbox-client/commit/b8e5e5aabe3fae56009caf33bc0511130e4ec7cb))
+
+A customer reported that their training codebase uses protobuf 5 and hit a version conflict with
+  cwsandbox requiring >=6.33.5. An audit of ~25 ML training frameworks shows protobuf v5 is the
+  common ground for PyTorch-based stacks: most don't constrain protobuf at all, and the few that do
+  (Composer <5.30, vLLM >=5.29.6) target v5.
+
+Frameworks audited include DeepSpeed, Megatron-LM, TRL, Accelerate, Transformers, torchtitan, verl,
+  NeMo, Composer, LLM Foundry, Axolotl, LLaMA-Factory, Unsloth, vLLM, SGLang, Ray, PyTorch
+  Lightning, PEFT, OpenRLHF, W&B, TensorBoard, and others. Only TensorFlow HEAD requires protobuf
+  v6+, but TF environments are separate from PyTorch training.
+
+Use buf.build plugin version 26.1.0 (protobuf 5.26.1) to generate proto stubs that predate the
+  ValidateProtobufRuntimeVersion check introduced in 5.27.0. This removes the runtime version
+  pinning from generated stubs, allowing protobuf >=5,<7 as the dependency range. Both protobuf 5.x
+  and 6.x pass the full unit test suite. A CI matrix job verifies compatibility with both major
+  versions.
+
+
 ## v0.12.0 (2026-03-25)
 
 ### Bug Fixes
