@@ -41,3 +41,36 @@ jobs:
 
       - name: Unit tests
         run: uv run pytest
+
+  protobuf-compat:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        protobuf-version: [">=5,<6", ">=6,<7"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install project
+        run: uv sync --all-extras
+
+      - name: Pin protobuf version
+        run: uv pip install 'protobuf${{ matrix.protobuf-version }}'
+
+      - name: Verify protobuf version
+        run: uv run python -c "import google.protobuf; print(f'protobuf {google.protobuf.__version__}')"
+
+      - name: Unit tests
+        run: uv run pytest

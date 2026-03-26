@@ -16,8 +16,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # buf.build plugin versions (prefix differs per package, commit suffix is shared)
 GRPC_VERSION="1.78.1.1.20260306144501+b06c7779a62f"
-PB_VERSION="33.5.0.1.20260306144501+b06c7779a62f"
-PYI_VERSION="33.5.0.1.20260306144501+b06c7779a62f"
+PB_VERSION="26.1.0.1.20260306144501+b06c7779a62f"
+PYI_VERSION="26.1.0.1.20260306144501+b06c7779a62f"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -180,22 +180,18 @@ validate_imports() {
 }
 
 validate_protobuf_version() {
-    # Verify generated files target protobuf 6.x
-    local version_line
-    version_line=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/atc_pb2.py 2>/dev/null || true)
-    if [[ -z "$version_line" ]]; then
-        log "WARN: could not find Protobuf Python Version in generated files"
-        return
-    fi
-    if ! echo "$version_line" | grep -q "6\."; then
-        log "FAIL: generated files do not target protobuf 6.x"
-        log "  Found: $version_line"
-        log "  Expected: Protobuf Python Version: 6.x.x"
+    # Verify generated files use protobuf <=5.26.x, which predates the
+    # ValidateProtobufRuntimeVersion check (introduced in 5.27.0).
+    # This avoids pinning users to a specific protobuf minor version.
+    if grep -q "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/atc_pb2.py 2>/dev/null; then
+        log "FAIL: generated files contain ValidateProtobufRuntimeVersion"
+        log "  Use plugin version <=26.1.x (protobuf <=5.26.x) to avoid the runtime check"
         exit 1
     fi
     local version
-    version=$(echo "$version_line" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
-    log "OK: protobuf version $version (6.x series)"
+    version=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/atc_pb2.py 2>/dev/null \
+        | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
+    log "OK: protobuf version $version (no runtime version check)"
 }
 
 # ---------------------------------------------------------------------------

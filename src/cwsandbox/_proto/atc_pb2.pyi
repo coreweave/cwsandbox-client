@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
-import datetime
-
 from cwsandbox._proto import secrets_pb2 as _secrets_pb2
 from google.api import annotations_pb2 as _annotations_pb2
 from google.api import field_behavior_pb2 as _field_behavior_pb2
@@ -11,8 +9,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -274,7 +271,7 @@ class StartSandboxResponse(_message.Message):
     sandbox_status: SandboxStatus
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., runway_id: _Optional[str] = ..., tower_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., runway_id: _Optional[str] = ..., tower_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class StopSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "graceful_shutdown_seconds", "snapshot_on_stop", "max_timeout_seconds")
@@ -286,7 +283,7 @@ class StopSandboxRequest(_message.Message):
     graceful_shutdown_seconds: int
     snapshot_on_stop: bool
     max_timeout_seconds: int
-    def __init__(self, sandbox_id: _Optional[str] = ..., graceful_shutdown_seconds: _Optional[int] = ..., snapshot_on_stop: _Optional[bool] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., graceful_shutdown_seconds: _Optional[int] = ..., snapshot_on_stop: bool = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class StopSandboxResponse(_message.Message):
     __slots__ = ("success", "error_message")
@@ -294,7 +291,7 @@ class StopSandboxResponse(_message.Message):
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error_message: str
-    def __init__(self, success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class GetSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
@@ -328,7 +325,7 @@ class GetSandboxResponse(_message.Message):
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
     __slots__ = ("tags", "status", "runway_ids", "tower_ids", "max_timeout_seconds", "include_stopped")
@@ -344,7 +341,7 @@ class ListSandboxesRequest(_message.Message):
     tower_ids: _containers.RepeatedScalarFieldContainer[str]
     max_timeout_seconds: int
     include_stopped: bool
-    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: _Optional[bool] = ...) -> None: ...
+    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ...) -> None: ...
 
 class ListSandboxesResponse(_message.Message):
     __slots__ = ("sandboxes",)
@@ -376,7 +373,7 @@ class SandboxInfo(_message.Message):
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class DeleteSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
@@ -392,7 +389,7 @@ class DeleteSandboxResponse(_message.Message):
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error_message: str
-    def __init__(self, success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class ExecSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "command", "args", "max_timeout_seconds")
@@ -430,7 +427,7 @@ class AddFileSandboxResponse(_message.Message):
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error_message: str
-    def __init__(self, success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class RetrieveFileSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "filepath", "max_timeout_seconds")
@@ -450,7 +447,7 @@ class RetrieveFileSandboxResponse(_message.Message):
     file_contents: bytes
     success: bool
     error_message: str
-    def __init__(self, file_contents: _Optional[bytes] = ..., success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, file_contents: _Optional[bytes] = ..., success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class PauseSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
@@ -466,7 +463,7 @@ class PauseSandboxResponse(_message.Message):
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error_message: str
-    def __init__(self, success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class ResumeSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
@@ -482,7 +479,7 @@ class ResumeSandboxResponse(_message.Message):
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error_message: str
-    def __init__(self, success: _Optional[bool] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class RawSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "action_type", "exec_payload", "add_file_payload", "retrieve_file_payload", "max_timeout_seconds")
