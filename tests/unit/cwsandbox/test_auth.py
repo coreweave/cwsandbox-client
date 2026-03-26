@@ -14,8 +14,10 @@ from cwsandbox._auth import (
     _read_api_key_from_netrc,
     _try_api_key_auth,
     _try_wandb_auth,
+    register_auth_mode,
     resolve_auth,
     resolve_auth_metadata,
+    unregister_auth_mode,
 )
 from cwsandbox._defaults import WANDB_NETRC_HOST
 
@@ -107,6 +109,111 @@ class TestResolveAuth:
 
         assert auth.strategy == "wandb"
         assert auth.headers == {"x-api-key": "wandb-key"}
+
+
+class TestRegisteredAuthModes:
+    """Tests for registered auth modes in resolve_auth()."""
+
+    @pytest.fixture
+    def register_auth_mode_fixture(self):
+        registered_names: list[str] = []
+
+        def _register(name: str, try_auth) -> None:
+            register_auth_mode(name, try_auth)
+            registered_names.append(name)
+
+        yield _register
+
+        for name in reversed(registered_names):
+            unregister_auth_mode(name)
+
+    def test_registered_auth_mode_takes_priority_over_builtin_wandb_fallback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        register_auth_mode_fixture,
+    ) -> None:
+        """Test registered auth modes are checked before builtin W&B fallback."""
+        monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
+        monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
+
+        register_auth_mode_fixture(
+            "auth-mode-test",
+            lambda: AuthHeaders(
+                headers={"x-api-key": "mode-key", "x-project-name": "mode-project"},
+                strategy="auth_mode",
+            ),
+        )
+
+        auth = resolve_auth()
+
+        assert auth.strategy == "auth_mode"
+        assert auth.headers["x-api-key"] == "mode-key"
+        assert auth.headers["x-project-name"] == "mode-project"
+
+    def test_registered_auth_mode_does_not_override_api_key_auth(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        register_auth_mode_fixture,
+    ) -> None:
+        """Test explicit CoreWeave auth still wins over registered auth modes."""
+        monkeypatch.setenv("CWSANDBOX_API_KEY", "cw-key")
+
+        register_auth_mode_fixture(
+            "auth-mode-test",
+            lambda: AuthHeaders(headers={"x-api-key": "mode-key"}, strategy="auth_mode"),
+        )
+
+        auth = resolve_auth()
+
+        assert auth.strategy == "api_key"
+        assert auth.headers == {"Authorization": "Bearer cw-key"}
+
+    def test_register_auth_mode_is_idempotent_by_name(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        register_auth_mode_fixture,
+    ) -> None:
+        """Test registering the same auth mode name twice keeps the first mode."""
+        monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_API_KEY", raising=False)
+
+        register_auth_mode_fixture(
+            "auth-mode-test",
+            lambda: AuthHeaders(headers={"x-api-key": "first-key"}, strategy="first"),
+        )
+        register_auth_mode_fixture(
+            "auth-mode-test",
+            lambda: AuthHeaders(headers={"x-api-key": "second-key"}, strategy="second"),
+        )
+
+        auth = resolve_auth()
+
+        assert auth.strategy == "first"
+        assert auth.headers == {"x-api-key": "first-key"}
+
+    def test_unregister_auth_mode_removes_registered_auth_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        register_auth_mode_fixture,
+        tmp_path: Path,
+    ) -> None:
+        """Test unregister_auth_mode removes the auth mode from resolution."""
+        monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_API_KEY", raising=False)
+        monkeypatch.delenv("WANDB_ENTITY", raising=False)
+        monkeypatch.delenv("WANDB_PROJECT", raising=False)
+
+        register_auth_mode_fixture(
+            "auth-mode-test",
+            lambda: AuthHeaders(headers={"x-api-key": "mode-key"}, strategy="auth_mode"),
+        )
+        unregister_auth_mode("auth-mode-test")
+
+        with patch("cwsandbox._auth.Path.home", return_value=tmp_path):
+            auth = resolve_auth()
+
+        assert auth.strategy == "none"
+        assert auth.headers == {}
 
 
 class TestTryApiKeyAuth:

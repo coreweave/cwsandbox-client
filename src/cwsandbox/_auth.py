@@ -4,11 +4,10 @@
 
 """Authentication resolution for CWSandbox client.
 
-Supports two auth strategies:
+Auth is resolved in the following order:
 1. API key: Uses CWSANDBOX_API_KEY env var -> Authorization: Bearer header
-2. W&B: Uses WANDB_* env vars or ~/.netrc -> x-api-key, x-entity-id, x-project-name headers
-
-Resolution order: API key credentials take priority if present.
+2. Registered auth mode in current process e.g. wandb SDK detects entity, project from active run
+3. W&B: Uses WANDB_* env vars or ~/.netrc -> x-api-key, x-entity-id, x-project-name headers
 """
 
 from __future__ import annotations
@@ -16,10 +15,10 @@ from __future__ import annotations
 import logging
 import netrc
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from cwsandbox._defaults import WANDB_NETRC_HOST
 
@@ -31,7 +30,7 @@ class AuthHeaders:
     """Resolved authentication headers and strategy used."""
 
     headers: dict[str, str]
-    strategy: Literal["api_key", "wandb", "none"]
+    strategy: str
 
     def __bool__(self) -> bool:
         """Return True if any auth headers are present."""
@@ -41,26 +40,69 @@ class AuthHeaders:
 class _AuthMode:
     """Configuration for an authentication mode."""
 
-    def __init__(self, try_auth: Callable[[], AuthHeaders | None]) -> None:
+    def __init__(self, name: str, try_auth: Callable[[], AuthHeaders | None]) -> None:
+        self.name = name
         self.try_auth = try_auth
+
+
+_REGISTERED_AUTH_MODES: list[_AuthMode] = []
+_AUTH_MODES_LOCK = threading.Lock()
+
+
+def register_auth_mode(
+    name: str,
+    try_auth: Callable[[], AuthHeaders | None],
+) -> None:
+    """Register an additional auth mode.
+
+    Registered auth modes are consulted after explicit CoreWeave API-key auth and before
+    the built-in generic W&B env/netrc fallback.
+
+    Registration is idempotent by name.
+    """
+    with _AUTH_MODES_LOCK:
+        if any(auth_mode.name == name for auth_mode in _REGISTERED_AUTH_MODES):
+            return
+        _REGISTERED_AUTH_MODES.append(_AuthMode(name=name, try_auth=try_auth))
+
+
+def unregister_auth_mode(name: str) -> None:
+    """Unregister a previously registered auth mode by name."""
+    with _AUTH_MODES_LOCK:
+        _REGISTERED_AUTH_MODES[:] = [
+            auth_mode for auth_mode in _REGISTERED_AUTH_MODES if auth_mode.name != name
+        ]
+
+
+def _iter_auth_modes() -> list[_AuthMode]:
+    if not _REGISTERED_AUTH_MODES:
+        return [*_BUILTIN_AUTH_MODES, *_FALLBACK_AUTH_MODES]
+
+    with _AUTH_MODES_LOCK:
+        registered_auth_modes = list(_REGISTERED_AUTH_MODES)
+
+    return [
+        *_BUILTIN_AUTH_MODES,
+        *registered_auth_modes,
+        *_FALLBACK_AUTH_MODES,
+    ]
 
 
 def resolve_auth() -> AuthHeaders:
     """Resolve authentication headers from available credentials.
 
-    Tries each auth mode in priority order (defined in _AUTH_MODES) and
-    returns the first one that succeeds.
+    Tries auth modes in priority order and returns the first one that succeeds.
 
     Resolution order:
     1. CWSANDBOX_API_KEY env var (API key auth)
-    2. WANDB_API_KEY + WANDB_ENTITY env vars (W&B auth)
-    3. ~/.netrc api.wandb.ai + WANDB_ENTITY env var (W&B auth)
+    2. Registered auth modes
+    3. WANDB_API_KEY / WANDB_* env vars or ~/.netrc fallback
     4. No auth (empty headers)
 
     Returns:
         AuthHeaders with resolved headers and strategy name
     """
-    for mode in _AUTH_MODES:
+    for mode in _iter_auth_modes():
         auth = mode.try_auth()
         if auth is not None:
             logger.debug("Using %s authentication", auth.strategy)
@@ -160,8 +202,11 @@ def _read_api_key_from_netrc() -> str | None:
     return password
 
 
-# Auth modes in priority order - first successful returns
-_AUTH_MODES = [
-    _AuthMode(try_auth=_try_api_key_auth),
-    _AuthMode(try_auth=_try_wandb_auth),
+_BUILTIN_AUTH_MODES = [
+    _AuthMode(name="api_key", try_auth=_try_api_key_auth),
+]
+
+# Fallback to existing builtin W&B auth for backward compatibility.
+_FALLBACK_AUTH_MODES = [
+    _AuthMode(name="wandb", try_auth=_try_wandb_auth),
 ]
