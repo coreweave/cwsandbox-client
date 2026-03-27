@@ -270,6 +270,26 @@ Demonstrates:
 
 See [SWE-bench Guide](../docs/guides/swebench.md) for full documentation.
 
+### Nanochat Training Pipeline (`nanochat/train_nanochat.py`)
+
+End-to-end LLM training pipeline running [karpathy/nanochat](https://github.com/karpathy/nanochat)'s CPU training inside a single sandbox:
+
+```bash
+# Quick smoke test
+python examples/nanochat/train_nanochat.py --num-iterations 10 --skip-sft
+
+# Full pipeline
+python examples/nanochat/train_nanochat.py
+```
+
+Demonstrates:
+- Long-running sequential pipeline with per-step `exec()` streaming
+- Shell-wrapped commands with venv activation across `exec()` calls
+- Per-step error handling with clear step boundaries
+- Configurable training parameters via CLI flags
+
+See [nanochat/README.md](nanochat/README.md) for full documentation.
+
 ---
 
 ## Async Example
