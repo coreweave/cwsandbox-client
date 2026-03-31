@@ -78,45 +78,7 @@ jobs:
           path: dist/
 
   # ──────────────────────────────────────────────────
-  # Job 2: Publish to Cloudsmith (isolated OIDC scope)
-  # ──────────────────────────────────────────────────
-  publish-cloudsmith:
-    needs: release
-    if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-
-    steps:
-      - name: Get GitHub OIDC Token
-        id: oidc-github-token
-        uses: coreweave/actions/tools/oidc/github-token@get-oidc-github-token-v1.0.0
-        with:
-          audience: "${{ github.server_url }}/${{ github.repository_owner }}"
-
-      - name: Get Cloudsmith API Token
-        uses: coreweave/actions/tools/oidc/cloudsmith-token@get-cloudsmith-api-token-v1.0.0
-        with:
-          oidc-token: "${{ steps.oidc-github-token.outputs.id_token_audience }}"
-          cloudsmith-service-slug: "${{ vars.CLOUDSMITH_SERVICE }}"
-
-      - name: Download dists
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Publish to Cloudsmith
-        env:
-          UV_PUBLISH_USERNAME: "${{ vars.CLOUDSMITH_SERVICE }}"
-          UV_PUBLISH_PASSWORD: "${{ env.CLOUDSMITH_API_TOKEN }}"
-        run: uv publish --publish-url https://python.cloudsmith.io/coreweave/cwsandbox-client/
-
-  # ──────────────────────────────────────────────────
-  # Job 3: Publish to PyPI (isolated OIDC scope)
+  # Job 2: Publish to PyPI (isolated OIDC scope)
   # ──────────────────────────────────────────────────
   publish-pypi:
     needs: release
