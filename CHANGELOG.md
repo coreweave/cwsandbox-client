@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v0.12.2 (2026-03-31)
+
+### Bug Fixes
+
+- Correct team slug in CODEOWNERS
+  ([`165a3f1`](https://github.com/coreweave/cwsandbox-client/commit/165a3f11537cfa9035d18442d9e9cee30bf144cc))
+
+The CODEOWNERS file referenced @coreweave/appliedtraining which does not match the actual GitHub
+  team slug (applied-training). This prevented automatic review assignment on PRs.
+
+### Chores
+
+- Add 7-day package cooldown via uv exclude-newer
+  ([`ce9896a`](https://github.com/coreweave/cwsandbox-client/commit/ce9896ad8280b2e8158680fc63d3438145f2f85c))
+
+Supply chain security measure that prevents uv from resolving packages published within the last 7
+  days, giving the community time to detect and remove malicious versions before they reach our
+  environment.
+
+
 ## v0.12.1 (2026-03-26)
 
 ### Bug Fixes
