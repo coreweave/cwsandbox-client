@@ -40,14 +40,12 @@ uv run pytest -k "test_create"                   # By name pattern
 | `clean_auth_env` | function | Yes | Clears all auth env vars before each test |
 | `mock_api_key` | function | No | Sets `CWSANDBOX_API_KEY` to `"test-api-key"`, returns value |
 | `mock_base_url` | function | No | Sets `CWSANDBOX_BASE_URL` to `"http://test-api.example.com"`, returns value |
-| `mock_wandb_api_key` | function | No | Sets `WANDB_API_KEY` to `"test-wandb-api-key"`, returns value |
-| `mock_wandb_entity_name` | function | No | Sets `WANDB_ENTITY` to `"test-entity"`, returns value |
 
 ### Integration Test Fixtures (`tests/integration/cwsandbox/conftest.py`)
 
 | Fixture | Scope | Autouse | Description |
 |---------|-------|---------|-------------|
-| `require_auth` | module | Yes | Skips tests if no auth configured (except test_auth.py) |
+| `require_auth` | module | Yes | Skips tests if no auth configured |
 | `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 300s lifetime, `("integration-test",)` tags |
 
 Set environment variables before running integration tests. A `.env` file in the project root is automatically loaded via python-dotenv.
@@ -85,8 +83,7 @@ mise run test:e2e
 Set environment variables before running tests (in priority order):
 
 1. `CWSANDBOX_API_KEY` environment variable (takes priority)
-2. `WANDB_API_KEY` + `WANDB_ENTITY` environment variables
-3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY`
+2. `WANDB_API_KEY` only if running live W&B metrics checks in `test_wandb.py`
 
 A `.env` file in the project root is automatically loaded via python-dotenv.
 
@@ -98,7 +95,7 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 
 | File | Coverage |
 |------|----------|
-| `test_auth.py` | Auth resolution priority, env vars, netrc parsing |
+| `test_auth.py` | Auth resolution priority and registered auth modes |
 | `test_cleanup.py` | atexit handlers, signal handlers, re-entrancy guard |
 | `test_defaults.py` | SandboxDefaults configuration, merge_tags, with_overrides |
 | `test_exceptions.py` | Exception hierarchy, custom attributes |
@@ -114,9 +111,9 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 
 | File | Coverage |
 |------|----------|
-| `test_auth.py` | W&B auth paths (env vars, netrc). Has own skip logic. |
 | `test_sandbox.py` | Sandbox lifecycle, file ops, exec. Uses `require_auth`. |
 | `test_session.py` | Session management, function execution. Uses `require_auth`. |
+| `test_wandb.py` | W&B metrics logging. Uses `require_auth`; live checks also need `WANDB_API_KEY`. |
 
 ## Parallel Execution
 

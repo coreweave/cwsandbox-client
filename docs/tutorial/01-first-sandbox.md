@@ -13,13 +13,11 @@ uv sync
 Set your credentials:
 
 ```bash
-# Option 1: CWSandbox API key
 export CWSANDBOX_API_KEY="your-api-key"
-
-# Option 2: W&B credentials
-export WANDB_API_KEY="your-wandb-key"
-export WANDB_ENTITY="your-entity"
 ```
+
+If you are using a provider integration such as `wandb.sandbox`, import that
+integration instead of bare `cwsandbox` so it can register its auth mode.
 
 ## Run Your First Sandbox
 
@@ -36,4 +34,3 @@ with Sandbox.run() as sandbox:
 - `Sandbox.run()` creates a sandbox and returns it inside a context manager
 - `exec()` runs a command and returns a `Process` object
 - `.result()` waits for the command to complete and returns the output
-

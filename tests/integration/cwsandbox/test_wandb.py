@@ -8,8 +8,9 @@ These tests run real sandboxes but mock the wandb SDK to verify
 metric collection and guardrails work correctly without requiring
 W&B credentials.
 
-The TestLiveWandbIntegration class requires WANDB_API_KEY to be set
-and performs actual logging to W&B with API verification.
+Sandbox auth for this file still comes from the shared integration fixture,
+which requires `CWSANDBOX_API_KEY`. The live W&B verification tests also
+require `WANDB_API_KEY`.
 """
 
 from __future__ import annotations
@@ -372,6 +373,7 @@ class TestLiveWandbIntegration:
     """Live integration tests that log to real W&B and verify via API.
 
     These tests require:
+    - CWSANDBOX_API_KEY environment variable set
     - wandb package installed
     - WANDB_API_KEY environment variable set
 

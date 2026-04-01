@@ -6,21 +6,17 @@
 
 Auth is resolved in the following order:
 1. API key: Uses CWSANDBOX_API_KEY env var -> Authorization: Bearer header
-2. Registered auth mode in current process e.g. wandb SDK detects entity, project from active run
-3. W&B: Uses WANDB_* env vars or ~/.netrc -> x-api-key, x-entity-id, x-project-name headers
+2. Registered auth mode in current process
+3. No auth
 """
 
 from __future__ import annotations
 
 import logging
-import netrc
 import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
-
-from cwsandbox._defaults import WANDB_NETRC_HOST
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +51,7 @@ def register_auth_mode(
 ) -> None:
     """Register an additional auth mode.
 
-    Registered auth modes are consulted after explicit CoreWeave API-key auth and before
-    the built-in generic W&B env/netrc fallback.
-
+    Registered auth modes are consulted after explicit CoreWeave API-key auth.
     Registration is idempotent by name.
     """
     with _AUTH_MODES_LOCK:
@@ -76,16 +70,12 @@ def unregister_auth_mode(name: str) -> None:
 
 def _iter_auth_modes() -> list[_AuthMode]:
     if not _REGISTERED_AUTH_MODES:
-        return [*_BUILTIN_AUTH_MODES, *_FALLBACK_AUTH_MODES]
+        return _BUILTIN_AUTH_MODES
 
     with _AUTH_MODES_LOCK:
         registered_auth_modes = list(_REGISTERED_AUTH_MODES)
 
-    return [
-        *_BUILTIN_AUTH_MODES,
-        *registered_auth_modes,
-        *_FALLBACK_AUTH_MODES,
-    ]
+    return [*_BUILTIN_AUTH_MODES, *registered_auth_modes]
 
 
 def resolve_auth() -> AuthHeaders:
@@ -96,8 +86,7 @@ def resolve_auth() -> AuthHeaders:
     Resolution order:
     1. CWSANDBOX_API_KEY env var (API key auth)
     2. Registered auth modes
-    3. WANDB_API_KEY / WANDB_* env vars or ~/.netrc fallback
-    4. No auth (empty headers)
+    3. No auth (empty headers)
 
     Returns:
         AuthHeaders with resolved headers and strategy name
@@ -141,72 +130,6 @@ def _try_api_key_auth() -> AuthHeaders | None:
     )
 
 
-def _try_wandb_auth() -> AuthHeaders | None:
-    """Try to resolve W&B authentication from env vars or netrc.
-
-    API key can come from WANDB_API_KEY env var or ~/.netrc.
-    WANDB_ENTITY and WANDB_PROJECT are optional; when set, they are
-    sent as x-entity-id and x-project-name headers.
-
-    Returns:
-        AuthHeaders if valid W&B credentials found, None otherwise.
-    """
-    # Check for API key first (env var, then netrc)
-    api_key = os.environ.get("WANDB_API_KEY") or _read_api_key_from_netrc()
-
-    if not api_key:
-        # No W&B credentials configured
-        return None
-
-    headers = {
-        "x-api-key": api_key,
-    }
-
-    entity = os.environ.get("WANDB_ENTITY")
-    if entity:
-        headers["x-entity-id"] = entity
-
-    project = os.environ.get("WANDB_PROJECT")
-    if project:
-        headers["x-project-name"] = project
-
-    return AuthHeaders(headers=headers, strategy="wandb")
-
-
-def _read_api_key_from_netrc() -> str | None:
-    """Read W&B API key from ~/.netrc file.
-
-    Looks for machine 'api.wandb.ai' and extracts the password field.
-
-    Returns:
-        API key string if found, None otherwise
-    """
-    netrc_path = Path.home() / ".netrc"
-
-    try:
-        nrc = netrc.netrc(str(netrc_path))
-    except FileNotFoundError:
-        logger.debug("No .netrc file found at %s", netrc_path)
-        return None
-    except netrc.NetrcParseError as e:
-        logger.warning("Failed to parse .netrc: %s", e)
-        return None
-
-    auth = nrc.authenticators(WANDB_NETRC_HOST)
-    if auth is None:
-        logger.debug("No entry for %s in .netrc", WANDB_NETRC_HOST)
-        return None
-
-    # auth is (login, account, password)
-    _login, _account, password = auth
-    return password
-
-
 _BUILTIN_AUTH_MODES = [
     _AuthMode(name="api_key", try_auth=_try_api_key_auth),
-]
-
-# Fallback to existing builtin W&B auth for backward compatibility.
-_FALLBACK_AUTH_MODES = [
-    _AuthMode(name="wandb", try_auth=_try_wandb_auth),
 ]

@@ -4,34 +4,30 @@ This guide covers common issues and their solutions when working with the CWSand
 
 ## Authentication Issues
 
-**Symptom**: `CWSandboxAuthenticationError` or `WandbAuthError` raised on sandbox operations.
+**Symptom**: `CWSandboxAuthenticationError` raised on sandbox operations.
 
 The SDK resolves authentication in this order:
 
 1. `CWSANDBOX_API_KEY` env var (takes priority)
-2. `WANDB_API_KEY` + `WANDB_ENTITY` env vars
-3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY`
+2. Registered auth modes from integrations imported in the current process
 
-You need **one** of these configured. Check which method you're using:
+You need one of these configured. For bare `cwsandbox`, check:
 
 ```bash
-# Option 1: CWSandbox API key
 echo $CWSANDBOX_API_KEY
-
-# Option 2: W&B credentials
-echo $WANDB_API_KEY
-echo $WANDB_ENTITY
 ```
+
+If you intended to use a provider-owned auth flow, make sure you imported that
+integration module before creating sandboxes. For example, use
+`from wandb.sandbox import Sandbox` rather than importing bare `cwsandbox`.
 
 ### Common Issues
 
 | Issue | Solution |
 |-------|----------|
-| No credentials configured | Set `CWSANDBOX_API_KEY` or W&B credentials |
+| No credentials configured | Set `CWSANDBOX_API_KEY` or import an integration that registers auth |
 | Invalid or expired API key | Contact your administrator for a new key |
-| W&B API key set but entity missing | Set `WANDB_ENTITY` to your W&B entity/team |
-| Using netrc but entity missing | Set `WANDB_ENTITY` - it's always required for W&B |
-| Netrc parse errors | Check `~/.netrc` file syntax and permissions |
+| Imported bare `cwsandbox` by mistake | Import the provider integration you meant to use, such as `wandb.sandbox` |
 
 ---
 
@@ -184,7 +180,6 @@ See [Cleanup Patterns - Orphan Management](cleanup-patterns.md#orphan-management
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `CWSandboxAuthenticationError` | Missing or invalid credentials | Check `CWSANDBOX_API_KEY` is set |
-| `WandbAuthError: WANDB_ENTITY is not set` | W&B API key found but entity missing | Set `WANDB_ENTITY` env var |
 | `SandboxNotRunningError` | Operation on stopped sandbox | Check `sandbox.status` before operations |
 | `SandboxTimeoutError` | Operation exceeded timeout | Increase `timeout_seconds` or optimize command |
 | `SandboxTerminatedError` | Sandbox killed externally | Check `max_lifetime_seconds` or external termination |

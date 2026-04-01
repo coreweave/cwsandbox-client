@@ -18,7 +18,6 @@ DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0
 DEFAULT_POLL_BACKOFF_FACTOR: float = 1.5
-WANDB_NETRC_HOST: str = "api.wandb.ai"
 
 # Default timeout for HTTP requests and API operations (seconds)
 # This controls how long to wait for API responses, not sandbox lifetime.

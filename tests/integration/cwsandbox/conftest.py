@@ -22,40 +22,26 @@ import pytest
 
 from cwsandbox import Sandbox, SandboxDefaults
 from cwsandbox._auth import resolve_auth
-from cwsandbox.exceptions import CWSandboxError, WandbAuthError
+from cwsandbox.exceptions import CWSandboxError
 
 if TYPE_CHECKING:
     pass
 
 
 @pytest.fixture(scope="module", autouse=True)
-def require_auth(request: pytest.FixtureRequest) -> None:
+def require_auth() -> None:
     """Skip integration tests if no auth credentials are configured.
 
     This fixture validates authentication upfront rather than letting tests
-    fail with opaque RPC errors. Runs automatically for all integration tests
-    except test_auth.py which manages its own auth fixtures.
-
-    Raises pytest.skip for:
-    - No auth configured at all (strategy == "none")
-    - Incomplete W&B auth (WANDB_API_KEY found but missing WANDB_ENTITY)
+    fail with opaque RPC errors. Runs automatically for all integration tests.
     """
-    # Skip for test_auth.py which manages its own auth via fixtures
-    if request.path.name == "test_auth.py":
-        return
-
-    try:
-        auth = resolve_auth()
-    except WandbAuthError as e:
-        pytest.skip(f"W&B credentials incomplete: {e}\nSet WANDB_ENTITY environment variable.")
+    auth = resolve_auth()
 
     if auth.strategy == "none":
         pytest.skip(
             "Integration tests require authentication. Configure one of:\n"
             "  1. CWSANDBOX_API_KEY environment variable\n"
-            "  2. WANDB_API_KEY + WANDB_ENTITY environment variables\n"
-            "  3. ~/.netrc (api.wandb.ai) + WANDB_ENTITY\n"
-            "  4. .env file in project root (auto-loaded, see .env.example)"
+            "  2. .env file in project root (auto-loaded, see .env.example)"
         )
 
 
