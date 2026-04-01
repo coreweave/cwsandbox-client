@@ -14,33 +14,15 @@ uv sync
 
 ## Authentication
 
-The SDK checks for credentials in this order:
-
-### Option 1: CWSandbox API Key (Recommended)
+Bare `cwsandbox` authenticates with a CoreWeave Sandbox API key:
 
 ```bash
 export CWSANDBOX_API_KEY="your-api-key"
 ```
 
-### Option 2: W&B Credentials
-
-If you have W&B credentials configured, the SDK can use them:
-
-```bash
-export WANDB_API_KEY="your-wandb-key"
-export WANDB_ENTITY="your-entity"
-export WANDB_PROJECT="your-project"
-```
-
-The SDK also reads W&B credentials from `~/.netrc` if `WANDB_API_KEY` isn't set:
-
-```
-machine api.wandb.ai
-  login user
-  password your-wandb-key
-```
-
-Both `WANDB_ENTITY` and `WANDB_PROJECT` are optional. If `WANDB_ENTITY` is unset, the SDK does not send the x-entity-id header. If `WANDB_PROJECT` is unset, the SDK does not send the x-project-name header.
+Provider integrations can register additional auth modes in-process. For
+example, importing `wandb.sandbox` installs W&B-aware auth resolution for that
+process, but bare `cwsandbox` does not read `WANDB_*` variables or `~/.netrc`.
 
 ## Quick Start
 

@@ -51,8 +51,8 @@ cp .env.example .env
 ```
 
 Authentication options:
-- **CWSandbox**: `CWSANDBOX_API_KEY` (takes priority)
-- **Weights & Biases**: `WANDB_API_KEY` + `WANDB_ENTITY` (or `~/.netrc`)
+- **Required for integration tests**: `CWSANDBOX_API_KEY`
+- **Optional for live W&B metrics verification**: `WANDB_API_KEY` in `tests/integration/cwsandbox/test_wandb.py`
 
 ---
 

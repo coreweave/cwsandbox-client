@@ -69,22 +69,6 @@ def mock_base_url(monkeypatch: pytest.MonkeyPatch) -> str:
     return test_url
 
 
-@pytest.fixture
-def mock_wandb_api_key(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Set a mock WANDB_API_KEY for the test."""
-    test_key = "test-wandb-api-key"
-    monkeypatch.setenv("WANDB_API_KEY", test_key)
-    return test_key
-
-
-@pytest.fixture
-def mock_wandb_entity_name(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Set a mock WANDB_ENTITY for the test."""
-    test_entity = "test-entity"
-    monkeypatch.setenv("WANDB_ENTITY", test_entity)
-    return test_entity
-
-
 # Helper functions for creating real OperationRef/Process objects in tests
 
 

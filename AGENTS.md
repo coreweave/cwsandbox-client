@@ -132,7 +132,6 @@ Key constants (from `_defaults.py`):
 - `DEFAULT_TEMP_DIR = "/tmp"`
 - Polling: `DEFAULT_POLL_INTERVAL_SECONDS = 0.2`, `DEFAULT_POLL_BACKOFF_FACTOR = 1.5`, `DEFAULT_MAX_POLL_INTERVAL_SECONDS = 2.0`
 - `DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS = 5.0` - Buffer added to exec timeout
-- W&B auth: `WANDB_NETRC_HOST = "api.wandb.ai"`
 
 **`OperationRef[T]`** (`_types.py`): Generic wrapper for async operations with lazy result retrieval. Bridges `concurrent.futures.Future` to asyncio for the sync/async hybrid API.
 
@@ -224,8 +223,8 @@ sandbox = Sandbox.run(
 
 `_auth.py` implements a priority-based resolution:
 1. `CWSANDBOX_API_KEY` env var - Bearer token auth
-2. `WANDB_API_KEY` + `WANDB_ENTITY` - W&B headers (x-api-key, x-entity-id, x-project-name)
-3. `~/.netrc` (api.wandb.ai) + `WANDB_ENTITY`
+2. registered auth modes in the current process (for example `wandb.sandbox`)
+3. no auth
 
 ### Function Execution (`_function.py`)
 
@@ -381,7 +380,6 @@ def test_sandbox_example(sandbox_defaults: SandboxDefaults) -> None:
 ```
 CWSandboxError
 ├── CWSandboxAuthenticationError
-│   └── WandbAuthError
 ├── SandboxError
 │   ├── SandboxNotRunningError
 │   ├── SandboxTimeoutError

@@ -44,7 +44,6 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
-    WandbAuthError,
 )
 
 if TYPE_CHECKING:
@@ -268,7 +267,6 @@ __all__ = [
     "TerminalResult",
     "TerminalSession",
     "Waitable",
-    "WandbAuthError",
     "results",
     "wait",
 ]

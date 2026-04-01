@@ -19,11 +19,11 @@ uv sync
 uv pip install swebench datasets
 ```
 
-For authentication, set one of these:
+For authentication, set your sandbox API key:
 
-- `CWSANDBOX_API_KEY` environment variable (recommended)
-- `WANDB_API_KEY` environment variable
-- W&B credentials in `~/.netrc`
+```bash
+export CWSANDBOX_API_KEY="your-api-key"
+```
 
 ## Quick start
 

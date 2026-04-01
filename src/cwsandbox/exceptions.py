@@ -104,7 +104,3 @@ class AsyncFunctionError(FunctionError):
 
 class FunctionSerializationError(FunctionError):
     """Raised when arguments, referenced globals, or closures cannot be serialized."""
-
-
-class WandbAuthError(CWSandboxAuthenticationError):
-    """Raised when W&B authentication is misconfigured."""

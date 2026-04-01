@@ -19,7 +19,6 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
-    WandbAuthError,
 )
 
 
@@ -31,10 +30,6 @@ class TestExceptionHierarchy:
         assert issubclass(SandboxError, CWSandboxError)
         assert issubclass(FunctionError, CWSandboxError)
         assert issubclass(CWSandboxAuthenticationError, CWSandboxError)
-
-    def test_auth_error_is_base_for_auth_exceptions(self) -> None:
-        """Test CWSandboxAuthenticationError is the base for auth-related exceptions."""
-        assert issubclass(WandbAuthError, CWSandboxAuthenticationError)
 
     def test_sandbox_error_is_base_for_sandbox_exceptions(self) -> None:
         """Test SandboxError is the base for sandbox-related exceptions."""

@@ -18,7 +18,7 @@ cwsandbox/
 ├── _function.py      # RemoteFunction for @session.function() decorator
 ├── _types.py         # OperationRef, ProcessResult, Process, StreamReader, Secret
 ├── _defaults.py      # SandboxDefaults configuration dataclass
-├── _auth.py          # Authentication resolution (API key, W&B, netrc)
+├── _auth.py          # Authentication resolution (API key, registered auth modes)
 ├── _loop_manager.py  # Background asyncio event loop singleton
 ├── _cleanup.py       # atexit/signal handlers for graceful shutdown
 ├── exceptions.py     # Exception hierarchy
