@@ -20,9 +20,10 @@ Bare `cwsandbox` authenticates with a CoreWeave Sandbox API key:
 export CWSANDBOX_API_KEY="your-api-key"
 ```
 
-Provider integrations can register additional auth modes in-process. For
-example, importing `wandb.sandbox` installs W&B-aware auth resolution for that
-process, but bare `cwsandbox` does not read `WANDB_*` variables or `~/.netrc`.
+Provider integrations can replace the active auth mode in-process. For
+example, importing `wandb.sandbox` installs W&B-owned auth resolution for that
+process, while bare `cwsandbox` continues to use only `CWSANDBOX_API_KEY` (or
+no auth for local environments that permit it).
 
 ## Quick Start
 

@@ -6,10 +6,11 @@ This guide covers common issues and their solutions when working with the CWSand
 
 **Symptom**: `CWSandboxAuthenticationError` raised on sandbox operations.
 
-The SDK resolves authentication in this order:
+The SDK resolves authentication from one active mode at a time:
 
-1. `CWSANDBOX_API_KEY` env var (takes priority)
-2. Registered auth modes from integrations imported in the current process
+1. A provider auth mode registered by an imported integration
+2. Otherwise, `CWSANDBOX_API_KEY`
+3. Otherwise, no auth (only for environments that allow unauthenticated access)
 
 You need one of these configured. For bare `cwsandbox`, check:
 
@@ -25,7 +26,7 @@ integration module before creating sandboxes. For example, use
 
 | Issue | Solution |
 |-------|----------|
-| No credentials configured | Set `CWSANDBOX_API_KEY` or import an integration that registers auth |
+| No credentials configured | Set `CWSANDBOX_API_KEY` or import an integration that installs the auth mode you intend to use |
 | Invalid or expired API key | Contact your administrator for a new key |
 | Imported bare `cwsandbox` by mistake | Import the provider integration you meant to use, such as `wandb.sandbox` |
 
