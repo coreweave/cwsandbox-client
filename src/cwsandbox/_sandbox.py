@@ -2020,7 +2020,10 @@ class Sandbox:
             result = sb.exec(["echo", "ready"]).result()
             ```
         """
-        self._loop_manager.run_sync(self._wait_until_running_async(timeout))
+        with get_tracer().start_as_current_span(
+            "sandbox.wait", attributes={"sandbox.id": self._sandbox_id or ""}
+        ):
+            self._loop_manager.run_sync(self._wait_until_running_async(timeout))
         return self
 
     def wait_until_complete(
