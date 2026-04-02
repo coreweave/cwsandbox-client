@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v0.13.0 (2026-04-02)
+
+### Chores
+
+- **ci**: Remove Cloudsmith publish step from release workflow
+  ([`1efc31f`](https://github.com/coreweave/cwsandbox-client/commit/1efc31f95a21f930c978062eff7a88c27c7ad701))
+
+The coreweave/actions OIDC actions can no longer be resolved, causing publish-cloudsmith to fail on
+  every release since 2026-03-24. Now that packages are distributed via PyPI (#79), the Cloudsmith
+  step is redundant.
+
+### Features
+
+- **auth**: Allow register auth mode
+  ([`f381366`](https://github.com/coreweave/cwsandbox-client/commit/f381366c05892a5edf1ca104de0825f8524f97b4))
+
+- **auth**: Register one active auth mode, no chain
+  ([`efa9c23`](https://github.com/coreweave/cwsandbox-client/commit/efa9c23b368b37d08cfece1be01d2accdc91394c))
+
+No more chain of auth modes. Use the registered auth mode directly.
+
+- **auth**: Remove builtin wandb auth and update doc
+  ([`fe6c474`](https://github.com/coreweave/cwsandbox-client/commit/fe6c47490050ed5444152c8e281dc99df31859c0))
+
+
 ## v0.12.2 (2026-03-31)
 
 ### Bug Fixes
