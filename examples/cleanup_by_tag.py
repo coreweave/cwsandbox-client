@@ -33,8 +33,6 @@ def create_tagged_sandboxes(tag: str, count: int) -> None:
     # Sandbox.run() returns immediately; sandboxes start in parallel
     sandboxes = [
         Sandbox.run(
-            "sleep",
-            "infinity",
             tags=[tag, f"instance-{i}"],
         )
         for i in range(count)

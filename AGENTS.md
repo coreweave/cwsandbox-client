@@ -326,6 +326,45 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 **`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process | TerminalSession`.
 
+### Discovery API
+
+Module-level sync functions (`_discovery.py`) for querying available towers and runways. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed).
+
+**Functions:**
+- `list_towers(*, tower_group_id=None, runway_name=None, gpu_type=None, architecture=None, include_resources=False)` -> `list[Tower]`: List available towers with optional filtering. Set `include_resources=True` for live resource availability. Auto-paginates.
+- `get_tower(tower_id)` -> `Tower`: Get a single tower by ID. Always returns full details including resources. Raises `TowerNotFoundError` if not found.
+- `list_runways(*, gpu_type=None, architecture=None, tower_id=None)` -> `list[Runway]`: List available runways with optional filtering. Auto-paginates.
+- `get_runway(runway_name, *, tower_id=None)` -> `Runway`: Get a single runway by name. Raises `RunwayNotFoundError` if not found.
+
+**Types:**
+- `Tower`: Frozen dataclass with tower capabilities (CPU, memory, GPU), health status, `runway_names`, and optional `TowerResources`. Has human-readable `__repr__`.
+- `TowerResources`: Live resource availability (`available_cpu_millicores`, `available_memory_bytes`, `available_gpu_count`, `running_sandboxes`).
+- `Runway`: Frozen dataclass with `runway_name`, `tower_id`, `supported_gpu_types`, `supported_architectures`, and `ingress_modes`/`egress_modes`.
+- `IngressMode`, `EgressMode`: Wrapper dataclasses (with `name` field) for forward compatibility.
+
+**Utilities:**
+- `format_bytes(value)`: Format bytes as human-readable string (e.g., `17179869184` -> `'16.0 GiB'`).
+- `format_cpu(millicores)`: Format CPU millicores (e.g., `4000` -> `'4.0 cores'`).
+
+Usage:
+```python
+import cwsandbox
+
+# List all towers with resources
+towers = cwsandbox.list_towers(include_resources=True)
+for t in towers:
+    print(t)  # Human-readable repr
+
+# Get a specific tower
+tower = cwsandbox.get_tower("tower-123")
+print(f"CPU: {cwsandbox.format_cpu(tower.max_cpu_millicores)}")
+
+# List runways, filter by GPU type
+runways = cwsandbox.list_runways(gpu_type="A100")
+```
+
+Note: `runway_names` from discovery are the same strings used in `SandboxDefaults(runway_ids=[...])` for infrastructure targeting. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
+
 ### Backend Communication
 
 Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
@@ -389,6 +428,8 @@ CWSandboxError
 │   ├── SandboxNotFoundError         # .sandbox_id attribute
 │   ├── SandboxExecutionError        # .exec_result, .exception_type, .exception_message attributes
 │   └── SandboxFileError             # .filepath attribute
+├── TowerNotFoundError               # .tower_id attribute
+├── RunwayNotFoundError              # .runway_name, .tower_id attributes
 └── FunctionError
     ├── AsyncFunctionError
     └── FunctionSerializationError

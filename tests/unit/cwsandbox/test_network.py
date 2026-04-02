@@ -6,9 +6,16 @@
 
 from unittest.mock import MagicMock, patch
 
+import grpc
 import pytest
 
-from cwsandbox._network import create_channel, parse_grpc_target
+from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
+from cwsandbox.exceptions import (
+    CWSandboxAuthenticationError,
+    CWSandboxError,
+    DiscoveryError,
+    SandboxError,
+)
 
 
 class TestParseGrpcTarget:
@@ -117,3 +124,81 @@ class TestCreateChannel:
 
         mock_insecure_channel.assert_called_once_with("localhost:50051")
         assert result is mock_channel
+
+
+def _make_rpc_error(code: grpc.StatusCode, details: str) -> grpc.RpcError:
+    err = MagicMock()
+    err.code.return_value = code
+    err.details.return_value = details
+    return err
+
+
+class TestTranslateGrpcError:
+    """Tests for translate_grpc_error shared helper."""
+
+    def test_unauthenticated(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.UNAUTHENTICATED, "bad token")
+        result = translate_grpc_error(err)
+        assert isinstance(result, CWSandboxAuthenticationError)
+        assert "bad token" in str(result)
+
+    def test_permission_denied(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.PERMISSION_DENIED, "forbidden")
+        result = translate_grpc_error(err)
+        assert isinstance(result, CWSandboxAuthenticationError)
+        assert "forbidden" in str(result)
+
+    def test_deadline_exceeded(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED, "slow")
+        result = translate_grpc_error(err, operation="List towers")
+        assert isinstance(result, CWSandboxError)
+        assert "timed out" in str(result)
+        assert "slow" in str(result)
+
+    def test_unavailable(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.UNAVAILABLE, "server down")
+        result = translate_grpc_error(err)
+        assert isinstance(result, CWSandboxError)
+        assert "unavailable" in str(result).lower()
+
+    def test_other_code(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.INTERNAL, "oops")
+        result = translate_grpc_error(err, operation="Get tower")
+        assert isinstance(result, CWSandboxError)
+        assert "oops" in str(result)
+
+    def test_returns_not_raises(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.INTERNAL, "oops")
+        result = translate_grpc_error(err)
+        assert isinstance(result, Exception)  # returned, not raised
+
+    # -- fallback_cls parameter tests --
+
+    def test_fallback_cls_sandbox_error_for_unavailable(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.UNAVAILABLE, "server down")
+        result = translate_grpc_error(err, fallback_cls=SandboxError)
+        assert isinstance(result, SandboxError)
+        assert "unavailable" in str(result).lower()
+
+    def test_fallback_cls_sandbox_error_for_deadline(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED, "slow")
+        result = translate_grpc_error(err, fallback_cls=SandboxError)
+        assert isinstance(result, SandboxError)
+        assert "timed out" in str(result)
+
+    def test_fallback_cls_sandbox_error_for_other(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.INTERNAL, "oops")
+        result = translate_grpc_error(err, fallback_cls=SandboxError)
+        assert isinstance(result, SandboxError)
+
+    def test_fallback_cls_discovery_error_for_unavailable(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.UNAVAILABLE, "server down")
+        result = translate_grpc_error(err, fallback_cls=DiscoveryError)
+        assert isinstance(result, DiscoveryError)
+
+    def test_fallback_cls_does_not_affect_auth_errors(self) -> None:
+        for code in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
+            err = _make_rpc_error(code, "denied")
+            result = translate_grpc_error(err, fallback_cls=SandboxError)
+            assert isinstance(result, CWSandboxAuthenticationError)
+            assert not isinstance(result, SandboxError)

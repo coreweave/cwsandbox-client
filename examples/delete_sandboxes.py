@@ -22,8 +22,6 @@ def main() -> None:
     # Create a sandbox to demonstrate deletion
     print("Creating a test sandbox...")
     sandbox = Sandbox.run(
-        "sleep",
-        "infinity",
         tags=["delete-example"],
     )
     sandbox_id = sandbox.sandbox_id

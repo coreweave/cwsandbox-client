@@ -39,7 +39,7 @@ from cwsandbox._defaults import (
     SandboxDefaults,
 )
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._network import create_channel, parse_grpc_target
+from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox._proto import (
     atc_pb2,
     atc_pb2_grpc,
@@ -59,7 +59,7 @@ from cwsandbox._types import (
     TerminalSession,
 )
 from cwsandbox.exceptions import (
-    CWSandboxAuthenticationError,
+    CWSandboxError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
@@ -160,8 +160,11 @@ def _translate_rpc_error(
     *,
     sandbox_id: str | None = None,
     operation: str = "operation",
-) -> SandboxError | CWSandboxAuthenticationError:
+) -> CWSandboxError:
     """Translate gRPC RpcError to appropriate CWSandbox exception.
+
+    Handles sandbox-specific codes first, then delegates to the shared
+    transport-level translator for auth and generic errors.
 
     Args:
         e: The gRPC RpcError to translate
@@ -179,21 +182,16 @@ def _translate_rpc_error(
             f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
             sandbox_id=sandbox_id,
         )
-    elif code == grpc.StatusCode.CANCELLED:
+    if code == grpc.StatusCode.CANCELLED:
         return SandboxNotRunningError(
             f"{operation} was cancelled"
             + (f" (sandbox {sandbox_id} connection closed)" if sandbox_id else "")
         )
-    elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
+    if code == grpc.StatusCode.DEADLINE_EXCEEDED:
         return SandboxTimeoutError(f"{operation} timed out: {details}")
-    elif code == grpc.StatusCode.UNAVAILABLE:
+    if code == grpc.StatusCode.UNAVAILABLE:
         return SandboxNotRunningError(f"Service unavailable: {details}")
-    elif code == grpc.StatusCode.PERMISSION_DENIED:
-        return CWSandboxAuthenticationError(f"Permission denied: {details}")
-    elif code == grpc.StatusCode.UNAUTHENTICATED:
-        return CWSandboxAuthenticationError(f"Authentication failed: {details}")
-    else:
-        return SandboxError(f"{operation} failed: {details}")
+    return translate_grpc_error(e, operation=operation, fallback_cls=SandboxError)
 
 
 # ---------------------------------------------------------------------------

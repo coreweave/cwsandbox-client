@@ -34,8 +34,6 @@ def create_long_running_sandbox() -> str:
     print("Creating a long-running sandbox...")
 
     sandbox = Sandbox.run(
-        "sleep",
-        "infinity",
         tags=["reconnect-example"],
     )
 
