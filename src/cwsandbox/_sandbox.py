@@ -2659,6 +2659,18 @@ class Sandbox:
         await self._wait_until_running_async()
 
         await self._ensure_client()
+
+        # Tracing: start a span covering the full exec lifecycle.
+        tracer = get_tracer()
+        _exec_span = tracer.start_as_current_span(
+            "sandbox.exec",
+            attributes={
+                "sandbox.id": self._sandbox_id or "",
+                "exec.argv0": command[0] if command else "",
+                "exec.argc": len(command),
+            },
+        )
+        _exec_cm = _exec_span.__enter__()
         channel = await self._get_or_create_streaming_channel()
         stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
@@ -2894,6 +2906,7 @@ class Sandbox:
                 exec_result=result,
             )
 
+        _exec_span.__exit__(None, None, None)
         return result
 
     def exec(
