@@ -24,6 +24,7 @@ import grpc.aio
 from google.protobuf import timestamp_pb2
 
 from cwsandbox._auth import resolve_auth_metadata
+from cwsandbox._tracing import get_tracer, inject_trace_context
 from cwsandbox._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
@@ -829,7 +830,7 @@ class Sandbox:
                 request_kwargs["include_stopped"] = True
             request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
             try:
-                response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
+                response = await stub.List(request, timeout=timeout, metadata=inject_trace_context(auth_metadata))
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="List sandboxes") from e
 
@@ -915,7 +916,7 @@ class Sandbox:
         try:
             request = gateway_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Get(request, timeout=timeout, metadata=auth_metadata)
+                response = await stub.Get(request, timeout=timeout, metadata=inject_trace_context(auth_metadata))
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
 
@@ -1005,7 +1006,7 @@ class Sandbox:
         try:
             request = gateway_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
+                response = await stub.Delete(request, timeout=timeout, metadata=inject_trace_context(auth_metadata))
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
                     return
@@ -1283,7 +1284,7 @@ class Sandbox:
         request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
             response = await self._stub.Get(
-                request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
+                request, timeout=self._request_timeout_seconds, metadata=inject_trace_context(self._auth_metadata)
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
@@ -1531,7 +1532,7 @@ class Sandbox:
                 response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
                     request,
                     timeout=self._request_timeout_seconds,
-                    metadata=self._auth_metadata,
+                    metadata=inject_trace_context(self._auth_metadata),
                 )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(
@@ -1634,12 +1635,19 @@ class Sandbox:
 
             request = gateway_pb2.StartSandboxRequest(**request_kwargs)
             self._start_accepted_at = time.monotonic()
-            try:
-                response = await self._stub.Start(
-                    request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
-                )
-            except grpc.RpcError as e:
-                raise _translate_rpc_error(e, operation="Start sandbox") from e
+            tracer = get_tracer()
+            with tracer.start_as_current_span(
+                "sandbox.start",
+                attributes={"sandbox.image": self._container_image or ""},
+            ):
+                try:
+                    response = await self._stub.Start(
+                        request,
+                        timeout=self._request_timeout_seconds,
+                        metadata=inject_trace_context(self._auth_metadata),
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(e, operation="Start sandbox") from e
 
             sandbox_id = str(response.sandbox_id)
             self._sandbox_id = sandbox_id
@@ -2046,7 +2054,7 @@ class Sandbox:
                 response = await self._stub.Stop(
                     request,
                     timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
-                    metadata=self._auth_metadata,
+                    metadata=inject_trace_context(self._auth_metadata),
                 )
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
@@ -2433,7 +2441,7 @@ class Sandbox:
             ] = stub.StreamExec(
                 request_iterator=request_generator(),
                 timeout=None,
-                metadata=auth_metadata,
+                metadata=inject_trace_context(auth_metadata),
             )
 
             # Bounded queue propagates backpressure to gRPC reads — when the
@@ -2670,7 +2678,7 @@ class Sandbox:
         ] = stub.StreamExec(
             request_iterator=request_generator(),
             timeout=call_timeout,
-            metadata=auth_metadata,
+            metadata=inject_trace_context(auth_metadata),
         )
 
         # Queue decouples stream iteration from our processing.
@@ -3015,7 +3023,7 @@ class Sandbox:
 
         try:
             response = await self._stub.RetrieveFile(
-                request, timeout=timeout, metadata=self._auth_metadata
+                request, timeout=timeout, metadata=inject_trace_context(self._auth_metadata)
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(e, sandbox_id=self._sandbox_id, operation="Read file") from e
@@ -3088,7 +3096,7 @@ class Sandbox:
 
         try:
             response = await self._stub.AddFile(
-                request, timeout=timeout, metadata=self._auth_metadata
+                request, timeout=timeout, metadata=inject_trace_context(self._auth_metadata)
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
