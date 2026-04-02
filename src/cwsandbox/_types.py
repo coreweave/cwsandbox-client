@@ -196,6 +196,36 @@ class Secret:
             raise ValueError("Secret.env_var cannot be empty")
 
 
+@dataclass(frozen=True, kw_only=True)
+class ResourceOptions:
+    """Resource configuration for sandbox CPU, memory, and GPU.
+
+    Supports separate requests and limits for Burstable QoS pods.
+    GPU is a separate top-level field because GPU overcommit is not
+    supported by the backend.
+
+    Shallow immutability: dict fields prevent hashing but preserve
+    the frozen dataclass pattern used by NetworkOptions and Secret.
+
+    Attributes:
+        requests: CPU/memory resource requests (e.g. {"cpu": "1", "memory": "256Mi"}).
+        limits: CPU/memory resource limits (e.g. {"cpu": "8", "memory": "2Gi"}).
+        gpu: GPU configuration (e.g. {"count": 1, "type": "A100"}).
+    """
+
+    requests: dict[str, str] | None = None
+    limits: dict[str, str] | None = None
+    gpu: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.requests is not None and len(self.requests) == 0:
+            object.__setattr__(self, "requests", None)
+        if self.limits is not None and len(self.limits) == 0:
+            object.__setattr__(self, "limits", None)
+        if isinstance(self.gpu, dict) and len(self.gpu) == 0:
+            object.__setattr__(self, "gpu", None)
+
+
 @dataclass
 class ProcessResult:
     """Result from a completed streaming exec operation.
