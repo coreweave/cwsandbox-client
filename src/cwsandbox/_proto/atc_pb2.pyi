@@ -196,7 +196,7 @@ class ObjectStorageAccess(_message.Message):
     def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
 
 class StartSandboxRequest(_message.Message):
-    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "runway_ids", "tower_ids", "max_lifetime_seconds", "max_timeout_seconds", "tower_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores")
+    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "runway_ids", "tower_ids", "max_lifetime_seconds", "max_timeout_seconds", "tower_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -229,6 +229,8 @@ class StartSandboxRequest(_message.Message):
     OBJECT_STORAGE_ACCESS_FIELD_NUMBER: _ClassVar[int]
     POD_ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
     SECRET_STORES_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_LIMITS_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_REQUESTS_FIELD_NUMBER: _ClassVar[int]
     command: str
     args: _containers.RepeatedScalarFieldContainer[str]
     tags: _containers.RepeatedScalarFieldContainer[str]
@@ -247,10 +249,12 @@ class StartSandboxRequest(_message.Message):
     object_storage_access: ObjectStorageAccess
     pod_annotations: _containers.ScalarMap[str, str]
     secret_stores: _containers.RepeatedCompositeFieldContainer[_secrets_pb2.SecretStoreReference]
-    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., tower_cluster_secrets: _Optional[_Iterable[_Union[TowerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ...) -> None: ...
+    resource_limits: ResourceRequest
+    resource_requests: ResourceRequest
+    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., tower_cluster_secrets: _Optional[_Iterable[_Union[TowerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StartSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "runway_id", "tower_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "runway_id", "tower_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode", "requested_resource_limits", "requested_resource_requests")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ADDRESS_FIELD_NUMBER: _ClassVar[int]
@@ -261,6 +265,8 @@ class StartSandboxResponse(_message.Message):
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
+    REQUESTED_RESOURCE_LIMITS_FIELD_NUMBER: _ClassVar[int]
+    REQUESTED_RESOURCE_REQUESTS_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     started_at_time: _timestamp_pb2.Timestamp
     service_address: str
@@ -271,7 +277,9 @@ class StartSandboxResponse(_message.Message):
     sandbox_status: SandboxStatus
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., runway_id: _Optional[str] = ..., tower_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    requested_resource_limits: ResourceRequest
+    requested_resource_requests: ResourceRequest
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., runway_id: _Optional[str] = ..., tower_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., requested_resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., requested_resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StopSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "graceful_shutdown_seconds", "snapshot_on_stop", "max_timeout_seconds")
@@ -508,3 +516,45 @@ class RawSandboxResponse(_message.Message):
     add_file_response: AddFileSandboxResponse
     retrieve_file_response: RetrieveFileSandboxResponse
     def __init__(self, action_type: _Optional[_Union[ActionType, str]] = ..., exec_response: _Optional[_Union[ExecSandboxResponse, _Mapping]] = ..., add_file_response: _Optional[_Union[AddFileSandboxResponse, _Mapping]] = ..., retrieve_file_response: _Optional[_Union[RetrieveFileSandboxResponse, _Mapping]] = ...) -> None: ...
+
+class ObjectStorageWIFConfig(_message.Message):
+    __slots__ = ("id", "wif_config_id", "enabled", "allowed_buckets", "max_permission", "created_at", "updated_at")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    WIF_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_BUCKETS_FIELD_NUMBER: _ClassVar[int]
+    MAX_PERMISSION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    wif_config_id: str
+    enabled: bool
+    allowed_buckets: _containers.RepeatedScalarFieldContainer[str]
+    max_permission: ObjectStoragePermission
+    created_at: _timestamp_pb2.Timestamp
+    updated_at: _timestamp_pb2.Timestamp
+    def __init__(self, id: _Optional[str] = ..., wif_config_id: _Optional[str] = ..., enabled: bool = ..., allowed_buckets: _Optional[_Iterable[str]] = ..., max_permission: _Optional[_Union[ObjectStoragePermission, str]] = ..., created_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class GetObjectStorageWIFConfigRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class SetObjectStorageWIFConfigRequest(_message.Message):
+    __slots__ = ("wif_config_id", "enabled", "allowed_buckets", "max_permission")
+    WIF_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_BUCKETS_FIELD_NUMBER: _ClassVar[int]
+    MAX_PERMISSION_FIELD_NUMBER: _ClassVar[int]
+    wif_config_id: str
+    enabled: bool
+    allowed_buckets: _containers.RepeatedScalarFieldContainer[str]
+    max_permission: ObjectStoragePermission
+    def __init__(self, wif_config_id: _Optional[str] = ..., enabled: bool = ..., allowed_buckets: _Optional[_Iterable[str]] = ..., max_permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
+
+class DeleteObjectStorageWIFConfigRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class DeleteObjectStorageWIFConfigResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...

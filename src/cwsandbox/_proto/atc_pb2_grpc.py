@@ -77,6 +77,21 @@ class ATCServiceStub(object):
                 request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxRequest.SerializeToString,
                 response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxResponse.FromString,
                 _registered_method=True)
+        self.GetObjectStorageWIFConfig = channel.unary_unary(
+                '/coreweave.aviato.v1beta1.ATCService/GetObjectStorageWIFConfig',
+                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.GetObjectStorageWIFConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.FromString,
+                _registered_method=True)
+        self.SetObjectStorageWIFConfig = channel.unary_unary(
+                '/coreweave.aviato.v1beta1.ATCService/SetObjectStorageWIFConfig',
+                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.SetObjectStorageWIFConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.FromString,
+                _registered_method=True)
+        self.DeleteObjectStorageWIFConfig = channel.unary_unary(
+                '/coreweave.aviato.v1beta1.ATCService/DeleteObjectStorageWIFConfig',
+                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigResponse.FromString,
+                _registered_method=True)
 
 
 class ATCServiceServicer(object):
@@ -164,6 +179,34 @@ class ATCServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetObjectStorageWIFConfig(self, request, context):
+        """--- Object Storage WIF Config Management ---
+
+        Returns the organization's WIF configuration.
+        Derives org_id from the authenticated caller.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetObjectStorageWIFConfig(self, request, context):
+        """Creates or replaces the organization's WIF configuration.
+        Derives org_id from the authenticated caller.
+        Since there is one config per org, this is an idempotent upsert.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteObjectStorageWIFConfig(self, request, context):
+        """Deletes the organization's WIF configuration.
+        Running sandboxes are unaffected until their OIDC JWT expires.
+        New sandbox requests with object_storage_access will be rejected.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ATCServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -221,6 +264,21 @@ def add_ATCServiceServicer_to_server(servicer, server):
                     servicer.Raw,
                     request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxRequest.FromString,
                     response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxResponse.SerializeToString,
+            ),
+            'GetObjectStorageWIFConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetObjectStorageWIFConfig,
+                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.GetObjectStorageWIFConfigRequest.FromString,
+                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.SerializeToString,
+            ),
+            'SetObjectStorageWIFConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetObjectStorageWIFConfig,
+                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.SetObjectStorageWIFConfigRequest.FromString,
+                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.SerializeToString,
+            ),
+            'DeleteObjectStorageWIFConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteObjectStorageWIFConfig,
+                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigRequest.FromString,
+                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -525,6 +583,87 @@ class ATCService(object):
             '/coreweave.aviato.v1beta1.ATCService/Raw',
             coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxRequest.SerializeToString,
             coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.RawSandboxResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetObjectStorageWIFConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.aviato.v1beta1.ATCService/GetObjectStorageWIFConfig',
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.GetObjectStorageWIFConfigRequest.SerializeToString,
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetObjectStorageWIFConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.aviato.v1beta1.ATCService/SetObjectStorageWIFConfig',
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.SetObjectStorageWIFConfigRequest.SerializeToString,
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.ObjectStorageWIFConfig.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteObjectStorageWIFConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.aviato.v1beta1.ATCService/DeleteObjectStorageWIFConfig',
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigRequest.SerializeToString,
+            coreweave_dot_aviato_dot_v1beta1_dot_atc__pb2.DeleteObjectStorageWIFConfigResponse.FromString,
             options,
             channel_credentials,
             insecure,
