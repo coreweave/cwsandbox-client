@@ -1549,21 +1549,19 @@
 <h1 id="troubleshooting-guide">Troubleshooting Guide<a class="headerlink" href="#troubleshooting-guide" title="Permanent link">&para;</a></h1>
 <p>This guide covers common issues and their solutions when working with the CWSandbox SDK.</p>
 <h2 id="authentication-issues">Authentication Issues<a class="headerlink" href="#authentication-issues" title="Permanent link">&para;</a></h2>
-<p><strong>Symptom</strong>: <code>CWSandboxAuthenticationError</code> or <code>WandbAuthError</code> raised on sandbox operations.</p>
-<p>The SDK resolves authentication in this order:</p>
+<p><strong>Symptom</strong>: <code>CWSandboxAuthenticationError</code> raised on sandbox operations.</p>
+<p>The SDK resolves authentication from one active mode at a time:</p>
 <ol>
-<li><code>CWSANDBOX_API_KEY</code> env var (takes priority)</li>
-<li><code>WANDB_API_KEY</code> + <code>WANDB_ENTITY</code> env vars</li>
-<li><code>~/.netrc</code> (api.wandb.ai) + <code>WANDB_ENTITY</code></li>
+<li>A provider auth mode registered by an imported integration</li>
+<li>Otherwise, <code>CWSANDBOX_API_KEY</code></li>
+<li>Otherwise, no auth (only for environments that allow unauthenticated access)</li>
 </ol>
-<p>You need <strong>one</strong> of these configured. Check which method you're using:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Option 1: CWSandbox API key</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$CWSANDBOX_API_KEY</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Option 2: W&amp;B credentials</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$WANDB_API_KEY</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$WANDB_ENTITY</span>
+<p>You need one of these configured. For bare <code>cwsandbox</code>, check:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$CWSANDBOX_API_KEY</span>
 </code></pre></div>
+<p>If you intended to use a provider-owned auth flow, make sure you imported that
+integration module before creating sandboxes. For example, use
+<code>from wandb.sandbox import Sandbox</code> rather than importing bare <code>cwsandbox</code>.</p>
 <h3 id="common-issues">Common Issues<a class="headerlink" href="#common-issues" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -1575,23 +1573,15 @@
 <tbody>
 <tr>
 <td>No credentials configured</td>
-<td>Set <code>CWSANDBOX_API_KEY</code> or W&amp;B credentials</td>
+<td>Set <code>CWSANDBOX_API_KEY</code> or import an integration that installs the auth mode you intend to use</td>
 </tr>
 <tr>
 <td>Invalid or expired API key</td>
 <td>Contact your administrator for a new key</td>
 </tr>
 <tr>
-<td>W&amp;B API key set but entity missing</td>
-<td>Set <code>WANDB_ENTITY</code> to your W&amp;B entity/team</td>
-</tr>
-<tr>
-<td>Using netrc but entity missing</td>
-<td>Set <code>WANDB_ENTITY</code> - it's always required for W&amp;B</td>
-</tr>
-<tr>
-<td>Netrc parse errors</td>
-<td>Check <code>~/.netrc</code> file syntax and permissions</td>
+<td>Imported bare <code>cwsandbox</code> by mistake</td>
+<td>Import the provider integration you meant to use, such as <code>wandb.sandbox</code></td>
 </tr>
 </tbody>
 </table>
@@ -1759,11 +1749,6 @@
 <td><code>CWSandboxAuthenticationError</code></td>
 <td>Missing or invalid credentials</td>
 <td>Check <code>CWSANDBOX_API_KEY</code> is set</td>
-</tr>
-<tr>
-<td><code>WandbAuthError: WANDB_ENTITY is not set</code></td>
-<td>W&amp;B API key found but entity missing</td>
-<td>Set <code>WANDB_ENTITY</code> env var</td>
 </tr>
 <tr>
 <td><code>SandboxNotRunningError</code></td>

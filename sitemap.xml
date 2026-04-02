@@ -2,110 +2,110 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/api/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/AGENTS/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/CLAUDE/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/cleanup-patterns/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/cli/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/environment-variables/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/execution/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/file-operations/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/interactive-shells/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/logging/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/remote-functions/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/rl-training/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/sandbox-configuration/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/sandbox-lifecycle/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/sessions/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/swebench/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/sync-vs-async/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/guides/troubleshooting/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/01-first-sandbox/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/02-configuration/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/03-running-commands/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/04-streaming/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/05-files/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/06-multiple-sandboxes/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/07-remote-functions/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
     <url>
          <loc>https://coreweave.github.io/cwsandbox-client/tutorial/08-cleanup/</loc>
-         <lastmod>2026-03-26</lastmod>
+         <lastmod>2026-04-02</lastmod>
     </url>
 </urlset>

@@ -430,34 +430,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Authentication">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#option-1-cwsandbox-api-key-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Option 1: CWSandbox API Key (Recommended)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#option-2-wb-credentials" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Option 2: W&amp;B Credentials
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -1393,34 +1365,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Authentication">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#option-1-cwsandbox-api-key-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Option 1: CWSandbox API Key (Recommended)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#option-2-wb-credentials" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Option 2: W&amp;B Credentials
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -1546,28 +1490,19 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>sync
 </code></pre></div>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
-<p>The SDK checks for credentials in this order:</p>
-<h3 id="option-1-cwsandbox-api-key-recommended">Option 1: CWSandbox API Key (Recommended)<a class="headerlink" href="#option-1-cwsandbox-api-key-recommended" title="Permanent link">&para;</a></h3>
+<p>Bare <code>cwsandbox</code> authenticates with a CoreWeave Sandbox API key:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CWSANDBOX_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span>
 </code></pre></div>
-<h3 id="option-2-wb-credentials">Option 2: W&amp;B Credentials<a class="headerlink" href="#option-2-wb-credentials" title="Permanent link">&para;</a></h3>
-<p>If you have W&amp;B credentials configured, the SDK can use them:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-wandb-key&quot;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_ENTITY</span><span class="o">=</span><span class="s2">&quot;your-entity&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_PROJECT</span><span class="o">=</span><span class="s2">&quot;your-project&quot;</span>
-</code></pre></div>
-<p>The SDK also reads W&amp;B credentials from <code>~/.netrc</code> if <code>WANDB_API_KEY</code> isn't set:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>machine api.wandb.ai
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  login user
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  password your-wandb-key
-</code></pre></div>
-<p>Both <code>WANDB_ENTITY</code> and <code>WANDB_PROJECT</code> are optional. If <code>WANDB_ENTITY</code> is unset, the SDK does not send the x-entity-id header. If <code>WANDB_PROJECT</code> is unset, the SDK does not send the x-project-name header.</p>
+<p>Provider integrations can replace the active auth mode in-process. For
+example, importing <code>wandb.sandbox</code> installs W&amp;B-owned auth resolution for that
+process, while bare <code>cwsandbox</code> continues to use only <code>CWSANDBOX_API_KEY</code> (or
+no auth for local environments that permit it).</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello, CWSandbox!&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>  <span class="c1"># &quot;Hello, CWSandbox!\n&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">cwsandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sandbox</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">()</span> <span class="k">as</span> <span class="n">sandbox</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">sandbox</span><span class="o">.</span><span class="n">exec</span><span class="p">([</span><span class="s2">&quot;echo&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello, CWSandbox!&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>  <span class="c1"># &quot;Hello, CWSandbox!\n&quot;</span>
 </code></pre></div>
 <h2 id="core-concepts">Core Concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h2>
 <h3 id="non-blocking-by-default">Non-Blocking by Default<a class="headerlink" href="#non-blocking-by-default" title="Permanent link">&para;</a></h3>
@@ -1609,12 +1544,12 @@
 </tbody>
 </table>
 <p>This enables natural parallelism - start multiple operations, then collect results:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">refs</span> <span class="o">=</span> <span class="p">[</span><span class="n">sandbox</span><span class="o">.</span><span class="n">read_file</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;/app/file</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">.txt&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">contents</span> <span class="o">=</span> <span class="p">[</span><span class="n">ref</span><span class="o">.</span><span class="n">result</span><span class="p">()</span> <span class="k">for</span> <span class="n">ref</span> <span class="ow">in</span> <span class="n">refs</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">refs</span> <span class="o">=</span> <span class="p">[</span><span class="n">sandbox</span><span class="o">.</span><span class="n">read_file</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;/app/file</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">.txt&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">contents</span> <span class="o">=</span> <span class="p">[</span><span class="n">ref</span><span class="o">.</span><span class="n">result</span><span class="p">()</span> <span class="k">for</span> <span class="n">ref</span> <span class="ow">in</span> <span class="n">refs</span><span class="p">]</span>
 </code></pre></div>
 <h3 id="sandbox-lifecycle">Sandbox Lifecycle<a class="headerlink" href="#sandbox-lifecycle" title="Permanent link">&para;</a></h3>
 <p>Sandboxes progress through these states:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>PENDING -&gt; CREATING -&gt; RUNNING -&gt; (COMPLETED | FAILED | TERMINATED)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>PENDING -&gt; CREATING -&gt; RUNNING -&gt; (COMPLETED | FAILED | TERMINATED)
 </code></pre></div>
 <p>Most operations handle state transitions automatically. For example, <code>exec()</code> waits for RUNNING before executing.</p>
 <h2 id="tutorial">Tutorial<a class="headerlink" href="#tutorial" title="Permanent link">&para;</a></h2>

@@ -1208,6 +1208,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cwsandbox.AuthHeaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthHeaders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cwsandbox.SandboxDefaults" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2291,10 +2302,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cwsandbox.WandbAuthError" class="md-nav__link">
+  <a href="#cwsandbox.set_auth_mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        WandbAuthError
+        set_auth_mode
       
     </span>
   </a>
@@ -2375,6 +2386,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cwsandbox.AuthHeaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthHeaders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cwsandbox.SandboxDefaults" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3458,10 +3480,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cwsandbox.WandbAuthError" class="md-nav__link">
+  <a href="#cwsandbox.set_auth_mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        WandbAuthError
+        set_auth_mode
       
     </span>
   </a>
@@ -3550,6 +3572,57 @@
 
 
 
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="cwsandbox.AuthHeaders" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">AuthHeaders</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#cwsandbox.AuthHeaders" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">AuthHeaders</span><span class="p">(</span><span class="n">headers</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n">strategy</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Resolved authentication headers and strategy used.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-class">
 
@@ -13793,35 +13866,36 @@ Inherits from SandboxError since it's a sandbox operation failure.</p>
 
 </div>
 
-<div class="doc doc-object doc-class">
+
+<div class="doc doc-object doc-function">
 
 
+<h3 id="cwsandbox.set_auth_mode" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">set_auth_mode</span>
 
-<h3 id="cwsandbox.WandbAuthError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">WandbAuthError</span>
+
+<a href="#cwsandbox.set_auth_mode" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">set_auth_mode</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">name</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n">get_auth</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[],</span> <span class="n"><a class="autorefs autorefs-internal" title="            AuthHeaders
 
 
-<a href="#cwsandbox.WandbAuthError" class="headerlink" title="Permanent link">&para;</a></h3>
-
+  
+      dataclass
+   (cwsandbox._auth.AuthHeaders)" href="#cwsandbox.AuthHeaders">AuthHeaders</a></span><span class="p">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
 
     <div class="doc doc-contents ">
 
-
-
-        <p>Raised when W&amp;B authentication is misconfigured.</p>
-
-
-
-
-
-
-
+        <p>Set the active auth mode for this process.</p>
+<p>The active mode replaces the built-in auth mode until it is reset.
+Configuration is process-global and last-writer-wins.
+The callback must return AuthHeaders or raise CWSandboxAuthenticationError.</p>
 
 
     </div>
 
 </div>
-
 
 <div class="doc doc-object doc-function">
 
