@@ -17,6 +17,7 @@ from cwsandbox._types import (
     ExecOutcome,
     NetworkOptions,
     OperationRef,
+    ResourceOptions,
     Secret,
     Serialization,
 )
@@ -324,7 +325,7 @@ class Session:
         tags: list[str] | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
-        resources: dict[str, Any] | None = None,
+        resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
@@ -347,7 +348,8 @@ class Session:
             tags: Tags for the sandbox (merged with session defaults)
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            resources: Resource requests (CPU, memory, GPU)
+            resources: Resource configuration. Accepts ResourceOptions for separate
+                requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
@@ -637,7 +639,7 @@ class Session:
         temp_dir: str | None = None,
         runway_ids: builtins.list[str] | None = None,
         tower_ids: builtins.list[str] | None = None,
-        resources: dict[str, Any] | None = None,
+        resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: Sequence[dict[str, Any]] | None = None,
@@ -662,7 +664,8 @@ class Session:
                 Defaults to session default. Created if missing.
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            resources: Resource requests (CPU, memory, GPU)
+            resources: Resource configuration. Accepts ResourceOptions for separate
+                requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox

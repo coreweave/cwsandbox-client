@@ -851,3 +851,51 @@ class TestRemoteFunctionAnnotations:
 
         assert isinstance(compute, RemoteFunction)
         assert compute._annotations == {"team": "platform"}
+
+
+class TestRemoteFunctionResourceOptions:
+    """Tests for ResourceOptions passthrough in RemoteFunction."""
+
+    @pytest.mark.asyncio
+    async def test_resource_options_passed_to_sandbox(self) -> None:
+        """Test that ResourceOptions flows through .remote() to Sandbox.__init__."""
+        from cwsandbox import Session
+        from cwsandbox._types import ResourceOptions, Serialization
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        resource_opts = ResourceOptions(
+            requests={"cpu": "1", "memory": "256Mi"},
+            limits={"cpu": "8", "memory": "2Gi"},
+        )
+
+        remote_fn = RemoteFunction(
+            add,
+            session=session,
+            serialization=Serialization.JSON,
+            resources=resource_opts,
+        )
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
+        mock_sandbox.sandbox_id = "test-sandbox-id"
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
+
+        result_json = json.dumps(5).encode()
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
+
+        with patch("cwsandbox._sandbox.Sandbox") as MockSandbox:
+            MockSandbox.return_value = mock_sandbox
+            await remote_fn._execute_async(2, 3)
+
+            call_kwargs = MockSandbox.call_args[1]
+            assert call_kwargs["resources"] is resource_opts
+            assert isinstance(call_kwargs["resources"], ResourceOptions)
+            assert call_kwargs["resources"].requests == {"cpu": "1", "memory": "256Mi"}
+            assert call_kwargs["resources"].limits == {"cpu": "8", "memory": "2Gi"}

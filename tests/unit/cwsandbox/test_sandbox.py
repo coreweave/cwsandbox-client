@@ -1738,7 +1738,12 @@ class TestSandboxKwargsValidation:
             environment_variables={"TEST_ENV_VAR": "test-value"},
             secrets=secrets,
         )
-        assert sandbox._start_kwargs["resources"] == {"cpu": "100m", "memory": "128Mi"}
+        from cwsandbox._types import ResourceOptions
+
+        stored_res = sandbox._start_kwargs["resources"]
+        assert isinstance(stored_res, ResourceOptions)
+        assert stored_res.requests == {"cpu": "100m", "memory": "128Mi"}
+        assert stored_res.limits == {"cpu": "100m", "memory": "128Mi"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
         assert sandbox._start_kwargs["network"] == net_opts
         assert sandbox._start_kwargs["max_timeout_seconds"] == 60
@@ -1783,8 +1788,13 @@ class TestSandboxKwargsValidation:
                 ports=[{"container_port": 8080}],
                 secrets=secrets,
             )
+            from cwsandbox._types import ResourceOptions
+
             mock_start.assert_called_once()
-            assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
+            stored_res = sandbox._start_kwargs["resources"]
+            assert isinstance(stored_res, ResourceOptions)
+            assert stored_res.requests == {"cpu": "100m"}
+            assert stored_res.limits == {"cpu": "100m"}
             assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
             stored = sandbox._start_kwargs["secrets"]
             assert len(stored) == 1 and stored[0].store == "wandb"
@@ -1800,6 +1810,229 @@ class TestSandboxKwargsValidation:
                 "hello",
                 invalid_param="value",
             )
+
+
+class TestResourceOptionsWiring:
+    """Tests for ResourceOptions normalization and proto conversion."""
+
+    def test_init_normalizes_flat_dict_to_resource_options(self) -> None:
+        """Flat resource dict is normalized to ResourceOptions in __init__."""
+        from cwsandbox._types import ResourceOptions
+
+        sandbox = Sandbox(command="echo", resources={"cpu": "2", "memory": "4Gi"})
+        stored = sandbox._start_kwargs["resources"]
+        assert isinstance(stored, ResourceOptions)
+        assert stored.requests == {"cpu": "2", "memory": "4Gi"}
+        assert stored.limits == {"cpu": "2", "memory": "4Gi"}
+
+    def test_init_accepts_resource_options_directly(self) -> None:
+        """ResourceOptions instance is accepted directly in __init__."""
+        from cwsandbox._types import ResourceOptions
+
+        opts = ResourceOptions(
+            requests={"cpu": "1", "memory": "256Mi"},
+            limits={"cpu": "8", "memory": "2Gi"},
+        )
+        sandbox = Sandbox(command="echo", resources=opts)
+        stored = sandbox._start_kwargs["resources"]
+        assert isinstance(stored, ResourceOptions)
+        assert stored.requests == {"cpu": "1", "memory": "256Mi"}
+        assert stored.limits == {"cpu": "8", "memory": "2Gi"}
+
+    def test_init_falls_back_to_defaults_resources(self) -> None:
+        """When no resources kwarg, uses SandboxDefaults.resources."""
+        from cwsandbox._types import ResourceOptions
+
+        defaults = SandboxDefaults(resources={"cpu": "500m", "memory": "1Gi"})
+        sandbox = Sandbox(command="echo", defaults=defaults)
+        stored = sandbox._start_kwargs["resources"]
+        assert isinstance(stored, ResourceOptions)
+        assert stored.requests == {"cpu": "500m", "memory": "1Gi"}
+
+    def test_init_none_resources_omitted(self) -> None:
+        """When resources is None everywhere, _start_kwargs has no resources key."""
+        sandbox = Sandbox(command="echo")
+        assert "resources" not in sandbox._start_kwargs
+
+    @pytest.mark.asyncio
+    async def test_start_async_maps_resource_options_to_proto_fields(
+        self, mock_api_key: str
+    ) -> None:
+        """ResourceOptions maps to resource_limits and resource_requests proto fields."""
+        from cwsandbox._types import ResourceOptions
+
+        opts = ResourceOptions(
+            requests={"cpu": "1", "memory": "256Mi"},
+            limits={"cpu": "8", "memory": "2Gi"},
+        )
+        sandbox = Sandbox(command="echo", resources=opts)
+
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "sb-123"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_response.HasField = MagicMock(return_value=False)
+
+        mock_stub = AsyncMock()
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._stub = mock_stub
+        sandbox._channel = MagicMock()
+        sandbox._auth_metadata = (("authorization", "Bearer test"),)
+
+        await sandbox._start_async()
+
+        call_kwargs = mock_stub.Start.call_args
+        request = call_kwargs[0][0]
+        assert hasattr(request, "resource_limits")
+        assert hasattr(request, "resource_requests")
+        # resource_limits should have cpu="8", memory="2Gi"
+        assert request.resource_limits.cpu == "8"
+        assert request.resource_limits.memory == "2Gi"
+        # resource_requests should have cpu="1", memory="256Mi"
+        assert request.resource_requests.cpu == "1"
+        assert request.resource_requests.memory == "256Mi"
+        # Legacy resources field should NOT be set
+        assert not request.HasField("resources")
+
+    @pytest.mark.asyncio
+    async def test_start_async_maps_gpu_to_both_proto_fields(self, mock_api_key: str) -> None:
+        """GPU config maps to both resource_limits and resource_requests."""
+        from cwsandbox._types import ResourceOptions
+
+        opts = ResourceOptions(
+            requests={"cpu": "1"},
+            limits={"cpu": "4"},
+            gpu={"count": 2, "type": "A100"},
+        )
+        sandbox = Sandbox(command="echo", resources=opts)
+
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "sb-456"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_response.HasField = MagicMock(return_value=False)
+
+        mock_stub = AsyncMock()
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._stub = mock_stub
+        sandbox._channel = MagicMock()
+        sandbox._auth_metadata = (("authorization", "Bearer test"),)
+
+        await sandbox._start_async()
+
+        request = mock_stub.Start.call_args[0][0]
+        assert request.resource_limits.gpu.gpu_count == 2
+        assert request.resource_limits.gpu.gpu_type == "A100"
+        assert request.resource_requests.gpu.gpu_count == 2
+        assert request.resource_requests.gpu.gpu_type == "A100"
+
+    @pytest.mark.asyncio
+    async def test_start_async_extracts_response_resource_fields(self, mock_api_key: str) -> None:
+        """Resource limits/requests are extracted from StartSandboxResponse."""
+        sandbox = Sandbox(command="echo")
+
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "sb-789"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+
+        # Simulate response with resource fields present (no GPU)
+        mock_limits = MagicMock()
+        mock_limits.cpu = "8"
+        mock_limits.memory = "2Gi"
+        mock_limits.HasField = MagicMock(return_value=False)
+        mock_requests = MagicMock()
+        mock_requests.cpu = "1"
+        mock_requests.memory = "256Mi"
+        mock_response.requested_resource_limits = mock_limits
+        mock_response.requested_resource_requests = mock_requests
+        mock_response.HasField = MagicMock(
+            side_effect=lambda f: f in ("requested_resource_limits", "requested_resource_requests")
+        )
+
+        mock_stub = AsyncMock()
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._stub = mock_stub
+        sandbox._channel = MagicMock()
+        sandbox._auth_metadata = (("authorization", "Bearer test"),)
+
+        await sandbox._start_async()
+
+        assert sandbox.resource_limits == {"cpu": "8", "memory": "2Gi"}
+        assert sandbox.resource_requests == {"cpu": "1", "memory": "256Mi"}
+        assert sandbox.resource_gpu is None
+
+    @pytest.mark.asyncio
+    async def test_start_async_extracts_gpu_from_response(self, mock_api_key: str) -> None:
+        """GPU fields are extracted from requested_resource_limits in StartSandboxResponse."""
+        sandbox = Sandbox(command="echo")
+
+        mock_gpu = MagicMock()
+        mock_gpu.gpu_count = 2
+        mock_gpu.gpu_type = "A100"
+        mock_gpu.gpu_memory_gb = 80
+
+        mock_limits = MagicMock()
+        mock_limits.cpu = "8"
+        mock_limits.memory = "2Gi"
+        mock_limits.gpu = mock_gpu
+        mock_limits.HasField = MagicMock(side_effect=lambda f: f == "gpu")
+
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "sb-gpu"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_response.requested_resource_limits = mock_limits
+        mock_response.HasField = MagicMock(side_effect=lambda f: f == "requested_resource_limits")
+
+        mock_stub = AsyncMock()
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+
+        sandbox._stub = mock_stub
+        sandbox._channel = MagicMock()
+        sandbox._auth_metadata = (("authorization", "Bearer test"),)
+
+        await sandbox._start_async()
+
+        assert sandbox.resource_gpu == {"count": 2, "type": "A100", "memory_gb": 80}
+
+    def test_resource_properties_default_none(self) -> None:
+        """resource_limits, resource_requests, and resource_gpu default to None."""
+        sandbox = Sandbox(command="echo")
+        assert sandbox.resource_limits is None
+        assert sandbox.resource_requests is None
+        assert sandbox.resource_gpu is None
+
+    def test_from_sandbox_info_has_none_resources(self, mock_api_key: str) -> None:
+        """Discovered sandboxes have None resource properties."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import atc_pb2
+
+        info = MagicMock()
+        info.sandbox_id = "sb-disc"
+        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.started_at_time = timestamp_pb2.Timestamp()
+        info.tower_id = "tower-1"
+        info.runway_id = "runway-1"
+        info.tower_group_id = "tg-1"
+        info.returncode = 0
+
+        sandbox = Sandbox._from_sandbox_info(info, base_url="http://test", timeout_seconds=30.0)
+        assert sandbox.resource_limits is None
+        assert sandbox.resource_requests is None
+        assert sandbox.resource_gpu is None
 
 
 class TestSandboxList:

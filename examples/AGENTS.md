@@ -20,6 +20,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 | `streaming_exec.py` | Sync | `def main()` | Real-time stdout iteration |
 | `stdin_streaming.py` | Sync/Async | `def main()` | Stdin streaming with `exec(stdin=True)` |
 | `function_decorator.py` | Sync | `def main()` | Remote function execution with `@session.function()` |
+| `resource_configuration.py` | Sync | `def main()` | ResourceOptions, flat dict, nested dict, GPU, response properties |
 | `error_handling.py` | Sync | `def main()` | Exception hierarchy: SandboxExecutionError, TimeoutError, NotFoundError |
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
 | `delete_sandboxes.py` | Sync | `def main()` | Deletion patterns with `Sandbox.delete()` |

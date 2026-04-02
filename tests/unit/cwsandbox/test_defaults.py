@@ -8,7 +8,7 @@ import dataclasses
 
 import pytest
 
-from cwsandbox import NetworkOptions, SandboxDefaults, Secret
+from cwsandbox import NetworkOptions, ResourceOptions, SandboxDefaults, Secret
 
 
 class TestSandboxDefaults:
@@ -186,6 +186,37 @@ class TestSandboxDefaults:
         assert defaults.network is network1  # original unchanged
         assert new_defaults.network is network2
 
+    def test_resources_accepts_resource_options(self) -> None:
+        """Test resources field accepts ResourceOptions."""
+        opts = ResourceOptions(
+            requests={"cpu": "1", "memory": "256Mi"},
+            limits={"cpu": "8", "memory": "2Gi"},
+        )
+        defaults = SandboxDefaults(resources=opts)
+        assert isinstance(defaults.resources, ResourceOptions)
+        assert defaults.resources.requests == {"cpu": "1", "memory": "256Mi"}
+        assert defaults.resources.limits == {"cpu": "8", "memory": "2Gi"}
+
+    def test_resources_accepts_flat_dict(self) -> None:
+        """Test resources field still accepts flat dicts for backward compat."""
+        defaults = SandboxDefaults(resources={"cpu": "2", "memory": "4Gi"})
+        assert defaults.resources == {"cpu": "2", "memory": "4Gi"}
+
+    def test_with_overrides_resources_to_resource_options(self) -> None:
+        """Test with_overrides replaces flat dict resources with ResourceOptions."""
+        defaults = SandboxDefaults(resources={"cpu": "2", "memory": "4Gi"})
+        opts = ResourceOptions(
+            requests={"cpu": "1", "memory": "256Mi"},
+            limits={"cpu": "8", "memory": "2Gi"},
+        )
+
+        new_defaults = defaults.with_overrides(resources=opts)
+
+        assert defaults.resources == {"cpu": "2", "memory": "4Gi"}
+        assert isinstance(new_defaults.resources, ResourceOptions)
+        assert new_defaults.resources.requests == {"cpu": "1", "memory": "256Mi"}
+        assert new_defaults.resources.limits == {"cpu": "8", "memory": "2Gi"}
+
     def test_secrets_can_be_set(self) -> None:
         """Test secrets can be set in SandboxDefaults."""
         secret = Secret(store="wandb", name="HF_TOKEN")
@@ -326,6 +357,33 @@ class TestSandboxDefaultsFromDict:
         assert defaults.base_url == "https://atc.cw-sandbox.com"
         assert defaults.temp_dir == "/tmp"
         assert defaults.request_timeout_seconds == 300.0
+
+    def test_from_dict_flat_resources_dict(self) -> None:
+        """from_dict passes through a flat resources dict."""
+        defaults = SandboxDefaults.from_dict({"resources": {"cpu": "2", "memory": "4Gi"}})
+        assert defaults.resources == {"cpu": "2", "memory": "4Gi"}
+
+    def test_from_dict_nested_resources_dict(self) -> None:
+        """from_dict passes through a nested resources dict with requests/limits."""
+        defaults = SandboxDefaults.from_dict(
+            {
+                "resources": {
+                    "requests": {"cpu": "1", "memory": "256Mi"},
+                    "limits": {"cpu": "8", "memory": "2Gi"},
+                },
+            }
+        )
+        assert isinstance(defaults.resources, dict)
+        assert "requests" in defaults.resources
+        assert "limits" in defaults.resources
+
+    def test_from_dict_preserves_resource_options(self) -> None:
+        """from_dict preserves ResourceOptions instance."""
+        from cwsandbox._types import ResourceOptions
+
+        opts = ResourceOptions(requests={"cpu": "1"}, limits={"cpu": "4"})
+        defaults = SandboxDefaults.from_dict({"resources": opts})
+        assert defaults.resources is opts
 
     def test_from_dict_rejects_bare_string_for_tuple_fields(self) -> None:
         """from_dict raises TypeError when a bare string is passed for a tuple field."""

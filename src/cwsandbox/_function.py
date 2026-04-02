@@ -19,7 +19,7 @@ from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 
 from cwsandbox._defaults import DEFAULT_TEMP_DIR
-from cwsandbox._types import NetworkOptions, OperationRef, Serialization
+from cwsandbox._types import NetworkOptions, OperationRef, ResourceOptions, Serialization
 from cwsandbox.exceptions import (
     AsyncFunctionError,
     FunctionSerializationError,
@@ -86,7 +86,7 @@ class RemoteFunction(Generic[P, R]):
         temp_dir: str = DEFAULT_TEMP_DIR,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
-        resources: dict[str, Any] | None = None,
+        resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
@@ -105,7 +105,8 @@ class RemoteFunction(Generic[P, R]):
             temp_dir: Directory for temporary payload/result files in sandbox
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            resources: Resource requests (CPU, memory, GPU)
+            resources: Resource configuration. Accepts ResourceOptions for separate
+                requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox

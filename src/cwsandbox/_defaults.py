@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from cwsandbox._types import NetworkOptions, Secret
+from cwsandbox._types import NetworkOptions, ResourceOptions, Secret
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
@@ -89,7 +89,8 @@ class SandboxDefaults:
         tags: Tags for filtering and organizing sandboxes.
         runway_ids: Restrict to specific runway IDs.
         tower_ids: Restrict to specific tower IDs.
-        resources: Resource requests (CPU, memory, GPU) as a dict.
+        resources: Resource configuration. Accepts ``ResourceOptions`` for separate
+            requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Network configuration via ``NetworkOptions``.
         secrets: Secrets to inject as environment variables.
         environment_variables: Environment variables injected into the sandbox.
@@ -122,7 +123,7 @@ class SandboxDefaults:
     tags: tuple[str, ...] = field(default_factory=tuple)
     runway_ids: tuple[str, ...] | None = None
     tower_ids: tuple[str, ...] | None = None
-    resources: dict[str, Any] | None = None
+    resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
@@ -208,8 +209,12 @@ class SandboxDefaults:
             if isinstance(val, str):
                 raise TypeError(f"{key} must be a sequence of strings, not a bare string")
             kwargs[key] = tuple(val)
+        # Coerce resources: preserve ResourceOptions, convert mappings to dicts
+        res = kwargs.get("resources")
+        if res is not None and not isinstance(res, ResourceOptions):
+            kwargs["resources"] = dict(res)
         # Coerce mapping types -> plain dicts for protobuf compat
-        for key in ("resources", "environment_variables"):
+        for key in ("environment_variables",):
             if key in kwargs and kwargs[key] is not None and not isinstance(kwargs[key], dict):
                 kwargs[key] = dict(kwargs[key])
         return cls(**kwargs)
