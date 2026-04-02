@@ -45,18 +45,13 @@ def configure_tracing(
 
         try:
             from opentelemetry import trace
-            from opentelemetry.context.propagation import (
-                TextMapPropagator,
-            )
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                 OTLPSpanExporter,
             )
-            from opentelemetry.propagate import get_global_textmap, set_global_textmap
-            from opentelemetry.propagators.composite import CompositeHTTPPropagator
+            from opentelemetry.propagate import get_global_textmap
             from opentelemetry.sdk.resources import Resource
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
-            from opentelemetry.trace.propagation import TraceContextTextMapPropagator
 
             resource = Resource.create({"service.name": service_name})
             exporter = OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces", headers=headers)
@@ -64,20 +59,16 @@ def configure_tracing(
             provider.add_span_processor(BatchSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
 
-            # Ensure W3C TraceContext propagator is registered.
-            current = get_global_textmap()
-            if not isinstance(current, (TraceContextTextMapPropagator, CompositeHTTPPropagator)):
-                set_global_textmap(TraceContextTextMapPropagator())
-
             _tracer = trace.get_tracer("cwsandbox")
             _propagator = get_global_textmap()
             _configured = True
             logger.info("Distributed tracing configured: endpoint=%s service=%s", endpoint, service_name)
 
-        except ImportError:
+        except ImportError as exc:
             logger.warning(
-                "opentelemetry packages not installed. "
-                "Install with: pip install cwsandbox[tracing]"
+                "opentelemetry packages not installed (%s). "
+                "Install with: pip install cwsandbox[tracing]",
+                exc,
             )
         except Exception:
             logger.exception("Failed to configure tracing")
