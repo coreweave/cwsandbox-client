@@ -17,7 +17,8 @@ export CWSANDBOX_API_KEY="your-api-key"
 ```
 
 If you are using a provider integration such as `wandb.sandbox`, import that
-integration instead of bare `cwsandbox` so it can register its auth mode.
+integration instead of bare `cwsandbox` so it can install its own auth mode for
+the current process.
 
 ## Run Your First Sandbox
 

@@ -4,19 +4,23 @@
 
 """Authentication resolution for CWSandbox client.
 
-Auth is resolved in the following order:
-1. API key: Uses CWSANDBOX_API_KEY env var -> Authorization: Bearer header
-2. Registered auth mode in current process
-3. No auth
+Auth is resolved from a single active mode.
+
+By default, the built-in CoreWeave auth mode is active and resolves:
+1. `CWSANDBOX_API_KEY` bearer auth, if present
+2. otherwise no auth
+
+Provider integrations can replace that active mode for the current process.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from cwsandbox.exceptions import CWSandboxAuthenticationError
 
 logger = logging.getLogger(__name__)
 
@@ -33,72 +37,71 @@ class AuthHeaders:
         return bool(self.headers)
 
 
+@dataclass(frozen=True)
 class _AuthMode:
     """Configuration for an authentication mode."""
 
-    def __init__(self, name: str, try_auth: Callable[[], AuthHeaders | None]) -> None:
-        self.name = name
-        self.try_auth = try_auth
+    name: str
+    get_auth: Callable[[], AuthHeaders]
 
 
-_REGISTERED_AUTH_MODES: list[_AuthMode] = []
-_AUTH_MODES_LOCK = threading.Lock()
+def _resolve_builtin_auth() -> AuthHeaders:
+    """Resolve the built-in CoreWeave auth mode."""
+    api_key = os.environ.get("CWSANDBOX_API_KEY")
+    if api_key:
+        return AuthHeaders(
+            headers={"Authorization": f"Bearer {api_key}"},
+            strategy="api_key",
+        )
+
+    return AuthHeaders(headers={}, strategy="none")
 
 
-def register_auth_mode(
+_BUILTIN_AUTH_MODE = _AuthMode(name="builtin", get_auth=_resolve_builtin_auth)
+_ACTIVE_AUTH_MODE = _BUILTIN_AUTH_MODE
+
+
+def set_auth_mode(
     name: str,
-    try_auth: Callable[[], AuthHeaders | None],
+    get_auth: Callable[[], AuthHeaders],
 ) -> None:
-    """Register an additional auth mode.
+    """Set the active auth mode for this process.
 
-    Registered auth modes are consulted after explicit CoreWeave API-key auth.
-    Registration is idempotent by name.
+    The active mode replaces the built-in auth mode until it is reset.
+    Configuration is process-global and last-writer-wins.
+    The callback must return AuthHeaders or raise CWSandboxAuthenticationError.
     """
-    with _AUTH_MODES_LOCK:
-        if any(auth_mode.name == name for auth_mode in _REGISTERED_AUTH_MODES):
-            return
-        _REGISTERED_AUTH_MODES.append(_AuthMode(name=name, try_auth=try_auth))
+    global _ACTIVE_AUTH_MODE
+    _ACTIVE_AUTH_MODE = _AuthMode(name=name, get_auth=get_auth)
 
 
-def unregister_auth_mode(name: str) -> None:
-    """Unregister a previously registered auth mode by name."""
-    with _AUTH_MODES_LOCK:
-        _REGISTERED_AUTH_MODES[:] = [
-            auth_mode for auth_mode in _REGISTERED_AUTH_MODES if auth_mode.name != name
-        ]
+def _reset_auth_mode_for_testing() -> None:
+    """Reset the active auth mode to the built-in default.
 
-
-def _iter_auth_modes() -> list[_AuthMode]:
-    if not _REGISTERED_AUTH_MODES:
-        return _BUILTIN_AUTH_MODES
-
-    with _AUTH_MODES_LOCK:
-        registered_auth_modes = list(_REGISTERED_AUTH_MODES)
-
-    return [*_BUILTIN_AUTH_MODES, *registered_auth_modes]
+    This exists for test isolation and should not be used by integrations.
+    """
+    global _ACTIVE_AUTH_MODE
+    _ACTIVE_AUTH_MODE = _BUILTIN_AUTH_MODE
 
 
 def resolve_auth() -> AuthHeaders:
     """Resolve authentication headers from available credentials.
 
-    Tries auth modes in priority order and returns the first one that succeeds.
-
-    Resolution order:
-    1. CWSANDBOX_API_KEY env var (API key auth)
-    2. Registered auth modes
-    3. No auth (empty headers)
+    Uses the current active auth mode and returns the resolved headers.
 
     Returns:
         AuthHeaders with resolved headers and strategy name
     """
-    for mode in _iter_auth_modes():
-        auth = mode.try_auth()
-        if auth is not None:
-            logger.debug("Using %s authentication", auth.strategy)
-            return auth
-
-    logger.debug("No authentication credentials found")
-    return AuthHeaders(headers={}, strategy="none")
+    mode = _ACTIVE_AUTH_MODE
+    auth = mode.get_auth()
+    # In case None is still returned at runtime, raise auth error instead of
+    # AttributeError from logging auth.strategy.
+    if auth is None:
+        raise CWSandboxAuthenticationError(
+            f"Configured auth mode {mode.name} returned no credentials"
+        )
+    logger.debug("Using auth mode %s with strategy %s", mode.name, auth.strategy)
+    return auth
 
 
 def resolve_auth_metadata() -> tuple[tuple[str, str], ...]:
@@ -112,24 +115,3 @@ def resolve_auth_metadata() -> tuple[tuple[str, str], ...]:
     """
     auth = resolve_auth()
     return tuple((k.lower(), v) for k, v in auth.headers.items())
-
-
-def _try_api_key_auth() -> AuthHeaders | None:
-    """Try to resolve API key authentication from env var.
-
-    Returns:
-        AuthHeaders if CWSANDBOX_API_KEY is set, None otherwise
-    """
-    api_key = os.environ.get("CWSANDBOX_API_KEY")
-    if not api_key:
-        return None
-
-    return AuthHeaders(
-        headers={"Authorization": f"Bearer {api_key}"},
-        strategy="api_key",
-    )
-
-
-_BUILTIN_AUTH_MODES = [
-    _AuthMode(name="api_key", try_auth=_try_api_key_auth),
-]

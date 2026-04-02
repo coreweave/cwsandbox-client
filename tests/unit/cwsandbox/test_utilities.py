@@ -325,6 +325,22 @@ class TestExports:
         """Waitable type alias is exported from cwsandbox module."""
         assert hasattr(cwsandbox, "Waitable")
 
+    def test_auth_headers_exported(self) -> None:
+        """AuthHeaders is exported from cwsandbox module."""
+        from cwsandbox import AuthHeaders
+        from cwsandbox._auth import AuthHeaders as InternalAuthHeaders
+
+        assert hasattr(cwsandbox, "AuthHeaders")
+        assert AuthHeaders is InternalAuthHeaders
+
+    def test_set_auth_mode_exported(self) -> None:
+        """set_auth_mode is exported from cwsandbox module."""
+        from cwsandbox import set_auth_mode
+        from cwsandbox._auth import set_auth_mode as internal_set_auth_mode
+
+        assert hasattr(cwsandbox, "set_auth_mode")
+        assert set_auth_mode is internal_set_auth_mode
+
     def test_results_in_all(self) -> None:
         """results is in __all__."""
         assert "results" in cwsandbox.__all__
@@ -336,3 +352,11 @@ class TestExports:
     def test_waitable_in_all(self) -> None:
         """Waitable is in __all__."""
         assert "Waitable" in cwsandbox.__all__
+
+    def test_auth_headers_in_all(self) -> None:
+        """AuthHeaders is in __all__."""
+        assert "AuthHeaders" in cwsandbox.__all__
+
+    def test_set_auth_mode_in_all(self) -> None:
+        """set_auth_mode is in __all__."""
+        assert "set_auth_mode" in cwsandbox.__all__

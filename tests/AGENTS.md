@@ -95,7 +95,7 @@ Tests skip gracefully with clear messages when no auth is configured. The `requi
 
 | File | Coverage |
 |------|----------|
-| `test_auth.py` | Auth resolution priority and registered auth modes |
+| `test_auth.py` | Built-in auth behavior and active auth mode overrides |
 | `test_cleanup.py` | atexit handlers, signal handlers, re-entrancy guard |
 | `test_defaults.py` | SandboxDefaults configuration, merge_tags, with_overrides |
 | `test_exceptions.py` | Exception hierarchy, custom attributes |
