@@ -323,8 +323,8 @@ class Session:
         args: list[str] | None = None,
         container_image: str | None = None,
         tags: list[str] | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -346,8 +346,8 @@ class Session:
             args: Arguments for the command
             container_image: Container image to use
             tags: Tags for the sandbox (merged with session defaults)
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -405,8 +405,8 @@ class Session:
             args=args,
             container_image=container_image,
             tags=tags,
-            runway_ids=runway_ids,
-            tower_ids=tower_ids,
+            profile_ids=profile_ids,
+            runner_ids=runner_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -429,8 +429,8 @@ class Session:
         *,
         tags: builtins.list[str] | None = None,
         status: str | None = None,
-        runway_ids: builtins.list[str] | None = None,
-        tower_ids: builtins.list[str] | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         adopt: bool = False,
     ) -> OperationRef[builtins.list[Sandbox]]:
@@ -449,8 +449,8 @@ class Session:
         Args:
             tags: Additional tags to filter by (merged with session's default tags)
             status: Filter by status
-            runway_ids: Filter by runway IDs (defaults to session's runway_ids if set)
-            tower_ids: Filter by tower IDs (defaults to session's tower_ids if set)
+            profile_ids: Filter by profile IDs (defaults to session's profile_ids if set)
+            runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
             include_stopped: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
@@ -484,8 +484,8 @@ class Session:
             self._list_async(
                 tags=tags,
                 status=status,
-                runway_ids=runway_ids,
-                tower_ids=tower_ids,
+                profile_ids=profile_ids,
+                runner_ids=runner_ids,
                 include_stopped=include_stopped,
                 adopt=adopt,
             )
@@ -497,8 +497,8 @@ class Session:
         *,
         tags: builtins.list[str] | None = None,
         status: str | None = None,
-        runway_ids: builtins.list[str] | None = None,
-        tower_ids: builtins.list[str] | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         adopt: bool = False,
     ) -> builtins.list[Sandbox]:
@@ -507,26 +507,26 @@ class Session:
 
         merged_tags = self._defaults.merge_tags(tags)
 
-        # Use session's default runway/tower IDs if not overridden
-        if runway_ids is not None:
-            effective_runway_ids = list(runway_ids)
-        elif self._defaults.runway_ids:
-            effective_runway_ids = list(self._defaults.runway_ids)
+        # Use session's default runway/runner IDs if not overridden
+        if profile_ids is not None:
+            effective_profile_ids = list(profile_ids)
+        elif self._defaults.profile_ids:
+            effective_profile_ids = list(self._defaults.profile_ids)
         else:
-            effective_runway_ids = None
+            effective_profile_ids = None
 
-        if tower_ids is not None:
-            effective_tower_ids = list(tower_ids)
-        elif self._defaults.tower_ids:
-            effective_tower_ids = list(self._defaults.tower_ids)
+        if runner_ids is not None:
+            effective_runner_ids = list(runner_ids)
+        elif self._defaults.runner_ids:
+            effective_runner_ids = list(self._defaults.runner_ids)
         else:
-            effective_tower_ids = None
+            effective_runner_ids = None
 
         sandboxes = await Sandbox._list_async(
             tags=merged_tags if merged_tags else None,
             status=status,
-            runway_ids=effective_runway_ids,
-            tower_ids=effective_tower_ids,
+            profile_ids=effective_profile_ids,
+            runner_ids=effective_runner_ids,
             include_stopped=include_stopped,
             base_url=None
             if self._defaults.base_url == DEFAULT_BASE_URL
@@ -637,8 +637,8 @@ class Session:
         container_image: str | None = None,
         serialization: Serialization = Serialization.JSON,
         temp_dir: str | None = None,
-        runway_ids: builtins.list[str] | None = None,
-        tower_ids: builtins.list[str] | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -662,8 +662,8 @@ class Session:
                 but only in trusted environments.
             temp_dir: Override temp directory for payload/result files in sandbox.
                 Defaults to session default. Created if missing.
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -723,8 +723,8 @@ class Session:
                 container_image=container_image,
                 serialization=serialization,
                 temp_dir=temp_dir or self._defaults.temp_dir,
-                runway_ids=runway_ids,
-                tower_ids=tower_ids,
+                profile_ids=profile_ids,
+                runner_ids=runner_ids,
                 resources=resources,
                 mounted_files=list(mounted_files) if mounted_files else None,
                 s3_mount=s3_mount,

@@ -491,11 +491,11 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
     # (sandbox._is_done should be True, but we can't easily verify this externally)
 
 
-# Infrastructure filtering tests (runway_ids, tower_ids)
+# Infrastructure filtering tests (profile_ids, runner_ids)
 
 
-def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with specific runway_ids and tower_ids.
+def test_sandbox_with_runway_and_runner_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with specific profile_ids and runner_ids.
 
     Creates a sandbox to discover valid runway/tower IDs, then creates another
     sandbox targeting those specific IDs to verify the parameters work.
@@ -503,16 +503,16 @@ def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) ->
     # First, create a sandbox to discover valid infrastructure IDs
     with Sandbox.run(defaults=sandbox_defaults) as discovery_sandbox:
         discovery_sandbox.wait()
-        discovered_runway_id = discovery_sandbox.runway_id
-        discovered_tower_id = discovery_sandbox.tower_id
+        discovered_profile_id = discovery_sandbox.profile_id
+        discovered_runner_id = discovery_sandbox.runner_id
 
-        assert discovered_runway_id is not None, "Discovery sandbox should have runway_id"
-        assert discovered_tower_id is not None, "Discovery sandbox should have tower_id"
+        assert discovered_profile_id is not None, "Discovery sandbox should have profile_id"
+        assert discovered_runner_id is not None, "Discovery sandbox should have runner_id"
 
         # Create a second sandbox targeting those specific IDs while first is still running
         with Sandbox.run(
-            runway_ids=[discovered_runway_id],
-            tower_ids=[discovered_tower_id],
+            profile_ids=[discovered_profile_id],
+            runner_ids=[discovered_runner_id],
             defaults=sandbox_defaults,
         ) as targeted_sandbox:
             targeted_sandbox.wait()
@@ -522,18 +522,18 @@ def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) ->
             assert targeted_sandbox.status == "running"
 
             # The sandbox should land on the specified runway/tower
-            assert targeted_sandbox.runway_id is not None
-            assert targeted_sandbox.tower_id is not None
+            assert targeted_sandbox.profile_id is not None
+            assert targeted_sandbox.runner_id is not None
 
 
-def test_sandbox_with_empty_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with empty runway_ids and tower_ids lists.
+def test_sandbox_with_empty_runway_and_runner_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with empty profile_ids and runner_ids lists.
 
     Verifies that empty lists are accepted (clearing any defaults).
     """
     with Sandbox.run(
-        runway_ids=[],
-        tower_ids=[],
+        profile_ids=[],
+        runner_ids=[],
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()

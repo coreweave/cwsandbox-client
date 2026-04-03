@@ -66,7 +66,7 @@ def list_sandboxes(include_stopped: bool) -> None:
         print("  No sandboxes found.")
     else:
         for sb in sandboxes:
-            print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
+            print(f"  {sb.sandbox_id}  status={sb.status}  runner={sb.runner_id}")
         print(f"\n  Total: {len(sandboxes)} sandbox(es)")
 
     # Session.list() - auto-filters by session tags
@@ -80,7 +80,7 @@ def list_sandboxes(include_stopped: bool) -> None:
             print("  No sandboxes found for session tags.")
         else:
             for sb in sandboxes:
-                print(f"  {sb.sandbox_id}  status={sb.status}  tower={sb.tower_id}")
+                print(f"  {sb.sandbox_id}  status={sb.status}  runner={sb.runner_id}")
             print(f"\n  Total: {len(sandboxes)} sandbox(es)")
 
 

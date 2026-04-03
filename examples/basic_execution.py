@@ -25,10 +25,10 @@ def main() -> None:
     with Sandbox.run(defaults=defaults) as sandbox:
         print(f"Sandbox started: {sandbox.sandbox_id}")
 
-        # Wait for sandbox to be running before accessing tower_id
-        # (tower assignment happens during scheduling, not at creation)
+        # Wait for sandbox to be running before accessing runner_id
+        # (runner assignment happens during scheduling, not at creation)
         sandbox.wait()
-        print(f"Running on tower: {sandbox.tower_id}")
+        print(f"Running on runner: {sandbox.runner_id}")
         print(f"Sandbox status: {sandbox.status}")
 
         # Execute a simple command

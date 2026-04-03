@@ -4,6 +4,6 @@
 
 """Vendored protobuf/gRPC stubs for the CoreWeave Sandbox API.
 
-These files were generated from coreweave/aviato/v1beta1/*.proto and
+These files were generated from coreweave/sandbox/v1beta2/*.proto and
 vendored here to eliminate the buf.build registry dependency.
 """

@@ -31,8 +31,8 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.tower_id = "tower-1"
-        mock_sb.runway_id = "runway-1"
+        mock_sb.runner_id = "tower-1"
+        mock_sb.profile_id = "runway-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -82,8 +82,8 @@ class TestListCommand:
         mock_sandbox_cls.list.assert_called_once_with(
             tags=["test", "dev"],
             status="running",
-            runway_ids=None,
-            tower_ids=None,
+            profile_ids=None,
+            runner_ids=None,
         )
 
     def test_list_invalid_status(self) -> None:
@@ -98,9 +98,9 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.tower_id = "tower-1"
-        mock_sb.runway_id = "runway-1"
-        mock_sb.tower_group_id = "tg-1"
+        mock_sb.runner_id = "tower-1"
+        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_group_id = "tg-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -118,9 +118,9 @@ class TestListCommand:
                 {
                     "sandbox_id": "abc-123",
                     "status": "running",
-                    "tower_id": "tower-1",
-                    "runway_id": "runway-1",
-                    "tower_group_id": "tg-1",
+                    "runner_id": "tower-1",
+                    "profile_id": "runway-1",
+                    "runner_group_id": "tg-1",
                     "started_at": "2026-01-15T10:30:00+00:00",
                 }
             ],
