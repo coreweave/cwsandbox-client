@@ -1209,18 +1209,21 @@ def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
     # With include_stopped=True, the sandbox should appear.
     # The status may not yet reflect the final terminal state, so we only
     # assert the sandbox is returned — not a specific status.
-    found = False
+    matched_sb = None
     for _ in range(15):
         sandboxes = Sandbox.list(tags=[unique_tag], include_stopped=True).result()
         for sb in sandboxes:
             if sb.sandbox_id == sandbox_id:
-                found = True
+                matched_sb = sb
                 break
-        if found:
+        if matched_sb:
             break
         time.sleep(1)
 
-    assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+    assert matched_sb is not None, (
+        f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+    )
+    assert matched_sb.container_image == sandbox_defaults.container_image
 
 
 def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
@@ -1359,3 +1362,97 @@ def test_default_command_produces_no_logs(sandbox_defaults: SandboxDefaults) -> 
             sandbox.stop(missing_ok=True).result()
         except SandboxError:
             pass
+
+
+# Tag tests
+
+
+def test_sandbox_tags_from_id(sandbox_defaults: SandboxDefaults) -> None:
+    """Tags set at creation are recovered via from_id."""
+    unique = uuid.uuid4().hex[:8]
+    custom_tags = [f"tag-a-{unique}", f"tag-b-{unique}"]
+
+    with Sandbox.run(
+        "sleep", "infinity", defaults=sandbox_defaults, tags=custom_tags
+    ) as sandbox:
+        sandbox.wait()
+
+        recovered = Sandbox.from_id(sandbox.sandbox_id).result()
+
+        # Tags from defaults (integration-test, session tag) plus custom tags
+        for tag in custom_tags:
+            assert tag in recovered.tags
+
+
+def test_sandbox_tags_list_filter(sandbox_defaults: SandboxDefaults) -> None:
+    """Sandbox.list filters by tags with AND semantics."""
+    unique = uuid.uuid4().hex[:8]
+    shared_tag = f"shared-{unique}"
+    only_a_tag = f"only-a-{unique}"
+    only_b_tag = f"only-b-{unique}"
+
+    # Create sequentially to avoid resource pressure on local clusters
+    with Sandbox.run(
+        "sleep", "infinity", defaults=sandbox_defaults, tags=[shared_tag, only_a_tag]
+    ) as sb_a:
+        sb_a.wait()
+
+        with Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=[shared_tag, only_b_tag]
+        ) as sb_b:
+            sb_b.wait()
+
+            # Filter by shared tag — both should appear
+            shared_results = Sandbox.list(tags=[shared_tag]).result()
+            shared_ids = {s.sandbox_id for s in shared_results}
+            assert sb_a.sandbox_id in shared_ids
+            assert sb_b.sandbox_id in shared_ids
+
+            # Filter by only_a — only sb_a should appear
+            a_results = Sandbox.list(tags=[only_a_tag]).result()
+            a_ids = {s.sandbox_id for s in a_results}
+            assert sb_a.sandbox_id in a_ids
+            assert sb_b.sandbox_id not in a_ids
+
+            # AND semantics — filter by both shared + only_a
+            and_results = Sandbox.list(tags=[shared_tag, only_a_tag]).result()
+            and_ids = {s.sandbox_id for s in and_results}
+            assert sb_a.sandbox_id in and_ids
+            assert sb_b.sandbox_id not in and_ids
+
+
+def test_sandbox_tags_rejects_invalid(sandbox_defaults: SandboxDefaults) -> None:
+    """Tags with invalid characters are rejected by the server."""
+    from cwsandbox.exceptions import SandboxError
+
+    # Tags with spaces are invalid K8s label name segments
+    with pytest.raises(SandboxError, match="(?i)invalid|label"):
+        sandbox = Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=["has space"]
+        )
+        sandbox.wait()
+
+
+def test_sandbox_tags_rejects_too_long(sandbox_defaults: SandboxDefaults) -> None:
+    """Tags exceeding K8s label length limit are rejected."""
+    from cwsandbox.exceptions import SandboxError
+
+    # K8s label name segment max is 63 chars; prefix eats 24, so tag > 39 chars overflows
+    long_tag = "a" * 64
+    with pytest.raises(SandboxError, match="(?i)invalid|63 bytes|label"):
+        sandbox = Sandbox.run(
+            "sleep", "infinity", defaults=sandbox_defaults, tags=[long_tag]
+        )
+        sandbox.wait()
+
+
+# Container image tests
+
+
+def test_sandbox_container_image_from_id(sandbox_defaults: SandboxDefaults) -> None:
+    """Container image is returned via from_id."""
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        sandbox.wait()
+
+        recovered = Sandbox.from_id(sandbox.sandbox_id).result()
+        assert recovered.container_image == sandbox_defaults.container_image
