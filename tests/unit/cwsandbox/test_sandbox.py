@@ -346,7 +346,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -399,7 +399,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -436,7 +436,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -481,7 +481,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -524,7 +524,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -577,7 +577,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -613,7 +613,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -650,7 +650,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -690,7 +690,7 @@ class TestSandboxExec:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -805,7 +805,7 @@ class TestSandboxAuth:
 
         with (
             patch("cwsandbox._sandbox.create_channel") as mock_create_channel,
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub") as mock_stub_class,
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub") as mock_stub_class,
             patch("cwsandbox._sandbox.resolve_auth_metadata") as mock_resolve,
         ):
             mock_resolve.return_value = (("authorization", "Bearer test-api-key"),)
@@ -1045,7 +1045,7 @@ class TestSandboxWait:
 
     def test_wait_raises_on_failed(self) -> None:
         """Test wait raises SandboxFailedError when sandbox fails."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
         from cwsandbox.exceptions import SandboxFailedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1054,7 +1054,7 @@ class TestSandboxWait:
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
-        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_FAILED
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_FAILED
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         with pytest.raises(SandboxFailedError, match="failed"):
@@ -1062,7 +1062,7 @@ class TestSandboxWait:
 
     def test_wait_raises_on_terminated_by_default(self) -> None:
         """Test wait raises SandboxTerminatedError when terminated."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
         from cwsandbox.exceptions import SandboxTerminatedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1071,7 +1071,7 @@ class TestSandboxWait:
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
-        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATED
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
         with pytest.raises(SandboxTerminatedError, match="terminated"):
@@ -1079,7 +1079,7 @@ class TestSandboxWait:
 
     def test_wait_auto_starts_unstarted_sandbox(self) -> None:
         """Test wait() triggers auto-start on unstarted sandbox."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
 
@@ -1087,10 +1087,10 @@ class TestSandboxWait:
         mock_start_response.sandbox_id = "auto-start-wait-id"
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
-        mock_get_response.tower_id = "tower-1"
-        mock_get_response.runway_id = "runway-1"
-        mock_get_response.tower_group_id = None
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.runner_id = "tower-1"
+        mock_get_response.profile_id = "runway-1"
+        mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
@@ -1111,7 +1111,7 @@ class TestSandboxAutoStartFileOps:
 
     def test_read_file_auto_starts_unstarted_sandbox(self) -> None:
         """Test read_file() triggers auto-start on unstarted sandbox."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -1119,10 +1119,10 @@ class TestSandboxAutoStartFileOps:
         mock_start_response.sandbox_id = "auto-start-read-id"
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
-        mock_get_response.tower_id = "tower-1"
-        mock_get_response.runway_id = "runway-1"
-        mock_get_response.tower_group_id = None
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.runner_id = "tower-1"
+        mock_get_response.profile_id = "runway-1"
+        mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
         mock_read_response = MagicMock()
@@ -1147,7 +1147,7 @@ class TestSandboxAutoStartFileOps:
 
     def test_write_file_auto_starts_unstarted_sandbox(self) -> None:
         """Test write_file() triggers auto-start on unstarted sandbox."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -1155,10 +1155,10 @@ class TestSandboxAutoStartFileOps:
         mock_start_response.sandbox_id = "auto-start-write-id"
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
-        mock_get_response.tower_id = "tower-1"
-        mock_get_response.runway_id = "runway-1"
-        mock_get_response.tower_group_id = None
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.runner_id = "tower-1"
+        mock_get_response.profile_id = "runway-1"
+        mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
         mock_write_response = MagicMock()
@@ -1185,7 +1185,7 @@ class TestSandboxWaitUntilComplete:
 
     def test_wait_until_complete_auto_starts(self) -> None:
         """Test wait_until_complete auto-starts via _ensure_started_async."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
 
@@ -1193,7 +1193,7 @@ class TestSandboxWaitUntilComplete:
         mock_start_response.sandbox_id = "auto-start-complete-id"
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
         mock_get_response.returncode = 0
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
@@ -1209,7 +1209,7 @@ class TestSandboxWaitUntilComplete:
 
     def test_wait_until_complete_no_raise_on_terminated_when_disabled(self) -> None:
         """Test wait_until_complete returns normally when raise_on_termination=False."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -1217,7 +1217,7 @@ class TestSandboxWaitUntilComplete:
         sandbox._channel = MagicMock()
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
-        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_TERMINATED
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATED
         mock_response.returncode = 0
         mock_response.started_at_time = None
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
@@ -1313,7 +1313,7 @@ class TestSandboxWaitForRunning:
 
     def test_wait_raises_on_failed_status(self) -> None:
         """Test wait raises SandboxFailedError when sandbox fails to start."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
         from cwsandbox.exceptions import SandboxFailedError
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -1321,7 +1321,7 @@ class TestSandboxWaitForRunning:
         sandbox._state = _Starting(sandbox_id="failing-sandbox-id")
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_FAILED
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_FAILED
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
@@ -1333,18 +1333,18 @@ class TestSandboxWaitForRunning:
 
     def test_wait_handles_fast_completion(self) -> None:
         """Test wait handles sandbox that completes during startup."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="echo", args=["hello"])
         sandbox._sandbox_id = "fast-sandbox-id"
         sandbox._state = _Starting(sandbox_id="fast-sandbox-id")
 
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
         mock_get_response.returncode = 0
-        mock_get_response.tower_id = "tower-1"
-        mock_get_response.runway_id = "runway-1"
-        mock_get_response.tower_group_id = None
+        mock_get_response.runner_id = "tower-1"
+        mock_get_response.profile_id = "runway-1"
+        mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
@@ -1568,9 +1568,9 @@ class TestSandboxAnnotations:
         mock_info.sandbox_id = "test-id"
         mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
         mock_info.started_at_time = None
-        mock_info.tower_id = None
-        mock_info.runway_id = None
-        mock_info.tower_group_id = None
+        mock_info.runner_id = None
+        mock_info.profile_id = None
+        mock_info.runner_group_id = None
 
         sandbox = Sandbox._from_sandbox_info(
             mock_info,
@@ -1710,7 +1710,7 @@ class TestSandboxTimeouts:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -2043,15 +2043,15 @@ class TestSandboxList:
         """Test list() returns list of Sandbox instances."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_sandbox_info = atc_pb2.SandboxInfo(
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
@@ -2059,14 +2059,14 @@ class TestSandboxList:
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
         )
 
         with (
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandboxes = await Sandbox.list(tags=["test-tag"])
 
@@ -2080,24 +2080,24 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_with_status_filter(self, mock_api_key: str) -> None:
         """Test list() passes status filter to request."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await Sandbox.list(status="running")
 
             call_args = mock_stub.List.call_args[0][0]
-            assert call_args.status == atc_pb2.SANDBOX_STATUS_RUNNING
+            assert call_args.status == gateway_pb2.SANDBOX_STATUS_RUNNING
             call_kwargs = mock_stub.List.call_args[1]
             assert call_kwargs["metadata"] == expected_metadata
 
@@ -2110,17 +2110,17 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_empty_result(self, mock_api_key: str) -> None:
         """Test list() returns empty list when no sandboxes match."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandboxes = await Sandbox.list(tags=["nonexistent"])
             assert sandboxes == []
@@ -2128,19 +2128,19 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_passes_field(self, mock_api_key: str) -> None:
         """Test list(include_stopped=True) sets the field on the request."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await Sandbox.list(include_stopped=True)
 
@@ -2150,17 +2150,17 @@ class TestSandboxList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_default_false(self, mock_api_key: str) -> None:
         """Test list() does not set include_stopped by default."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await Sandbox.list()
 
@@ -2176,15 +2176,15 @@ class TestSandboxFromId:
         """Test from_id() returns a Sandbox instance."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.GetSandboxResponse(
+        mock_response = gateway_pb2.GetSandboxResponse(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
@@ -2197,14 +2197,14 @@ class TestSandboxFromId:
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandbox = await Sandbox.from_id("test-123")
 
             assert isinstance(sandbox, Sandbox)
             assert sandbox.sandbox_id == "test-123"
             assert sandbox.status == "running"
-            assert sandbox.tower_id == "tower-1"
+            assert sandbox.runner_id == "tower-1"
             call_kwargs = mock_stub.Get.call_args[1]
             assert call_kwargs["metadata"] == expected_metadata
 
@@ -2219,7 +2219,7 @@ class TestSandboxFromId:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             with pytest.raises(SandboxNotFoundError, match="not found"):
                 await Sandbox.from_id("nonexistent-id")
@@ -2231,9 +2231,9 @@ class TestSandboxDeleteClassMethod:
     @pytest.mark.asyncio
     async def test_delete_returns_none_on_success(self, mock_api_key: str) -> None:
         """Test delete() returns None when deletion succeeds."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.DeleteSandboxResponse(success=True, error_message="")
+        mock_response = gateway_pb2.DeleteSandboxResponse(success=True, error_message="")
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
         mock_channel = MagicMock()
@@ -2245,7 +2245,7 @@ class TestSandboxDeleteClassMethod:
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             result = await Sandbox.delete("test-123")
 
@@ -2266,7 +2266,7 @@ class TestSandboxDeleteClassMethod:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             with pytest.raises(SandboxNotFoundError):
                 await Sandbox.delete("nonexistent-id")
@@ -2284,7 +2284,7 @@ class TestSandboxDeleteClassMethod:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             result = await Sandbox.delete("nonexistent-id", missing_ok=True)
             assert result is None
@@ -2388,15 +2388,15 @@ class TestSandboxServiceAddressAndExposedPorts:
         """Test from_id() returns sandbox with None service_address."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.GetSandboxResponse(
+        mock_response = gateway_pb2.GetSandboxResponse(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         mock_channel = MagicMock()
@@ -2407,7 +2407,7 @@ class TestSandboxServiceAddressAndExposedPorts:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandbox = await Sandbox.from_id("test-123")
 
@@ -2416,61 +2416,61 @@ class TestSandboxServiceAddressAndExposedPorts:
 
 
 class TestSandboxRunwayAndTowerIds:
-    """Tests for runway_ids and tower_ids parameters."""
+    """Tests for profile_ids and runner_ids parameters."""
 
-    def test_runway_ids_stored_on_sandbox(self) -> None:
-        """Test runway_ids are stored on sandbox instance."""
-        sandbox = Sandbox(runway_ids=["runway-1", "runway-2"])
-        assert sandbox._runway_ids == ["runway-1", "runway-2"]
+    def test_profile_ids_stored_on_sandbox(self) -> None:
+        """Test profile_ids are stored on sandbox instance."""
+        sandbox = Sandbox(profile_ids=["runway-1", "runway-2"])
+        assert sandbox._profile_ids == ["runway-1", "runway-2"]
 
-    def test_tower_ids_stored_on_sandbox(self) -> None:
-        """Test tower_ids are stored on sandbox instance."""
-        sandbox = Sandbox(tower_ids=["tower-1", "tower-2"])
-        assert sandbox._tower_ids == ["tower-1", "tower-2"]
+    def test_runner_ids_stored_on_sandbox(self) -> None:
+        """Test runner_ids are stored on sandbox instance."""
+        sandbox = Sandbox(runner_ids=["tower-1", "tower-2"])
+        assert sandbox._runner_ids == ["tower-1", "tower-2"]
 
-    def test_empty_runway_ids_overrides_defaults(self) -> None:
-        """Test empty runway_ids list overrides defaults."""
+    def test_empty_profile_ids_overrides_defaults(self) -> None:
+        """Test empty profile_ids list overrides defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(runway_ids=("default-runway",))
-        sandbox = Sandbox(runway_ids=[], defaults=defaults)
-        assert sandbox._runway_ids == []
+        defaults = SandboxDefaults(profile_ids=("default-runway",))
+        sandbox = Sandbox(profile_ids=[], defaults=defaults)
+        assert sandbox._profile_ids == []
 
-    def test_empty_tower_ids_overrides_defaults(self) -> None:
-        """Test empty tower_ids list overrides defaults."""
+    def test_empty_runner_ids_overrides_defaults(self) -> None:
+        """Test empty runner_ids list overrides defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(tower_ids=("default-tower",))
-        sandbox = Sandbox(tower_ids=[], defaults=defaults)
-        assert sandbox._tower_ids == []
+        defaults = SandboxDefaults(runner_ids=("default-tower",))
+        sandbox = Sandbox(runner_ids=[], defaults=defaults)
+        assert sandbox._runner_ids == []
 
-    def test_none_runway_ids_uses_defaults(self) -> None:
-        """Test None runway_ids falls back to defaults."""
+    def test_none_profile_ids_uses_defaults(self) -> None:
+        """Test None profile_ids falls back to defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(runway_ids=("default-runway",))
+        defaults = SandboxDefaults(profile_ids=("default-runway",))
         sandbox = Sandbox(defaults=defaults)
-        assert sandbox._runway_ids == ["default-runway"]
+        assert sandbox._profile_ids == ["default-runway"]
 
-    def test_none_tower_ids_uses_defaults(self) -> None:
-        """Test None tower_ids falls back to defaults."""
+    def test_none_runner_ids_uses_defaults(self) -> None:
+        """Test None runner_ids falls back to defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(tower_ids=("default-tower",))
+        defaults = SandboxDefaults(runner_ids=("default-tower",))
         sandbox = Sandbox(defaults=defaults)
-        assert sandbox._tower_ids == ["default-tower"]
+        assert sandbox._runner_ids == ["default-tower"]
 
-    def test_run_passes_runway_ids(self) -> None:
-        """Test Sandbox.run passes runway_ids to sandbox."""
+    def test_run_passes_profile_ids(self) -> None:
+        """Test Sandbox.run passes profile_ids to sandbox."""
         with patch.object(Sandbox, "start"):
-            sandbox = Sandbox.run(runway_ids=["runway-1"])
-            assert sandbox._runway_ids == ["runway-1"]
+            sandbox = Sandbox.run(profile_ids=["runway-1"])
+            assert sandbox._profile_ids == ["runway-1"]
 
-    def test_run_passes_tower_ids(self) -> None:
-        """Test Sandbox.run passes tower_ids to sandbox."""
+    def test_run_passes_runner_ids(self) -> None:
+        """Test Sandbox.run passes runner_ids to sandbox."""
         with patch.object(Sandbox, "start"):
-            sandbox = Sandbox.run(tower_ids=["tower-1"])
-            assert sandbox._tower_ids == ["tower-1"]
+            sandbox = Sandbox.run(runner_ids=["tower-1"])
+            assert sandbox._runner_ids == ["tower-1"]
 
 
 class TestNetworkOptionsTypeGuard:
@@ -2616,7 +2616,7 @@ class TestAppliedNetworkModes:
 
     def test_applied_modes_preserved_after_get_status(self) -> None:
         """Test applied_* values are preserved after get_status() refresh."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
 
@@ -2636,7 +2636,7 @@ class TestAppliedNetworkModes:
 
         # Mock get_status call
         mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
 
         sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
@@ -3073,15 +3073,15 @@ class TestSandboxStartupTimeTracking:
 
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         info = MagicMock()
         info.sandbox_id = "test-123"
-        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
         info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
-        info.tower_id = "tower-1"
-        info.tower_group_id = "group-1"
-        info.runway_id = "runway-1"
+        info.runner_id = "tower-1"
+        info.runner_group_id = "group-1"
+        info.profile_id = "runway-1"
         sandbox = Sandbox._from_sandbox_info(
             info,
             base_url="https://api.example.com",
@@ -3093,7 +3093,7 @@ class TestSandboxStartupTimeTracking:
 
     def test_wait_records_startup_time_to_session(self) -> None:
         """Test wait() records startup time to session reporter."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -3106,10 +3106,10 @@ class TestSandboxStartupTimeTracking:
         sandbox._stub = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
-        mock_response.tower_id = "tower-1"
-        mock_response.tower_group_id = None
-        mock_response.runway_id = "runway-1"
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_response.runner_id = "tower-1"
+        mock_response.runner_group_id = None
+        mock_response.profile_id = "runway-1"
         mock_response.started_at_time = None
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
@@ -3122,7 +3122,7 @@ class TestSandboxStartupTimeTracking:
 
     def test_startup_time_only_recorded_once(self) -> None:
         """Test startup time is only recorded once."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -3136,10 +3136,10 @@ class TestSandboxStartupTimeTracking:
         sandbox._stub = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
-        mock_response.tower_id = "tower-1"
-        mock_response.tower_group_id = None
-        mock_response.runway_id = "runway-1"
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_response.runner_id = "tower-1"
+        mock_response.runner_group_id = None
+        mock_response.profile_id = "runway-1"
         mock_response.started_at_time = None
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
@@ -3328,7 +3328,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3373,7 +3373,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3407,7 +3407,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3440,7 +3440,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3471,7 +3471,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3514,7 +3514,7 @@ class TestExecStdinReadySignal:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -3561,7 +3561,7 @@ class TestShellStreamingTTY:
         stack.enter_context(patch("cwsandbox._sandbox.create_channel", return_value=mock_channel))
         stack.enter_context(
             patch(
-                "cwsandbox._sandbox.streaming_pb2_grpc.ATCStreamingServiceStub",
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
                 return_value=mock_stub,
             )
         )
@@ -4059,18 +4059,18 @@ class TestTerminalStateProperties:
         sandbox._state = _Terminal(sandbox_id="sb-terminal", status=SandboxStatus.COMPLETED)
         assert sandbox.sandbox_id == "sb-terminal"
 
-    def test_tower_id_from_terminal_state(self) -> None:
-        """Properties read tower_id from _Terminal state."""
+    def test_runner_id_from_terminal_state(self) -> None:
+        """Properties read runner_id from _Terminal state."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Terminal(
-            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, tower_id="tower-99"
+            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, runner_id="tower-99"
         )
-        assert sandbox.tower_id == "tower-99"
+        assert sandbox.runner_id == "tower-99"
 
-    def test_runway_id_from_terminal_state(self) -> None:
-        """Properties read runway_id from _Terminal state."""
+    def test_profile_id_from_terminal_state(self) -> None:
+        """Properties read profile_id from _Terminal state."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Terminal(
-            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, runway_id="runway-99"
+            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, profile_id="runway-99"
         )
-        assert sandbox.runway_id == "runway-99"
+        assert sandbox.profile_id == "runway-99"

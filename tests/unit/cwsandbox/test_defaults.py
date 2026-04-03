@@ -39,8 +39,8 @@ class TestSandboxDefaults:
         assert defaults.tags == ()
 
         # Runway/tower IDs should default to None (no filtering)
-        assert defaults.runway_ids is None
-        assert defaults.tower_ids is None
+        assert defaults.profile_ids is None
+        assert defaults.runner_ids is None
 
         # Network should default to None (backend defaults)
         assert defaults.network is None
@@ -263,14 +263,14 @@ class TestSandboxDefaultsFromDict:
             {
                 "tags": ["tag1", "tag2"],
                 "args": ["-f", "/dev/null"],
-                "runway_ids": ["r1"],
-                "tower_ids": ["t1", "t2"],
+                "profile_ids": ["r1"],
+                "runner_ids": ["t1", "t2"],
             }
         )
         assert defaults.tags == ("tag1", "tag2")
         assert defaults.args == ("-f", "/dev/null")
-        assert defaults.runway_ids == ("r1",)
-        assert defaults.tower_ids == ("t1", "t2")
+        assert defaults.profile_ids == ("r1",)
+        assert defaults.runner_ids == ("t1", "t2")
 
     def test_from_dict_coerces_network_dict(self) -> None:
         """from_dict converts network dict to NetworkOptions."""
@@ -354,7 +354,7 @@ class TestSandboxDefaultsFromDict:
         )
         assert defaults.container_image == "python:3.11"
         assert defaults.command == "tail"
-        assert defaults.base_url == "https://atc.cw-sandbox.com"
+        assert defaults.base_url == "https://gateway.cw-sandbox.com"
         assert defaults.temp_dir == "/tmp"
         assert defaults.request_timeout_seconds == 300.0
 

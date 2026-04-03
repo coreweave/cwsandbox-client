@@ -39,7 +39,7 @@ def create_tagged_sandboxes(tag: str, count: int) -> None:
     ]
 
     for sb in sandboxes:
-        print(f"  Created: {sb.sandbox_id} (tower: {sb.tower_id})")
+        print(f"  Created: {sb.sandbox_id} (runner: {sb.runner_id})")
 
     print(f"\nCreated {len(sandboxes)} sandboxes")
     print("Run with --cleanup to delete them.")
@@ -57,9 +57,9 @@ def cleanup_tagged_sandboxes(tag: str) -> None:
         print("\nNothing to clean up.")
         return
 
-    # Show which towers they're on
+    # Show which runners they're on
     for sb in sandboxes:
-        print(f"  {sb.sandbox_id} (tower: {sb.tower_id}, status: {sb.status})")
+        print(f"  {sb.sandbox_id} (runner: {sb.runner_id}, status: {sb.status})")
 
     print("\nStopping sandboxes...")
 
