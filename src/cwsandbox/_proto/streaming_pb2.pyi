@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
+import datetime
+
 from google.api import field_behavior_pb2 as _field_behavior_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -44,7 +47,7 @@ class ExecStreamInit(_message.Message):
     tty_width: int
     tty_height: int
     env: _containers.ScalarMap[str, str]
-    def __init__(self, sandbox_id: _Optional[str] = ..., command: _Optional[_Iterable[str]] = ..., tty: bool = ..., tty_width: _Optional[int] = ..., tty_height: _Optional[int] = ..., env: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., command: _Optional[_Iterable[str]] = ..., tty: _Optional[bool] = ..., tty_width: _Optional[int] = ..., tty_height: _Optional[int] = ..., env: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class ExecStreamData(_message.Message):
     __slots__ = ("data",)
@@ -68,7 +71,7 @@ class StreamingExecReady(_message.Message):
     __slots__ = ("ready_at",)
     READY_AT_FIELD_NUMBER: _ClassVar[int]
     ready_at: _timestamp_pb2.Timestamp
-    def __init__(self, ready_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, ready_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ExecStreamResponse(_message.Message):
     __slots__ = ("output", "exit", "error", "ready")
@@ -98,7 +101,7 @@ class ExecStreamOutput(_message.Message):
     stream_type: ExecStreamOutput.StreamType
     data: bytes
     timestamp: _timestamp_pb2.Timestamp
-    def __init__(self, stream_type: _Optional[_Union[ExecStreamOutput.StreamType, str]] = ..., data: _Optional[bytes] = ..., timestamp: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, stream_type: _Optional[_Union[ExecStreamOutput.StreamType, str]] = ..., data: _Optional[bytes] = ..., timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ExecStreamExit(_message.Message):
     __slots__ = ("exit_code", "completed_at")
@@ -106,7 +109,7 @@ class ExecStreamExit(_message.Message):
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     exit_code: int
     completed_at: _timestamp_pb2.Timestamp
-    def __init__(self, exit_code: _Optional[int] = ..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, exit_code: _Optional[int] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ExecStreamError(_message.Message):
     __slots__ = ("message", "code")
@@ -136,7 +139,7 @@ class LogStreamInit(_message.Message):
     tail_lines: int
     since_time: _timestamp_pb2.Timestamp
     timestamps: bool
-    def __init__(self, sandbox_id: _Optional[str] = ..., follow: bool = ..., tail_lines: _Optional[int] = ..., since_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., timestamps: bool = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., follow: _Optional[bool] = ..., tail_lines: _Optional[int] = ..., since_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., timestamps: _Optional[bool] = ...) -> None: ...
 
 class LogStreamClose(_message.Message):
     __slots__ = ()
@@ -158,7 +161,7 @@ class LogStreamData(_message.Message):
     TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
     data: bytes
     timestamp: _timestamp_pb2.Timestamp
-    def __init__(self, data: _Optional[bytes] = ..., timestamp: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, data: _Optional[bytes] = ..., timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class LogStreamComplete(_message.Message):
     __slots__ = ()
