@@ -36,9 +36,9 @@ def _make_proto_info(
     *,
     sandbox_id: str = "sb-test",
     sandbox_status: int = 2,  # SANDBOX_STATUS_RUNNING
-    tower_id: str = "",
-    runway_id: str = "",
-    tower_group_id: str = "",
+    runner_id: str = "",
+    profile_id: str = "",
+    runner_group_id: str = "",
     started_at_time: object | None = None,
     returncode: int = 0,
 ) -> SimpleNamespace:
@@ -46,9 +46,9 @@ def _make_proto_info(
     return SimpleNamespace(
         sandbox_id=sandbox_id,
         sandbox_status=sandbox_status,
-        tower_id=tower_id,
-        runway_id=runway_id,
-        tower_group_id=tower_group_id,
+        runner_id=runner_id,
+        profile_id=profile_id,
+        runner_group_id=runner_group_id,
         started_at_time=started_at_time,
         returncode=returncode,
     )
@@ -114,15 +114,15 @@ class TestStateDefaults:
     def test_running_defaults(self) -> None:
         state = _Running(sandbox_id="sb-1")
         assert state.status == SandboxStatus.RUNNING
-        assert state.tower_id is None
-        assert state.runway_id is None
-        assert state.tower_group_id is None
+        assert state.runner_id is None
+        assert state.profile_id is None
+        assert state.runner_group_id is None
         assert state.started_at is None
 
     def test_terminal_defaults(self) -> None:
         state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.FAILED)
         assert state.returncode is None
-        assert state.tower_id is None
+        assert state.runner_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +181,11 @@ class TestLifecycleStateFromInfo:
         state = _lifecycle_state_from_info(
             sandbox_id="sb-1",
             status=SandboxStatus.RUNNING,
-            tower_id="tower-1",
+            runner_id="tower-1",
         )
         assert isinstance(state, _Running)
         assert state.sandbox_id == "sb-1"
-        assert state.tower_id == "tower-1"
+        assert state.runner_id == "tower-1"
 
     def test_paused_status(self) -> None:
         state = _lifecycle_state_from_info(
@@ -274,17 +274,17 @@ class TestApplySandboxInfo:
         ts = _make_started_at()
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.RUNNING),
-            tower_id="tower-1",
-            runway_id="runway-1",
-            tower_group_id="tg-1",
+            runner_id="tower-1",
+            profile_id="runway-1",
+            runner_group_id="tg-1",
             started_at_time=ts,
         )
         new_state = sb._apply_sandbox_info(info)
         assert isinstance(new_state, _Running)
         assert new_state.sandbox_id == "sb-1"
-        assert new_state.tower_id == "tower-1"
-        assert new_state.runway_id == "runway-1"
-        assert new_state.tower_group_id == "tg-1"
+        assert new_state.runner_id == "tower-1"
+        assert new_state.profile_id == "runway-1"
+        assert new_state.runner_group_id == "tg-1"
         assert new_state.started_at is not None
 
     def test_running_to_completed_with_poll_sets_returncode(self) -> None:
@@ -394,15 +394,15 @@ class TestApplySandboxInfo:
         sb = self._make_sandbox(_Starting(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.RUNNING),
-            tower_id="",
-            runway_id="",
-            tower_group_id="",
+            runner_id="",
+            profile_id="",
+            runner_group_id="",
         )
         new_state = sb._apply_sandbox_info(info)
         assert isinstance(new_state, _Running)
-        assert new_state.tower_id is None
-        assert new_state.runway_id is None
-        assert new_state.tower_group_id is None
+        assert new_state.runner_id is None
+        assert new_state.profile_id is None
+        assert new_state.runner_group_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ class TestFromSandboxInfoState:
         info = _make_proto_info(
             sandbox_id="sb-1",
             sandbox_status=_proto_status(SandboxStatus.RUNNING),
-            tower_id="tower-1",
+            runner_id="tower-1",
         )
         from cwsandbox import Sandbox
 
@@ -426,7 +426,7 @@ class TestFromSandboxInfoState:
         )
         assert isinstance(sb._state, _Running)
         assert sb._state.sandbox_id == "sb-1"
-        assert sb._state.tower_id == "tower-1"
+        assert sb._state.runner_id == "tower-1"
 
     def test_paused_sandbox_has_running_state(self) -> None:
         info = _make_proto_info(

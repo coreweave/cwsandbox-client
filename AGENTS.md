@@ -60,7 +60,7 @@ Key methods:
 Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
-- `sandbox_id`, `tower_id`, `runway_id`, `tower_group_id`, `returncode`, `started_at`
+- `sandbox_id`, `runner_id`, `profile_id`, `runner_group_id`, `returncode`, `started_at`
 
 Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
 - `resources` - Resource requests (CPU, memory, GPU)
@@ -75,7 +75,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
+- `Sandbox.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 
@@ -86,7 +86,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
+- `session.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -104,12 +104,12 @@ with Session(defaults) as session:
 
 Fields (all optional with sensible defaults):
 - `container_image`, `command`, `args` - Container configuration
-- `base_url` - API endpoint (default: `https://atc.cw-sandbox.com`)
+- `base_url` - API endpoint (default: `https://gateway.cw-sandbox.com`)
 - `request_timeout_seconds` - Client-side HTTP timeout (default: 300.0)
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
-- `runway_ids`, `tower_ids` - Infrastructure filtering (optional tuple of IDs)
+- `profile_ids`, `runner_ids` - Infrastructure filtering (optional tuple of IDs)
 - `resources` - Resource requests (CPU, memory, GPU)
 - `network` - Network configuration via `NetworkOptions`
 - `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
@@ -125,7 +125,7 @@ Utility methods:
 Key constants (from `_defaults.py`):
 - `DEFAULT_CONTAINER_IMAGE = "python:3.11"`
 - `DEFAULT_COMMAND = "tail"`, `DEFAULT_ARGS = ("-f", "/dev/null")`
-- `DEFAULT_BASE_URL = "https://atc.cw-sandbox.com"`
+- `DEFAULT_BASE_URL = "https://gateway.cw-sandbox.com"`
 - `DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0` - Client-side HTTP timeout
 - `DEFAULT_MAX_LIFETIME_SECONDS = None` - Server controls sandbox lifetime
 - `DEFAULT_GRACEFUL_SHUTDOWN_SECONDS = 10.0`
@@ -164,9 +164,9 @@ data = await ref
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
 Fields:
-- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
+- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
 - `exposed_ports: tuple[int, ...] | None` - Ports to expose (required with `ingress_mode`). Lists are normalized to tuples for immutability.
-- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
+- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
 
 Usage:
 ```python
@@ -327,7 +327,7 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 ### Backend Communication
 
-Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
+Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`gateway_pb2`, `gateway_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
 
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 
@@ -335,7 +335,7 @@ Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The
 
 ### Related Repositories
 
-- **Backend**: [github.com/coreweave/aviato](https://github.com/coreweave/aviato) - Server-side implementation (Go). Use `/repo-explore` to investigate backend behavior, API contracts, or debug client-server issues.
+- **Backend**: [github.com/coreweave/sandbox](https://github.com/coreweave/sandbox) - Server-side implementation (Go). Use `/repo-explore` to investigate backend behavior, API contracts, or debug client-server issues.
 
 ## Test Structure
 

@@ -84,8 +84,8 @@ class RemoteFunction(Generic[P, R]):
         container_image: str | None = None,
         serialization: Serialization = Serialization.JSON,
         temp_dir: str = DEFAULT_TEMP_DIR,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -103,8 +103,8 @@ class RemoteFunction(Generic[P, R]):
             container_image: Override container image for this function
             serialization: Serialization mode (JSON by default for safety)
             temp_dir: Directory for temporary payload/result files in sandbox
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of runway IDs
+            runner_ids: Optional list of tower IDs
             resources: Resource requests (CPU, memory, GPU)
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
@@ -143,8 +143,8 @@ class RemoteFunction(Generic[P, R]):
         self._container_image = container_image
         self._serialization = serialization
         self._temp_dir = temp_dir
-        self._runway_ids = list(runway_ids) if runway_ids is not None else None
-        self._tower_ids = list(tower_ids) if tower_ids is not None else None
+        self._profile_ids = list(profile_ids) if profile_ids is not None else None
+        self._runner_ids = list(runner_ids) if runner_ids is not None else None
         self._resources = resources
         self._mounted_files = mounted_files
         self._s3_mount = s3_mount
@@ -256,10 +256,10 @@ class RemoteFunction(Generic[P, R]):
         )
 
         sandbox_kwargs: dict[str, Any] = {}
-        if self._runway_ids is not None:
-            sandbox_kwargs["runway_ids"] = self._runway_ids
-        if self._tower_ids is not None:
-            sandbox_kwargs["tower_ids"] = self._tower_ids
+        if self._profile_ids is not None:
+            sandbox_kwargs["profile_ids"] = self._profile_ids
+        if self._runner_ids is not None:
+            sandbox_kwargs["runner_ids"] = self._runner_ids
         if self._resources is not None:
             sandbox_kwargs["resources"] = self._resources
         if self._mounted_files is not None:

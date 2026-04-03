@@ -150,16 +150,16 @@ mise run proto:update
 
 ### Local backend development
 
-When developing against a local aviato backend checkout with proto changes that
+When developing against a local sandbox backend checkout with proto changes that
 haven't been published to buf.build yet:
 
 ```bash
 # Generate protos from local backend and copy into vendored directory
 mise run proto:update:local
 
-# Or manually (if CWSANDBOX_BACKEND_PATH is not ../aviato):
-(cd /path/to/aviato && make buf-gen-python)
-scripts/update-protos.sh --local /path/to/aviato/gen/python
+# Or manually (if CWSANDBOX_BACKEND_PATH is not ../sandbox):
+(cd /path/../sandbox && make buf-gen-python)
+scripts/update-protos.sh --local /path/../sandbox/gen/python
 ```
 
 To revert local proto changes, use git:

@@ -490,15 +490,15 @@ class TestSessionList:
         from google.protobuf import timestamp_pb2
 
         from cwsandbox import SandboxDefaults
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_sandbox_info = atc_pb2.SandboxInfo(
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         defaults = SandboxDefaults(tags=("session-tag",))
@@ -508,13 +508,13 @@ class TestSessionList:
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
         )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandboxes = await session.list()
 
@@ -525,7 +525,7 @@ class TestSessionList:
     async def test_list_uses_default_tags(self, mock_api_key: str) -> None:
         """Test session.list() automatically filters by session's default tags."""
         from cwsandbox import SandboxDefaults
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         defaults = SandboxDefaults(tags=("session-tag",))
         session = Session(defaults)
@@ -533,12 +533,12 @@ class TestSessionList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await session.list()
 
@@ -550,15 +550,15 @@ class TestSessionList:
         """Test session.list(adopt=True) registers sandboxes with session."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_sandbox_info = atc_pb2.SandboxInfo(
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         session = Session()
@@ -567,13 +567,13 @@ class TestSessionList:
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
         )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandboxes = await session.list(adopt=True)
 
@@ -585,15 +585,15 @@ class TestSessionList:
         """Test session.list(adopt=False) does not register sandboxes."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_sandbox_info = atc_pb2.SandboxInfo(
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         session = Session()
@@ -602,13 +602,13 @@ class TestSessionList:
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
         mock_stub.List = AsyncMock(
-            return_value=atc_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
         )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await session.list(adopt=False)
 
@@ -617,19 +617,19 @@ class TestSessionList:
     @pytest.mark.asyncio
     async def test_list_include_stopped_passes_to_sandbox_list(self, mock_api_key: str) -> None:
         """Test session.list(include_stopped=True) passes the field through."""
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         session = Session()
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.List = AsyncMock(return_value=atc_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await session.list(include_stopped=True)
 
@@ -645,15 +645,15 @@ class TestSessionFromId:
         """Test session.from_id() returns a Sandbox instance."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.GetSandboxResponse(
+        mock_response = gateway_pb2.GetSandboxResponse(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         session = Session()
@@ -666,7 +666,7 @@ class TestSessionFromId:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandbox = await session.from_id("test-123")
 
@@ -678,15 +678,15 @@ class TestSessionFromId:
         """Test session.from_id() adopts sandbox by default."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.GetSandboxResponse(
+        mock_response = gateway_pb2.GetSandboxResponse(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         session = Session()
@@ -699,7 +699,7 @@ class TestSessionFromId:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             sandbox = await session.from_id("test-123")
 
@@ -711,15 +711,15 @@ class TestSessionFromId:
         """Test session.from_id(adopt=False) does not register sandbox."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
-        mock_response = atc_pb2.GetSandboxResponse(
+        mock_response = gateway_pb2.GetSandboxResponse(
             sandbox_id="test-123",
-            sandbox_status=atc_pb2.SANDBOX_STATUS_RUNNING,
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
             started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
-            tower_id="tower-1",
-            tower_group_id="group-1",
-            runway_id="runway-1",
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
         )
 
         session = Session()
@@ -732,7 +732,7 @@ class TestSessionFromId:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await session.from_id("test-123", adopt=False)
 
@@ -850,7 +850,7 @@ class TestSessionSandboxMetrics:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await sandbox._start_async()
 
@@ -876,7 +876,7 @@ class TestSessionSandboxMetrics:
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
-            patch("cwsandbox._sandbox.atc_pb2_grpc.ATCServiceStub", return_value=mock_stub),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
         ):
             await sandbox._start_async()
             await sandbox._start_async()

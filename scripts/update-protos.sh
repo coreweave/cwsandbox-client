@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 #
-# Refresh vendored protobuf/gRPC stubs from buf.build or a local aviato checkout.
+# Refresh vendored protobuf/gRPC stubs from buf.build or a local sandbox checkout.
 #
 # Usage:
 #   scripts/update-protos.sh                          # download from buf.build
-#   scripts/update-protos.sh --local ../aviato/gen/python  # copy from local path
+#   scripts/update-protos.sh --local ../sandbox/gen/python  # copy from local path
 
 set -euo pipefail
 
@@ -31,9 +31,9 @@ SPDX_HEADER='# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 
 # Files we vendor (everything else in the wheels is ignored)
 PROTO_FILES=(
-    atc_pb2.py
-    atc_pb2.pyi
-    atc_pb2_grpc.py
+    gateway_pb2.py
+    gateway_pb2.pyi
+    gateway_pb2_grpc.py
     secrets_pb2.py
     secrets_pb2.pyi
     streaming_pb2.py
@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             log "Usage: $0 [--local PATH]"
             log ""
-            log "  --local PATH  Copy from local aviato gen/python directory"
+            log "  --local PATH  Copy from local sandbox gen/python directory"
             log "                (default: download from buf.build)"
             exit 0
             ;;
@@ -83,7 +83,7 @@ done
 # Source: local path
 # ---------------------------------------------------------------------------
 copy_from_local() {
-    local src="$1/coreweave/aviato/v1beta1"
+    local src="$1/coreweave/sandbox/v1beta2"
     [[ -d "$src" ]] || die "Local proto source not found: $src"
 
     log "Copying from local: $src"
@@ -108,9 +108,9 @@ copy_from_buf() {
     log "Downloading wheels from buf.build..."
     pip3 download --no-deps --quiet --dest "$tmpdir" \
         --index-url "$BUF_INDEX" \
-        "coreweave-aviato-grpc-python==$GRPC_VERSION" \
-        "coreweave-aviato-protocolbuffers-python==$PB_VERSION" \
-        "coreweave-aviato-protocolbuffers-pyi==$PYI_VERSION"
+        "coreweave-sandbox-grpc-python==$GRPC_VERSION" \
+        "coreweave-sandbox-protocolbuffers-python==$PB_VERSION" \
+        "coreweave-sandbox-protocolbuffers-pyi==$PYI_VERSION"
 
     log "Wheel checksums (SHA256):"
     for whl in "$tmpdir"/*.whl; do
@@ -125,7 +125,7 @@ copy_from_buf() {
         unzip -q -o "$whl" -d "$extract_dir"
     done
 
-    local src="$extract_dir/coreweave/aviato/v1beta1"
+    local src="$extract_dir/coreweave/sandbox/v1beta2"
     [[ -d "$src" ]] || die "Expected path not found in wheels: $src"
 
     for f in "${PROTO_FILES[@]}"; do
@@ -153,24 +153,24 @@ inject_spdx_header() {
 
 rewrite_imports() {
     # Rewrite Python import paths from the upstream package to our vendored location.
-    # Only rewrites "from coreweave.aviato.v1beta1 import" statements.
-    # gRPC service paths (e.g. '/coreweave.aviato.v1beta1.ATCService/Start') are
+    # Only rewrites "from coreweave.sandbox.v1beta2 import" statements.
+    # gRPC service paths (e.g. '/coreweave.sandbox.v1beta2.GatewayService/Start') are
     # protocol-level identifiers and must NOT be rewritten.
     for f in "${PROTO_FILES[@]}"; do
         local filepath="$PROTO_DIR/$f"
         local tmp
         tmp="$(mktemp)"
-        sed 's/from coreweave\.aviato\.v1beta1 import/from cwsandbox._proto import/g' "$filepath" > "$tmp"
+        sed 's/from coreweave\.sandbox\.v1beta2 import/from cwsandbox._proto import/g' "$filepath" > "$tmp"
         mv "$tmp" "$filepath"
     done
 }
 
 validate_imports() {
     # Verify no stale Python import references remain.
-    # We grep for "from coreweave.aviato" which catches import statements but
-    # not gRPC service path strings like '/coreweave.aviato.v1beta1.ATCService/Start'.
+    # We grep for "from coreweave.sandbox" which catches import statements but
+    # not gRPC service path strings like '/coreweave.sandbox.v1beta2.GatewayService/Start'.
     local stale
-    stale=$(grep -rn "from coreweave\.aviato" "$PROTO_DIR/" 2>/dev/null || true)
+    stale=$(grep -rn "from coreweave\.sandbox" "$PROTO_DIR/" 2>/dev/null || true)
     if [[ -n "$stale" ]]; then
         log "FAIL: stale Python imports found in vendored files:"
         log "$stale"
@@ -183,13 +183,13 @@ validate_protobuf_version() {
     # Verify generated files use protobuf <=5.26.x, which predates the
     # ValidateProtobufRuntimeVersion check (introduced in 5.27.0).
     # This avoids pinning users to a specific protobuf minor version.
-    if grep -q "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/atc_pb2.py 2>/dev/null; then
+    if grep -q "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/gateway_pb2.py 2>/dev/null; then
         log "FAIL: generated files contain ValidateProtobufRuntimeVersion"
         log "  Use plugin version <=26.1.x (protobuf <=5.26.x) to avoid the runtime check"
         exit 1
     fi
     local version
-    version=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/atc_pb2.py 2>/dev/null \
+    version=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/gateway_pb2.py 2>/dev/null \
         | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
     log "OK: protobuf version $version (no runtime version check)"
 }

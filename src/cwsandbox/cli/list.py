@@ -25,10 +25,10 @@ _STATUS_CHOICES = [s.value for s in SandboxStatus if s != SandboxStatus.UNSPECIF
 )
 @click.option("--tag", "-t", "tags", multiple=True, help="Filter by tag (repeatable).")
 @click.option(
-    "--runway-id", "-r", "runway_ids", multiple=True, help="Filter by runway ID (repeatable)."
+    "--profile-id", "-r", "profile_ids", multiple=True, help="Filter by profile ID (repeatable)."
 )
 @click.option(
-    "--tower-id", "-T", "tower_ids", multiple=True, help="Filter by tower ID (repeatable)."
+    "--runner-id", "-T", "runner_ids", multiple=True, help="Filter by runner ID (repeatable)."
 )
 @click.option(
     "--output",
@@ -41,19 +41,19 @@ _STATUS_CHOICES = [s.value for s in SandboxStatus if s != SandboxStatus.UNSPECIF
 def list_sandboxes(
     status: str | None,
     tags: tuple[str, ...],
-    runway_ids: tuple[str, ...],
-    tower_ids: tuple[str, ...],
+    profile_ids: tuple[str, ...],
+    runner_ids: tuple[str, ...],
     output_format: str,
 ) -> None:
     """List sandboxes.
 
-    Displays sandbox ID, status, tower, runway, and started time for matching sandboxes.
+    Displays sandbox ID, status, runner, profile, and started time for matching sandboxes.
     """
     sandboxes = Sandbox.list(
         tags=list(tags) if tags else None,
         status=status,
-        runway_ids=list(runway_ids) if runway_ids else None,
-        tower_ids=list(tower_ids) if tower_ids else None,
+        profile_ids=list(profile_ids) if profile_ids else None,
+        runner_ids=list(runner_ids) if runner_ids else None,
     ).result()
 
     if output_format == "json":
@@ -61,9 +61,9 @@ def list_sandboxes(
             {
                 "sandbox_id": sb.sandbox_id,
                 "status": sb.status.value if sb.status else None,
-                "tower_id": sb.tower_id,
-                "runway_id": sb.runway_id,
-                "tower_group_id": sb.tower_group_id,
+                "runner_id": sb.runner_id,
+                "profile_id": sb.profile_id,
+                "runner_group_id": sb.runner_group_id,
                 "started_at": sb.started_at.isoformat() if sb.started_at else None,
             }
             for sb in sandboxes
@@ -81,7 +81,7 @@ def list_sandboxes(
     for sb in sandboxes:
         sid = sb.sandbox_id or "-"
         st = sb.status.value if sb.status else "-"
-        tower = sb.tower_id or "-"
-        runway = sb.runway_id or "-"
+        runner = sb.runner_id or "-"
+        profile = sb.profile_id or "-"
         started = sb.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if sb.started_at else "-"
-        click.echo(f"{sid:<40} {st:<14} {tower:<20} {runway:<20} {started}")
+        click.echo(f"{sid:<40} {st:<14} {runner:<20} {profile:<20} {started}")
