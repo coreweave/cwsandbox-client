@@ -1,0 +1,49 @@
+## Conversation
+User asked to create a branch in cwsandbox-client for handling the aviato→sandbox
+rename. This was blocking the scaling research experiments because the server
+(aviato repo) had been rebranded but the Python SDK still used old proto paths.
+
+## Actions
+1. Created branch feat/rename-aviato-to-sandbox from latest main (eaeb6c1)
+2. Generated new Python proto stubs from aviato repo: make buf-gen-python
+3. Copied gateway_pb2.py, gateway_pb2_grpc.py, secrets_pb2.py, streaming_pb2.py,
+   streaming_pb2_grpc.py from aviato/gen/python/coreweave/sandbox/v1beta2/
+4. Removed old atc_pb2.py, atc_pb2.pyi, atc_pb2_grpc.py
+5. Rewrote imports: from coreweave.sandbox.v1beta2 → from cwsandbox._proto
+6. Renamed all SDK references: atc_pb2→gateway_pb2, ATCServiceStub→GatewayServiceStub,
+   ATCStreamingServiceStub→GatewayStreamingServiceStub
+7. Renamed public API: tower_ids→runner_ids, runway_ids→profile_ids,
+   tower_group_id→runner_group_id
+8. Updated CLI flags: --tower-id→--runner-id, --runway-id→--profile-id
+9. Fixed all unit tests (658 pass), integration test references updated
+10. Did NOT update uv.lock (it changed but was not staged)
+
+## Errors & Mistakes
+- First test run failed on test_defaults.py because SandboxDefaults dataclass
+  had renamed fields but test still accessed old names
+- Second test run failed because mock patches in test_sandbox.py still referenced
+  ATCStreamingServiceStub string in patch() calls
+
+## Dead Ends
+None - straightforward mechanical rename.
+
+## Hints for Future Agents
+- The update-protos.sh script references old buf.build package names
+  (coreweave-aviato-*). It needs updating for the new package names when
+  buf.build publishes the v1beta2 packages.
+- The .pyi type stub files for gateway_pb2 were NOT generated. The old
+  atc_pb2.pyi was deleted. Type checking for proto types will be degraded.
+- The streaming_pb2.pyi and secrets_pb2.pyi are stale (still reference v1beta1
+  internally in their type annotations).
+
+## Codebase Discoveries
+- Proto stubs are vendored, not generated at build time
+- update-protos.sh has two modes: buf.build download and local copy
+- The SDK uses grpc.aio for async, not asyncio directly
+- Proto files are excluded from ruff linting (pyproject.toml extend-exclude)
+
+## Open Questions
+- Should the streaming_pb2.pyi and secrets_pb2.pyi stubs be regenerated?
+- Should update-protos.sh be updated to use new buf.build package names?
+- The DEFAULT_BASE_URL in _defaults.py is still "https://atc.cw-sandbox.com" -
+  should this change to "https://gateway.cwsandbox.com"?
