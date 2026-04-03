@@ -28,19 +28,19 @@ result = sb.exec(["echo", "more"]).result()  # Block for result
 sb.stop().result()  # Block for completion
 
 # Context manager (recommended for most use cases)
-with Sandbox.run("sleep", "infinity") as sb:
+with Sandbox.run() as sb:  # Default command keeps sandbox alive
     result = sb.exec(["echo", "hello"]).result()
 # Automatically stopped on exit
 
 # Streaming output before getting result
-with Sandbox.run("sleep", "infinity") as sb:
+with Sandbox.run() as sb:
     process = sb.exec(["echo", "hello"])
     for line in process.stdout:  # Stream lines as they arrive
         print(line, end="")
     result = process.result()  # Get final ProcessResult
 
 # Async context manager
-async with Sandbox.run("sleep", "infinity") as sb:
+async with Sandbox.run() as sb:
     result = await sb.exec(["echo", "hello"])
 ```
 
@@ -95,7 +95,7 @@ Properties:
 Usage pattern:
 ```python
 with Session(defaults) as session:
-    sb = session.sandbox(command="sleep", args=["infinity"])
+    sb = session.sandbox()  # Default command keeps sandbox alive
     result = sb.exec(["echo", "hello"]).result()
 # Automatically cleans up all sandboxes on exit
 ```
@@ -221,10 +221,11 @@ sandbox = Sandbox.run(
 
 ### Authentication Flow
 
-`_auth.py` implements a priority-based resolution:
-1. `CWSANDBOX_API_KEY` env var - Bearer token auth
-2. registered auth modes in the current process (for example `wandb.sandbox`)
-3. no auth
+`_auth.py` implements a pluggable auth mode system with a single active mode:
+1. `CWSANDBOX_API_KEY` env var - Bearer token auth (built-in default)
+2. No auth (built-in fallback)
+
+Provider integrations (e.g. `wandb.sandbox`) can replace the active mode for the current process via `set_auth_mode()`.
 
 ### Function Execution (`_function.py`)
 
@@ -299,14 +300,14 @@ On first signal, performs cleanup then chains to original handler. On second sig
 
 ### Module-Level Utilities
 
-**`cwsandbox.result()`**: Block for one or more OperationRefs and return results.
+**`cwsandbox.results()`**: Block for one or more OperationRefs and return results.
 
 ```python
 # Single ref
-data = cwsandbox.result(sandbox.read_file("/path"))
+data = cwsandbox.results(sandbox.read_file("/path"))
 
 # Multiple refs
-results = cwsandbox.result([sb.read_file(f) for f in files])
+all_data = cwsandbox.results([sb.read_file(f) for f in files])
 ```
 
 **`cwsandbox.wait()`**: Wait for Sandbox, OperationRef, or Process objects to complete. Returns `(done, pending)` tuple.
@@ -323,7 +324,7 @@ done, pending = cwsandbox.wait(refs, num_returns=2)
 done, pending = cwsandbox.wait(procs, timeout=30.0)
 ```
 
-**`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process`.
+**`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process | TerminalSession`.
 
 ### Backend Communication
 
@@ -339,8 +340,8 @@ Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The
 
 ## Test Structure
 
-- `tests/unit/` - Mock-based tests, no network calls (284 tests). Default pytest path.
-- `tests/integration/` - Real sandbox operations, requires auth (31 tests). Run explicitly.
+- `tests/unit/` - Mock-based tests, no network calls. Default pytest path.
+- `tests/integration/` - Real sandbox operations, requires auth. Run explicitly.
 
 Unit test conftest clears all auth env vars before each test (`autouse=True` fixture).
 
@@ -348,7 +349,7 @@ Unit test conftest clears all auth env vars before each test (`autouse=True` fix
 
 Integration tests create real sandboxes and take significant time:
 - **Individual test**: 5-15 seconds (sandbox startup + operation)
-- **Full suite (31 tests)**: ~3 minutes total
+- **Full suite**: ~3 minutes total
 - **Sandbox startup**: 30-60 seconds (mostly backend scheduling)
 
 When running integration tests:
@@ -370,7 +371,7 @@ Tests should use the sync/async hybrid API:
 ```python
 # Correct pattern
 def test_sandbox_example(sandbox_defaults: SandboxDefaults) -> None:
-    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
         result = sandbox.exec(["echo", "hello"]).result()
         assert result.returncode == 0
 ```
