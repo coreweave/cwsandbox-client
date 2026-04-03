@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.14.0 (2026-04-03)
+
+### Documentation
+
+- Update AGENTS.md for accuracy and best practices
+  ([`4b692a1`](https://github.com/coreweave/cwsandbox-client/commit/4b692a132b57380a54f4bed8321dd9ae8d79aaa9))
+
+Remove redundant "sleep infinity" from code examples - the SDK default command already keeps
+  sandboxes alive. Fix stale documentation: update auth section to match pluggable auth mode system,
+  correct cwsandbox.result() to cwsandbox.results(), add TerminalSession to Waitable type alias, and
+  remove hardcoded test counts that go stale.
+
+### Features
+
+- Remove python<3.14 constraint ([#99](https://github.com/coreweave/cwsandbox-client/pull/99),
+  [`a4775d8`](https://github.com/coreweave/cwsandbox-client/commit/a4775d8d77981a609878a4528189080a3517cdf5))
+
+* feat: remove python<3.14 constraint
+
+* chore: Add <4 to python version
+
+
 ## v0.13.0 (2026-04-02)
 
 ### Chores
