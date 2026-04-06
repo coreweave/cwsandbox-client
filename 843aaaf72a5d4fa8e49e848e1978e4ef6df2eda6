@@ -1,0 +1,25 @@
+## Conversation
+Part of multi-repo DNS migration: cw-sandbox.com → cwsandbox.com.
+Brandon Jacobs confirmed new endpoints: api.cwsandbox.com (prod),
+api-stg.cwsandbox.com (staging).
+
+## Actions
+- Grepped for cw-sandbox.com, cwaviato.com, gateway.cwsandbox.com
+- Updated DEFAULT_BASE_URL, docstrings, AGENTS.md, .env.example, tests
+- Ran full unit test suite: 658 passed
+
+## Errors & Mistakes
+None.
+
+## Dead Ends
+None.
+
+## Hints for Future Agents
+- CHANGELOG.md has historical references to old domains — leave those.
+- uv.lock also changed from test runs but was intentionally not committed here.
+
+## Codebase Discoveries
+None.
+
+## Open Questions
+None.
