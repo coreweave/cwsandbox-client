@@ -76,9 +76,9 @@ class TestParseGrpcTarget:
 
     def test_production_url(self) -> None:
         """Test parsing the production CWSandbox URL."""
-        target, is_secure = parse_grpc_target("https://gateway.cw-sandbox.com")
+        target, is_secure = parse_grpc_target("https://api.cwsandbox.com")
 
-        assert target == "gateway.cw-sandbox.com:443"
+        assert target == "api.cwsandbox.com:443"
         assert is_secure is True
 
 
