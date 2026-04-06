@@ -13,7 +13,7 @@ from cwsandbox._types import NetworkOptions, ResourceOptions, Secret
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
 DEFAULT_ARGS: tuple[str, ...] = ("-f", "/dev/null")
-DEFAULT_BASE_URL: str = "https://gateway.cw-sandbox.com"
+DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0

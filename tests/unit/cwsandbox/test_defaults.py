@@ -354,7 +354,7 @@ class TestSandboxDefaultsFromDict:
         )
         assert defaults.container_image == "python:3.11"
         assert defaults.command == "tail"
-        assert defaults.base_url == "https://gateway.cw-sandbox.com"
+        assert defaults.base_url == "https://api.cwsandbox.com"
         assert defaults.temp_dir == "/tmp"
         assert defaults.request_timeout_seconds == 300.0
 
