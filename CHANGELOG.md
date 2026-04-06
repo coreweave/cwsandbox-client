@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.15.0 (2026-04-06)
+
+### Chores
+
+- **proto**: Add discovery stubs and bump BSR pins to 20260402
+  ([`13cebcb`](https://github.com/coreweave/cwsandbox-client/commit/13cebcbed75a156f76ef33056340a47946db5159))
+
+Add discovery_pb2.py, discovery_pb2.pyi, and discovery_pb2_grpc.py to the vendored proto directory
+  for the new DiscoveryService (ListAvailableTowers, GetAvailableTower, ListRunways, GetRunway).
+
+Bump BSR version pins from 20260306 (b06c7779a62f) to 20260402 (69e6fe070d98), which also updates
+  the existing ATC stubs with upstream changes. Generalize validate_protobuf_version to check all
+  *_pb2.py files instead of only atc_pb2.py.
+
+### Features
+
+- **discovery**: Add Discovery API for tower and runway introspection
+  ([`45067d9`](https://github.com/coreweave/cwsandbox-client/commit/45067d9016bf4fa09df5ddb96798c40662e9383b))
+
+Add module-level sync functions (list_towers, get_tower, list_runways, get_runway) that query the
+  backend DiscoveryService via gRPC. Returns frozen dataclass types (Tower, TowerResources, Runway,
+  IngressMode, EgressMode) with auto-pagination, error translation, and input validation.
+
+Client-side filtering for ingress/egress modes and tower capacity is included as a workaround until
+  backend support lands (coreweave/aviato#571, coreweave/aviato#572).
+
+Includes TowerNotFoundError and RunwayNotFoundError exceptions, format_bytes/format_cpu utilities,
+  77 unit tests, 23 integration tests, example script, and AGENTS.md documentation.
+
+Closes #47
+
+
 ## v0.14.0 (2026-04-03)
 
 ### Documentation
