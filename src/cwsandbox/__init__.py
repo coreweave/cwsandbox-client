@@ -15,6 +15,19 @@ from typing import TYPE_CHECKING, Any, TypeVar, overload
 from cwsandbox import _cleanup as _cleanup  # noqa: F401
 from cwsandbox._auth import AuthHeaders, set_auth_mode
 from cwsandbox._defaults import SandboxDefaults
+from cwsandbox._discovery import (
+    EgressMode,
+    IngressMode,
+    Runway,
+    Tower,
+    TowerResources,
+    format_bytes,
+    format_cpu,
+    get_runway,
+    get_tower,
+    list_runways,
+    list_towers,
+)
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._sandbox import Sandbox, SandboxStatus
@@ -35,8 +48,10 @@ from cwsandbox.exceptions import (
     AsyncFunctionError,
     CWSandboxAuthenticationError,
     CWSandboxError,
+    DiscoveryError,
     FunctionError,
     FunctionSerializationError,
+    RunwayNotFoundError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
@@ -45,6 +60,7 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxTerminatedError,
     SandboxTimeoutError,
+    TowerNotFoundError,
 )
 
 if TYPE_CHECKING:
@@ -243,13 +259,22 @@ __all__ = [
     "AsyncFunctionError",
     "CWSandboxAuthenticationError",
     "CWSandboxError",
+    "DiscoveryError",
+    "EgressMode",
     "FunctionError",
     "FunctionSerializationError",
+    "IngressMode",
+    "get_runway",
+    "get_tower",
+    "list_runways",
+    "list_towers",
     "NetworkOptions",
     "OperationRef",
     "Process",
     "ProcessResult",
     "RemoteFunction",
+    "Runway",
+    "RunwayNotFoundError",
     "set_auth_mode",
     "Sandbox",
     "SandboxDefaults",
@@ -269,7 +294,12 @@ __all__ = [
     "StreamWriter",
     "TerminalResult",
     "TerminalSession",
+    "Tower",
+    "TowerNotFoundError",
+    "TowerResources",
     "Waitable",
+    "format_bytes",
+    "format_cpu",
     "results",
     "wait",
 ]

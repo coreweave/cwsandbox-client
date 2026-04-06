@@ -16,7 +16,11 @@ import pytest
 
 from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
 from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Terminal
-from cwsandbox.exceptions import SandboxError, SandboxNotFoundError, SandboxNotRunningError
+from cwsandbox.exceptions import (
+    SandboxError,
+    SandboxNotFoundError,
+    SandboxNotRunningError,
+)
 
 
 class MockRpcError(grpc.RpcError):
@@ -3001,8 +3005,8 @@ class TestTranslateRpcError:
         assert isinstance(result, CWSandboxAuthenticationError)
         assert "authentication" in str(result).lower()
 
-    def test_other_status_returns_sandbox_error(self) -> None:
-        """Test other status codes return generic SandboxError."""
+    def test_other_status_delegates_to_shared_translator(self) -> None:
+        """Test other status codes delegate to shared transport translator."""
         from cwsandbox._sandbox import _translate_rpc_error
 
         error = MockRpcError(grpc.StatusCode.INTERNAL, "internal error")

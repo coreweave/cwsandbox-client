@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""gRPC channel management for CWSandbox SDK.
+"""gRPC transport utilities for CWSandbox SDK.
 
-This module provides utilities for creating and managing gRPC channels
-to communicate with the CWSandbox backend.
+Provides channel management and shared error translation for gRPC
+communication with the CWSandbox backend.
 
 Generated SDK imports:
 - from cwsandbox._proto import atc_pb2_grpc (ATCServiceStub)
@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 
 import grpc
 import grpc.aio
+
+from cwsandbox.exceptions import CWSandboxAuthenticationError, CWSandboxError
 
 
 def parse_grpc_target(base_url: str) -> tuple[str, bool]:
@@ -75,3 +77,41 @@ def create_channel(
         return grpc.aio.secure_channel(target, credentials)
     else:
         return grpc.aio.insecure_channel(target)
+
+
+def translate_grpc_error(
+    e: grpc.RpcError,
+    *,
+    operation: str = "operation",
+    fallback_cls: type[CWSandboxError] = CWSandboxError,
+) -> CWSandboxError:
+    """Translate a gRPC error into a transport-level CWSandbox exception.
+
+    Handles cross-cutting gRPC status codes (auth, timeout, unavailable).
+    Domain modules should check domain-specific codes (e.g. NOT_FOUND)
+    before calling this function.
+
+    Args:
+        e: The gRPC error to translate.
+        operation: Description of the operation for error messages.
+        fallback_cls: Exception class for non-auth errors. Callers should
+            pass their domain base class (e.g. ``SandboxError``,
+            ``DiscoveryError``) so that ``except DomainError`` catches
+            transport failures too. Defaults to ``CWSandboxError``.
+
+    Returns:
+        An appropriate CWSandbox exception. Caller should
+        ``raise result from e`` to preserve the chain.
+    """
+    code = e.code()
+    details = e.details() or str(e)
+
+    if code == grpc.StatusCode.UNAUTHENTICATED:
+        return CWSandboxAuthenticationError(f"Authentication failed: {details}")
+    if code == grpc.StatusCode.PERMISSION_DENIED:
+        return CWSandboxAuthenticationError(f"Permission denied: {details}")
+    if code == grpc.StatusCode.DEADLINE_EXCEEDED:
+        return fallback_cls(f"{operation} timed out: {details}")
+    if code == grpc.StatusCode.UNAVAILABLE:
+        return fallback_cls(f"Service unavailable: {details}")
+    return fallback_cls(f"{operation} failed: {details}")

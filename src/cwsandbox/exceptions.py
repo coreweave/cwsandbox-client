@@ -90,6 +90,41 @@ class SandboxFileError(SandboxError):
         self.filepath = filepath
 
 
+class DiscoveryError(CWSandboxError):
+    """Base exception for discovery operations (towers, runways).
+
+    Covers domain errors (not-found) and transport errors (timeout,
+    unavailable). Authentication errors use
+    ``CWSandboxAuthenticationError`` instead.
+    """
+
+
+class TowerNotFoundError(DiscoveryError):
+    """Raised when a tower ID is not found.
+
+    Attributes:
+        tower_id: The ID of the tower that was not found.
+    """
+
+    def __init__(self, message: str, *, tower_id: str) -> None:
+        super().__init__(message)
+        self.tower_id = tower_id
+
+
+class RunwayNotFoundError(DiscoveryError):
+    """Raised when a runway is not found.
+
+    Attributes:
+        runway_name: The name of the runway that was not found.
+        tower_id: The tower ID if specified in the request, or None.
+    """
+
+    def __init__(self, message: str, *, runway_name: str, tower_id: str | None = None) -> None:
+        super().__init__(message)
+        self.runway_name = runway_name
+        self.tower_id = tower_id
+
+
 class FunctionError(CWSandboxError):
     """Base exception for function execution operations."""
 

@@ -173,7 +173,7 @@ async def collect_trajectory_group(
         )
 
     async def single_rollout() -> art.Trajectory:
-        sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox = session.sandbox()
         try:
             await sandbox  # Wait for RUNNING status asynchronously
             return await rollout(problem, sandbox, config, client=client)

@@ -15,9 +15,9 @@ set -euo pipefail
 # Version pins - update these when bumping protos
 # ---------------------------------------------------------------------------
 # buf.build plugin versions (prefix differs per package, commit suffix is shared)
-GRPC_VERSION="1.78.1.1.20260306144501+b06c7779a62f"
-PB_VERSION="26.1.0.1.20260306144501+b06c7779a62f"
-PYI_VERSION="26.1.0.1.20260306144501+b06c7779a62f"
+GRPC_VERSION="1.80.0.1.20260402151721+69e6fe070d98"
+PB_VERSION="26.1.0.1.20260402151721+69e6fe070d98"
+PYI_VERSION="26.1.0.1.20260402151721+69e6fe070d98"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -34,6 +34,9 @@ PROTO_FILES=(
     atc_pb2.py
     atc_pb2.pyi
     atc_pb2_grpc.py
+    discovery_pb2.py
+    discovery_pb2.pyi
+    discovery_pb2_grpc.py
     secrets_pb2.py
     secrets_pb2.pyi
     streaming_pb2.py
@@ -183,14 +186,17 @@ validate_protobuf_version() {
     # Verify generated files use protobuf <=5.26.x, which predates the
     # ValidateProtobufRuntimeVersion check (introduced in 5.27.0).
     # This avoids pinning users to a specific protobuf minor version.
-    if grep -q "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/atc_pb2.py 2>/dev/null; then
-        log "FAIL: generated files contain ValidateProtobufRuntimeVersion"
+    local bad_files
+    bad_files=$(grep -rl "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/*_pb2.py 2>/dev/null || true)
+    if [[ -n "$bad_files" ]]; then
+        log "FAIL: generated files contain ValidateProtobufRuntimeVersion:"
+        log "$bad_files"
         log "  Use plugin version <=26.1.x (protobuf <=5.26.x) to avoid the runtime check"
         exit 1
     fi
     local version
-    version=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/atc_pb2.py 2>/dev/null \
-        | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
+    version=$(grep -h "Protobuf Python Version:" "$PROTO_DIR"/*_pb2.py 2>/dev/null \
+        | head -1 | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
     log "OK: protobuf version $version (no runtime version check)"
 }
 
