@@ -38,7 +38,7 @@ def create_long_running_sandbox() -> str:
     )
 
     print(f"Created sandbox: {sandbox.sandbox_id}")
-    print(f"Tower: {sandbox.tower_id}")
+    print(f"Runner: {sandbox.runner_id}")
     print("Status: running")
     print()
     print("This sandbox will keep running until you stop it.")
@@ -65,7 +65,7 @@ def reconnect_to_sandbox(sandbox_id: str, stop: bool = False) -> None:
 
     print("Connected!")
     print(f"  Status: {sandbox.status}")
-    print(f"  Tower: {sandbox.tower_id}")
+    print(f"  Runner: {sandbox.runner_id}")
     print(f"  Started at: {sandbox.started_at}")
     print()
 

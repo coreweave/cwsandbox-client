@@ -130,11 +130,11 @@ class NetworkOptions:
 
     Attributes:
         ingress_mode: Inbound traffic mode. Available modes depend on the
-            runway configurations of towers you have access to.
+            profile configurations of runners you have access to.
         exposed_ports: Ports to expose when using ingress. Required when
             ``ingress_mode`` is set. Lists are normalized to tuples.
         egress_mode: Outbound traffic mode. Available modes depend on the
-            runway configurations of towers you have access to.
+            profile configurations of runners you have access to.
     """
 
     ingress_mode: str | None = None

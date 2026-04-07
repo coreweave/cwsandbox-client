@@ -8,8 +8,8 @@ Provides channel management and shared error translation for gRPC
 communication with the CWSandbox backend.
 
 Generated SDK imports:
-- from cwsandbox._proto import atc_pb2_grpc (ATCServiceStub)
-- from cwsandbox._proto import streaming_pb2_grpc (ATCStreamingServiceStub)
+- from cwsandbox._proto import gateway_pb2_grpc (GatewayServiceStub)
+- from cwsandbox._proto import streaming_pb2_grpc (GatewayStreamingServiceStub)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def parse_grpc_target(base_url: str) -> tuple[str, bool]:
     """Parse a URL into a gRPC target and security flag.
 
     Args:
-        base_url: HTTP(S) URL to parse (e.g., "https://atc.cw-sandbox.com")
+        base_url: HTTP(S) URL to parse (e.g., "https://api.cwsandbox.com")
 
     Returns:
         Tuple of (target, is_secure) where:

@@ -13,7 +13,7 @@ from cwsandbox._types import NetworkOptions, ResourceOptions, Secret
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 DEFAULT_COMMAND: str = "tail"
 DEFAULT_ARGS: tuple[str, ...] = ("-f", "/dev/null")
-DEFAULT_BASE_URL: str = "https://atc.cw-sandbox.com"
+DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0
@@ -87,8 +87,8 @@ class SandboxDefaults:
             None lets the backend control the default.
         temp_dir: Temp directory path inside the sandbox.
         tags: Tags for filtering and organizing sandboxes.
-        runway_ids: Restrict to specific runway IDs.
-        tower_ids: Restrict to specific tower IDs.
+        profile_ids: Restrict to specific profile IDs.
+        runner_ids: Restrict to specific runner IDs.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Network configuration via ``NetworkOptions``.
@@ -121,8 +121,8 @@ class SandboxDefaults:
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
     temp_dir: str = DEFAULT_TEMP_DIR
     tags: tuple[str, ...] = field(default_factory=tuple)
-    runway_ids: tuple[str, ...] | None = None
-    tower_ids: tuple[str, ...] | None = None
+    profile_ids: tuple[str, ...] | None = None
+    runner_ids: tuple[str, ...] | None = None
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
     secrets: tuple[Secret, ...] | None = None
@@ -169,7 +169,7 @@ class SandboxDefaults:
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
-        - ``args``, ``tags``, ``runway_ids``, ``tower_ids`` lists -> tuples
+        - ``args``, ``tags``, ``profile_ids``, ``runner_ids`` lists -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:
@@ -202,7 +202,7 @@ class SandboxDefaults:
                 Secret(**s) if not isinstance(s, Secret) else s for s in secrets
             )
         # Coerce sequences -> tuples for tuple fields (reject bare strings)
-        for key in ("args", "tags", "runway_ids", "tower_ids"):
+        for key in ("args", "tags", "profile_ids", "runner_ids"):
             val = kwargs.get(key)
             if val is None or isinstance(val, tuple):
                 continue

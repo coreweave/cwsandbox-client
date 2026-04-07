@@ -41,8 +41,8 @@ from cwsandbox._defaults import (
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox._proto import (
-    atc_pb2,
-    atc_pb2_grpc,
+    gateway_pb2,
+    gateway_pb2_grpc,
     streaming_pb2,
     streaming_pb2_grpc,
 )
@@ -107,7 +107,7 @@ class SandboxStatus(StrEnum):
     def from_proto(cls, proto_status: int) -> SandboxStatus:
         """Convert protobuf status enum to SandboxStatus."""
         try:
-            proto_name = atc_pb2.SandboxStatus.Name(proto_status)
+            proto_name = gateway_pb2.SandboxStatus.Name(proto_status)
             enum_name = proto_name.replace("SANDBOX_STATUS_", "")
             return cls[enum_name]
         except ValueError:
@@ -117,7 +117,7 @@ class SandboxStatus(StrEnum):
     def to_proto(self) -> int:
         """Convert SandboxStatus to protobuf enum"""
         proto_name = f"SANDBOX_STATUS_{self.name}"
-        return atc_pb2.SandboxStatus.Value(proto_name)
+        return gateway_pb2.SandboxStatus.Value(proto_name)
 
 
 def _validate_cwd(cwd: str | None) -> None:
@@ -216,9 +216,9 @@ class _Starting:
 class _Running:
     sandbox_id: str
     status: SandboxStatus = SandboxStatus.RUNNING
-    tower_id: str | None = None
-    runway_id: str | None = None
-    tower_group_id: str | None = None
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
     started_at: datetime | None = None
 
 
@@ -227,9 +227,9 @@ class _Terminal:
     sandbox_id: str
     status: SandboxStatus
     returncode: int | None = None
-    tower_id: str | None = None
-    runway_id: str | None = None
-    tower_group_id: str | None = None
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
     started_at: datetime | None = None
 
 
@@ -259,9 +259,9 @@ def _lifecycle_state_from_info(
     *,
     sandbox_id: str,
     status: SandboxStatus,
-    tower_id: str | None = None,
-    runway_id: str | None = None,
-    tower_group_id: str | None = None,
+    runner_id: str | None = None,
+    profile_id: str | None = None,
+    runner_group_id: str | None = None,
     started_at: datetime | None = None,
     returncode: int | None = None,
 ) -> _LifecycleState:
@@ -273,9 +273,9 @@ def _lifecycle_state_from_info(
         return _Running(
             sandbox_id=sandbox_id,
             status=status,
-            tower_id=tower_id,
-            runway_id=runway_id,
-            tower_group_id=tower_group_id,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
             started_at=started_at,
         )
     if status in _TERMINAL_STATUSES:
@@ -283,9 +283,9 @@ def _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
             returncode=returncode,
-            tower_id=tower_id,
-            runway_id=runway_id,
-            tower_group_id=tower_group_id,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
             started_at=started_at,
         )
     return _Starting(sandbox_id=sandbox_id, status=status)
@@ -321,8 +321,8 @@ class Sandbox:
     Attributes:
         sandbox_id: Unique identifier for this sandbox.
         status: Cached status from last API call.
-        tower_id: Tower ID where sandbox is running.
-        runway_id: Runway ID for this sandbox.
+        runner_id: Runner ID where sandbox is running.
+        profile_id: Profile ID for this sandbox.
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
     """
@@ -338,8 +338,8 @@ class Sandbox:
         base_url: str | None = None,
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -363,8 +363,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
                 the backend controls the default.
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -418,21 +418,21 @@ class Sandbox:
         )
         self._annotations = self._defaults.merge_annotations(annotations)
 
-        self._runway_ids: list[str] | None
-        if runway_ids is not None:
-            self._runway_ids = list(runway_ids)
-        elif self._defaults.runway_ids:
-            self._runway_ids = list(self._defaults.runway_ids)
+        self._profile_ids: list[str] | None
+        if profile_ids is not None:
+            self._profile_ids = list(profile_ids)
+        elif self._defaults.profile_ids:
+            self._profile_ids = list(self._defaults.profile_ids)
         else:
-            self._runway_ids = None
+            self._profile_ids = None
 
-        self._tower_ids: list[str] | None
-        if tower_ids is not None:
-            self._tower_ids = list(tower_ids)
-        elif self._defaults.tower_ids:
-            self._tower_ids = list(self._defaults.tower_ids)
+        self._runner_ids: list[str] | None
+        if runner_ids is not None:
+            self._runner_ids = list(runner_ids)
+        elif self._defaults.runner_ids:
+            self._runner_ids = list(self._defaults.runner_ids)
         else:
-            self._tower_ids = None
+            self._runner_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
         # Use explicit resources or fall back to defaults, then normalize
@@ -472,7 +472,7 @@ class Sandbox:
             self._start_kwargs["secrets"] = list(seen.values())
 
         self._channel: grpc.aio.Channel | None = None
-        self._stub: atc_pb2_grpc.ATCServiceStub | None = None
+        self._stub: gateway_pb2_grpc.GatewayServiceStub | None = None
         self._auth_metadata: tuple[tuple[str, str], ...] = ()
         self._streaming_channel: grpc.aio.Channel | None = None
         self._streaming_channel_lock = asyncio.Lock()
@@ -521,8 +521,8 @@ class Sandbox:
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -547,8 +547,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -604,8 +604,8 @@ class Sandbox:
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
-            runway_ids=runway_ids,
-            tower_ids=tower_ids,
+            profile_ids=profile_ids,
+            runner_ids=runner_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -674,8 +674,8 @@ class Sandbox:
         sandbox._container_image = None
         sandbox._tags = None
         sandbox._max_lifetime_seconds = None
-        sandbox._runway_ids = None
-        sandbox._tower_ids = None
+        sandbox._profile_ids = None
+        sandbox._runner_ids = None
         sandbox._environment_variables = {}
         sandbox._annotations = {}
         sandbox._channel = None
@@ -717,9 +717,9 @@ class Sandbox:
         sandbox._state = _lifecycle_state_from_info(
             sandbox_id=str(info.sandbox_id),
             status=status,
-            tower_id=getattr(info, "tower_id", None) or None,
-            runway_id=getattr(info, "runway_id", None) or None,
-            tower_group_id=getattr(info, "tower_group_id", None) or None,
+            runner_id=getattr(info, "runner_id", None) or None,
+            profile_id=getattr(info, "profile_id", None) or None,
+            runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
         )
         return sandbox
@@ -730,8 +730,8 @@ class Sandbox:
         *,
         tags: list[str] | None = None,
         status: str | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
@@ -750,8 +750,8 @@ class Sandbox:
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
-            runway_ids: Filter by runway IDs
-            tower_ids: Filter by tower IDs
+            profile_ids: Filter by profile IDs
+            runner_ids: Filter by runner IDs
             include_stopped: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
@@ -784,8 +784,8 @@ class Sandbox:
             cls._list_async(
                 tags=tags,
                 status=status,
-                runway_ids=runway_ids,
-                tower_ids=tower_ids,
+                profile_ids=profile_ids,
+                runner_ids=runner_ids,
                 include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
@@ -799,8 +799,8 @@ class Sandbox:
         *,
         tags: builtins.list[str] | None = None,
         status: str | None = None,
-        runway_ids: builtins.list[str] | None = None,
-        tower_ids: builtins.list[str] | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
@@ -821,7 +821,7 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request_kwargs: dict[str, Any] = {}
@@ -829,14 +829,14 @@ class Sandbox:
                 request_kwargs["tags"] = tags
             if status_enum:
                 request_kwargs["status"] = status_enum.to_proto()
-            if runway_ids is not None:
-                request_kwargs["runway_ids"] = runway_ids
-            if tower_ids is not None:
-                request_kwargs["tower_ids"] = tower_ids
+            if profile_ids is not None:
+                request_kwargs["profile_ids"] = profile_ids
+            if runner_ids is not None:
+                request_kwargs["runner_ids"] = runner_ids
 
             if include_stopped:
                 request_kwargs["include_stopped"] = True
-            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+            request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
             try:
                 response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -919,10 +919,10 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+            request = gateway_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
                 response = await stub.Get(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -1009,10 +1009,10 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+            request = gateway_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
                 response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -1045,17 +1045,17 @@ class Sandbox:
         return None
 
     @property
-    def tower_id(self) -> str | None:
+    def runner_id(self) -> str | None:
         """Tower where sandbox is running, or None if not started."""
         if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.tower_id
+            return self._state.runner_id
         return None
 
     @property
-    def runway_id(self) -> str | None:
+    def profile_id(self) -> str | None:
         """Runway where sandbox is running, or None if not started."""
         if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.runway_id
+            return self._state.profile_id
         return None
 
     @property
@@ -1099,10 +1099,10 @@ class Sandbox:
         return None
 
     @property
-    def tower_group_id(self) -> str | None:
+    def runner_group_id(self) -> str | None:
         """Tower group ID where the sandbox is running."""
         if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.tower_group_id
+            return self._state.runner_group_id
         return None
 
     @property
@@ -1210,8 +1210,8 @@ class Sandbox:
         Guards against regressing from terminal or cancelled states.
 
         Args:
-            info: Protobuf response with sandbox_status, tower_id, runway_id,
-                tower_group_id, started_at_time, and optionally returncode fields.
+            info: Protobuf response with sandbox_status, runner_id, profile_id,
+                runner_group_id, started_at_time, and optionally returncode fields.
             source: Controls returncode behavior:
                 "poll" - set returncode (polling observed the exit)
                 "query" - omit returncode (get_status/list/from_id)
@@ -1246,9 +1246,9 @@ class Sandbox:
         return _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
-            tower_id=getattr(info, "tower_id", None) or None,
-            runway_id=getattr(info, "runway_id", None) or None,
-            tower_group_id=getattr(info, "tower_group_id", None) or None,
+            runner_id=getattr(info, "runner_id", None) or None,
+            profile_id=getattr(info, "profile_id", None) or None,
+            runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
             returncode=returncode,
         )
@@ -1304,7 +1304,7 @@ class Sandbox:
         await self._ensure_client()
         assert self._stub is not None
 
-        request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+        request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
             response = await self._stub.Get(
                 request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
@@ -1477,7 +1477,7 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(self._base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
         self._channel = channel
         self._stub = stub
         self._auth_metadata = auth_metadata
@@ -1513,7 +1513,7 @@ class Sandbox:
         self,
         timeout_seconds: float | None = None,
         timeout_message: str = "",
-    ) -> atc_pb2.GetSandboxResponse:
+    ) -> gateway_pb2.GetSandboxResponse:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
@@ -1550,9 +1550,9 @@ class Sandbox:
                 if elapsed > timeout_seconds:
                     raise SandboxTimeoutError(timeout_message)
 
-            request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+            request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
-                response: atc_pb2.GetSandboxResponse = await self._stub.Get(
+                response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
                     request,
                     timeout=self._request_timeout_seconds,
                     metadata=self._auth_metadata,
@@ -1570,12 +1570,12 @@ class Sandbox:
 
             # Stable states - return for caller to handle
             if response.sandbox_status in (
-                atc_pb2.SANDBOX_STATUS_RUNNING,
-                atc_pb2.SANDBOX_STATUS_PAUSED,
-                atc_pb2.SANDBOX_STATUS_COMPLETED,
-                atc_pb2.SANDBOX_STATUS_FAILED,
-                atc_pb2.SANDBOX_STATUS_TERMINATED,
-                atc_pb2.SANDBOX_STATUS_UNSPECIFIED,
+                gateway_pb2.SANDBOX_STATUS_RUNNING,
+                gateway_pb2.SANDBOX_STATUS_PAUSED,
+                gateway_pb2.SANDBOX_STATUS_COMPLETED,
+                gateway_pb2.SANDBOX_STATUS_FAILED,
+                gateway_pb2.SANDBOX_STATUS_TERMINATED,
+                gateway_pb2.SANDBOX_STATUS_UNSPECIFIED,
             ):
                 return response
 
@@ -1617,10 +1617,10 @@ class Sandbox:
 
             if self._max_lifetime_seconds is not None:
                 request_kwargs["max_lifetime_seconds"] = int(self._max_lifetime_seconds)
-            if self._runway_ids is not None:
-                request_kwargs["runway_ids"] = self._runway_ids
-            if self._tower_ids is not None:
-                request_kwargs["tower_ids"] = self._tower_ids
+            if self._profile_ids is not None:
+                request_kwargs["profile_ids"] = self._profile_ids
+            if self._runner_ids is not None:
+                request_kwargs["runner_ids"] = self._runner_ids
             if self._environment_variables:
                 request_kwargs["environment_variables"] = self._environment_variables
             if self._annotations:
@@ -1691,7 +1691,7 @@ class Sandbox:
 
             logger.debug("Starting sandbox with image %s", self._container_image)
 
-            request = atc_pb2.StartSandboxRequest(**request_kwargs)
+            request = gateway_pb2.StartSandboxRequest(**request_kwargs)
             self._start_accepted_at = time.monotonic()
             try:
                 response = await self._stub.Start(
@@ -2099,10 +2099,10 @@ class Sandbox:
             self._state = _Terminal(
                 sandbox_id=sandbox_id,
                 status=SandboxStatus.TERMINATED,
-                tower_id=prev.tower_id if isinstance(prev, (_Running, _Terminal)) else None,
-                runway_id=prev.runway_id if isinstance(prev, (_Running, _Terminal)) else None,
-                tower_group_id=(
-                    prev.tower_group_id if isinstance(prev, (_Running, _Terminal)) else None
+                runner_id=prev.runner_id if isinstance(prev, (_Running, _Terminal)) else None,
+                profile_id=prev.profile_id if isinstance(prev, (_Running, _Terminal)) else None,
+                runner_group_id=(
+                    prev.runner_group_id if isinstance(prev, (_Running, _Terminal)) else None
                 ),
                 started_at=prev.started_at if isinstance(prev, (_Running, _Terminal)) else None,
             )
@@ -2121,7 +2121,7 @@ class Sandbox:
         logger.debug("Stopping sandbox %s", self._sandbox_id)
 
         max_timeout = int(graceful_shutdown_seconds) + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
-        request = atc_pb2.StopSandboxRequest(
+        request = gateway_pb2.StopSandboxRequest(
             sandbox_id=self._sandbox_id,
             graceful_shutdown_seconds=int(graceful_shutdown_seconds),
             snapshot_on_stop=snapshot_on_stop,
@@ -2236,7 +2236,7 @@ class Sandbox:
 
             await self._ensure_client()
             channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
             auth_metadata = self._auth_metadata
 
@@ -2410,7 +2410,7 @@ class Sandbox:
 
             await self._ensure_client()
             channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
             auth_metadata = self._auth_metadata
 
@@ -2652,7 +2652,7 @@ class Sandbox:
 
         await self._ensure_client()
         channel = await self._get_or_create_streaming_channel()
-        stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
         auth_metadata = self._auth_metadata
 
@@ -3094,7 +3094,7 @@ class Sandbox:
 
         logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
 
-        request = atc_pb2.RetrieveFileSandboxRequest(
+        request = gateway_pb2.RetrieveFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
             max_timeout_seconds=int(timeout),
@@ -3166,7 +3166,7 @@ class Sandbox:
             len(contents),
         )
 
-        request = atc_pb2.AddFileSandboxRequest(
+        request = gateway_pb2.AddFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
             file_contents=contents,
