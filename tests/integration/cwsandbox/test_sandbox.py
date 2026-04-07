@@ -14,7 +14,7 @@ import uuid
 import httpx
 import pytest
 
-from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Session
+from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
 
 
@@ -105,6 +105,38 @@ def test_sandbox_with_defaults() -> None:
         result = sandbox.exec(["python", "--version"]).result()
         assert result.returncode == 0
         assert "Python 3.11" in result.stdout
+
+
+def test_sandbox_burstable_qos_resources(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with distinct requests and limits (Burstable QoS).
+
+    Uses ResourceOptions with requests < limits to exercise the overcommit path,
+    which maps to separate resource_requests and resource_limits proto fields.
+    """
+    defaults = SandboxDefaults(
+        max_lifetime_seconds=60,
+        tags=("integration-test",),
+        resources=ResourceOptions(
+            requests={"cpu": "500m", "memory": "512Mi"},
+            limits={"cpu": "1", "memory": "1Gi"},
+        ),
+    )
+
+    with Sandbox.run("sleep", "infinity", defaults=defaults) as sandbox:
+        sandbox.wait()
+        assert sandbox.sandbox_id is not None
+        assert sandbox.status == "running"
+
+        assert sandbox.resource_requests is not None
+        assert sandbox.resource_limits is not None
+        assert sandbox.resource_requests["cpu"] == "500m"
+        assert sandbox.resource_requests["memory"] == "512Mi"
+        assert sandbox.resource_limits["cpu"] == "1"
+        assert sandbox.resource_limits["memory"] == "1Gi"
+
+        result = sandbox.exec(["echo", "burstable"]).result()
+        assert result.returncode == 0
+        assert result.stdout.strip() == "burstable"
 
 
 def test_sandbox_python_exec(sandbox_defaults: SandboxDefaults) -> None:

@@ -46,12 +46,14 @@ from cwsandbox._proto import (
     streaming_pb2,
     streaming_pb2_grpc,
 )
+from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
     ExecOutcome,
     NetworkOptions,
     OperationRef,
     Process,
     ProcessResult,
+    ResourceOptions,
     Secret,
     StreamReader,
     StreamWriter,
@@ -338,7 +340,7 @@ class Sandbox:
         max_lifetime_seconds: float | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
-        resources: dict[str, Any] | None = None,
+        resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
@@ -363,7 +365,8 @@ class Sandbox:
                 the backend controls the default.
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            resources: Resource requests (CPU, memory, GPU)
+            resources: Resource configuration. Accepts ResourceOptions for separate
+                requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
@@ -432,10 +435,11 @@ class Sandbox:
             self._tower_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
-        # Use explicit resources or fall back to defaults
+        # Use explicit resources or fall back to defaults, then normalize
         effective_resources = resources if resources is not None else self._defaults.resources
-        if effective_resources is not None:
-            self._start_kwargs["resources"] = effective_resources
+        normalized = normalize_resources(effective_resources)
+        if normalized is not None:
+            self._start_kwargs["resources"] = normalized
         if mounted_files is not None:
             self._start_kwargs["mounted_files"] = mounted_files
         if s3_mount is not None:
@@ -490,6 +494,9 @@ class Sandbox:
         self._exposed_ports: tuple[tuple[int, str], ...] | None = None
         self._applied_ingress_mode: str | None = None
         self._applied_egress_mode: str | None = None
+        self._resource_limits: dict[str, str] | None = None
+        self._resource_requests: dict[str, str] | None = None
+        self._resource_gpu: dict[str, Any] | None = None
 
         # Execution statistics for metrics (protected by _exec_stats_lock)
         self._exec_stats_lock = threading.Lock()
@@ -516,7 +523,7 @@ class Sandbox:
         tags: list[str] | None = None,
         runway_ids: list[str] | None = None,
         tower_ids: list[str] | None = None,
-        resources: dict[str, Any] | None = None,
+        resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
@@ -542,7 +549,8 @@ class Sandbox:
             tags: Optional tags for the sandbox
             runway_ids: Optional list of runway IDs
             tower_ids: Optional list of tower IDs
-            resources: Resource requests (CPU, memory, GPU)
+            resources: Resource configuration. Accepts ResourceOptions for separate
+                requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
@@ -688,6 +696,9 @@ class Sandbox:
         sandbox._exposed_ports = None
         sandbox._applied_ingress_mode = None
         sandbox._applied_egress_mode = None
+        sandbox._resource_limits = None
+        sandbox._resource_requests = None
+        sandbox._resource_gpu = None
         # Exec stats (protected by _exec_stats_lock)
         sandbox._exec_stats_lock = threading.Lock()
         sandbox._exec_count = 0
@@ -1131,6 +1142,21 @@ class Sandbox:
     def applied_egress_mode(self) -> str | None:
         """The egress mode applied by the backend (set after start)."""
         return self._applied_egress_mode
+
+    @property
+    def resource_limits(self) -> dict[str, str] | None:
+        """Resource limits from the start response, or None for discovered sandboxes."""
+        return self._resource_limits
+
+    @property
+    def resource_requests(self) -> dict[str, str] | None:
+        """Resource requests from the start response, or None for discovered sandboxes."""
+        return self._resource_requests
+
+    @property
+    def resource_gpu(self) -> dict[str, Any] | None:
+        """GPU config confirmed by the start response, or None for discovered sandboxes."""
+        return self._resource_gpu
 
     @property
     def exec_stats(self) -> dict[str, int]:
@@ -1602,6 +1628,41 @@ class Sandbox:
 
             request_kwargs.update(self._start_kwargs)
 
+            # Convert ResourceOptions to new proto fields (resource_limits / resource_requests)
+            resources_opt = request_kwargs.pop("resources", None)
+            if resources_opt is not None:
+                if isinstance(resources_opt, ResourceOptions):
+                    limits_kwargs: dict[str, Any] = {}
+                    if resources_opt.limits:
+                        if "cpu" in resources_opt.limits:
+                            limits_kwargs["cpu"] = resources_opt.limits["cpu"]
+                        if "memory" in resources_opt.limits:
+                            limits_kwargs["memory"] = resources_opt.limits["memory"]
+                    if resources_opt.gpu:
+                        gpu_kwargs: dict[str, Any] = {}
+                        if "count" in resources_opt.gpu:
+                            gpu_kwargs["gpu_count"] = resources_opt.gpu["count"]
+                        if "type" in resources_opt.gpu:
+                            gpu_kwargs["gpu_type"] = resources_opt.gpu["type"]
+                        if "memory_gb" in resources_opt.gpu:
+                            gpu_kwargs["gpu_memory_gb"] = resources_opt.gpu["memory_gb"]
+                        if gpu_kwargs:
+                            limits_kwargs["gpu"] = gpu_kwargs
+                    if limits_kwargs:
+                        request_kwargs["resource_limits"] = limits_kwargs
+
+                    requests_kwargs: dict[str, Any] = {}
+                    if resources_opt.requests:
+                        if "cpu" in resources_opt.requests:
+                            requests_kwargs["cpu"] = resources_opt.requests["cpu"]
+                        if "memory" in resources_opt.requests:
+                            requests_kwargs["memory"] = resources_opt.requests["memory"]
+                    if resources_opt.gpu:
+                        gpu_ref = limits_kwargs.get("gpu")
+                        requests_kwargs["gpu"] = dict(gpu_ref) if gpu_ref else gpu_ref
+                    if requests_kwargs:
+                        request_kwargs["resource_requests"] = requests_kwargs
+
             # Convert NetworkOptions to dict for proto
             network = request_kwargs.get("network")
             if network is not None and isinstance(network, NetworkOptions):
@@ -1651,6 +1712,34 @@ class Sandbox:
             )
             self._applied_ingress_mode = response.applied_ingress_mode or None
             self._applied_egress_mode = response.applied_egress_mode or None
+
+            # Extract resource limits/requests echoed back from the start response
+            if response.HasField("requested_resource_limits"):
+                rl = response.requested_resource_limits
+                d = {}
+                if rl.cpu:
+                    d["cpu"] = rl.cpu
+                if rl.memory:
+                    d["memory"] = rl.memory
+                self._resource_limits = d if d else None
+                if rl.HasField("gpu"):
+                    gpu = rl.gpu
+                    gd: dict[str, Any] = {}
+                    if gpu.gpu_count:
+                        gd["count"] = gpu.gpu_count
+                    if gpu.gpu_type:
+                        gd["type"] = gpu.gpu_type
+                    if gpu.gpu_memory_gb:
+                        gd["memory_gb"] = gpu.gpu_memory_gb
+                    self._resource_gpu = gd if gd else None
+            if response.HasField("requested_resource_requests"):
+                rr = response.requested_resource_requests
+                d = {}
+                if rr.cpu:
+                    d["cpu"] = rr.cpu
+                if rr.memory:
+                    d["memory"] = rr.memory
+                self._resource_requests = d if d else None
 
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id

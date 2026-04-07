@@ -441,7 +441,12 @@ class TestSessionKwargsValidation:
             resources={"cpu": "100m"},
             ports=[{"container_port": 8080}],
         )
-        assert sandbox._start_kwargs["resources"] == {"cpu": "100m"}
+        from cwsandbox._types import ResourceOptions
+
+        stored_res = sandbox._start_kwargs["resources"]
+        assert isinstance(stored_res, ResourceOptions)
+        assert stored_res.requests == {"cpu": "100m"}
+        assert stored_res.limits == {"cpu": "100m"}
         assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
 
     def test_sandbox_with_invalid_kwargs(self) -> None:

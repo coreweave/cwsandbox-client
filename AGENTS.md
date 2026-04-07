@@ -61,9 +61,10 @@ Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
 - `sandbox_id`, `tower_id`, `runway_id`, `tower_group_id`, `returncode`, `started_at`
+- `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 
 Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
-- `resources` - Resource requests (CPU, memory, GPU)
+- `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
@@ -110,7 +111,7 @@ Fields (all optional with sensible defaults):
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
 - `runway_ids`, `tower_ids` - Infrastructure filtering (optional tuple of IDs)
-- `resources` - Resource requests (CPU, memory, GPU)
+- `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Network configuration via `NetworkOptions`
 - `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
@@ -216,6 +217,36 @@ sandbox = Sandbox.run(
 # Using dicts (convenient for config files)
 sandbox = Sandbox.run(
     secrets=[{"store": "wandb", "name": "HF_TOKEN"}],
+)
+```
+
+**`ResourceOptions`** (`_types.py`): Frozen dataclass for typed resource configuration. Supports separate requests and limits for Burstable QoS pods. GPU is a separate top-level field because GPU overcommit is not supported by the backend. The `resources` parameter accepts a `ResourceOptions` instance, a nested dict, or a legacy flat dict (which is automatically coerced).
+
+Fields:
+- `requests: dict[str, str] | None` - CPU/memory resource requests (e.g. `{"cpu": "1", "memory": "256Mi"}`)
+- `limits: dict[str, str] | None` - CPU/memory resource limits (e.g. `{"cpu": "8", "memory": "2Gi"}`)
+- `gpu: dict[str, Any] | None` - GPU configuration (e.g. `{"count": 1, "type": "A100"}`)
+
+Usage:
+```python
+from cwsandbox import ResourceOptions
+
+# Using ResourceOptions (recommended for overcommit)
+sandbox = Sandbox.run(
+    resources=ResourceOptions(
+        requests={"cpu": "1", "memory": "256Mi"},
+        limits={"cpu": "8", "memory": "2Gi"},
+    ),
+)
+
+# Using nested dict
+sandbox = Sandbox.run(
+    resources={"requests": {"cpu": "1"}, "limits": {"cpu": "8"}},
+)
+
+# Legacy flat dict (Guaranteed QoS - requests == limits)
+sandbox = Sandbox.run(
+    resources={"cpu": "8", "memory": "2Gi"},
 )
 ```
 
@@ -439,6 +470,7 @@ CWSandboxError
 
 The `examples/` directory contains runnable scripts demonstrating common patterns:
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py`, `stdin_streaming.py` - Sandbox creation and execution
+- `resource_configuration.py` - ResourceOptions, flat dict, nested dict, GPU, and response properties
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
 - `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)
@@ -464,6 +496,8 @@ When adding new documentation files to `docs/`, update `mkdocs.yml` nav section 
 **Lazy-Start Model**: `Sandbox.run()` returns immediately once the backend accepts the request - it does NOT wait for RUNNING status. Blocking happens explicitly via `.result()` or `.wait()`.
 
 **Single Internal Implementation**: There is one async implementation internally. The sync/async flexibility comes from how users consume results (`.result()` vs `await`), not from duplicate code paths.
+
+**ResourceOptions and Overcommit**: GPU is a separate field from requests/limits because the backend does not support GPU overcommit. Flat dict backward compatibility is maintained for CPU/memory (legacy form sets requests == limits for Guaranteed QoS). The flat dict form for GPU (`{"gpu_count": N}`) is a breaking change - use `ResourceOptions(gpu={"count": N})` instead. The `resource_requests` and `resource_limits` properties are populated only from start-response data, so they are None for sandboxes discovered via `Sandbox.from_id()` or `Sandbox.list()`.
 
 ## License Headers
 

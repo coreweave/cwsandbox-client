@@ -104,6 +104,22 @@ Demonstrates:
 - Pickle and JSON serialization modes
 - Functions with closure variables
 
+### Resource Configuration (`resource_configuration.py`)
+
+Configure CPU, memory, and GPU resources:
+
+```bash
+python examples/resource_configuration.py
+```
+
+Demonstrates:
+- `ResourceOptions` for separate requests and limits (Burstable QoS)
+- Flat dict shorthand for equal requests and limits (Guaranteed QoS)
+- Nested dict form as an alternative to `ResourceOptions`
+- GPU configuration alongside resource limits
+- Inspecting confirmed resources from the sandbox response
+- Sharing resource defaults across sandboxes via `SandboxDefaults`
+
 ### Error Handling (`error_handling.py`)
 
 Proper error handling with the exception hierarchy:
