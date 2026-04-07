@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v0.16.0 (2026-04-07)
+
+### Chores
+
+- Add .worktreeinclude for Claude Code worktrees
+  ([`a9c6a2d`](https://github.com/coreweave/cwsandbox-client/commit/a9c6a2d0b6336e2bd23ab0494e86d9e49906250b))
+
+Ensures .env is automatically copied into new worktrees created by Claude Code, so auth credentials
+  are available without manual setup.
+
+### Continuous Integration
+
+- Add commitlint workflow to validate PR commits
+  ([`a2fdcfa`](https://github.com/coreweave/cwsandbox-client/commit/a2fdcfa12af4e1fa74d6904c99164a43561e482d))
+
+The pre-commit hook enforces conventional commit messages locally, but CI only checked the PR title
+  (via action-semantic-pull-request in lint-pr.yaml). This left a gap where non-conforming commit
+  messages could land in main through squash-less merges.
+
+Add a commitlint workflow that validates every commit in a PR against the same conventional commit
+  types configured in .pre-commit-config.yaml. The workflow and config follow the established
+  pattern used across other organization repositories.
+
+### Features
+
+- Add ResourceOptions type and K8s quantity parser
+  ([`a635a04`](https://github.com/coreweave/cwsandbox-client/commit/a635a04cb633f8d6742481ff54cdc7c0f67b2e5e))
+
+Support separate resource requests and limits for Burstable QoS pods, which is needed for the
+  overcommit feature. GPU remains a top-level field since GPU overcommit is not supported by the
+  backend.
+
+New modules: - _quantity.py: Kubernetes quantity parser using stdlib Decimal, handles SI and binary
+  suffixes with validation - _resources.py: Centralized normalization handling ResourceOptions,
+  nested dicts, and flat dict backward compatibility
+
+ResourceOptions is a frozen dataclass with requests, limits, and gpu fields, following the same
+  immutable pattern as NetworkOptions and Secret.
+
+Includes unit tests covering quantity parsing, validation, and resource normalization logic.
+
+- Wire ResourceOptions through SDK entry points and gRPC
+  ([`4f15e10`](https://github.com/coreweave/cwsandbox-client/commit/4f15e105dd21481b3fd742135c19e8673ae09cce))
+
+Accept ResourceOptions alongside plain dicts for the resources parameter across all public entry
+  points (Sandbox.__init__, Sandbox.run, Session.sandbox, Session.function, RemoteFunction,
+  SandboxDefaults).
+
+Flat resource dicts are normalized to Guaranteed QoS ResourceOptions via normalize_resources() in
+  Sandbox.__init__. ResourceOptions instances map to the new resource_limits/resource_requests proto
+  fields (31/32) while legacy dicts pass through to the old resources field for backward compat.
+
+GPU configuration is mapped identically into both proto fields. Response properties
+  (resource_limits, resource_requests) are extracted from StartSandboxResponse when the backend
+  echoes them back.
+
+SandboxDefaults.from_dict() preserves ResourceOptions instances rather than flattening them to plain
+  dicts.
+
+
 ## v0.15.0 (2026-04-06)
 
 ### Chores
