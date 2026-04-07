@@ -35,8 +35,8 @@ _STATUS_CHOICES = [s.value for s in SandboxStatus if s != SandboxStatus.UNSPECIF
     "-o",
     "output_format",
     default="table",
-    type=click.Choice(["table", "json"], case_sensitive=False),
-    help="Output format.",
+    type=click.Choice(["table", "wide", "json"], case_sensitive=False),
+    help="Output format (table, wide, json).",
 )
 def list_sandboxes(
     status: str | None,
@@ -47,7 +47,8 @@ def list_sandboxes(
 ) -> None:
     """List sandboxes.
 
-    Displays sandbox ID, status, runner, profile, and started time for matching sandboxes.
+    Default table shows ID, status, image, and started time. Use -o wide
+    for runner, runner group, profile, and tags. Use -o json for all fields.
     """
     sandboxes = Sandbox.list(
         tags=list(tags) if tags else None,
@@ -65,6 +66,8 @@ def list_sandboxes(
                 "profile_id": sb.profile_id,
                 "runner_group_id": sb.runner_group_id,
                 "started_at": sb.started_at.isoformat() if sb.started_at else None,
+                "container_image": sb.container_image,
+                "tags": list(sb.tags) if sb.tags else [],
             }
             for sb in sandboxes
         ]
@@ -75,13 +78,25 @@ def list_sandboxes(
         click.echo("No sandboxes found.")
         return
 
-    click.echo(f"{'SANDBOX ID':<40} {'STATUS':<14} {'TOWER':<20} {'RUNWAY':<20} {'STARTED AT'}")
-    click.echo(f"{'-' * 40} {'-' * 14} {'-' * 20} {'-' * 20} {'-' * 24}")
+    wide = output_format == "wide"
+
+    header = f"{'SANDBOX ID':<40} {'STATUS':<14} {'IMAGE':<25} {'STARTED AT':<24}"
+    sep = f"{'-' * 40} {'-' * 14} {'-' * 25} {'-' * 24}"
+    if wide:
+        header += f" {'RUNNER':<20} {'RUNNER GROUP':<20} {'PROFILE':<20} {'TAGS'}"
+        sep += f" {'-' * 20} {'-' * 20} {'-' * 20} {'-' * 40}"
+    click.echo(header)
+    click.echo(sep)
 
     for sb in sandboxes:
         sid = sb.sandbox_id or "-"
         st = sb.status.value if sb.status else "-"
-        runner = sb.runner_id or "-"
-        profile = sb.profile_id or "-"
+        image = sb.container_image or "-"
         started = sb.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if sb.started_at else "-"
-        click.echo(f"{sid:<40} {st:<14} {runner:<20} {profile:<20} {started}")
+        line = f"{sid:<40} {st:<14} {image:<25} {started:<24}"
+        if wide:
+            runner = sb.runner_id or "-"
+            runner_group = sb.runner_group_id or "-"
+            profile = sb.profile_id or "-"
+            line += f" {runner:<20} {runner_group:<20} {profile:<20} {','.join(sb.tags) if sb.tags else '-'}"
+        click.echo(line)
