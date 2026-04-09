@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
+from cwsandbox._sandbox import SandboxStatus
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
 
 
@@ -1172,3 +1173,59 @@ def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> N
     recovered = Sandbox.from_id(sandbox_id).result()
     assert recovered.sandbox_id == sandbox_id
     assert recovered.status in ("completed", "terminated", "failed", "unspecified")
+
+
+def test_stop_reaches_terminal_through_terminating(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that stop() polls through TERMINATING to a real terminal state.
+
+    Validates the full stop lifecycle: stop RPC -> TERMINATING drain ->
+    COMPLETED or FAILED. If the backend doesn't support TERMINATING yet,
+    the sandbox still reaches a terminal state (TERMINATED on old backends).
+    """
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    sandbox.wait()
+    assert sandbox.status == SandboxStatus.RUNNING
+
+    sandbox.stop().result()
+
+    assert sandbox.status in (
+        SandboxStatus.COMPLETED,
+        SandboxStatus.FAILED,
+        SandboxStatus.TERMINATED,
+    )
+
+
+def test_stop_raise_on_termination_with_stop_owned(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test that wait_until_complete(raise_on_termination=True) raises after stop().
+
+    The _stop_owned flag should cause SandboxTerminatedError even when the
+    backend's final status is COMPLETED (not TERMINATED).
+    """
+    from cwsandbox.exceptions import SandboxTerminatedError
+
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    sandbox.wait()
+
+    sandbox.stop()
+
+    with pytest.raises(SandboxTerminatedError):
+        sandbox.wait_until_complete(raise_on_termination=True).result()
+
+
+def test_natural_exit_no_raise_on_termination(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that a naturally exiting sandbox does not raise with raise_on_termination=True.
+
+    A sandbox whose command exits on its own (not via stop()) should NOT raise
+    SandboxTerminatedError, even if polling observes TERMINATING during drain.
+    """
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults)
+
+    sandbox.wait_until_complete(raise_on_termination=True, timeout=60.0).result()
+
+    assert sandbox.status in (
+        SandboxStatus.COMPLETED,
+        SandboxStatus.FAILED,
+        SandboxStatus.TERMINATED,
+    )

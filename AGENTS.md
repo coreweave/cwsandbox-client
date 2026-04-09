@@ -48,14 +48,14 @@ Key methods:
 - `run(*args, **kwargs)`: Create and start sandbox, return immediately. Accepts advanced configuration kwargs (see below).
 - `start()`: Send start request, return `OperationRef[None]`. Call `.result()` to block until backend accepts.
 - `wait()`: Block until RUNNING status, returns self for chaining
-- `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
+- `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Polls through TERMINATING automatically. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
 - `shell(command=None, *, width=None, height=None)`: Start an interactive TTY session, return `TerminalSession`. Always allocates a TTY and enables stdin. Output is raw bytes (merged stdout/stderr) with no buffering — safe for long-running interactive sessions. Defaults to `["/bin/bash"]`.
 - `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
-- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
-- `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable.
+- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the stop RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
+- `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
 
 Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
@@ -148,7 +148,7 @@ data = ref.result()               # Block when result needed
 data = await ref
 ```
 
-**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states: `PENDING`, `CREATING`, `RUNNING`, `PAUSED`, `COMPLETED`, `TERMINATED`, `FAILED`, `UNSPECIFIED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
+**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states. Lifecycle: `CREATING` -> `RUNNING` -> `TERMINATING` -> `COMPLETED` | `FAILED`. Values: `PENDING`, `CREATING`, `RUNNING`, `PAUSED`, `TERMINATING`, `COMPLETED`, `FAILED`, `TERMINATED` (deprecated), `UNSPECIFIED`. `TERMINATING` is non-terminal: the sandbox is draining through its grace period. `TERMINATED` is deprecated in favor of the `TERMINATING` -> `COMPLETED`/`FAILED` flow but still emitted by older backends. Terminal statuses (used for caching and polling): `COMPLETED`, `FAILED`, `TERMINATED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
 
 **Exec Types** (`_types.py`): Types for command execution, returned by `Sandbox.exec()`:
 

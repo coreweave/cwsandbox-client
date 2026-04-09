@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -507,3 +507,29 @@ class TestLifecycleStateUnion:
     )
     def test_all_variants_are_lifecycle_states(self, state: _LifecycleState) -> None:
         assert isinstance(state, (_NotStarted, _Starting, _Running, _Terminal))
+
+
+# ---------------------------------------------------------------------------
+# SandboxStatus.from_proto edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxStatusFromProto:
+    """Verify from_proto handles unknown proto status names gracefully."""
+
+    def test_unknown_proto_name_returns_unspecified(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Backend may add new statuses the SDK doesn't know about yet.
+
+        gateway_pb2.SandboxStatus.Name() returns a valid string, but the
+        StrEnum lookup (cls[enum_name]) raises KeyError. Ensure we fall
+        back to UNSPECIFIED with a warning instead of crashing.
+        """
+        fake_proto_value = 9999
+        with patch(
+            "cwsandbox._sandbox.gateway_pb2.SandboxStatus.Name",
+            return_value="SANDBOX_STATUS_FUTURESTATE",
+        ):
+            result = SandboxStatus.from_proto(fake_proto_value)
+
+        assert result is SandboxStatus.UNSPECIFIED
+        assert any("Unknown sandbox status" in msg for msg in caplog.messages)
