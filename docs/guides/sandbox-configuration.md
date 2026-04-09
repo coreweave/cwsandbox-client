@@ -206,7 +206,7 @@ Set default annotations for all sandboxes in a session:
 defaults = SandboxDefaults(
     annotations={
         "team": "ml-infra",
-        "managed-by": "sandbox-sdk",
+        "managed-by": "aviato-sdk",
     },
 )
 
@@ -218,7 +218,7 @@ with Session(defaults) as session:
     sb2 = session.sandbox(
         annotations={"experiment": "run-42", "team": "ml-research"},
     )
-    # sb2 gets: team=ml-research, managed-by=sandbox-sdk, experiment=run-42
+    # sb2 gets: team=ml-research, managed-by=aviato-sdk, experiment=run-42
 ```
 
 ### Merge Behavior
@@ -278,16 +278,16 @@ Unlike `environment_variables`, secrets are never passed in plaintext - they are
 server-side from the named store and injected securely.
 
 The `store` field refers to a secret store provider configured on the towers you are
-using. Available stores depend on your runner configuration - contact your platform
+using. Available stores depend on your tower configuration - contact your platform
 administrator to find out which stores are available and what secrets they contain.
-For example, runners with the W&B integration have a `"wandb"` store that provides
+For example, towers with the W&B integration have a `"wandb"` store that provides
 access to W&B team secrets.
 
 ### Secret Fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `store` | `str` | required | Secret store provider configured on your runner (e.g. `"wandb"`) |
+| `store` | `str` | required | Secret store provider configured on your tower (e.g. `"wandb"`) |
 | `name` | `str` | required | Name of the secret in the store |
 | `field` | `str` | `""` | Specific field within a structured secret |
 | `env_var` | `str` | same as `name` | Environment variable the secret is injected as |

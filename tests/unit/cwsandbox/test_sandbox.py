@@ -15,7 +15,7 @@ import grpc.aio
 import pytest
 
 from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
-from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Terminal
+from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
     SandboxNotFoundError,
@@ -1653,6 +1653,8 @@ class TestSandboxStop:
 
     def test_stop_waits_for_inflight_start(self) -> None:
         """Test stop() acquires _start_lock and waits for in-flight start()."""
+        from cwsandbox._proto import gateway_pb2
+
         sandbox = Sandbox(command="sleep", args=["infinity"])
         expected_metadata = (("authorization", "Bearer test-key"),)
         sandbox._auth_metadata = expected_metadata
@@ -1663,9 +1665,20 @@ class TestSandboxStop:
         mock_stop_response = MagicMock()
         mock_stop_response.success = True
 
+        # Mock Get to return terminal so _do_poll_complete resolves
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "race-sandbox-id"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+
         mock_stub = MagicMock()
         mock_stub.Start = AsyncMock(return_value=mock_start_response)
         mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
@@ -2018,11 +2031,11 @@ class TestResourceOptionsWiring:
         """Discovered sandboxes have None resource properties."""
         from google.protobuf import timestamp_pb2
 
-        from cwsandbox._proto import atc_pb2
+        from cwsandbox._proto import gateway_pb2
 
         info = MagicMock()
         info.sandbox_id = "sb-disc"
-        info.sandbox_status = atc_pb2.SANDBOX_STATUS_RUNNING
+        info.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
         info.started_at_time = timestamp_pb2.Timestamp()
         info.tower_id = "tower-1"
         info.runway_id = "runway-1"
@@ -4074,3 +4087,755 @@ class TestTerminalStateProperties:
             sandbox_id="sb-1", status=SandboxStatus.COMPLETED, profile_id="runway-99"
         )
         assert sandbox.profile_id == "runway-99"
+
+
+class TestTerminatingStatus:
+    """Tests for TERMINATING status and _Stopping lifecycle state."""
+
+    def test_from_proto_terminating(self) -> None:
+        """from_proto(9) returns TERMINATING."""
+        from cwsandbox._proto import gateway_pb2
+
+        status = SandboxStatus.from_proto(gateway_pb2.SANDBOX_STATUS_TERMINATING)
+        assert status == SandboxStatus.TERMINATING
+
+    def test_to_proto_terminating(self) -> None:
+        """TERMINATING round-trips through to_proto."""
+        from cwsandbox._proto import gateway_pb2
+
+        assert SandboxStatus.TERMINATING.to_proto() == gateway_pb2.SANDBOX_STATUS_TERMINATING
+
+    def test_terminating_not_in_terminal_statuses(self) -> None:
+        """TERMINATING is not a terminal status."""
+        from cwsandbox._sandbox import _TERMINAL_STATUSES
+
+        assert SandboxStatus.TERMINATING not in _TERMINAL_STATUSES
+
+    def test_lifecycle_state_from_info_terminating(self) -> None:
+        """_lifecycle_state_from_info maps TERMINATING to _Stopping with metadata."""
+        from cwsandbox._sandbox import _lifecycle_state_from_info
+
+        state = _lifecycle_state_from_info(
+            sandbox_id="sb-1",
+            status=SandboxStatus.TERMINATING,
+            runner_id="tower-1",
+            profile_id="runway-1",
+            runner_group_id="group-1",
+        )
+        assert isinstance(state, _Stopping)
+        assert state.sandbox_id == "sb-1"
+        assert state.status == SandboxStatus.TERMINATING
+        assert state.runner_id == "tower-1"
+        assert state.profile_id == "runway-1"
+        assert state.runner_group_id == "group-1"
+
+    def test_stopping_is_frozen(self) -> None:
+        """_Stopping dataclass is frozen (immutable)."""
+        state = _Stopping(sandbox_id="sb-1")
+        with pytest.raises(AttributeError):
+            state.sandbox_id = "sb-2"  # type: ignore[misc]
+
+
+class TestStoppingStateTransitions:
+    """Tests for state transition guards involving _Stopping."""
+
+    def test_stopping_to_terminal_completed_allowed(self) -> None:
+        """_Stopping -> _Terminal(COMPLETED) is allowed."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1", runner_id="tower-1")
+
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "sb-1"
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_info.runner_id = "tower-1"
+        mock_info.profile_id = ""
+        mock_info.runner_group_id = ""
+        mock_info.started_at_time = None
+        mock_info.returncode = 0
+
+        new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.status == SandboxStatus.COMPLETED
+
+    def test_stopping_to_running_rejected(self) -> None:
+        """_Stopping -> _Running is rejected (stale poll response)."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "sb-1"
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
+        mock_info.runner_id = ""
+        mock_info.profile_id = ""
+        mock_info.runner_group_id = ""
+        mock_info.started_at_time = None
+
+        new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(new_state, _Stopping)
+
+    def test_stopping_to_starting_rejected(self) -> None:
+        """_Stopping -> _Starting is rejected (stale poll response)."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "sb-1"
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_PENDING
+        mock_info.runner_id = ""
+        mock_info.profile_id = ""
+        mock_info.runner_group_id = ""
+        mock_info.started_at_time = None
+
+        new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(new_state, _Stopping)
+
+    def test_stopping_to_terminal_failed_allowed(self) -> None:
+        """_Stopping -> _Terminal(FAILED) is allowed."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "sb-1"
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_FAILED
+        mock_info.runner_id = ""
+        mock_info.profile_id = ""
+        mock_info.runner_group_id = ""
+        mock_info.started_at_time = None
+
+        new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.status == SandboxStatus.FAILED
+
+
+class TestStoppingOperationGuards:
+    """Tests for operation guards during _Stopping state."""
+
+    def test_exec_blocked_in_stopping(self) -> None:
+        """exec() raises SandboxNotRunningError in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.exec(["echo", "hello"]).result()
+
+    def test_read_file_blocked_in_stopping(self) -> None:
+        """read_file() raises SandboxNotRunningError in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.read_file("/tmp/test").result()
+
+    def test_write_file_blocked_in_stopping(self) -> None:
+        """write_file() raises SandboxNotRunningError in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            sandbox.write_file("/tmp/test", b"data").result()
+
+    def test_shell_blocked_in_stopping(self) -> None:
+        """shell() raises SandboxNotRunningError in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            session = sandbox.shell()
+            session.result()
+
+    def test_stream_logs_follow_blocked_in_stopping(self) -> None:
+        """stream_logs(follow=True) raises SandboxNotRunningError in _Stopping."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        with pytest.raises(SandboxNotRunningError, match="terminating"):
+            reader = sandbox.stream_logs(follow=True)
+            # Iterate to trigger the async method
+            for _ in reader:
+                pass
+
+    def test_stream_logs_no_follow_allowed_in_stopping(self) -> None:
+        """stream_logs(follow=False) is allowed in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+
+        # The guard check should not block non-follow log streaming.
+        # _is_stopping is True but _is_done is False, so follow=False passes.
+        assert sandbox._is_stopping is True
+        assert not sandbox._is_done
+
+
+class TestStoppingStopFlow:
+    """Tests for stop() behavior with _Stopping lifecycle."""
+
+    def test_stop_sends_rpc_then_sets_stopping(self) -> None:
+        """stop() sends Stop RPC then transitions to _Stopping."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+
+        mock_stub = MagicMock()
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "test-id"
+        mock_get_response.runner_id = "tower-1"
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
+
+        sandbox._stub = mock_stub
+        sandbox.stop().result()
+        mock_stub.Stop.assert_called_once()
+
+    def test_stop_rpc_failure_no_state_change(self) -> None:
+        """Stop RPC failure does not change state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+
+        sandbox._stub.Stop = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.INTERNAL, "server error")
+        )
+
+        with pytest.raises(SandboxError):
+            sandbox.stop().result()
+
+    def test_stop_missing_ok_not_found_sets_terminal(self) -> None:
+        """stop(missing_ok=True) + NOT_FOUND -> _Terminal(TERMINATED)."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+
+        sandbox._stub.Stop = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
+        )
+
+        result = sandbox.stop(missing_ok=True).result()
+        assert result is None
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.TERMINATED
+
+    def test_repeated_stop_joins_shared_task(self) -> None:
+        """Repeated stop() calls join the same task."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+
+        mock_stub = MagicMock()
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "test-id"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
+
+        sandbox._stub = mock_stub
+        sandbox.stop().result()
+        sandbox.stop().result()  # Second call should be idempotent
+        # Stop RPC should only be called once
+        mock_stub.Stop.assert_called_once()
+
+
+class TestStoppingProperties:
+    """Tests for property accessors in _Stopping state."""
+
+    def test_status_returns_terminating(self) -> None:
+        """status property returns TERMINATING in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        assert sandbox.status == SandboxStatus.TERMINATING
+
+    def test_returncode_none_in_stopping(self) -> None:
+        """returncode is None in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        assert sandbox.returncode is None
+
+    def test_runner_id_accessible_in_stopping(self) -> None:
+        """runner_id is accessible in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1", runner_id="tower-1")
+        assert sandbox.runner_id == "tower-1"
+
+    def test_profile_id_accessible_in_stopping(self) -> None:
+        """profile_id is accessible in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1", profile_id="runway-1")
+        assert sandbox.profile_id == "runway-1"
+
+    def test_runner_group_id_accessible_in_stopping(self) -> None:
+        """runner_group_id is accessible in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1", runner_group_id="group-1")
+        assert sandbox.runner_group_id == "group-1"
+
+    def test_started_at_accessible_in_stopping(self) -> None:
+        """started_at is accessible in _Stopping state."""
+        from datetime import UTC, datetime
+
+        ts = datetime.now(UTC)
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1", started_at=ts)
+        assert sandbox.started_at == ts
+
+    def test_sandbox_id_accessible_in_stopping(self) -> None:
+        """sandbox_id is accessible in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        assert sandbox.sandbox_id == "sb-1"
+
+    def test_is_stopping_true(self) -> None:
+        """_is_stopping is True in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        assert sandbox._is_stopping is True
+        assert sandbox._is_done is False
+
+    def test_is_stopping_false_in_running(self) -> None:
+        """_is_stopping is False in _Running state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Running(sandbox_id="sb-1")
+        assert sandbox._is_stopping is False
+
+
+class TestStopOwnedTermination:
+    """Tests for _stop_owned-based termination detection.
+
+    Verifies that raise_on_termination triggers on local stop() provenance
+    (_stop_owned), not on mere observation of TERMINATING status.
+    """
+
+    def test_stop_owned_raises_on_completed(self) -> None:
+        """stop() + COMPLETED + raise_on_termination=True raises SandboxTerminatedError."""
+        from cwsandbox.exceptions import SandboxTerminatedError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._stop_owned = True
+
+        terminal = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED, returncode=0)
+        with pytest.raises(SandboxTerminatedError):
+            sandbox._raise_or_return_for_terminal(terminal, raise_on_termination=True)
+
+    def test_stop_owned_false_does_not_raise_on_completed(self) -> None:
+        """Normal exit (no stop()) + COMPLETED does NOT raise with raise_on_termination=True."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._stop_owned = False
+
+        terminal = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED, returncode=0)
+        sandbox._raise_or_return_for_terminal(terminal, raise_on_termination=True)
+
+    def test_stop_owned_respects_raise_on_termination_false(self) -> None:
+        """stop() + COMPLETED + raise_on_termination=False does NOT raise."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._stop_owned = True
+
+        terminal = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED, returncode=0)
+        sandbox._raise_or_return_for_terminal(terminal, raise_on_termination=False)
+
+    def test_normal_exit_through_terminating_no_raise(self) -> None:
+        """Sandbox polling through TERMINATING to COMPLETED does NOT raise.
+
+        This is the false-positive case that _termination_observed triggered:
+        a sandbox naturally exits, polls see TERMINATING during drain, and
+        then COMPLETED. Without _stop_owned, no termination error is raised.
+        """
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        # Observe TERMINATING (normal exit draining)
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "sb-1"
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATING
+        mock_info.runner_id = ""
+        mock_info.profile_id = ""
+        mock_info.runner_group_id = ""
+        mock_info.started_at_time = None
+
+        new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(new_state, _Stopping)
+        assert sandbox._stop_owned is False
+
+        # Then observe COMPLETED
+        mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_info.returncode = 0
+        sandbox._state = new_state
+        terminal_state = sandbox._apply_sandbox_info(mock_info, source="poll")
+        assert isinstance(terminal_state, _Terminal)
+
+        # No raise with raise_on_termination=True because _stop_owned is False
+        sandbox._raise_or_return_for_terminal(terminal_state, raise_on_termination=True)
+
+    def test_discovered_sandbox_stop_owned_false(self) -> None:
+        """Sandboxes discovered via from_id/list always have _stop_owned=False."""
+        from cwsandbox._proto import gateway_pb2
+
+        info = gateway_pb2.SandboxInfo(
+            sandbox_id="sb-discovered",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_TERMINATING,
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert sandbox._stop_owned is False
+
+
+class TestStoppingDiscovery:
+    """Tests for discovering sandboxes in TERMINATING state."""
+
+    def test_from_sandbox_info_with_terminating_status(self) -> None:
+        """_from_sandbox_info creates _Stopping state for TERMINATING sandbox."""
+        from cwsandbox._proto import gateway_pb2
+
+        info = gateway_pb2.SandboxInfo(
+            sandbox_id="sb-terminating",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_TERMINATING,
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert isinstance(sandbox._state, _Stopping)
+        assert sandbox.status == SandboxStatus.TERMINATING
+        assert sandbox.sandbox_id == "sb-terminating"
+
+
+class TestStoppingSessionClose:
+    """Tests for Session.close() interaction with _Stopping sandboxes."""
+
+    @pytest.mark.asyncio
+    async def test_close_joins_stopping_sandbox(self) -> None:
+        """Session.close() on a _Stopping sandbox joins the stop task, not double-stops."""
+        from cwsandbox._proto import gateway_pb2
+        from cwsandbox._session import Session
+
+        session = Session()
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "test-id"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
+        sandbox._stub = mock_stub
+
+        # First stop() puts sandbox into _Stopping then polls to terminal
+        await sandbox._stop_async()
+        assert isinstance(sandbox._state, _Terminal)
+
+        # Session.close() should not call Stop RPC again
+        mock_stub.Stop.reset_mock()
+        await session._close_async()
+        mock_stub.Stop.assert_not_called()
+
+
+class TestStoppingCancelledError:
+    """Tests for CancelledError handling with _stop_owned."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_during_wait_running_with_stop_owned(self) -> None:
+        """CancelledError with _stop_owned raises SandboxNotRunningError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Stopping(sandbox_id="test-id")
+        sandbox._stop_owned = True
+
+        cancelled_task = asyncio.Future()
+        cancelled_task.cancel()
+        sandbox._running_task = cancelled_task
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            await sandbox._wait_until_running_async()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_during_wait_complete_with_stop_owned(self) -> None:
+        """CancelledError with _stop_owned raises SandboxNotRunningError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Stopping(sandbox_id="test-id")
+        sandbox._stop_owned = True
+
+        cancelled_task = asyncio.Future()
+        cancelled_task.cancel()
+        sandbox._complete_task = cancelled_task
+
+        with pytest.raises(SandboxNotRunningError, match="has been stopped"):
+            await sandbox._wait_until_complete_async()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_without_stop_owned_propagates(self) -> None:
+        """CancelledError without _stop_owned propagates as CancelledError."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Stopping(sandbox_id="test-id")
+        sandbox._stop_owned = False
+
+        cancelled_task = asyncio.Future()
+        cancelled_task.cancel()
+        sandbox._running_task = cancelled_task
+
+        with pytest.raises(asyncio.CancelledError):
+            await sandbox._wait_until_running_async()
+
+
+class TestDoPolRunningStoppingBranch:
+    """Tests for _do_poll_running behavior when sandbox enters _Stopping."""
+
+    @pytest.mark.asyncio
+    async def test_do_poll_running_stopping_returns_normally(self) -> None:
+        """_do_poll_running returns without raising when sandbox enters _Stopping.
+
+        The sandbox is draining through its grace period and will reach a
+        terminal state via _do_poll_complete. Raising here was a false positive.
+        """
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "sb-1"
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATING
+        mock_response.runner_id = ""
+        mock_response.profile_id = ""
+        mock_response.runner_group_id = ""
+        mock_response.started_at_time = None
+
+        with patch.object(sandbox, "_poll_until_stable", return_value=mock_response):
+            await sandbox._do_poll_running()
+
+        assert isinstance(sandbox._state, _Stopping)
+
+    @pytest.mark.asyncio
+    async def test_wait_regression_starting_to_terminating_to_completed(self) -> None:
+        """wait() does not raise when sandbox transitions STARTING -> TERMINATING -> COMPLETED.
+
+        Regression test: the old _termination_observed flag would have caused
+        a SandboxTerminatedError on the COMPLETED transition because TERMINATING
+        was observed during the poll.
+        """
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="echo", args=["done"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+
+        # First poll returns TERMINATING (sandbox exiting naturally)
+        terminating_response = MagicMock()
+        terminating_response.sandbox_id = "sb-1"
+        terminating_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATING
+        terminating_response.runner_id = ""
+        terminating_response.profile_id = ""
+        terminating_response.runner_group_id = ""
+        terminating_response.started_at_time = None
+
+        with patch.object(sandbox, "_poll_until_stable", return_value=terminating_response):
+            await sandbox._do_poll_running()
+
+        assert isinstance(sandbox._state, _Stopping)
+        assert sandbox._stop_owned is False
+
+        # Second poll (via _do_poll_complete) returns COMPLETED
+        completed_response = MagicMock()
+        completed_response.sandbox_id = "sb-1"
+        completed_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        completed_response.runner_id = ""
+        completed_response.profile_id = ""
+        completed_response.runner_group_id = ""
+        completed_response.started_at_time = None
+        completed_response.returncode = 0
+
+        with patch.object(sandbox, "_poll_until_stable", return_value=completed_response):
+            await sandbox._do_poll_complete()
+
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.COMPLETED
+
+        # No raise with raise_on_termination=True because _stop_owned is False
+        sandbox._raise_or_return_for_terminal(sandbox._state, raise_on_termination=True)
+
+
+class TestStoppingWaitUntilComplete:
+    """Tests for wait_until_complete with _Stopping sandboxes."""
+
+    @pytest.mark.asyncio
+    async def test_stop_then_wait_until_complete_raises(self) -> None:
+        """stop() + wait_until_complete(raise_on_termination=True) raises."""
+        from cwsandbox._proto import gateway_pb2
+        from cwsandbox.exceptions import SandboxTerminatedError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "sb-1"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
+        sandbox._stub = mock_stub
+
+        await sandbox._stop_async()
+        assert sandbox._stop_owned is True
+        assert isinstance(sandbox._state, _Terminal)
+
+        with pytest.raises(SandboxTerminatedError):
+            sandbox._raise_or_return_for_terminal(sandbox._state, raise_on_termination=True)
+
+    @pytest.mark.asyncio
+    async def test_stop_then_wait_until_complete_no_raise_when_false(self) -> None:
+        """stop() + wait_until_complete(raise_on_termination=False) does NOT raise."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stop_response = MagicMock()
+        mock_stop_response.success = True
+        mock_stub.Stop = AsyncMock(return_value=mock_stop_response)
+
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "sb-1"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        mock_stub.Get = AsyncMock(return_value=mock_get_response)
+        sandbox._stub = mock_stub
+
+        await sandbox._stop_async()
+        assert sandbox._stop_owned is True
+        assert isinstance(sandbox._state, _Terminal)
+
+        # No raise with raise_on_termination=False
+        sandbox._raise_or_return_for_terminal(sandbox._state, raise_on_termination=False)
+
+    def test_discovered_stopping_sandbox_wait_until_complete(self) -> None:
+        """Sandbox.from_id() returning _Stopping then wait_until_complete does not raise.
+
+        Discovered sandboxes have _stop_owned=False, so even if they are in
+        TERMINATING and eventually reach COMPLETED, no SandboxTerminatedError
+        is raised with raise_on_termination=True.
+        """
+        from cwsandbox._proto import gateway_pb2
+
+        info = gateway_pb2.SandboxInfo(
+            sandbox_id="sb-discovered",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_TERMINATING,
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://api.example.com",
+            timeout_seconds=300.0,
+        )
+        assert isinstance(sandbox._state, _Stopping)
+        assert sandbox._stop_owned is False
+
+        terminal = _Terminal(
+            sandbox_id="sb-discovered", status=SandboxStatus.COMPLETED, returncode=0
+        )
+        # No raise because _stop_owned is False
+        sandbox._raise_or_return_for_terminal(terminal, raise_on_termination=True)
+
+
+class TestStoppingDel:
+    """Tests for __del__ warning with _Stopping state."""
+
+    def test_del_warns_for_stopping(self) -> None:
+        """__del__ warns about unstopped sandbox in _Stopping state."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+
+        with pytest.warns(ResourceWarning, match="was not stopped"):
+            sandbox.__del__()

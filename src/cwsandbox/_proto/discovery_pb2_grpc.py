@@ -5,12 +5,12 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from cwsandbox._proto import discovery_pb2 as coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2
+from cwsandbox._proto import discovery_pb2 as coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2
 
 
 class DiscoveryServiceStub(object):
     """DiscoveryService provides read-only endpoints for discovering available
-    towers and runways visible to the authenticated user's organization.
+    runners and profiles visible to the authenticated user's organization.
     """
 
     def __init__(self, channel):
@@ -19,57 +19,57 @@ class DiscoveryServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.ListAvailableTowers = channel.unary_unary(
-                '/coreweave.aviato.v1beta1.DiscoveryService/ListAvailableTowers',
-                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersRequest.SerializeToString,
-                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersResponse.FromString,
+        self.ListAvailableRunners = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.DiscoveryService/ListAvailableRunners',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
                 _registered_method=True)
-        self.GetAvailableTower = channel.unary_unary(
-                '/coreweave.aviato.v1beta1.DiscoveryService/GetAvailableTower',
-                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetAvailableTowerRequest.SerializeToString,
-                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.AvailableTower.FromString,
+        self.GetAvailableRunner = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.DiscoveryService/GetAvailableRunner',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.FromString,
                 _registered_method=True)
-        self.ListRunways = channel.unary_unary(
-                '/coreweave.aviato.v1beta1.DiscoveryService/ListRunways',
-                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysRequest.SerializeToString,
-                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysResponse.FromString,
+        self.ListProfiles = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.DiscoveryService/ListProfiles',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.FromString,
                 _registered_method=True)
-        self.GetRunway = channel.unary_unary(
-                '/coreweave.aviato.v1beta1.DiscoveryService/GetRunway',
-                request_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetRunwayRequest.SerializeToString,
-                response_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.RunwaySummary.FromString,
+        self.GetProfile = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.DiscoveryService/GetProfile',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.FromString,
                 _registered_method=True)
 
 
 class DiscoveryServiceServicer(object):
     """DiscoveryService provides read-only endpoints for discovering available
-    towers and runways visible to the authenticated user's organization.
+    runners and profiles visible to the authenticated user's organization.
     """
 
-    def ListAvailableTowers(self, request, context):
-        """ListAvailableTowers returns towers visible to the caller's organization,
+    def ListAvailableRunners(self, request, context):
+        """ListAvailableRunners returns runners visible to the caller's organization,
         optionally filtered by capabilities.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetAvailableTower(self, request, context):
-        """GetAvailableTower returns a single tower by ID, if visible to the caller.
+    def GetAvailableRunner(self, request, context):
+        """GetAvailableRunner returns a single runner by ID, if visible to the caller.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListRunways(self, request, context):
-        """ListRunways returns an aggregated view of runways across visible towers.
+    def ListProfiles(self, request, context):
+        """ListProfiles returns an aggregated view of profiles across visible runners.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetRunway(self, request, context):
-        """GetRunway returns a single runway by name.
+    def GetProfile(self, request, context):
+        """GetProfile returns a single profile by name.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -78,41 +78,41 @@ class DiscoveryServiceServicer(object):
 
 def add_DiscoveryServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'ListAvailableTowers': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListAvailableTowers,
-                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersRequest.FromString,
-                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersResponse.SerializeToString,
+            'ListAvailableRunners': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListAvailableRunners,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.SerializeToString,
             ),
-            'GetAvailableTower': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetAvailableTower,
-                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetAvailableTowerRequest.FromString,
-                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.AvailableTower.SerializeToString,
+            'GetAvailableRunner': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAvailableRunner,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.SerializeToString,
             ),
-            'ListRunways': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListRunways,
-                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysRequest.FromString,
-                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysResponse.SerializeToString,
+            'ListProfiles': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListProfiles,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.SerializeToString,
             ),
-            'GetRunway': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetRunway,
-                    request_deserializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetRunwayRequest.FromString,
-                    response_serializer=coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.RunwaySummary.SerializeToString,
+            'GetProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetProfile,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'coreweave.aviato.v1beta1.DiscoveryService', rpc_method_handlers)
+            'coreweave.sandbox.v1beta2.DiscoveryService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('coreweave.aviato.v1beta1.DiscoveryService', rpc_method_handlers)
+    server.add_registered_method_handlers('coreweave.sandbox.v1beta2.DiscoveryService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
 class DiscoveryService(object):
     """DiscoveryService provides read-only endpoints for discovering available
-    towers and runways visible to the authenticated user's organization.
+    runners and profiles visible to the authenticated user's organization.
     """
 
     @staticmethod
-    def ListAvailableTowers(request,
+    def ListAvailableRunners(request,
             target,
             options=(),
             channel_credentials=None,
@@ -125,9 +125,9 @@ class DiscoveryService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/coreweave.aviato.v1beta1.DiscoveryService/ListAvailableTowers',
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersRequest.SerializeToString,
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListAvailableTowersResponse.FromString,
+            '/coreweave.sandbox.v1beta2.DiscoveryService/ListAvailableRunners',
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -139,7 +139,7 @@ class DiscoveryService(object):
             _registered_method=True)
 
     @staticmethod
-    def GetAvailableTower(request,
+    def GetAvailableRunner(request,
             target,
             options=(),
             channel_credentials=None,
@@ -152,9 +152,9 @@ class DiscoveryService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/coreweave.aviato.v1beta1.DiscoveryService/GetAvailableTower',
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetAvailableTowerRequest.SerializeToString,
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.AvailableTower.FromString,
+            '/coreweave.sandbox.v1beta2.DiscoveryService/GetAvailableRunner',
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.FromString,
             options,
             channel_credentials,
             insecure,
@@ -166,7 +166,7 @@ class DiscoveryService(object):
             _registered_method=True)
 
     @staticmethod
-    def ListRunways(request,
+    def ListProfiles(request,
             target,
             options=(),
             channel_credentials=None,
@@ -179,9 +179,9 @@ class DiscoveryService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/coreweave.aviato.v1beta1.DiscoveryService/ListRunways',
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysRequest.SerializeToString,
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.ListRunwaysResponse.FromString,
+            '/coreweave.sandbox.v1beta2.DiscoveryService/ListProfiles',
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -193,7 +193,7 @@ class DiscoveryService(object):
             _registered_method=True)
 
     @staticmethod
-    def GetRunway(request,
+    def GetProfile(request,
             target,
             options=(),
             channel_credentials=None,
@@ -206,9 +206,9 @@ class DiscoveryService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/coreweave.aviato.v1beta1.DiscoveryService/GetRunway',
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.GetRunwayRequest.SerializeToString,
-            coreweave_dot_aviato_dot_v1beta1_dot_discovery__pb2.RunwaySummary.FromString,
+            '/coreweave.sandbox.v1beta2.DiscoveryService/GetProfile',
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.FromString,
             options,
             channel_credentials,
             insecure,
