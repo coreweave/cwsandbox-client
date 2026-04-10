@@ -5,69 +5,69 @@
 """Discover available infrastructure before running sandboxes.
 
 Demonstrates:
-- Listing runways and their networking capabilities
-- Filtering runways by egress mode
-- Listing towers with live resource availability
-- Filtering towers by minimum capacity
+- Listing profiles and their networking capabilities
+- Filtering profiles by egress mode
+- Listing runners with live resource availability
+- Filtering runners by minimum capacity
 - Using format_cpu() and format_bytes() for readable output
 """
 
 import cwsandbox
-from cwsandbox import Runway, Tower, format_bytes, format_cpu
+from cwsandbox import Profile, Runner, format_bytes, format_cpu
 
 
 def main() -> None:
-    # --- Available Runways ---
-    print("--- Available Runways ---")
-    runways: list[Runway] = cwsandbox.list_runways()
+    # --- Available Profiles ---
+    print("--- Available Profiles ---")
+    profiles: list[Profile] = cwsandbox.list_profiles()
 
-    if not runways:
-        print("  No runways available.")
-    for rw in runways:
-        ingress = ", ".join(m.name for m in rw.ingress_modes) or "none"
-        egress = ", ".join(m.name for m in rw.egress_modes) or "none"
-        print(f"  {rw.runway_name}  tower={rw.tower_id}")
-        print(f"    ingress: {ingress}")
+    if not profiles:
+        print("  No profiles available.")
+    for p in profiles:
+        exposure = ", ".join(m.name for m in p.service_exposure_modes) or "none"
+        egress = ", ".join(m.name for m in p.egress_modes) or "none"
+        print(f"  {p.profile_name}  runner={p.runner_id}")
+        print(f"    service exposure: {exposure}")
         print(f"    egress:  {egress}")
 
-    # --- Runways With Internet Egress ---
-    print("\n--- Runways With Internet Egress ---")
-    internet_runways = cwsandbox.list_runways(egress_mode="internet")
+    # --- Profiles With Internet Egress ---
+    print("\n--- Profiles With Internet Egress ---")
+    internet_profiles = cwsandbox.list_profiles(egress_mode="internet")
 
-    if not internet_runways:
-        print("  No runways with internet egress.")
-    for rw in internet_runways:
-        ingress = ", ".join(m.name for m in rw.ingress_modes) or "none"
-        print(f"  {rw.runway_name}  tower={rw.tower_id}  ingress: {ingress}")
+    if not internet_profiles:
+        print("  No profiles with internet egress.")
+    for p in internet_profiles:
+        exposure = ", ".join(m.name for m in p.service_exposure_modes) or "none"
+        print(f"  {p.profile_name}  runner={p.runner_id}  service exposure: {exposure}")
 
-    # --- Towers With Capacity ---
-    print("\n--- Towers With At Least 2 CPU, 4 GiB Available ---")
-    towers: list[Tower] = cwsandbox.list_towers(
+    # --- Runners With Capacity ---
+    print("\n--- Runners With At Least 2 CPU, 4 GiB Available ---")
+    runners: list[Runner] = cwsandbox.list_runners(
         include_resources=True,
         min_available_cpu_millicores=2000,
         min_available_memory_bytes=4 * 1024**3,
     )
 
-    if not towers:
-        print("  No towers match the capacity requirements.")
-    for t in towers:
-        print(f"  {t.tower_id}  healthy={t.healthy}")
-        print(f"    max: {format_cpu(t.max_cpu_millicores)}, {format_bytes(t.max_memory_bytes)}")
-        if t.resources:
-            avail_cpu = format_cpu(t.resources.available_cpu_millicores)
-            avail_mem = format_bytes(t.resources.available_memory_bytes)
+    if not runners:
+        print("  No runners match the capacity requirements.")
+    for r in runners:
+        print(f"  {r.runner_id}  healthy={r.healthy}")
+        print(f"    max: {format_cpu(r.max_cpu_millicores)}, {format_bytes(r.max_memory_bytes)}")
+        if r.resources:
+            avail_cpu = format_cpu(r.resources.available_cpu_millicores)
+            avail_mem = format_bytes(r.resources.available_memory_bytes)
             print(f"    available: {avail_cpu}, {avail_mem}")
-            print(f"    running sandboxes: {t.resources.running_sandboxes}")
-        print(f"    runways: {', '.join(t.runway_names)}")
+            print(f"    running sandboxes: {r.resources.running_sandboxes}")
+        print(f"    profiles: {', '.join(r.profile_names)}")
 
     # --- Use With Sandbox.run ---
     print("\n--- Use With Sandbox.run ---")
-    if runways:
-        name = runways[0].runway_name
-        print("  # Use a discovered runway with Sandbox.run:")
-        print(f'  # sandbox = Sandbox.run(runway_ids=["{name}"])')
+    if profiles:
+        name = profiles[0].profile_name
+        print("  # Use a discovered profile with Sandbox.run:")
+        print(f'  # sandbox = Sandbox.run(profile_ids=["{name}"])')
     else:
-        print("  # No runways discovered - check credentials and connectivity.")
+        print("  # No profiles discovered - check credentials and connectivity.")
 
 
 if __name__ == "__main__":
