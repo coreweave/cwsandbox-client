@@ -74,7 +74,7 @@ When adding configuration options that users pass to `Sandbox.run()`, `Session.s
 
 3. **Update documentation**:
    - `AGENTS.md` (root) - SandboxDefaults fields list
-   - `docs/guides/sandbox-configuration.md` - usage examples
+   - [docs.coreweave.com](https://docs.coreweave.com/products/coreweave-sandbox/client) - usage examples
 
 4. **Add tests** for:
    - Default value in `test_defaults.py`

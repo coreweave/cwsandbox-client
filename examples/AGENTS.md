@@ -37,7 +37,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 
 The `exec()` method returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate over `process.stdout` before calling `.result()` if you need real-time streaming output.
 
-For detailed guides, see `docs/guides/`. See [Sync vs Async](../docs/guides/sync-vs-async.md) for when to use each pattern.
+For detailed guides, see [docs.coreweave.com](https://docs.coreweave.com/products/coreweave-sandbox/client).
 
 ## Running Examples
 
