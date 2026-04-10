@@ -91,7 +91,7 @@ class SandboxFileError(SandboxError):
 
 
 class DiscoveryError(CWSandboxError):
-    """Base exception for discovery operations (towers, runways).
+    """Base exception for discovery operations (runners, profiles).
 
     Covers domain errors (not-found) and transport errors (timeout,
     unavailable). Authentication errors use
@@ -99,30 +99,30 @@ class DiscoveryError(CWSandboxError):
     """
 
 
-class TowerNotFoundError(DiscoveryError):
-    """Raised when a tower ID is not found.
+class RunnerNotFoundError(DiscoveryError):
+    """Raised when a runner ID is not found.
 
     Attributes:
-        tower_id: The ID of the tower that was not found.
+        runner_id: The ID of the runner that was not found.
     """
 
-    def __init__(self, message: str, *, tower_id: str) -> None:
+    def __init__(self, message: str, *, runner_id: str) -> None:
         super().__init__(message)
-        self.tower_id = tower_id
+        self.runner_id = runner_id
 
 
-class RunwayNotFoundError(DiscoveryError):
-    """Raised when a runway is not found.
+class ProfileNotFoundError(DiscoveryError):
+    """Raised when a profile is not found.
 
     Attributes:
-        runway_name: The name of the runway that was not found.
-        tower_id: The tower ID if specified in the request, or None.
+        profile_name: The name of the profile that was not found.
+        runner_id: The runner ID if specified in the request, or None.
     """
 
-    def __init__(self, message: str, *, runway_name: str, tower_id: str | None = None) -> None:
+    def __init__(self, message: str, *, profile_name: str, runner_id: str | None = None) -> None:
         super().__init__(message)
-        self.runway_name = runway_name
-        self.tower_id = tower_id
+        self.profile_name = profile_name
+        self.runner_id = runner_id
 
 
 class FunctionError(CWSandboxError):

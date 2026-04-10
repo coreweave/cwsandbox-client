@@ -23,7 +23,7 @@ DEFAULT_POLL_BACKOFF_FACTOR: float = 1.5
 # This controls how long to wait for API responses, not sandbox lifetime.
 DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 300.0
 
-# Timeout for lightweight discovery RPCs (list/get towers and runways).
+# Timeout for lightweight discovery RPCs (list/get runners and profiles).
 DEFAULT_DISCOVERY_TIMEOUT_SECONDS: float = 30.0
 
 # If not set, the backend controls the default lifetime of the sandboxes

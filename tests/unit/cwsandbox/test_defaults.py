@@ -38,7 +38,7 @@ class TestSandboxDefaults:
         # Tags should default to empty tuple (immutable)
         assert defaults.tags == ()
 
-        # Runway/tower IDs should default to None (no filtering)
+        # Profile/runner IDs should default to None (no filtering)
         assert defaults.profile_ids is None
         assert defaults.runner_ids is None
 
