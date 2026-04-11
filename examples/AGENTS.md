@@ -14,7 +14,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 
 | File | Pattern | Entry Point | Description |
 |------|---------|-------------|-------------|
-| `discover_infrastructure.py` | Sync | `def main()` | List runways and towers, filter by networking and capacity |
+| `discover_infrastructure.py` | Sync | `def main()` | List profiles and runners, filter by networking and capacity |
 | `quick_start.py` | Sync | `def main()` | Context manager with exec |
 | `basic_execution.py` | Sync | `def main()` | Context manager pattern with exec, file ops |
 | `streaming_exec.py` | Sync | `def main()` | Real-time stdout iteration |

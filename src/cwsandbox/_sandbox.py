@@ -1079,14 +1079,14 @@ class Sandbox:
 
     @property
     def runner_id(self) -> str | None:
-        """Tower where sandbox is running, or None if not started."""
+        """Runner where sandbox is running, or None if not started."""
         if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.runner_id
         return None
 
     @property
     def profile_id(self) -> str | None:
-        """Runway where sandbox is running, or None if not started."""
+        """Profile where sandbox is running, or None if not started."""
         if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.profile_id
         return None
@@ -1135,7 +1135,7 @@ class Sandbox:
 
     @property
     def runner_group_id(self) -> str | None:
-        """Tower group ID where the sandbox is running."""
+        """Runner group ID where the sandbox is running."""
         if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.runner_group_id
         return None
@@ -1145,12 +1145,12 @@ class Sandbox:
         """External address for accessing sandbox services.
 
         Returns an address like '166.19.9.70:8080' for network-accessible sandboxes
-        (SSH, web services). Availability depends on tower configuration.
+        (SSH, web services). Availability depends on runner configuration.
 
         Returns None if:
         - Sandbox hasn't been started yet
         - Sandbox was obtained via from_id() or list()
-        - Tower uses ClusterIP instead of LoadBalancer
+        - Runner uses ClusterIP instead of LoadBalancer
         """
         return self._service_address
 

@@ -2037,9 +2037,9 @@ class TestResourceOptionsWiring:
         info.sandbox_id = "sb-disc"
         info.sandbox_status = gateway_pb2.SANDBOX_STATUS_RUNNING
         info.started_at_time = timestamp_pb2.Timestamp()
-        info.tower_id = "tower-1"
-        info.runway_id = "runway-1"
-        info.tower_group_id = "tg-1"
+        info.runner_id = "runner-1"
+        info.profile_id = "profile-1"
+        info.runner_group_id = "rg-1"
         info.returncode = 0
 
         sandbox = Sandbox._from_sandbox_info(info, base_url="http://test", timeout_seconds=30.0)
@@ -2428,24 +2428,24 @@ class TestSandboxServiceAddressAndExposedPorts:
             assert sandbox.exposed_ports is None
 
 
-class TestSandboxRunwayAndTowerIds:
+class TestSandboxProfileAndRunnerIds:
     """Tests for profile_ids and runner_ids parameters."""
 
     def test_profile_ids_stored_on_sandbox(self) -> None:
         """Test profile_ids are stored on sandbox instance."""
-        sandbox = Sandbox(profile_ids=["runway-1", "runway-2"])
-        assert sandbox._profile_ids == ["runway-1", "runway-2"]
+        sandbox = Sandbox(profile_ids=["profile-1", "profile-2"])
+        assert sandbox._profile_ids == ["profile-1", "profile-2"]
 
     def test_runner_ids_stored_on_sandbox(self) -> None:
         """Test runner_ids are stored on sandbox instance."""
-        sandbox = Sandbox(runner_ids=["tower-1", "tower-2"])
-        assert sandbox._runner_ids == ["tower-1", "tower-2"]
+        sandbox = Sandbox(runner_ids=["runner-1", "runner-2"])
+        assert sandbox._runner_ids == ["runner-1", "runner-2"]
 
     def test_empty_profile_ids_overrides_defaults(self) -> None:
         """Test empty profile_ids list overrides defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(profile_ids=("default-runway",))
+        defaults = SandboxDefaults(profile_ids=("default-profile",))
         sandbox = Sandbox(profile_ids=[], defaults=defaults)
         assert sandbox._profile_ids == []
 
@@ -2453,7 +2453,7 @@ class TestSandboxRunwayAndTowerIds:
         """Test empty runner_ids list overrides defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(runner_ids=("default-tower",))
+        defaults = SandboxDefaults(runner_ids=("default-runner",))
         sandbox = Sandbox(runner_ids=[], defaults=defaults)
         assert sandbox._runner_ids == []
 
@@ -2461,29 +2461,29 @@ class TestSandboxRunwayAndTowerIds:
         """Test None profile_ids falls back to defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(profile_ids=("default-runway",))
+        defaults = SandboxDefaults(profile_ids=("default-profile",))
         sandbox = Sandbox(defaults=defaults)
-        assert sandbox._profile_ids == ["default-runway"]
+        assert sandbox._profile_ids == ["default-profile"]
 
     def test_none_runner_ids_uses_defaults(self) -> None:
         """Test None runner_ids falls back to defaults."""
         from cwsandbox._defaults import SandboxDefaults
 
-        defaults = SandboxDefaults(runner_ids=("default-tower",))
+        defaults = SandboxDefaults(runner_ids=("default-runner",))
         sandbox = Sandbox(defaults=defaults)
-        assert sandbox._runner_ids == ["default-tower"]
+        assert sandbox._runner_ids == ["default-runner"]
 
     def test_run_passes_profile_ids(self) -> None:
         """Test Sandbox.run passes profile_ids to sandbox."""
         with patch.object(Sandbox, "start"):
-            sandbox = Sandbox.run(profile_ids=["runway-1"])
-            assert sandbox._profile_ids == ["runway-1"]
+            sandbox = Sandbox.run(profile_ids=["profile-1"])
+            assert sandbox._profile_ids == ["profile-1"]
 
     def test_run_passes_runner_ids(self) -> None:
         """Test Sandbox.run passes runner_ids to sandbox."""
         with patch.object(Sandbox, "start"):
-            sandbox = Sandbox.run(runner_ids=["tower-1"])
-            assert sandbox._runner_ids == ["tower-1"]
+            sandbox = Sandbox.run(runner_ids=["runner-1"])
+            assert sandbox._runner_ids == ["runner-1"]
 
 
 class TestNetworkOptionsTypeGuard:
@@ -4286,11 +4286,16 @@ class TestStoppingOperationGuards:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
 
-        # The guard check should not block non-follow log streaming.
-        # _is_stopping is True but _is_done is False, so follow=False passes.
-        assert sandbox._is_stopping is True
-        assert not sandbox._is_done
+        async def fake_stream_logs(output_queue, **kwargs):
+            await output_queue.put(None)
+
+        with patch.object(sandbox, "_stream_logs_async", side_effect=fake_stream_logs):
+            reader = sandbox.stream_logs(follow=False)
+            lines = list(reader)
+            assert lines == []
 
 
 class TestStoppingStopFlow:
@@ -4340,6 +4345,8 @@ class TestStoppingStopFlow:
 
         with pytest.raises(SandboxError):
             sandbox.stop().result()
+
+        assert isinstance(sandbox._state, _Running)
 
     def test_stop_missing_ok_not_found_sets_terminal(self) -> None:
         """stop(missing_ok=True) + NOT_FOUND -> _Terminal(TERMINATED)."""
@@ -4451,6 +4458,40 @@ class TestStoppingProperties:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Running(sandbox_id="sb-1")
         assert sandbox._is_stopping is False
+
+    def test_get_status_not_cached_in_stopping(self) -> None:
+        """get_status() fetches from backend in _Stopping (not cached like _Terminal)."""
+        from cwsandbox._proto import gateway_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATING
+        mock_response.sandbox_id = "sb-1"
+        mock_response.runner_id = ""
+        mock_response.profile_id = ""
+        mock_response.runner_group_id = ""
+        mock_response.started_at_time = None
+        sandbox._stub.Get = AsyncMock(return_value=mock_response)
+
+        result = sandbox.get_status()
+        assert result == SandboxStatus.TERMINATING
+        sandbox._stub.Get.assert_called_once()
+
+    def test_get_status_cached_in_terminal(self) -> None:
+        """get_status() returns cached status for _Terminal without API call."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+        sandbox._stub = MagicMock()
+
+        result = sandbox.get_status()
+        assert result == SandboxStatus.COMPLETED
+        sandbox._stub.Get.assert_not_called()
 
 
 class TestStopOwnedTermination:
