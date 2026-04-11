@@ -83,14 +83,19 @@ logger = logging.getLogger(__name__)
 class SandboxStatus(StrEnum):
     """Sandbox lifecycle status values.
 
+    Lifecycle: CREATING -> RUNNING -> TERMINATING -> COMPLETED | FAILED
+
     Attributes:
         PENDING: Sandbox has been accepted but not yet scheduled.
         CREATING: Sandbox container is being created.
         RUNNING: Sandbox is running and ready for operations.
         PAUSED: Sandbox is paused (resources may be reclaimed).
+        TERMINATING: Sandbox is draining through its grace period before exit.
         COMPLETED: Sandbox exited normally (check ``returncode``).
         FAILED: Sandbox failed to start or encountered a fatal error.
-        TERMINATED: Sandbox was stopped externally (via ``stop()`` or timeout).
+        TERMINATED: Sandbox was stopped via ``stop()`` or timeout (deprecated
+            in favor of the TERMINATING -> COMPLETED/FAILED flow, but still
+            emitted by older backends).
         UNSPECIFIED: Status is unknown or not yet reported by the backend.
     """
 
@@ -98,6 +103,7 @@ class SandboxStatus(StrEnum):
     CREATING = "creating"
     PENDING = "pending"
     PAUSED = "paused"
+    TERMINATING = "terminating"
     COMPLETED = "completed"
     FAILED = "failed"
     TERMINATED = "terminated"
@@ -110,7 +116,7 @@ class SandboxStatus(StrEnum):
             proto_name = gateway_pb2.SandboxStatus.Name(proto_status)
             enum_name = proto_name.replace("SANDBOX_STATUS_", "")
             return cls[enum_name]
-        except ValueError:
+        except (ValueError, KeyError):
             logger.warning("Unknown sandbox status %s, treating as UNSPECIFIED", proto_status)
             return cls.UNSPECIFIED
 
@@ -223,6 +229,16 @@ class _Running:
 
 
 @dataclass(frozen=True)
+class _Stopping:
+    sandbox_id: str
+    status: SandboxStatus = SandboxStatus.TERMINATING
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class _Terminal:
     sandbox_id: str
     status: SandboxStatus
@@ -233,7 +249,7 @@ class _Terminal:
     started_at: datetime | None = None
 
 
-_LifecycleState = _NotStarted | _Starting | _Running | _Terminal
+_LifecycleState = _NotStarted | _Starting | _Running | _Stopping | _Terminal
 
 
 class _SandboxInfoLike(Protocol):
@@ -271,6 +287,15 @@ def _lifecycle_state_from_info(
     """
     if status in _RUNNING_STATUSES:
         return _Running(
+            sandbox_id=sandbox_id,
+            status=status,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
+            started_at=started_at,
+        )
+    if status == SandboxStatus.TERMINATING:
+        return _Stopping(
             sandbox_id=sandbox_id,
             status=status,
             runner_id=runner_id,
@@ -489,6 +514,11 @@ class Sandbox:
         self._complete_task: asyncio.Task[SandboxStatus] | None = None
         self._complete_lock = asyncio.Lock()
 
+        # Shared stop task so repeated stop() calls join the same operation
+        self._stop_task: asyncio.Task[None] | None = None
+        self._stop_lock = asyncio.Lock()
+        self._stop_owned: bool = False
+
         self._status_updated_at: datetime | None = None
         self._service_address: str | None = None
         self._exposed_ports: tuple[tuple[int, str], ...] | None = None
@@ -691,6 +721,9 @@ class Sandbox:
         sandbox._running_lock = asyncio.Lock()
         sandbox._complete_task = None
         sandbox._complete_lock = asyncio.Lock()
+        sandbox._stop_task = None
+        sandbox._stop_lock = asyncio.Lock()
+        sandbox._stop_owned = False
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -1047,14 +1080,14 @@ class Sandbox:
     @property
     def runner_id(self) -> str | None:
         """Tower where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Terminal)):
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.runner_id
         return None
 
     @property
     def profile_id(self) -> str | None:
         """Runway where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Terminal)):
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.profile_id
         return None
 
@@ -1073,7 +1106,9 @@ class Sandbox:
         match self._state:
             case _NotStarted():
                 return None
-            case _Starting(status=s) | _Running(status=s) | _Terminal(status=s):
+            case (
+                _Starting(status=s) | _Running(status=s) | _Stopping(status=s) | _Terminal(status=s)
+            ):
                 return s
 
     @property
@@ -1094,14 +1129,14 @@ class Sandbox:
         Populated after start() completes or when obtained via list()/from_id().
         None only for sandboxes that haven't been started yet.
         """
-        if isinstance(self._state, (_Running, _Terminal)):
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.started_at
         return None
 
     @property
     def runner_group_id(self) -> str | None:
         """Tower group ID where the sandbox is running."""
-        if isinstance(self._state, (_Running, _Terminal)):
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.runner_group_id
         return None
 
@@ -1186,18 +1221,33 @@ class Sandbox:
         return isinstance(self._state, _NotStarted) and self._state.cancelled
 
     @property
+    def _is_stopping(self) -> bool:
+        """True when sandbox is in the TERMINATING grace period."""
+        return isinstance(self._state, _Stopping)
+
+    @property
     def _is_done(self) -> bool:
         """True when sandbox has reached a terminal state or was cancelled before start."""
         return isinstance(self._state, _Terminal) or self._is_cancelled
 
-    @staticmethod
     def _raise_or_return_for_terminal(
-        state: _Terminal, *, raise_on_termination: bool = True
+        self, state: _Terminal, *, raise_on_termination: bool = True
     ) -> None:
-        """Raise the appropriate error for FAILED/TERMINATED, or return for COMPLETED."""
+        """Raise the appropriate error for FAILED/TERMINATED, or return for COMPLETED.
+
+        Raises SandboxTerminatedError when raise_on_termination is True and either:
+        - The backend reported legacy TERMINATED status (old backends), or
+        - This client sent a successful Stop RPC (_stop_owned).
+
+        Limitation: external kills (infrastructure, lifetime limits, other clients)
+        that result in COMPLETED are not detectable as terminations until the
+        backend provides termination_reason metadata.
+        """
         if state.status == SandboxStatus.FAILED:
             raise SandboxFailedError(f"Sandbox {state.sandbox_id} failed")
         if state.status == SandboxStatus.TERMINATED and raise_on_termination:
+            raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
+        if self._stop_owned and raise_on_termination:
             raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
 
     def _apply_sandbox_info(
@@ -1228,6 +1278,18 @@ class Sandbox:
         # Polling: UNSPECIFIED means the sandbox exited cleanly
         if source == "poll" and status == SandboxStatus.UNSPECIFIED:
             status = SandboxStatus.COMPLETED
+
+        # Guard: once in _Stopping, only allow forward transitions to _Terminal.
+        # Stale poll responses reporting RUNNING/_Starting are rejected.
+        if isinstance(self._state, _Stopping) and status not in _TERMINAL_STATUSES:
+            if status != SandboxStatus.TERMINATING:
+                logger.debug(
+                    "Rejecting stale %s while in _Stopping for sandbox %s",
+                    status,
+                    self._state.sandbox_id,
+                )
+            return self._state
+
         if not isinstance(self._state, _NotStarted):
             sandbox_id = self._state.sandbox_id
         else:
@@ -1243,7 +1305,7 @@ class Sandbox:
         else:
             returncode = None
 
-        return _lifecycle_state_from_info(
+        new_state = _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
             runner_id=getattr(info, "runner_id", None) or None,
@@ -1252,6 +1314,8 @@ class Sandbox:
             started_at=started_at,
             returncode=returncode,
         )
+
+        return new_state
 
     def _on_exec_complete(
         self,
@@ -1296,6 +1360,7 @@ class Sandbox:
         if isinstance(self._state, _Terminal):
             self._status_updated_at = datetime.now(UTC)
             return self._state.status
+        # _Stopping is mutable (will transition to _Terminal), so always fetch
         if isinstance(self._state, _NotStarted):
             if self._state.cancelled:
                 raise SandboxNotRunningError("Sandbox was cancelled before starting")
@@ -1461,7 +1526,7 @@ class Sandbox:
 
     def __del__(self) -> None:
         """Warn if sandbox was not properly stopped."""
-        if hasattr(self, "_state") and isinstance(self._state, (_Starting, _Running)):
+        if hasattr(self, "_state") and isinstance(self._state, (_Starting, _Running, _Stopping)):
             warnings.warn(
                 f"Sandbox {self._state.sandbox_id} was not stopped. "
                 "Use 'sandbox.stop().result()' or the context manager pattern.",
@@ -1572,6 +1637,7 @@ class Sandbox:
             if response.sandbox_status in (
                 gateway_pb2.SANDBOX_STATUS_RUNNING,
                 gateway_pb2.SANDBOX_STATUS_PAUSED,
+                gateway_pb2.SANDBOX_STATUS_TERMINATING,
                 gateway_pb2.SANDBOX_STATUS_COMPLETED,
                 gateway_pb2.SANDBOX_STATUS_FAILED,
                 gateway_pb2.SANDBOX_STATUS_TERMINATED,
@@ -1770,6 +1836,11 @@ class Sandbox:
                 if self._session is not None:
                     self._session._record_startup_time(startup_time)
             logger.debug("Sandbox %s is running", self._sandbox_id)
+        elif isinstance(self._state, _Stopping):
+            logger.info(
+                "Sandbox %s entered TERMINATING during startup, draining to terminal",
+                self._sandbox_id,
+            )
         elif isinstance(self._state, _Terminal):
             if self._state.status == SandboxStatus.FAILED:
                 raise SandboxFailedError(f"Sandbox {self._sandbox_id} failed to start")
@@ -1845,6 +1916,10 @@ class Sandbox:
                 f"Sandbox {self._sandbox_id} did not become ready within {effective_timeout}s"
             ) from None
         except asyncio.CancelledError:
+            if self._stop_owned:
+                raise SandboxNotRunningError(
+                    f"Sandbox {self._sandbox_id} has been stopped"
+                ) from None
             if (
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
@@ -1954,6 +2029,8 @@ class Sandbox:
         except TimeoutError:
             raise SandboxTimeoutError(f"Timed out waiting for sandbox {sandbox_id}") from None
         except asyncio.CancelledError:
+            if self._stop_owned:
+                raise SandboxNotRunningError(f"Sandbox {sandbox_id} has been stopped") from None
             if (
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
@@ -2029,14 +2106,19 @@ class Sandbox:
         Args:
             timeout: Maximum seconds to wait. None means use default timeout.
             raise_on_termination: If True (default), raises SandboxTerminatedError
-                if sandbox was terminated externally.
+                when this client called stop() or the backend reports legacy
+                TERMINATED status. External kills (infrastructure, lifetime limits,
+                other clients) that result in COMPLETED are not detectable until
+                the backend provides termination_reason metadata.
+                Set to False to suppress SandboxTerminatedError entirely.
 
         Returns:
             OperationRef[Sandbox]: Use .result() to block or await in async contexts.
 
         Raises:
             SandboxTimeoutError: If timeout expires
-            SandboxTerminatedError: If sandbox was terminated (and raise_on_termination=True)
+            SandboxTerminatedError: If sandbox was stopped by this client or
+                reported as TERMINATED by backend (and raise_on_termination=True)
             SandboxFailedError: If sandbox failed
 
         Examples:
@@ -2076,6 +2158,163 @@ class Sandbox:
         future = self._loop_manager.run_async(_await_running())
         return asyncio.wrap_future(future).__await__()
 
+    async def _await_terminal_after_stop(self) -> None:
+        """Ensure a complete-polling task is running and wait for terminal state.
+
+        Shared by both the Stop-RPC path and the already-stopping path so that
+        stop().result() always resolves only after the sandbox reaches a
+        terminal state (COMPLETED or FAILED).
+        """
+        async with self._complete_lock:
+            if isinstance(self._state, _Terminal):
+                return
+            if self._complete_task is None:
+                self._complete_task = asyncio.create_task(self._do_poll_complete())
+                self._complete_task.add_done_callback(self._on_complete_task_done)
+            task = self._complete_task
+
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
+
+    async def _do_stop(
+        self,
+        *,
+        snapshot_on_stop: bool = False,
+        graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
+        missing_ok: bool = False,
+    ) -> None:
+        """Body of the shared _stop_task: send Stop RPC, poll to terminal, cleanup.
+
+        Only the first caller's parameters (snapshot_on_stop, graceful_shutdown_seconds)
+        are used. Later stop() calls join the existing task.
+        """
+        sent_rpc = False
+
+        # Acquire _start_lock to serialize with startup
+        async with self._start_lock:
+            if self._is_done:
+                return
+            if self._is_stopping:
+                # Already draining (e.g. background poll saw TERMINATING).
+                # Skip the Stop RPC but fall through to await terminal.
+                logger.debug(
+                    "Sandbox %s already stopping, waiting for terminal",
+                    self._sandbox_id,
+                )
+            elif self._sandbox_id is None:
+                self._state = _NotStarted(cancelled=True)
+                return
+            else:
+                sandbox_id = self._sandbox_id
+                prev = self._state
+
+                await self._ensure_client()
+                assert self._stub is not None
+
+                max_timeout = int(graceful_shutdown_seconds) + int(
+                    DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                )
+                request = gateway_pb2.StopSandboxRequest(
+                    sandbox_id=sandbox_id,
+                    graceful_shutdown_seconds=int(graceful_shutdown_seconds),
+                    snapshot_on_stop=snapshot_on_stop,
+                    max_timeout_seconds=max_timeout,
+                )
+
+                # Send Stop RPC first, then update state on success
+                try:
+                    response = await self._stub.Stop(
+                        request,
+                        timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+                        metadata=self._auth_metadata,
+                    )
+                except grpc.RpcError as e:
+                    if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                        logger.debug(
+                            "Sandbox %s not found during stop (missing_ok=True)",
+                            sandbox_id,
+                        )
+                        self._state = _Terminal(
+                            sandbox_id=sandbox_id,
+                            status=SandboxStatus.TERMINATED,
+                            runner_id=(
+                                prev.runner_id
+                                if isinstance(prev, (_Running,))
+                                else None
+                            ),
+                            profile_id=(
+                                prev.profile_id
+                                if isinstance(prev, (_Running,))
+                                else None
+                            ),
+                            runner_group_id=(
+                                prev.runner_group_id
+                                if isinstance(prev, (_Running,))
+                                else None
+                            ),
+                            started_at=(
+                                prev.started_at
+                                if isinstance(prev, (_Running,))
+                                else None
+                            ),
+                        )
+                        if self._complete_task is not None and not self._complete_task.done():
+                            self._complete_task.cancel()
+                            self._complete_task = None
+                        return
+                    raise _translate_rpc_error(
+                        e, sandbox_id=sandbox_id, operation="Stop sandbox"
+                    ) from e
+
+                if not response.success:
+                    error_msg = response.error_message or "unknown error"
+                    raise SandboxError(f"Failed to stop sandbox: {error_msg}")
+
+                # RPC succeeded: transition to _Stopping
+                self._state = _Stopping(
+                    sandbox_id=sandbox_id,
+                    runner_id=(
+                        prev.runner_id if isinstance(prev, (_Running,)) else None
+                    ),
+                    profile_id=(
+                        prev.profile_id if isinstance(prev, (_Running,)) else None
+                    ),
+                    runner_group_id=(
+                        prev.runner_group_id
+                        if isinstance(prev, (_Running,))
+                        else None
+                    ),
+                    started_at=(
+                        prev.started_at if isinstance(prev, (_Running,)) else None
+                    ),
+                )
+                self._stop_owned = True
+                sent_rpc = True
+                logger.info("Sandbox %s stop accepted, draining", sandbox_id)
+
+        # Cancel the running poll only when we sent the Stop RPC.
+        # In the observe-only path (_is_stopping), the poll already
+        # completed naturally when the background poller saw TERMINATING.
+        if sent_rpc and self._running_task is not None and not self._running_task.done():
+            self._running_task.cancel()
+            self._running_task = None
+
+        await self._await_terminal_after_stop()
+
+    def _on_stop_task_done(self, task: asyncio.Task[None]) -> None:
+        """Clear _stop_task reference when task completes."""
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.debug(
+                "Stop task for sandbox %s failed: %s",
+                self._sandbox_id,
+                exc,
+            )
+        if self._stop_task is task:
+            self._stop_task = None
+
     async def _stop_async(
         self,
         *,
@@ -2083,78 +2322,37 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
     ) -> None:
-        """Internal async: Stop the sandbox."""
-        # Acquire _start_lock to wait for any in-flight start() to complete
-        async with self._start_lock:
+        """Internal async: Stop the sandbox using shared _stop_task pattern.
+
+        First caller creates the task; later callers join it.
+        """
+        async with self._stop_lock:
             if self._is_done:
                 logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
                 return
-            if self._sandbox_id is None:
+            if self._sandbox_id is None and not self._is_stopping:
                 logger.debug("stop() called on sandbox that was never started")
                 self._state = _NotStarted(cancelled=True)
                 return
-            sandbox_id = self._sandbox_id
-            assert sandbox_id is not None
-            prev = self._state
-            self._state = _Terminal(
-                sandbox_id=sandbox_id,
-                status=SandboxStatus.TERMINATED,
-                runner_id=prev.runner_id if isinstance(prev, (_Running, _Terminal)) else None,
-                profile_id=prev.profile_id if isinstance(prev, (_Running, _Terminal)) else None,
-                runner_group_id=(
-                    prev.runner_group_id if isinstance(prev, (_Running, _Terminal)) else None
-                ),
-                started_at=prev.started_at if isinstance(prev, (_Running, _Terminal)) else None,
-            )
-
-        # Cancel the shared polling tasks so waiters get CancelledError
-        if self._running_task is not None and not self._running_task.done():
-            self._running_task.cancel()
-            self._running_task = None
-        if self._complete_task is not None and not self._complete_task.done():
-            self._complete_task.cancel()
-            self._complete_task = None
-
-        await self._ensure_client()
-        assert self._stub is not None
-
-        logger.debug("Stopping sandbox %s", self._sandbox_id)
-
-        max_timeout = int(graceful_shutdown_seconds) + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
-        request = gateway_pb2.StopSandboxRequest(
-            sandbox_id=self._sandbox_id,
-            graceful_shutdown_seconds=int(graceful_shutdown_seconds),
-            snapshot_on_stop=snapshot_on_stop,
-            max_timeout_seconds=max_timeout,
-        )
-
-        try:
-            try:
-                response = await self._stub.Stop(
-                    request,
-                    timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
-                    metadata=self._auth_metadata,
-                )
-            except grpc.RpcError as e:
-                if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
-                    logger.debug(
-                        "Sandbox %s not found during stop (missing_ok=True)",
-                        self._sandbox_id,
+            if self._stop_task is None:
+                self._stop_task = asyncio.create_task(
+                    self._do_stop(
+                        snapshot_on_stop=snapshot_on_stop,
+                        graceful_shutdown_seconds=graceful_shutdown_seconds,
+                        missing_ok=missing_ok,
                     )
-                    return
-                raise _translate_rpc_error(
-                    e, sandbox_id=self._sandbox_id, operation="Stop sandbox"
-                ) from e
+                )
+                self._stop_task.add_done_callback(self._on_stop_task_done)
+            task = self._stop_task
 
-            if response.success:
-                logger.info("Sandbox %s stopped successfully", self._sandbox_id)
-            else:
-                error_msg = response.error_message or "unknown error"
-                raise SandboxError(f"Failed to stop sandbox: {error_msg}")
+        # Join the shared stop task
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
         finally:
-            # Deregister from session regardless of outcome - the sandbox
-            # is no longer usable either way
-            if self._session is not None:
+            # Deregister from session if we own the stop
+            if self._stop_owned and self._session is not None:
                 self._session._deregister_sandbox(self)
             # Close channels to release resources
             if self._streaming_channel is not None:
@@ -2174,6 +2372,14 @@ class Sandbox:
     ) -> OperationRef[None]:
         """Stop sandbox, return OperationRef immediately.
 
+        The sandbox transitions through TERMINATING (grace period draining)
+        before reaching a terminal state (COMPLETED or FAILED). The returned
+        OperationRef resolves when the backend confirms a terminal state, not
+        just when the stop RPC succeeds.
+
+        Multiple callers share the same underlying stop task: the first caller
+        creates it, subsequent callers join it.
+
         The sandbox is deregistered from its session regardless of whether
         the stop was successful, since the sandbox is no longer usable.
 
@@ -2184,16 +2390,20 @@ class Sandbox:
                 doesn't exist.
 
         Returns:
-            OperationRef[None]: Use .result() to block until complete.
+            OperationRef[None]: Use .result() to block until terminal.
             Raises SandboxError on failure, SandboxNotFoundError if not found
             (unless missing_ok=True).
 
         Examples:
             ```python
-            sb.stop().result()  # Block until stopped
+            sb.stop().result()  # Block until terminal (COMPLETED/FAILED)
 
             # Ignore if already deleted
             sb.stop(missing_ok=True).result()
+
+            # wait_until_complete() after stop() resolves when terminal
+            sb.stop()
+            sb.wait_until_complete().result()  # Polls through TERMINATING
             ```
         """
         future = self._loop_manager.run_async(
@@ -2225,13 +2435,13 @@ class Sandbox:
             await self._ensure_started_async()
             if self._sandbox_id is None:
                 raise SandboxNotRunningError("No sandbox is running")
-            if self._is_done and follow:
+            if (self._is_stopping or self._is_done) and follow:
                 raise SandboxNotRunningError(
-                    f"Sandbox {self._sandbox_id} has been stopped"
+                    f"Sandbox {self._sandbox_id} is terminating"
                     " (follow=True requires a running sandbox)"
                 )
 
-            if not self._is_done:
+            if not self._is_done and not self._is_stopping:
                 await self._wait_until_running_async()
 
             await self._ensure_client()
@@ -2401,7 +2611,7 @@ class Sandbox:
 
         try:
             await self._ensure_started_async()
-            if self._is_done:
+            if self._is_done or self._is_stopping:
                 raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
             if self._sandbox_id is None:
                 raise SandboxNotRunningError("No sandbox is running")
@@ -2642,7 +2852,7 @@ class Sandbox:
             raise ValueError("Command cannot be empty")
 
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
@@ -3081,7 +3291,7 @@ class Sandbox:
     ) -> bytes:
         """Internal async: Read a file from the sandbox filesystem."""
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
@@ -3148,7 +3358,7 @@ class Sandbox:
     ) -> None:
         """Internal async: Write a file to the sandbox filesystem."""
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")

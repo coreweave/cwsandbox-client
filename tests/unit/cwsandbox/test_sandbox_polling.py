@@ -233,12 +233,16 @@ class TestRunningDedup:
     async def test_stop_while_waiting(self) -> None:
         """Calling stop() while a waiter is blocked raises SandboxNotRunningError."""
         poll_started = asyncio.Event()
+        stop_called = asyncio.Event()
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            poll_started.set()
-            # Block long enough for stop() to fire
-            await asyncio.sleep(10)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            if not stop_called.is_set():
+                poll_started.set()
+                # Block long enough for stop() to fire
+                await asyncio.sleep(10)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            # After stop, return terminal immediately
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -250,7 +254,8 @@ class TestRunningDedup:
         waiter = asyncio.create_task(sandbox._wait_until_running_async())
         await poll_started.wait()
 
-        # Stop the sandbox (cancels the running task)
+        # Stop the sandbox (cancels the running task, polls to terminal)
+        stop_called.set()
         await sandbox._stop_async()
 
         with pytest.raises(SandboxNotRunningError):
@@ -437,11 +442,18 @@ class TestCompleteDedup:
     async def test_stop_while_waiting(self) -> None:
         """Calling stop() during wait raises SandboxNotRunningError."""
         poll_started = asyncio.Event()
+        stop_called = asyncio.Event()
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            poll_started.set()
-            # Block long enough for stop() to fire
-            await asyncio.sleep(10)
+            if not stop_called.is_set():
+                poll_started.set()
+                # Wait for stop to be called, not a fixed sleep
+                try:
+                    await asyncio.wait_for(stop_called.wait(), timeout=5.0)
+                except TimeoutError:
+                    pass
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            # After stop, return terminal immediately
             return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
@@ -454,10 +466,13 @@ class TestCompleteDedup:
         waiter = asyncio.create_task(sandbox._wait_until_complete_async())
         await poll_started.wait()
 
-        # Stop the sandbox (cancels the complete task)
+        # Stop the sandbox - sets _Stopping and polls to terminal
+        stop_called.set()
         await sandbox._stop_async()
 
-        with pytest.raises(SandboxNotRunningError):
+        # Waiter sees either CancelledError (-> SandboxNotRunningError via
+        # _stop_owned) or a terminal state (-> SandboxTerminatedError)
+        with pytest.raises((SandboxNotRunningError, SandboxTerminatedError)):
             await waiter
 
     @pytest.mark.asyncio

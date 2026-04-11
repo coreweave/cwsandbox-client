@@ -199,6 +199,8 @@ class TestSessionCleanup:
         """Test sandbox is deregistered from session when stopped."""
         from unittest.mock import AsyncMock, MagicMock
 
+        from cwsandbox._proto import gateway_pb2
+
         session = Session()
         sandbox = session.sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-sandbox-id"
@@ -211,6 +213,17 @@ class TestSessionCleanup:
         mock_response.exit_code = 0
         sandbox._stub.Stop = AsyncMock(return_value=mock_response)
         sandbox._channel.close = AsyncMock()
+
+        # Mock Get to return terminal so _do_poll_complete resolves
+        mock_get_response = MagicMock()
+        mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
+        mock_get_response.sandbox_id = "test-sandbox-id"
+        mock_get_response.runner_id = ""
+        mock_get_response.profile_id = ""
+        mock_get_response.runner_group_id = ""
+        mock_get_response.started_at_time = None
+        mock_get_response.returncode = 0
+        sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
         assert id(sandbox) in session._sandboxes
 

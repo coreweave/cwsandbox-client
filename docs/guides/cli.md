@@ -35,7 +35,7 @@ cwsandbox --help
 cwsandbox ls                                      # All sandboxes
 cwsandbox ls --status running                     # Filter by status
 cwsandbox ls --tag my-project                     # Filter by tag
-cwsandbox ls --profile-id default --runner-id t1    # Filter by infrastructure
+cwsandbox ls --runway-id default --tower-id t1    # Filter by infrastructure
 ```
 
 ### Run a command
@@ -81,10 +81,10 @@ cwsandbox ls -o json | jq -r '.[].sandbox_id'
 cwsandbox ls -o json | jq -r '.[].sandbox_id' | xargs -I{} cwsandbox exec {} echo hello
 
 # Filter by field
-cwsandbox ls -o json | jq '.[] | select(.runner_id == "my-runner")'
+cwsandbox ls -o json | jq '.[] | select(.tower_id == "my-tower")'
 ```
 
-Each object contains: `sandbox_id`, `status`, `runner_id`, `profile_id`, `runner_group_id`, `started_at` (ISO 8601 or null).
+Each object contains: `sandbox_id`, `status`, `tower_id`, `runway_id`, `tower_group_id`, `started_at` (ISO 8601 or null).
 
 ## See also
 
