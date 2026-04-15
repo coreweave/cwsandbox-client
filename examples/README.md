@@ -28,7 +28,7 @@ The cwsandbox SDK uses a sync/async hybrid API. **Most users should use sync pat
 
 **Async patterns** (alternative): `async_patterns.py` demonstrates using `await` with the hybrid API
 
-See [Sync vs Async Guide](../docs/guides/sync-vs-async.md) for when to use each pattern.
+See the [documentation site](https://docs.coreweave.com/products/coreweave-sandbox/client) for detailed guides.
 
 ---
 
@@ -284,7 +284,7 @@ Demonstrates:
 - Pre-built container images from external registries (Epoch AI)
 - Per-instance cleanup patterns for batch workloads
 
-See [SWE-bench Guide](../docs/guides/swebench.md) for full documentation.
+See the [SWE-bench guide](https://docs.coreweave.com/products/coreweave-sandbox/client/guides/swebench) for full documentation.
 
 ---
 

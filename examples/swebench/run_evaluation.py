@@ -23,7 +23,7 @@ Usage:
     uv run python run_evaluation.py --predictions-path predictions.json \\
         --run-id eval-run-1 --max-workers 10
 
-See docs/guides/swebench.md for full documentation.
+See the SWE-bench guide at docs.coreweave.com for full documentation.
 """
 
 from __future__ import annotations
