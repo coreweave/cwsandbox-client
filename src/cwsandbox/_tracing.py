@@ -56,7 +56,11 @@ def configure_tracing(
             resource = Resource.create({"service.name": service_name})
             exporter = OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces", headers=headers)
             provider = TracerProvider(resource=resource)
-            provider.add_span_processor(BatchSpanProcessor(exporter))
+            provider.add_span_processor(BatchSpanProcessor(
+                exporter,
+                max_queue_size=65536,
+                max_export_batch_size=4096,
+            ))
             trace.set_tracer_provider(provider)
 
             _tracer = trace.get_tracer("cwsandbox")
