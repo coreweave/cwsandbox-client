@@ -19,27 +19,27 @@ import pytest
 
 from cwsandbox._discovery import (
     EgressMode,
-    IngressMode,
-    Runway,
-    Tower,
-    TowerResources,
+    Profile,
+    Runner,
+    RunnerResources,
+    ServiceExposureMode,
     _paginate_async,
-    _runway_from_proto,
-    _tower_from_proto,
+    _profile_from_proto,
+    _runner_from_proto,
     format_bytes,
     format_cpu,
-    get_runway,
-    get_tower,
-    list_runways,
-    list_towers,
+    get_profile,
+    get_runner,
+    list_profiles,
+    list_runners,
 )
 from cwsandbox._proto import discovery_pb2
 from cwsandbox.exceptions import (
     CWSandboxAuthenticationError,
     CWSandboxError,
     DiscoveryError,
-    RunwayNotFoundError,
-    TowerNotFoundError,
+    ProfileNotFoundError,
+    RunnerNotFoundError,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,11 +47,11 @@ from cwsandbox.exceptions import (
 # ---------------------------------------------------------------------------
 
 
-class TestTowerResources:
-    """Tests for TowerResources dataclass."""
+class TestRunnerResources:
+    """Tests for RunnerResources dataclass."""
 
     def test_creation(self) -> None:
-        res = TowerResources(
+        res = RunnerResources(
             available_cpu_millicores=2000,
             available_memory_bytes=8589934592,
             available_gpu_count=1,
@@ -63,7 +63,7 @@ class TestTowerResources:
         assert res.running_sandboxes == 5
 
     def test_frozen(self) -> None:
-        res = TowerResources(
+        res = RunnerResources(
             available_cpu_millicores=2000,
             available_memory_bytes=0,
             available_gpu_count=0,
@@ -73,15 +73,15 @@ class TestTowerResources:
             res.available_cpu_millicores = 9999  # type: ignore[misc]
 
 
-class TestIngressMode:
-    """Tests for IngressMode dataclass."""
+class TestServiceExposureMode:
+    """Tests for ServiceExposureMode dataclass."""
 
     def test_creation(self) -> None:
-        mode = IngressMode(name="public")
+        mode = ServiceExposureMode(name="public")
         assert mode.name == "public"
 
     def test_frozen(self) -> None:
-        mode = IngressMode(name="public")
+        mode = ServiceExposureMode(name="public")
         with pytest.raises(dataclasses.FrozenInstanceError):
             mode.name = "private"  # type: ignore[misc]
 
@@ -99,16 +99,16 @@ class TestEgressMode:
             mode.name = "blocked"  # type: ignore[misc]
 
 
-class TestTower:
-    """Tests for Tower dataclass."""
+class TestRunner:
+    """Tests for Runner dataclass."""
 
-    def _make_tower(self, **overrides: object) -> Tower:
+    def _make_runner(self, **overrides: object) -> Runner:
         defaults: dict[str, object] = {
-            "tower_id": "tower-1",
-            "tower_group_id": "group-1",
+            "runner_id": "runner-1",
+            "runner_group_id": "group-1",
             "tags": ("tag1", "tag2"),
             "healthy": True,
-            "runway_names": ("default",),
+            "profile_names": ("default",),
             "connected_at": datetime(2025, 1, 1, tzinfo=UTC),
             "max_cpu_millicores": 4000,
             "max_memory_bytes": 17179869184,
@@ -120,50 +120,50 @@ class TestTower:
             "resources": None,
         }
         defaults.update(overrides)
-        return Tower(**defaults)  # type: ignore[arg-type]
+        return Runner(**defaults)  # type: ignore[arg-type]
 
     def test_creation_all_fields(self) -> None:
-        tower = self._make_tower()
-        assert tower.tower_id == "tower-1"
-        assert tower.tower_group_id == "group-1"
-        assert tower.tags == ("tag1", "tag2")
-        assert tower.healthy is True
-        assert tower.runway_names == ("default",)
-        assert tower.connected_at == datetime(2025, 1, 1, tzinfo=UTC)
-        assert tower.max_cpu_millicores == 4000
-        assert tower.max_memory_bytes == 17179869184
-        assert tower.max_gpu_count == 2
-        assert tower.supported_gpu_types == ("A100",)
-        assert tower.supported_architectures == ("amd64",)
-        assert tower.supports_privileged is True
-        assert tower.available_storage_classes == ("ssd",)
-        assert tower.resources is None
+        runner = self._make_runner()
+        assert runner.runner_id == "runner-1"
+        assert runner.runner_group_id == "group-1"
+        assert runner.tags == ("tag1", "tag2")
+        assert runner.healthy is True
+        assert runner.profile_names == ("default",)
+        assert runner.connected_at == datetime(2025, 1, 1, tzinfo=UTC)
+        assert runner.max_cpu_millicores == 4000
+        assert runner.max_memory_bytes == 17179869184
+        assert runner.max_gpu_count == 2
+        assert runner.supported_gpu_types == ("A100",)
+        assert runner.supported_architectures == ("amd64",)
+        assert runner.supports_privileged is True
+        assert runner.available_storage_classes == ("ssd",)
+        assert runner.resources is None
 
     def test_frozen(self) -> None:
-        tower = self._make_tower()
+        runner = self._make_runner()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            tower.tower_id = "other"  # type: ignore[misc]
+            runner.runner_id = "other"  # type: ignore[misc]
 
     def test_resources_populated(self) -> None:
-        res = TowerResources(
+        res = RunnerResources(
             available_cpu_millicores=2000,
             available_memory_bytes=8589934592,
             available_gpu_count=1,
             running_sandboxes=3,
         )
-        tower = self._make_tower(resources=res)
-        assert tower.resources is res
-        assert tower.resources.running_sandboxes == 3
+        runner = self._make_runner(resources=res)
+        assert runner.resources is res
+        assert runner.resources.running_sandboxes == 3
 
     def test_repr_human_readable(self) -> None:
-        tower = self._make_tower(
+        runner = self._make_runner(
             max_cpu_millicores=4000,
             max_memory_bytes=17179869184,
             max_gpu_count=2,
-            runway_names=("default", "gpu"),
+            profile_names=("default", "gpu"),
         )
-        r = repr(tower)
-        assert "tower_id='tower-1'" in r
+        r = repr(runner)
+        assert "runner_id='runner-1'" in r
         assert "healthy=True" in r
         assert "cpu=4.0 vCPU" in r
         assert "memory=16.0 GiB" in r
@@ -171,12 +171,12 @@ class TestTower:
         assert "['default', 'gpu']" in r
 
     def test_post_init_normalizes_lists_to_tuples(self) -> None:
-        tower = Tower(
-            tower_id="t",
-            tower_group_id="g",
+        runner = Runner(
+            runner_id="t",
+            runner_group_id="g",
             tags=["a", "b"],  # type: ignore[arg-type]
             healthy=True,
-            runway_names=["r1"],  # type: ignore[arg-type]
+            profile_names=["r1"],  # type: ignore[arg-type]
             connected_at=datetime(2025, 1, 1, tzinfo=UTC),
             max_cpu_millicores=0,
             max_memory_bytes=0,
@@ -186,48 +186,48 @@ class TestTower:
             supports_privileged=False,
             available_storage_classes=["nfs"],  # type: ignore[arg-type]
         )
-        assert isinstance(tower.tags, tuple)
-        assert isinstance(tower.runway_names, tuple)
-        assert isinstance(tower.supported_gpu_types, tuple)
-        assert isinstance(tower.supported_architectures, tuple)
-        assert isinstance(tower.available_storage_classes, tuple)
+        assert isinstance(runner.tags, tuple)
+        assert isinstance(runner.profile_names, tuple)
+        assert isinstance(runner.supported_gpu_types, tuple)
+        assert isinstance(runner.supported_architectures, tuple)
+        assert isinstance(runner.available_storage_classes, tuple)
 
     def test_post_init_preserves_tuples(self) -> None:
         tags = ("x",)
-        tower = self._make_tower(tags=tags)
-        assert tower.tags is tags
+        runner = self._make_runner(tags=tags)
+        assert runner.tags is tags
 
 
-class TestRunway:
-    """Tests for Runway dataclass."""
+class TestProfile:
+    """Tests for Profile dataclass."""
 
     def test_creation(self) -> None:
-        runway = Runway(
-            runway_name="default",
-            tower_id="tower-1",
+        profile = Profile(
+            profile_name="default",
+            runner_id="runner-1",
             supported_gpu_types=("A100",),
             supported_architectures=("amd64",),
-            ingress_modes=(IngressMode(name="public"),),
+            service_exposure_modes=(ServiceExposureMode(name="public"),),
             egress_modes=(EgressMode(name="internet"),),
         )
-        assert runway.runway_name == "default"
-        assert runway.tower_id == "tower-1"
-        assert runway.ingress_modes == (IngressMode(name="public"),)
-        assert runway.egress_modes == (EgressMode(name="internet"),)
+        assert profile.profile_name == "default"
+        assert profile.runner_id == "runner-1"
+        assert profile.service_exposure_modes == (ServiceExposureMode(name="public"),)
+        assert profile.egress_modes == (EgressMode(name="internet"),)
 
     def test_post_init_normalizes_lists(self) -> None:
-        runway = Runway(
-            runway_name="r",
-            tower_id="t",
+        profile = Profile(
+            profile_name="r",
+            runner_id="t",
             supported_gpu_types=["A100"],  # type: ignore[arg-type]
             supported_architectures=["amd64"],  # type: ignore[arg-type]
-            ingress_modes=[IngressMode(name="public")],  # type: ignore[arg-type]
+            service_exposure_modes=[ServiceExposureMode(name="public")],  # type: ignore[arg-type]
             egress_modes=[EgressMode(name="internet")],  # type: ignore[arg-type]
         )
-        assert isinstance(runway.supported_gpu_types, tuple)
-        assert isinstance(runway.supported_architectures, tuple)
-        assert isinstance(runway.ingress_modes, tuple)
-        assert isinstance(runway.egress_modes, tuple)
+        assert isinstance(profile.supported_gpu_types, tuple)
+        assert isinstance(profile.supported_architectures, tuple)
+        assert isinstance(profile.service_exposure_modes, tuple)
+        assert isinstance(profile.egress_modes, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -280,41 +280,41 @@ class TestFormatCpu:
 class TestDiscoveryExceptions:
     """Tests for discovery-specific exceptions."""
 
-    def test_tower_not_found_error(self) -> None:
-        exc = TowerNotFoundError("Tower not found: 'abc'", tower_id="abc")
-        assert exc.tower_id == "abc"
-        assert "Tower not found" in str(exc)
+    def test_runner_not_found_error(self) -> None:
+        exc = RunnerNotFoundError("Runner not found: 'abc'", runner_id="abc")
+        assert exc.runner_id == "abc"
+        assert "Runner not found" in str(exc)
         assert isinstance(exc, CWSandboxError)
 
-    def test_runway_not_found_error_with_tower_id(self) -> None:
-        exc = RunwayNotFoundError(
-            "Runway not found: 'default'",
-            runway_name="default",
-            tower_id="tower-1",
+    def test_profile_not_found_error_with_runner_id(self) -> None:
+        exc = ProfileNotFoundError(
+            "Profile not found: 'default'",
+            profile_name="default",
+            runner_id="runner-1",
         )
-        assert exc.runway_name == "default"
-        assert exc.tower_id == "tower-1"
+        assert exc.profile_name == "default"
+        assert exc.runner_id == "runner-1"
         assert isinstance(exc, CWSandboxError)
 
-    def test_runway_not_found_error_without_tower_id(self) -> None:
-        exc = RunwayNotFoundError(
-            "Runway not found: 'default'",
-            runway_name="default",
+    def test_profile_not_found_error_without_runner_id(self) -> None:
+        exc = ProfileNotFoundError(
+            "Profile not found: 'default'",
+            profile_name="default",
         )
-        assert exc.runway_name == "default"
-        assert exc.tower_id is None
+        assert exc.profile_name == "default"
+        assert exc.runner_id is None
 
 
 class TestDiscoveryErrorHierarchy:
     """Tests for discovery exception inheritance."""
 
-    def test_tower_not_found_is_discovery_error(self) -> None:
-        exc = TowerNotFoundError("not found", tower_id="abc")
+    def test_runner_not_found_is_discovery_error(self) -> None:
+        exc = RunnerNotFoundError("not found", runner_id="abc")
         assert isinstance(exc, DiscoveryError)
         assert isinstance(exc, CWSandboxError)
 
-    def test_runway_not_found_is_discovery_error(self) -> None:
-        exc = RunwayNotFoundError("not found", runway_name="default")
+    def test_profile_not_found_is_discovery_error(self) -> None:
+        exc = ProfileNotFoundError("not found", profile_name="default")
         assert isinstance(exc, DiscoveryError)
         assert isinstance(exc, CWSandboxError)
 
@@ -324,26 +324,26 @@ class TestDiscoveryErrorHierarchy:
 # ---------------------------------------------------------------------------
 
 
-class TestTowerFromProto:
-    """Tests for _tower_from_proto conversion."""
+class TestRunnerFromProto:
+    """Tests for _runner_from_proto conversion."""
 
     def _make_proto(
         self,
         *,
         with_capabilities: bool = True,
         with_resources: bool = False,
-    ) -> discovery_pb2.AvailableTower:
-        proto = discovery_pb2.AvailableTower(
-            tower_id="tower-1",
-            tower_group_id="group-1",
+    ) -> discovery_pb2.AvailableRunner:
+        proto = discovery_pb2.AvailableRunner(
+            runner_id="runner-1",
+            runner_group_id="group-1",
             tags=["tag1"],
             healthy=True,
-            runway_names=["default"],
+            profile_names=["default"],
         )
         proto.connected_at.FromDatetime(datetime(2025, 6, 15, 12, 0, 0))
         if with_capabilities:
             proto.capabilities.CopyFrom(
-                discovery_pb2.TowerCapabilitySummary(
+                discovery_pb2.RunnerCapabilitySummary(
                     max_cpu_millicores=4000,
                     max_memory_bytes=17179869184,
                     max_gpu_count=2,
@@ -355,7 +355,7 @@ class TestTowerFromProto:
             )
         if with_resources:
             proto.resources.CopyFrom(
-                discovery_pb2.TowerResourceSummary(
+                discovery_pb2.RunnerResourceSummary(
                     available_cpu_millicores=2000,
                     available_memory_bytes=8589934592,
                     available_gpu_count=1,
@@ -366,53 +366,53 @@ class TestTowerFromProto:
 
     def test_basic_conversion(self) -> None:
         proto = self._make_proto()
-        tower = _tower_from_proto(proto)
+        runner = _runner_from_proto(proto)
 
-        assert tower.tower_id == "tower-1"
-        assert tower.tower_group_id == "group-1"
-        assert tower.tags == ("tag1",)
-        assert tower.healthy is True
-        assert tower.runway_names == ("default",)
-        assert tower.connected_at.tzinfo is UTC
-        assert tower.max_cpu_millicores == 4000
-        assert tower.max_memory_bytes == 17179869184
-        assert tower.max_gpu_count == 2
-        assert tower.supported_gpu_types == ("A100",)
-        assert tower.supported_architectures == ("amd64",)
-        assert tower.supports_privileged is True
-        assert tower.available_storage_classes == ("ssd",)
-        assert tower.resources is None
+        assert runner.runner_id == "runner-1"
+        assert runner.runner_group_id == "group-1"
+        assert runner.tags == ("tag1",)
+        assert runner.healthy is True
+        assert runner.profile_names == ("default",)
+        assert runner.connected_at.tzinfo is UTC
+        assert runner.max_cpu_millicores == 4000
+        assert runner.max_memory_bytes == 17179869184
+        assert runner.max_gpu_count == 2
+        assert runner.supported_gpu_types == ("A100",)
+        assert runner.supported_architectures == ("amd64",)
+        assert runner.supports_privileged is True
+        assert runner.available_storage_classes == ("ssd",)
+        assert runner.resources is None
 
     def test_without_capabilities(self) -> None:
         proto = self._make_proto(with_capabilities=False)
-        tower = _tower_from_proto(proto)
+        runner = _runner_from_proto(proto)
 
-        assert tower.max_cpu_millicores == 0
-        assert tower.max_memory_bytes == 0
-        assert tower.max_gpu_count == 0
-        assert tower.supported_gpu_types == ()
-        assert tower.supported_architectures == ()
-        assert tower.supports_privileged is False
-        assert tower.available_storage_classes == ()
+        assert runner.max_cpu_millicores == 0
+        assert runner.max_memory_bytes == 0
+        assert runner.max_gpu_count == 0
+        assert runner.supported_gpu_types == ()
+        assert runner.supported_architectures == ()
+        assert runner.supports_privileged is False
+        assert runner.available_storage_classes == ()
 
     def test_with_resources(self) -> None:
         proto = self._make_proto(with_resources=True)
-        tower = _tower_from_proto(proto)
+        runner = _runner_from_proto(proto)
 
-        assert tower.resources is not None
-        assert tower.resources.available_cpu_millicores == 2000
-        assert tower.resources.available_memory_bytes == 8589934592
-        assert tower.resources.available_gpu_count == 1
-        assert tower.resources.running_sandboxes == 5
+        assert runner.resources is not None
+        assert runner.resources.available_cpu_millicores == 2000
+        assert runner.resources.available_memory_bytes == 8589934592
+        assert runner.resources.available_gpu_count == 1
+        assert runner.resources.running_sandboxes == 5
 
 
-class TestRunwayFromProto:
-    """Tests for _runway_from_proto conversion."""
+class TestProfileFromProto:
+    """Tests for _profile_from_proto conversion."""
 
     def test_basic_conversion(self) -> None:
-        proto = discovery_pb2.RunwaySummary(
-            runway_name="default",
-            tower_id="tower-1",
+        proto = discovery_pb2.ProfileSummary(
+            profile_name="default",
+            runner_id="runner-1",
             supported_gpu_types=["A100", "H100"],
             supported_architectures=["amd64"],
             service_exposure_modes=[
@@ -422,23 +422,23 @@ class TestRunwayFromProto:
                 discovery_pb2.EgressMode(name="internet"),
             ],
         )
-        runway = _runway_from_proto(proto)
+        profile = _profile_from_proto(proto)
 
-        assert runway.runway_name == "default"
-        assert runway.tower_id == "tower-1"
-        assert runway.supported_gpu_types == ("A100", "H100")
-        assert runway.supported_architectures == ("amd64",)
-        assert runway.ingress_modes == (IngressMode(name="public"),)
-        assert runway.egress_modes == (EgressMode(name="internet"),)
+        assert profile.profile_name == "default"
+        assert profile.runner_id == "runner-1"
+        assert profile.supported_gpu_types == ("A100", "H100")
+        assert profile.supported_architectures == ("amd64",)
+        assert profile.service_exposure_modes == (ServiceExposureMode(name="public"),)
+        assert profile.egress_modes == (EgressMode(name="internet"),)
 
     def test_empty_modes(self) -> None:
-        proto = discovery_pb2.RunwaySummary(
-            runway_name="bare",
-            tower_id="tower-2",
+        proto = discovery_pb2.ProfileSummary(
+            profile_name="bare",
+            runner_id="runner-2",
         )
-        runway = _runway_from_proto(proto)
-        assert runway.ingress_modes == ()
-        assert runway.egress_modes == ()
+        profile = _profile_from_proto(proto)
+        assert profile.service_exposure_modes == ()
+        assert profile.egress_modes == ()
 
 
 # ---------------------------------------------------------------------------
@@ -563,21 +563,21 @@ class TestPaginateAsync:
 class TestInputValidation:
     """Tests for input validation on public functions."""
 
-    def test_get_tower_empty_string(self) -> None:
-        with pytest.raises(ValueError, match="tower_id must not be empty"):
-            get_tower("")
+    def test_get_runner_empty_string(self) -> None:
+        with pytest.raises(ValueError, match="runner_id must not be empty"):
+            get_runner("")
 
-    def test_get_tower_whitespace_only(self) -> None:
-        with pytest.raises(ValueError, match="tower_id must not be empty"):
-            get_tower("   ")
+    def test_get_runner_whitespace_only(self) -> None:
+        with pytest.raises(ValueError, match="runner_id must not be empty"):
+            get_runner("   ")
 
-    def test_get_runway_empty_string(self) -> None:
-        with pytest.raises(ValueError, match="runway_name must not be empty"):
-            get_runway("")
+    def test_get_profile_empty_string(self) -> None:
+        with pytest.raises(ValueError, match="profile_name must not be empty"):
+            get_profile("")
 
-    def test_get_runway_whitespace_only(self) -> None:
-        with pytest.raises(ValueError, match="runway_name must not be empty"):
-            get_runway("  ")
+    def test_get_profile_whitespace_only(self) -> None:
+        with pytest.raises(ValueError, match="profile_name must not be empty"):
+            get_profile("  ")
 
 
 # ---------------------------------------------------------------------------
@@ -623,18 +623,18 @@ def _setup_grpc_mocks(
     return channel
 
 
-def _make_tower_proto() -> discovery_pb2.AvailableTower:
-    """Build a minimal AvailableTower proto for stub responses."""
-    proto = discovery_pb2.AvailableTower(
-        tower_id="tower-abc",
-        tower_group_id="group-1",
+def _make_runner_proto() -> discovery_pb2.AvailableRunner:
+    """Build a minimal AvailableRunner proto for stub responses."""
+    proto = discovery_pb2.AvailableRunner(
+        runner_id="runner-abc",
+        runner_group_id="group-1",
         tags=["test"],
         healthy=True,
-        runway_names=["default"],
+        profile_names=["default"],
     )
     proto.connected_at.FromDatetime(datetime(2025, 1, 1))
     proto.capabilities.CopyFrom(
-        discovery_pb2.TowerCapabilitySummary(
+        discovery_pb2.RunnerCapabilitySummary(
             max_cpu_millicores=8000,
             max_memory_bytes=34359738368,
             max_gpu_count=4,
@@ -647,11 +647,11 @@ def _make_tower_proto() -> discovery_pb2.AvailableTower:
     return proto
 
 
-def _make_runway_proto() -> discovery_pb2.RunwaySummary:
-    """Build a minimal RunwaySummary proto for stub responses."""
-    return discovery_pb2.RunwaySummary(
-        runway_name="default",
-        tower_id="tower-abc",
+def _make_profile_proto() -> discovery_pb2.ProfileSummary:
+    """Build a minimal ProfileSummary proto for stub responses."""
+    return discovery_pb2.ProfileSummary(
+        profile_name="default",
+        runner_id="runner-abc",
         supported_gpu_types=["A100"],
         supported_architectures=["amd64"],
         service_exposure_modes=[
@@ -663,8 +663,8 @@ def _make_runway_proto() -> discovery_pb2.RunwaySummary:
     )
 
 
-class TestListTowers:
-    """Tests for list_towers public function."""
+class TestListRunners:
+    """Tests for list_runners public function."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -682,22 +682,22 @@ class TestListTowers:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [_make_tower_proto()]
+        response.runners = [_make_runner_proto()]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
         channel = mock_channel.return_value
-        result = list_towers()
+        result = list_runners()
 
         assert len(result) == 1
-        assert result[0].tower_id == "tower-abc"
+        assert result[0].runner_id == "runner-abc"
         # Verify basic view is the default
-        call_args = stub.ListAvailableTowers.call_args
+        call_args = stub.ListAvailableRunners.call_args
         request = call_args[0][0]
-        assert request.view == discovery_pb2.TOWER_VIEW_BASIC
+        assert request.view == discovery_pb2.RUNNER_VIEW_BASIC
         channel.close.assert_awaited_once_with(grace=None)
 
     @patch(_PATCH_STUB)
@@ -716,18 +716,18 @@ class TestListTowers:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [_make_tower_proto()]
+        response.runners = [_make_runner_proto()]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        list_towers(include_resources=True)
+        list_runners(include_resources=True)
 
-        call_args = stub.ListAvailableTowers.call_args
+        call_args = stub.ListAvailableRunners.call_args
         request = call_args[0][0]
-        assert request.view == discovery_pb2.TOWER_VIEW_FULL
+        assert request.view == discovery_pb2.RUNNER_VIEW_FULL
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -745,24 +745,24 @@ class TestListTowers:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = []
+        response.runners = []
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        list_towers(
-            tower_group_id="grp",
-            runway_name="rw",
+        list_runners(
+            runner_group_id="grp",
+            profile_name="rw",
             gpu_type="H100",
             architecture="arm64",
         )
 
-        call_args = stub.ListAvailableTowers.call_args
+        call_args = stub.ListAvailableRunners.call_args
         request = call_args[0][0]
-        assert request.tower_group_id == "grp"
-        assert request.runway_name == "rw"
+        assert request.runner_group_id == "grp"
+        assert request.profile_name == "rw"
         assert request.gpu_type == "H100"
         assert request.architecture == "arm64"
 
@@ -782,28 +782,28 @@ class TestListTowers:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = []
+        response.runners = []
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        list_towers()
+        list_runners()
 
-        call_kwargs = stub.ListAvailableTowers.call_args[1]
+        call_kwargs = stub.ListAvailableRunners.call_args[1]
         assert call_kwargs["metadata"] == (("authorization", "Bearer test-key"),)
 
 
-class TestGetTower:
-    """Tests for get_tower public function."""
+class TestGetRunner:
+    """Tests for get_runner public function."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_returns_tower(
+    def test_returns_runner(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -814,23 +814,23 @@ class TestGetTower:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         stub = MagicMock()
-        stub.GetAvailableTower = AsyncMock(return_value=_make_tower_proto())
+        stub.GetAvailableRunner = AsyncMock(return_value=_make_runner_proto())
         mock_stub_cls.return_value = stub
 
-        tower = get_tower("tower-abc")
+        runner = get_runner("runner-abc")
 
-        assert tower.tower_id == "tower-abc"
-        call_args = stub.GetAvailableTower.call_args
+        assert runner.runner_id == "runner-abc"
+        call_args = stub.GetAvailableRunner.call_args
         request = call_args[0][0]
-        assert request.tower_id == "tower-abc"
-        assert request.view == discovery_pb2.TOWER_VIEW_FULL
+        assert request.runner_id == "runner-abc"
+        assert request.view == discovery_pb2.RUNNER_VIEW_FULL
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_not_found_raises_tower_not_found(
+    def test_not_found_raises_runner_not_found(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -847,12 +847,12 @@ class TestGetTower:
             details="not found",
         )
         stub = MagicMock()
-        stub.GetAvailableTower = AsyncMock(side_effect=err)
+        stub.GetAvailableRunner = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
-        with pytest.raises(TowerNotFoundError) as exc_info:
-            get_tower("missing")
-        assert exc_info.value.tower_id == "missing"
+        with pytest.raises(RunnerNotFoundError) as exc_info:
+            get_runner("missing")
+        assert exc_info.value.runner_id == "missing"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -876,22 +876,22 @@ class TestGetTower:
             details="invalid token",
         )
         stub = MagicMock()
-        stub.GetAvailableTower = AsyncMock(side_effect=err)
+        stub.GetAvailableRunner = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
         with pytest.raises(CWSandboxAuthenticationError, match="invalid token"):
-            get_tower("tower-1")
+            get_runner("runner-1")
 
 
-class TestListRunways:
-    """Tests for list_runways public function."""
+class TestListProfiles:
+    """Tests for list_profiles public function."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_returns_runways(
+    def test_returns_profiles(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -902,17 +902,17 @@ class TestListRunways:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.runways = [_make_runway_proto()]
+        response.profiles = [_make_profile_proto()]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(return_value=response)
+        stub.ListProfiles = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_runways()
+        result = list_profiles()
 
         assert len(result) == 1
-        assert result[0].runway_name == "default"
+        assert result[0].profile_name == "default"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -930,35 +930,35 @@ class TestListRunways:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.runways = []
+        response.profiles = []
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(return_value=response)
+        stub.ListProfiles = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        list_runways(
+        list_profiles(
             gpu_type="H100",
             architecture="arm64",
-            tower_id="tower-1",
+            runner_id="runner-1",
         )
 
-        call_args = stub.ListRunways.call_args
+        call_args = stub.ListProfiles.call_args
         request = call_args[0][0]
         assert request.gpu_type == "H100"
         assert request.architecture == "arm64"
-        assert request.tower_id == "tower-1"
+        assert request.runner_id == "runner-1"
 
 
-class TestGetRunway:
-    """Tests for get_runway public function."""
+class TestGetProfile:
+    """Tests for get_profile public function."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_returns_runway(
+    def test_returns_profile(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -969,22 +969,22 @@ class TestGetRunway:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(return_value=_make_runway_proto())
+        stub.GetProfile = AsyncMock(return_value=_make_profile_proto())
         mock_stub_cls.return_value = stub
 
-        runway = get_runway("default")
+        profile = get_profile("default")
 
-        assert runway.runway_name == "default"
-        call_args = stub.GetRunway.call_args
+        assert profile.profile_name == "default"
+        call_args = stub.GetProfile.call_args
         request = call_args[0][0]
-        assert request.runway_name == "default"
+        assert request.profile_name == "default"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_with_tower_id(
+    def test_with_runner_id(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -995,21 +995,21 @@ class TestGetRunway:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(return_value=_make_runway_proto())
+        stub.GetProfile = AsyncMock(return_value=_make_profile_proto())
         mock_stub_cls.return_value = stub
 
-        get_runway("default", tower_id="tower-abc")
+        get_profile("default", runner_id="runner-abc")
 
-        call_args = stub.GetRunway.call_args
+        call_args = stub.GetProfile.call_args
         request = call_args[0][0]
-        assert request.tower_id == "tower-abc"
+        assert request.runner_id == "runner-abc"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_not_found_raises_runway_not_found(
+    def test_not_found_raises_profile_not_found(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -1026,13 +1026,13 @@ class TestGetRunway:
             details="not found",
         )
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(side_effect=err)
+        stub.GetProfile = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
-        with pytest.raises(RunwayNotFoundError) as exc_info:
-            get_runway("missing", tower_id="tower-1")
-        assert exc_info.value.runway_name == "missing"
-        assert exc_info.value.tower_id == "tower-1"
+        with pytest.raises(ProfileNotFoundError) as exc_info:
+            get_profile("missing", runner_id="runner-1")
+        assert exc_info.value.profile_name == "missing"
+        assert exc_info.value.runner_id == "runner-1"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1056,12 +1056,12 @@ class TestGetRunway:
             details="connection refused",
         )
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(side_effect=err)
+        stub.GetProfile = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
         channel = mock_channel.return_value
         with pytest.raises(DiscoveryError, match="unavailable"):
-            get_runway("default")
+            get_profile("default")
         channel.close.assert_awaited_once_with(grace=None)
 
     @patch(_PATCH_STUB)
@@ -1086,30 +1086,30 @@ class TestGetRunway:
             details="timeout",
         )
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(side_effect=err)
+        stub.GetProfile = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
         with pytest.raises(DiscoveryError, match="timed out"):
-            get_runway("default")
+            get_profile("default")
 
 
 # ---------------------------------------------------------------------------
-# Client-side filtering tests - list_runways
+# Client-side filtering tests - list_profiles
 # ---------------------------------------------------------------------------
 
-_PATCH_LIST_RUNWAYS_ASYNC = "cwsandbox._discovery._list_runways_async"
+_PATCH_LIST_PROFILES_ASYNC = "cwsandbox._discovery._list_profiles_async"
 
 
-def _make_runway_proto_with_modes(
+def _make_profile_proto_with_modes(
     name: str,
-    tower_id: str,
+    runner_id: str,
     ingress_names: list[str],
     egress_names: list[str],
-) -> discovery_pb2.RunwaySummary:
-    """Build a RunwaySummary proto with specific ingress/egress modes."""
-    return discovery_pb2.RunwaySummary(
-        runway_name=name,
-        tower_id=tower_id,
+) -> discovery_pb2.ProfileSummary:
+    """Build a ProfileSummary proto with specific ingress/egress modes."""
+    return discovery_pb2.ProfileSummary(
+        profile_name=name,
+        runner_id=runner_id,
         supported_gpu_types=["A100"],
         supported_architectures=["amd64"],
         service_exposure_modes=[discovery_pb2.ServiceExposureMode(name=n) for n in ingress_names],
@@ -1117,15 +1117,15 @@ def _make_runway_proto_with_modes(
     )
 
 
-class TestListRunwaysClientSideFilters:
-    """Tests for client-side ingress/egress mode filtering on list_runways."""
+class TestListProfilesClientSideFilters:
+    """Tests for client-side ingress/egress mode filtering on list_profiles."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_ingress_mode_filter(
+    def test_service_exposure_mode_filter(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -1136,21 +1136,21 @@ class TestListRunwaysClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.runways = [
-            _make_runway_proto_with_modes("rw-1", "t-1", ["public", "private"], ["internet"]),
-            _make_runway_proto_with_modes("rw-2", "t-1", ["public"], ["internet"]),
-            _make_runway_proto_with_modes("rw-3", "t-2", ["private"], ["internet"]),
+        response.profiles = [
+            _make_profile_proto_with_modes("prof-1", "t-1", ["public", "private"], ["internet"]),
+            _make_profile_proto_with_modes("prof-2", "t-1", ["public"], ["internet"]),
+            _make_profile_proto_with_modes("prof-3", "t-2", ["private"], ["internet"]),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(return_value=response)
+        stub.ListProfiles = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_runways(ingress_mode="public")
+        result = list_profiles(service_exposure_mode="public")
 
         assert len(result) == 2
-        assert {r.runway_name for r in result} == {"rw-1", "rw-2"}
+        assert {r.profile_name for r in result} == {"prof-1", "prof-2"}
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1168,21 +1168,21 @@ class TestListRunwaysClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.runways = [
-            _make_runway_proto_with_modes("rw-1", "t-1", ["public"], ["internet"]),
-            _make_runway_proto_with_modes("rw-2", "t-1", ["public"], ["blocked"]),
-            _make_runway_proto_with_modes("rw-3", "t-2", ["public"], ["internet", "blocked"]),
+        response.profiles = [
+            _make_profile_proto_with_modes("prof-1", "t-1", ["public"], ["internet"]),
+            _make_profile_proto_with_modes("prof-2", "t-1", ["public"], ["blocked"]),
+            _make_profile_proto_with_modes("prof-3", "t-2", ["public"], ["internet", "blocked"]),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(return_value=response)
+        stub.ListProfiles = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_runways(egress_mode="blocked")
+        result = list_profiles(egress_mode="blocked")
 
         assert len(result) == 2
-        assert {r.runway_name for r in result} == {"rw-2", "rw-3"}
+        assert {r.profile_name for r in result} == {"prof-2", "prof-3"}
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1200,46 +1200,46 @@ class TestListRunwaysClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.runways = [
-            _make_runway_proto_with_modes("rw-1", "t-1", ["public"], ["internet"]),
-            _make_runway_proto_with_modes("rw-2", "t-1", ["public"], ["blocked"]),
-            _make_runway_proto_with_modes("rw-3", "t-2", ["private"], ["internet"]),
+        response.profiles = [
+            _make_profile_proto_with_modes("prof-1", "t-1", ["public"], ["internet"]),
+            _make_profile_proto_with_modes("prof-2", "t-1", ["public"], ["blocked"]),
+            _make_profile_proto_with_modes("prof-3", "t-2", ["private"], ["internet"]),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(return_value=response)
+        stub.ListProfiles = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_runways(ingress_mode="public", egress_mode="internet")
+        result = list_profiles(service_exposure_mode="public", egress_mode="internet")
 
         assert len(result) == 1
-        assert result[0].runway_name == "rw-1"
+        assert result[0].profile_name == "prof-1"
 
 
 # ---------------------------------------------------------------------------
-# Client-side filtering tests - list_towers
+# Client-side filtering tests - list_runners
 # ---------------------------------------------------------------------------
 
 
-def _make_tower_proto_with_resources(
-    tower_id: str,
+def _make_runner_proto_with_resources(
+    runner_id: str,
     cpu: int,
     memory: int,
     gpu: int,
     running: int = 0,
-) -> discovery_pb2.AvailableTower:
-    """Build a tower proto with resource availability."""
-    proto = discovery_pb2.AvailableTower(
-        tower_id=tower_id,
-        tower_group_id="group-1",
+) -> discovery_pb2.AvailableRunner:
+    """Build a runner proto with resource availability."""
+    proto = discovery_pb2.AvailableRunner(
+        runner_id=runner_id,
+        runner_group_id="group-1",
         tags=["test"],
         healthy=True,
-        runway_names=["default"],
+        profile_names=["default"],
     )
     proto.connected_at.FromDatetime(datetime(2025, 1, 1))
     proto.capabilities.CopyFrom(
-        discovery_pb2.TowerCapabilitySummary(
+        discovery_pb2.RunnerCapabilitySummary(
             max_cpu_millicores=16000,
             max_memory_bytes=68719476736,
             max_gpu_count=8,
@@ -1250,7 +1250,7 @@ def _make_tower_proto_with_resources(
         )
     )
     proto.resources.CopyFrom(
-        discovery_pb2.TowerResourceSummary(
+        discovery_pb2.RunnerResourceSummary(
             available_cpu_millicores=cpu,
             available_memory_bytes=memory,
             available_gpu_count=gpu,
@@ -1260,18 +1260,18 @@ def _make_tower_proto_with_resources(
     return proto
 
 
-def _make_tower_proto_no_resources(tower_id: str) -> discovery_pb2.AvailableTower:
-    """Build a tower proto without resource information."""
-    proto = discovery_pb2.AvailableTower(
-        tower_id=tower_id,
-        tower_group_id="group-1",
+def _make_runner_proto_no_resources(runner_id: str) -> discovery_pb2.AvailableRunner:
+    """Build a runner proto without resource information."""
+    proto = discovery_pb2.AvailableRunner(
+        runner_id=runner_id,
+        runner_group_id="group-1",
         tags=["test"],
         healthy=True,
-        runway_names=["default"],
+        profile_names=["default"],
     )
     proto.connected_at.FromDatetime(datetime(2025, 1, 1))
     proto.capabilities.CopyFrom(
-        discovery_pb2.TowerCapabilitySummary(
+        discovery_pb2.RunnerCapabilitySummary(
             max_cpu_millicores=8000,
             max_memory_bytes=34359738368,
             max_gpu_count=4,
@@ -1284,8 +1284,8 @@ def _make_tower_proto_no_resources(tower_id: str) -> discovery_pb2.AvailableTowe
     return proto
 
 
-class TestListTowersClientSideFilters:
-    """Tests for client-side capacity and networking filtering on list_towers."""
+class TestListRunnersClientSideFilters:
+    """Tests for client-side capacity and networking filtering on list_runners."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1303,21 +1303,21 @@ class TestListTowersClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_with_resources("t-2", cpu=1000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_with_resources("t-3", cpu=8000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_with_resources("t-2", cpu=1000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_with_resources("t-3", cpu=8000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_towers(min_available_cpu_millicores=4000)
+        result = list_runners(min_available_cpu_millicores=4000)
 
         assert len(result) == 2
-        assert {t.tower_id for t in result} == {"t-1", "t-3"}
+        assert {t.runner_id for t in result} == {"t-1", "t-3"}
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1335,20 +1335,20 @@ class TestListTowersClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=16_000_000_000, gpu=0),
-            _make_tower_proto_with_resources("t-2", cpu=4000, memory=4_000_000_000, gpu=0),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=16_000_000_000, gpu=0),
+            _make_runner_proto_with_resources("t-2", cpu=4000, memory=4_000_000_000, gpu=0),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_towers(min_available_memory_bytes=8_000_000_000)
+        result = list_runners(min_available_memory_bytes=8_000_000_000)
 
         assert len(result) == 1
-        assert result[0].tower_id == "t-1"
+        assert result[0].runner_id == "t-1"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1366,21 +1366,21 @@ class TestListTowersClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=4),
-            _make_tower_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=1),
-            _make_tower_proto_with_resources("t-3", cpu=4000, memory=8_000_000_000, gpu=0),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=4),
+            _make_runner_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=1),
+            _make_runner_proto_with_resources("t-3", cpu=4000, memory=8_000_000_000, gpu=0),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_towers(min_available_gpu_count=2)
+        result = list_runners(min_available_gpu_count=2)
 
         assert len(result) == 1
-        assert result[0].tower_id == "t-1"
+        assert result[0].runner_id == "t-1"
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1398,20 +1398,20 @@ class TestListTowersClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        list_towers(min_available_cpu_millicores=1)
+        list_runners(min_available_cpu_millicores=1)
 
-        call_args = stub.ListAvailableTowers.call_args
+        call_args = stub.ListAvailableRunners.call_args
         request = call_args[0][0]
-        assert request.view == discovery_pb2.TOWER_VIEW_FULL
+        assert request.view == discovery_pb2.RUNNER_VIEW_FULL
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1429,272 +1429,272 @@ class TestListTowersClientSideFilters:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_no_resources("t-2"),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_no_resources("t-2"),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        result = list_towers(min_available_cpu_millicores=1)
+        result = list_runners(min_available_cpu_millicores=1)
 
         assert len(result) == 1
-        assert result[0].tower_id == "t-1"
+        assert result[0].runner_id == "t-1"
 
-    @patch(_PATCH_LIST_RUNWAYS_ASYNC, new_callable=AsyncMock)
+    @patch(_PATCH_LIST_PROFILES_ASYNC, new_callable=AsyncMock)
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_ingress_mode_filter_on_towers(
+    def test_service_exposure_mode_filter_on_runners(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
         mock_auth: MagicMock,
         mock_parse: MagicMock,
         mock_stub_cls: MagicMock,
-        mock_list_runways_async: AsyncMock,
+        mock_list_profiles_async: AsyncMock,
     ) -> None:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        mock_list_runways_async.return_value = [
-            Runway(
-                runway_name="rw-1",
-                tower_id="t-1",
+        mock_list_profiles_async.return_value = [
+            Profile(
+                profile_name="prof-1",
+                runner_id="t-1",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
-            Runway(
-                runway_name="rw-2",
-                tower_id="t-2",
+            Profile(
+                profile_name="prof-2",
+                runner_id="t-2",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="private"),),
+                service_exposure_modes=(ServiceExposureMode(name="private"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
         ]
 
-        result = list_towers(ingress_mode="public")
+        result = list_runners(service_exposure_mode="public")
 
         assert len(result) == 1
-        assert result[0].tower_id == "t-1"
-        mock_list_runways_async.assert_awaited_once()
+        assert result[0].runner_id == "t-1"
+        mock_list_profiles_async.assert_awaited_once()
 
-    @patch(_PATCH_LIST_RUNWAYS_ASYNC, new_callable=AsyncMock)
+    @patch(_PATCH_LIST_PROFILES_ASYNC, new_callable=AsyncMock)
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_egress_mode_filter_on_towers(
+    def test_egress_mode_filter_on_runners(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
         mock_auth: MagicMock,
         mock_parse: MagicMock,
         mock_stub_cls: MagicMock,
-        mock_list_runways_async: AsyncMock,
+        mock_list_profiles_async: AsyncMock,
     ) -> None:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=2),
-            _make_tower_proto_with_resources("t-3", cpu=4000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_with_resources("t-2", cpu=4000, memory=8_000_000_000, gpu=2),
+            _make_runner_proto_with_resources("t-3", cpu=4000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        mock_list_runways_async.return_value = [
-            Runway(
-                runway_name="rw-1",
-                tower_id="t-1",
+        mock_list_profiles_async.return_value = [
+            Profile(
+                profile_name="prof-1",
+                runner_id="t-1",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
-            Runway(
-                runway_name="rw-2",
-                tower_id="t-2",
+            Profile(
+                profile_name="prof-2",
+                runner_id="t-2",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="blocked"),),
             ),
-            Runway(
-                runway_name="rw-3",
-                tower_id="t-3",
+            Profile(
+                profile_name="prof-3",
+                runner_id="t-3",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"), EgressMode(name="blocked")),
             ),
         ]
 
-        result = list_towers(egress_mode="internet")
+        result = list_runners(egress_mode="internet")
 
         assert len(result) == 2
-        assert {t.tower_id for t in result} == {"t-1", "t-3"}
-        mock_list_runways_async.assert_awaited_once()
+        assert {t.runner_id for t in result} == {"t-1", "t-3"}
+        mock_list_profiles_async.assert_awaited_once()
 
-    @patch(_PATCH_LIST_RUNWAYS_ASYNC, new_callable=AsyncMock)
+    @patch(_PATCH_LIST_PROFILES_ASYNC, new_callable=AsyncMock)
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_capacity_plus_ingress_mode_combined(
+    def test_capacity_plus_service_exposure_mode_combined(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
         mock_auth: MagicMock,
         mock_parse: MagicMock,
         mock_stub_cls: MagicMock,
-        mock_list_runways_async: AsyncMock,
+        mock_list_profiles_async: AsyncMock,
     ) -> None:
         """f-10: Combined capacity and network mode filters."""
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=8000, memory=16_000_000_000, gpu=4),
-            _make_tower_proto_with_resources("t-2", cpu=2000, memory=4_000_000_000, gpu=1),
-            _make_tower_proto_with_resources("t-3", cpu=8000, memory=16_000_000_000, gpu=4),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=8000, memory=16_000_000_000, gpu=4),
+            _make_runner_proto_with_resources("t-2", cpu=2000, memory=4_000_000_000, gpu=1),
+            _make_runner_proto_with_resources("t-3", cpu=8000, memory=16_000_000_000, gpu=4),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        mock_list_runways_async.return_value = [
-            Runway(
-                runway_name="rw-1",
-                tower_id="t-1",
+        mock_list_profiles_async.return_value = [
+            Profile(
+                profile_name="prof-1",
+                runner_id="t-1",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
-            Runway(
-                runway_name="rw-2",
-                tower_id="t-2",
+            Profile(
+                profile_name="prof-2",
+                runner_id="t-2",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
-            Runway(
-                runway_name="rw-3",
-                tower_id="t-3",
+            Profile(
+                profile_name="prof-3",
+                runner_id="t-3",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="private"),),
+                service_exposure_modes=(ServiceExposureMode(name="private"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
         ]
 
-        result = list_towers(min_available_cpu_millicores=4000, ingress_mode="public")
+        result = list_runners(min_available_cpu_millicores=4000, service_exposure_mode="public")
 
         assert len(result) == 1
-        assert result[0].tower_id == "t-1"
-        mock_list_runways_async.assert_awaited_once()
+        assert result[0].runner_id == "t-1"
+        mock_list_profiles_async.assert_awaited_once()
 
-    @patch(_PATCH_LIST_RUNWAYS_ASYNC, new_callable=AsyncMock)
+    @patch(_PATCH_LIST_PROFILES_ASYNC, new_callable=AsyncMock)
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_list_runways_async_failure_propagates(
+    def test_list_profiles_async_failure_propagates(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
         mock_auth: MagicMock,
         mock_parse: MagicMock,
         mock_stub_cls: MagicMock,
-        mock_list_runways_async: AsyncMock,
+        mock_list_profiles_async: AsyncMock,
     ) -> None:
-        """f-11: Error in _list_runways_async propagates through list_towers."""
+        """f-11: Error in _list_profiles_async propagates through list_runners."""
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        mock_list_runways_async.side_effect = CWSandboxError("runway fetch failed")
+        mock_list_profiles_async.side_effect = CWSandboxError("profile fetch failed")
 
-        with pytest.raises(CWSandboxError, match="runway fetch failed"):
-            list_towers(ingress_mode="public")
+        with pytest.raises(CWSandboxError, match="profile fetch failed"):
+            list_runners(service_exposure_mode="public")
 
-    @patch(_PATCH_LIST_RUNWAYS_ASYNC, new_callable=AsyncMock)
+    @patch(_PATCH_LIST_PROFILES_ASYNC, new_callable=AsyncMock)
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_timeout_budget_shared_with_runway_fetch(
+    def test_timeout_budget_shared_with_profile_fetch(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
         mock_auth: MagicMock,
         mock_parse: MagicMock,
         mock_stub_cls: MagicMock,
-        mock_list_runways_async: AsyncMock,
+        mock_list_profiles_async: AsyncMock,
     ) -> None:
-        """g-14: Verify remaining time (not original timeout) is passed to _list_runways_async."""
+        """g-14: Verify remaining time (not original timeout) is passed to _list_profiles_async."""
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         response = MagicMock()
-        response.towers = [
-            _make_tower_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
+        response.runners = [
+            _make_runner_proto_with_resources("t-1", cpu=4000, memory=8_000_000_000, gpu=2),
         ]
         response.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(return_value=response)
+        stub.ListAvailableRunners = AsyncMock(return_value=response)
         mock_stub_cls.return_value = stub
 
-        mock_list_runways_async.return_value = [
-            Runway(
-                runway_name="rw-1",
-                tower_id="t-1",
+        mock_list_profiles_async.return_value = [
+            Profile(
+                profile_name="prof-1",
+                runner_id="t-1",
                 supported_gpu_types=("A100",),
                 supported_architectures=("amd64",),
-                ingress_modes=(IngressMode(name="public"),),
+                service_exposure_modes=(ServiceExposureMode(name="public"),),
                 egress_modes=(EgressMode(name="internet"),),
             ),
         ]
 
-        # Simulate 7 seconds elapsing between deadline set and runway fetch.
+        # Simulate 7 seconds elapsing between deadline set and profile fetch.
         # With a 30s timeout, the remaining budget should be ~23s, not 30s.
         call_count = 0
 
@@ -1702,16 +1702,16 @@ class TestListTowersClientSideFilters:
             nonlocal call_count
             call_count += 1
             # First calls: deadline creation and paginate timeout
-            # Later calls: the remaining-time check before _list_runways_async
+            # Later calls: the remaining-time check before _list_profiles_async
             return 1000.0 + (call_count - 1) * 3.5
 
         with patch("cwsandbox._discovery.time") as mock_time:
             mock_time.monotonic = advancing_monotonic
-            list_towers(ingress_mode="public")
+            list_runners(service_exposure_mode="public")
 
-        # _list_runways_async receives a timeout arg (positional arg index 2)
-        runway_call_args = mock_list_runways_async.call_args
-        timeout_passed = runway_call_args[0][2]
+        # _list_profiles_async receives a timeout arg (positional arg index 2)
+        profile_call_args = mock_list_profiles_async.call_args
+        timeout_passed = profile_call_args[0][2]
         assert timeout_passed < 30.0, f"Expected remaining budget < 30s, got {timeout_passed}"
         assert timeout_passed > 0, "Timeout budget must be positive"
 
@@ -1721,8 +1721,8 @@ class TestListTowersClientSideFilters:
 # ---------------------------------------------------------------------------
 
 
-class TestListTowersGrpcErrors:
-    """f-9: gRPC error path coverage for list_towers."""
+class TestListRunnersGrpcErrors:
+    """f-9: gRPC error path coverage for list_runners."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1746,15 +1746,15 @@ class TestListTowersGrpcErrors:
             details="connection refused",
         )
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(side_effect=err)
+        stub.ListAvailableRunners = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
         with pytest.raises(DiscoveryError, match="unavailable"):
-            list_towers()
+            list_runners()
 
 
-class TestListRunwaysGrpcErrors:
-    """f-9: gRPC error path coverage for list_runways."""
+class TestListProfilesGrpcErrors:
+    """f-9: gRPC error path coverage for list_profiles."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
@@ -1778,12 +1778,12 @@ class TestListRunwaysGrpcErrors:
             details="connection refused",
         )
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(side_effect=err)
+        stub.ListProfiles = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
         channel = mock_channel.return_value
         with pytest.raises(DiscoveryError, match="unavailable"):
-            list_runways()
+            list_profiles()
         channel.close.assert_awaited_once_with(grace=None)
 
 
@@ -1800,7 +1800,7 @@ class TestMultiPagePagination:
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_list_towers_multi_page(
+    def test_list_runners_multi_page(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -1811,30 +1811,30 @@ class TestMultiPagePagination:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         page1 = MagicMock()
-        page1.towers = [_make_tower_proto()]
+        page1.runners = [_make_runner_proto()]
         page1.next_page_token = "page2"
 
         page2 = MagicMock()
-        page2.towers = [_make_tower_proto()]
-        page2.towers[0].tower_id = "tower-def"
+        page2.runners = [_make_runner_proto()]
+        page2.runners[0].runner_id = "runner-def"
         page2.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListAvailableTowers = AsyncMock(side_effect=[page1, page2])
+        stub.ListAvailableRunners = AsyncMock(side_effect=[page1, page2])
         mock_stub_cls.return_value = stub
 
-        result = list_towers()
+        result = list_runners()
 
         assert len(result) == 2
-        assert {t.tower_id for t in result} == {"tower-abc", "tower-def"}
-        assert stub.ListAvailableTowers.call_count == 2
+        assert {t.runner_id for t in result} == {"runner-abc", "runner-def"}
+        assert stub.ListAvailableRunners.call_count == 2
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_list_runways_multi_page(
+    def test_list_profiles_multi_page(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -1845,39 +1845,39 @@ class TestMultiPagePagination:
         _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
 
         page1 = MagicMock()
-        page1.runways = [_make_runway_proto()]
+        page1.profiles = [_make_profile_proto()]
         page1.next_page_token = "page2"
 
         page2 = MagicMock()
-        page2.runways = [_make_runway_proto()]
-        page2.runways[0].runway_name = "gpu-runway"
+        page2.profiles = [_make_profile_proto()]
+        page2.profiles[0].profile_name = "gpu-profile"
         page2.next_page_token = ""
 
         stub = MagicMock()
-        stub.ListRunways = AsyncMock(side_effect=[page1, page2])
+        stub.ListProfiles = AsyncMock(side_effect=[page1, page2])
         mock_stub_cls.return_value = stub
 
-        result = list_runways()
+        result = list_profiles()
 
         assert len(result) == 2
-        assert {r.runway_name for r in result} == {"default", "gpu-runway"}
-        assert stub.ListRunways.call_count == 2
+        assert {r.profile_name for r in result} == {"default", "gpu-profile"}
+        assert stub.ListProfiles.call_count == 2
 
 
 # ---------------------------------------------------------------------------
-# get_runway NOT_FOUND without tower_id
+# get_profile NOT_FOUND without runner_id
 # ---------------------------------------------------------------------------
 
 
-class TestGetRunwayNotFoundVariants:
-    """f-13: get_runway NOT_FOUND with tower_id=None."""
+class TestGetProfileNotFoundVariants:
+    """f-13: get_profile NOT_FOUND with runner_id=None."""
 
     @patch(_PATCH_STUB)
     @patch(_PATCH_PARSE)
     @patch(_PATCH_AUTH)
     @patch(_PATCH_CHANNEL)
     @patch(_PATCH_LM)
-    def test_not_found_without_tower_id(
+    def test_not_found_without_runner_id(
         self,
         mock_lm: MagicMock,
         mock_channel: MagicMock,
@@ -1894,10 +1894,10 @@ class TestGetRunwayNotFoundVariants:
             details="not found",
         )
         stub = MagicMock()
-        stub.GetRunway = AsyncMock(side_effect=err)
+        stub.GetProfile = AsyncMock(side_effect=err)
         mock_stub_cls.return_value = stub
 
-        with pytest.raises(RunwayNotFoundError) as exc_info:
-            get_runway("missing")
-        assert exc_info.value.runway_name == "missing"
-        assert exc_info.value.tower_id is None
+        with pytest.raises(ProfileNotFoundError) as exc_info:
+            get_profile("missing")
+        assert exc_info.value.profile_name == "missing"
+        assert exc_info.value.runner_id is None

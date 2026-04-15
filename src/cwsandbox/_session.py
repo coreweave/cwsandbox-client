@@ -507,7 +507,7 @@ class Session:
 
         merged_tags = self._defaults.merge_tags(tags)
 
-        # Use session's default runway/runner IDs if not overridden
+        # Use session's default profile/runner IDs if not overridden
         if profile_ids is not None:
             effective_profile_ids = list(profile_ids)
         elif self._defaults.profile_ids:

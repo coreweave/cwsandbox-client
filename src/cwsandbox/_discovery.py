@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""Discovery types and gRPC client for tower and runway introspection."""
+"""Discovery types and gRPC client for runner and profile introspection."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from cwsandbox._proto import discovery_pb2, discovery_pb2_grpc
 from cwsandbox.exceptions import (
     CWSandboxError,
     DiscoveryError,
-    RunwayNotFoundError,
-    TowerNotFoundError,
+    ProfileNotFoundError,
+    RunnerNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,11 +78,11 @@ def format_cpu(millicores: int) -> str:
 
 
 @dataclass(frozen=True, kw_only=True)
-class IngressMode:
-    """An ingress mode supported by a runway.
+class ServiceExposureMode:
+    """A service exposure mode supported by a profile.
 
     Attributes:
-        name: The ingress mode identifier (e.g. ``"public"``).
+        name: The service exposure mode identifier (e.g. ``"public"``).
     """
 
     name: str
@@ -90,7 +90,7 @@ class IngressMode:
 
 @dataclass(frozen=True, kw_only=True)
 class EgressMode:
-    """An egress mode supported by a runway.
+    """An egress mode supported by a profile.
 
     Attributes:
         name: The egress mode identifier (e.g. ``"internet"``).
@@ -100,14 +100,14 @@ class EgressMode:
 
 
 @dataclass(frozen=True, kw_only=True)
-class TowerResources:
-    """Live resource availability for a tower.
+class RunnerResources:
+    """Live resource availability for a runner.
 
     Attributes:
         available_cpu_millicores: Unreserved CPU capacity in millicores.
         available_memory_bytes: Unreserved memory in bytes.
         available_gpu_count: Unreserved GPU count.
-        running_sandboxes: Number of sandboxes currently running on the tower.
+        running_sandboxes: Number of sandboxes currently running on the runner.
     """
 
     available_cpu_millicores: int
@@ -117,34 +117,34 @@ class TowerResources:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Tower:
-    """A tower registered with the discovery service.
+class Runner:
+    """A runner registered with the discovery service.
 
-    Towers are the compute nodes that run sandboxes. Each tower advertises
-    its capabilities (CPU, memory, GPU) and the runways it supports.
+    Runners are the compute nodes that run sandboxes. Each runner advertises
+    its capabilities (CPU, memory, GPU) and the profiles it supports.
 
     Attributes:
-        tower_id: Unique identifier for the tower.
-        tower_group_id: Group this tower belongs to.
-        tags: Tags associated with the tower.
-        healthy: Whether the tower is currently healthy.
-        runway_names: Names of runways available on this tower.
-        connected_at: When the tower connected, as a UTC-aware datetime.
+        runner_id: Unique identifier for the runner.
+        runner_group_id: Group this runner belongs to.
+        tags: Tags associated with the runner.
+        healthy: Whether the runner is currently healthy.
+        profile_names: Names of profiles available on this runner.
+        connected_at: When the runner connected, as a UTC-aware datetime.
         max_cpu_millicores: Maximum CPU capacity in millicores.
         max_memory_bytes: Maximum memory capacity in bytes.
         max_gpu_count: Maximum GPU count.
-        supported_gpu_types: GPU types supported by this tower.
+        supported_gpu_types: GPU types supported by this runner.
         supported_architectures: CPU architectures supported (e.g. ``"amd64"``).
         supports_privileged: Whether privileged containers are allowed.
         available_storage_classes: Kubernetes storage classes available.
         resources: Live resource availability, or None if not reported.
     """
 
-    tower_id: str
-    tower_group_id: str
+    runner_id: str
+    runner_group_id: str
     tags: tuple[str, ...]
     healthy: bool
-    runway_names: tuple[str, ...]
+    profile_names: tuple[str, ...]
     connected_at: datetime
     max_cpu_millicores: int
     max_memory_bytes: int
@@ -153,12 +153,12 @@ class Tower:
     supported_architectures: tuple[str, ...]
     supports_privileged: bool
     available_storage_classes: tuple[str, ...]
-    resources: TowerResources | None = None
+    resources: RunnerResources | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
             "tags",
-            "runway_names",
+            "profile_names",
             "supported_gpu_types",
             "supported_architectures",
             "available_storage_classes",
@@ -168,46 +168,46 @@ class Tower:
                 object.__setattr__(self, field_name, tuple(value))
 
     def __repr__(self) -> str:
-        runways = list(self.runway_names)
+        profiles = list(self.profile_names)
         return (
-            f"Tower("
-            f"tower_id={self.tower_id!r}, "
+            f"Runner("
+            f"runner_id={self.runner_id!r}, "
             f"healthy={self.healthy!r}, "
             f"cpu={format_cpu(self.max_cpu_millicores)}, "
             f"memory={format_bytes(self.max_memory_bytes)}, "
             f"gpus={self.max_gpu_count}, "
-            f"runways={runways!r})"
+            f"profiles={profiles!r})"
         )
 
 
 @dataclass(frozen=True, kw_only=True)
-class Runway:
-    """A runway configuration on a specific tower.
+class Profile:
+    """A profile configuration on a specific runner.
 
-    Runways define execution environments with specific ingress/egress
+    Profiles define execution environments with specific service exposure/egress
     modes and hardware capabilities.
 
     Attributes:
-        runway_name: Name of the runway.
-        tower_id: Tower this runway belongs to.
-        supported_gpu_types: GPU types available on this runway.
+        profile_name: Name of the profile.
+        runner_id: Runner this profile belongs to.
+        supported_gpu_types: GPU types available on this profile.
         supported_architectures: CPU architectures supported.
-        ingress_modes: Ingress modes this runway supports.
-        egress_modes: Egress modes this runway supports.
+        service_exposure_modes: Service exposure modes this profile supports.
+        egress_modes: Egress modes this profile supports.
     """
 
-    runway_name: str
-    tower_id: str
+    profile_name: str
+    runner_id: str
     supported_gpu_types: tuple[str, ...]
     supported_architectures: tuple[str, ...]
-    ingress_modes: tuple[IngressMode, ...]
+    service_exposure_modes: tuple[ServiceExposureMode, ...]
     egress_modes: tuple[EgressMode, ...]
 
     def __post_init__(self) -> None:
         for field_name in (
             "supported_gpu_types",
             "supported_architectures",
-            "ingress_modes",
+            "service_exposure_modes",
             "egress_modes",
         ):
             value = getattr(self, field_name)
@@ -233,11 +233,11 @@ async def _paginate_async(
     the overall deadline is reached.
 
     Args:
-        rpc_method: Bound stub method (e.g. ``stub.ListAvailableTowers``).
+        rpc_method: Bound stub method (e.g. ``stub.ListAvailableRunners``).
         request: The protobuf request message. Its ``page_token`` field is
             mutated in-place between pages.
         items_field: Name of the repeated field on the response that holds
-            the result items (e.g. ``"towers"``).
+            the result items (e.g. ``"runners"``).
         metadata: gRPC call metadata (auth headers).
         timeout: Total wall-clock seconds allowed for all pages.
 
@@ -279,8 +279,8 @@ async def _paginate_async(
 # ---------------------------------------------------------------------------
 
 
-def _tower_from_proto(proto: discovery_pb2.AvailableTower) -> Tower:
-    """Convert an ``AvailableTower`` proto to a ``Tower`` dataclass."""
+def _runner_from_proto(proto: discovery_pb2.AvailableRunner) -> Runner:
+    """Convert an ``AvailableRunner`` proto to a ``Runner`` dataclass."""
     connected_at = proto.connected_at.ToDatetime().replace(tzinfo=UTC)
 
     if proto.HasField("capabilities"):
@@ -304,19 +304,19 @@ def _tower_from_proto(proto: discovery_pb2.AvailableTower) -> Tower:
     resources = None
     if proto.HasField("resources"):
         res = proto.resources
-        resources = TowerResources(
+        resources = RunnerResources(
             available_cpu_millicores=res.available_cpu_millicores,
             available_memory_bytes=res.available_memory_bytes,
             available_gpu_count=res.available_gpu_count,
             running_sandboxes=res.running_sandboxes,
         )
 
-    return Tower(
-        tower_id=proto.tower_id,
-        tower_group_id=proto.tower_group_id,
+    return Runner(
+        runner_id=proto.runner_id,
+        runner_group_id=proto.runner_group_id,
         tags=tuple(proto.tags),
         healthy=proto.healthy,
-        runway_names=tuple(proto.runway_names),
+        profile_names=tuple(proto.profile_names),
         connected_at=connected_at,
         max_cpu_millicores=max_cpu_millicores,
         max_memory_bytes=max_memory_bytes,
@@ -329,14 +329,16 @@ def _tower_from_proto(proto: discovery_pb2.AvailableTower) -> Tower:
     )
 
 
-def _runway_from_proto(proto: discovery_pb2.RunwaySummary) -> Runway:
-    """Convert a ``RunwaySummary`` proto to a ``Runway`` dataclass."""
-    return Runway(
-        runway_name=proto.runway_name,
-        tower_id=proto.tower_id,
+def _profile_from_proto(proto: discovery_pb2.ProfileSummary) -> Profile:
+    """Convert a ``ProfileSummary`` proto to a ``Profile`` dataclass."""
+    return Profile(
+        profile_name=proto.profile_name,
+        runner_id=proto.runner_id,
         supported_gpu_types=tuple(proto.supported_gpu_types),
         supported_architectures=tuple(proto.supported_architectures),
-        ingress_modes=tuple(IngressMode(name=m.name) for m in proto.service_exposure_modes),
+        service_exposure_modes=tuple(
+            ServiceExposureMode(name=m.name) for m in proto.service_exposure_modes
+        ),
         egress_modes=tuple(EgressMode(name=m.name) for m in proto.egress_modes),
     )
 
@@ -346,151 +348,159 @@ def _runway_from_proto(proto: discovery_pb2.RunwaySummary) -> Runway:
 # ---------------------------------------------------------------------------
 
 
-async def _list_towers_async(
+async def _list_runners_async(
     base_url: str,
     metadata: tuple[tuple[str, str], ...],
     timeout: float,
     *,
-    view: discovery_pb2.TowerView,
-    tower_group_id: str | None = None,
-    runway_name: str | None = None,
+    view: discovery_pb2.RunnerView,
+    runner_group_id: str | None = None,
+    profile_name: str | None = None,
     gpu_type: str | None = None,
     architecture: str | None = None,
     min_available_cpu_millicores: int | None = None,
     min_available_memory_bytes: int | None = None,
     min_available_gpu_count: int | None = None,
-    ingress_mode: str | None = None,
+    service_exposure_mode: str | None = None,
     egress_mode: str | None = None,
-) -> list[Tower]:
-    """Async implementation of :func:`list_towers`."""
+) -> list[Runner]:
+    """Async implementation of :func:`list_runners`."""
     deadline = time.monotonic() + timeout
     target, is_secure = parse_grpc_target(base_url)
     channel = create_channel(target, is_secure)
     try:
         stub = discovery_pb2_grpc.DiscoveryServiceStub(channel)  # type: ignore[no-untyped-call]
-        request = discovery_pb2.ListAvailableTowersRequest(
+        request = discovery_pb2.ListAvailableRunnersRequest(
             view=view,
             page_size=100,
         )
-        if tower_group_id is not None:
-            request.tower_group_id = tower_group_id
-        if runway_name is not None:
-            request.runway_name = runway_name
+        if runner_group_id is not None:
+            request.runner_group_id = runner_group_id
+        if profile_name is not None:
+            request.profile_name = profile_name
         if gpu_type is not None:
             request.gpu_type = gpu_type
         if architecture is not None:
             request.architecture = architecture
 
         protos = await _paginate_async(
-            stub.ListAvailableTowers,
+            stub.ListAvailableRunners,
             request,
-            "towers",
+            "runners",
             metadata,
             deadline - time.monotonic(),
         )
-        results = [_tower_from_proto(t) for t in protos]
+        results = [_runner_from_proto(r) for r in protos]
 
         if min_available_cpu_millicores is not None:
             results = [
-                t
-                for t in results
-                if t.resources is not None
-                and t.resources.available_cpu_millicores >= min_available_cpu_millicores
+                r
+                for r in results
+                if r.resources is not None
+                and r.resources.available_cpu_millicores >= min_available_cpu_millicores
             ]
         if min_available_memory_bytes is not None:
             results = [
-                t
-                for t in results
-                if t.resources is not None
-                and t.resources.available_memory_bytes >= min_available_memory_bytes
+                r
+                for r in results
+                if r.resources is not None
+                and r.resources.available_memory_bytes >= min_available_memory_bytes
             ]
         if min_available_gpu_count is not None:
             results = [
-                t
-                for t in results
-                if t.resources is not None
-                and t.resources.available_gpu_count >= min_available_gpu_count
+                r
+                for r in results
+                if r.resources is not None
+                and r.resources.available_gpu_count >= min_available_gpu_count
             ]
 
-        if ingress_mode is not None or egress_mode is not None:
+        if service_exposure_mode is not None or egress_mode is not None:
             if not results:
                 return results
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise DiscoveryError("Discovery request timed out before runway fetch")
-            all_runways = await _list_runways_async(base_url, metadata, remaining)
-            tower_ingress: dict[str, set[str]] = {}
-            tower_egress: dict[str, set[str]] = {}
-            for rw in all_runways:
-                tower_ingress.setdefault(rw.tower_id, set()).update(
-                    m.name for m in rw.ingress_modes
+                raise DiscoveryError("Discovery request timed out before profile fetch")
+            all_profiles = await _list_profiles_async(base_url, metadata, remaining)
+            runner_exposure: dict[str, set[str]] = {}
+            runner_egress: dict[str, set[str]] = {}
+            for p in all_profiles:
+                runner_exposure.setdefault(p.runner_id, set()).update(
+                    m.name for m in p.service_exposure_modes
                 )
-                tower_egress.setdefault(rw.tower_id, set()).update(m.name for m in rw.egress_modes)
-            if ingress_mode is not None:
+                runner_egress.setdefault(p.runner_id, set()).update(
+                    m.name for m in p.egress_modes
+                )
+            if service_exposure_mode is not None:
                 results = [
-                    t for t in results if ingress_mode in tower_ingress.get(t.tower_id, set())
+                    r
+                    for r in results
+                    if service_exposure_mode in runner_exposure.get(r.runner_id, set())
                 ]
             if egress_mode is not None:
-                results = [t for t in results if egress_mode in tower_egress.get(t.tower_id, set())]
+                results = [
+                    r for r in results if egress_mode in runner_egress.get(r.runner_id, set())
+                ]
 
         return results
     except grpc.aio.AioRpcError as e:
-        raise translate_grpc_error(e, operation="List towers", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="List runners", fallback_cls=DiscoveryError
+        ) from e
     finally:
         await channel.close(grace=None)
 
 
-def list_towers(
+def list_runners(
     *,
-    tower_group_id: str | None = None,
-    runway_name: str | None = None,
+    runner_group_id: str | None = None,
+    profile_name: str | None = None,
     gpu_type: str | None = None,
     architecture: str | None = None,
     include_resources: bool = False,
     min_available_cpu_millicores: int | None = None,
     min_available_memory_bytes: int | None = None,
     min_available_gpu_count: int | None = None,
-    ingress_mode: str | None = None,
+    service_exposure_mode: str | None = None,
     egress_mode: str | None = None,
-) -> list[Tower]:
-    """List available towers, optionally filtered.
+) -> list[Runner]:
+    """List available runners, optionally filtered.
 
     Creates a gRPC channel, issues the RPC(s), and closes the channel before
     returning.  Automatically paginates when the server returns a
     ``next_page_token``.
 
     Args:
-        tower_group_id: Restrict results to this tower group.
-        runway_name: Only return towers that have this runway.
-        gpu_type: Only return towers that support this GPU type.
-        architecture: Only return towers that support this CPU architecture.
+        runner_group_id: Restrict results to this runner group.
+        profile_name: Only return runners that have this profile.
+        gpu_type: Only return runners that support this GPU type.
+        architecture: Only return runners that support this CPU architecture.
         include_resources: If ``True``, include live resource availability
-            on each tower.  Defaults to ``False`` (basic view).
-        min_available_cpu_millicores: Only return towers with at least this
+            on each runner.  Defaults to ``False`` (basic view).
+        min_available_cpu_millicores: Only return runners with at least this
             many unreserved CPU millicores.  Automatically enables
             ``include_resources``.  Filtered client-side.
-        min_available_memory_bytes: Only return towers with at least this
+        min_available_memory_bytes: Only return runners with at least this
             many unreserved memory bytes.  Automatically enables
             ``include_resources``.  Filtered client-side.
-        min_available_gpu_count: Only return towers with at least this many
+        min_available_gpu_count: Only return runners with at least this many
             unreserved GPUs.  Automatically enables ``include_resources``.
             Filtered client-side.
-        ingress_mode: Only return towers whose runways support this ingress
-            mode.  Requires an additional runway fetch.  Filtered
-            client-side.
-        egress_mode: Only return towers whose runways support this egress
-            mode.  Requires an additional runway fetch.  Filtered
+        service_exposure_mode: Only return runners whose profiles support this
+            service exposure mode.  Requires an additional profile fetch.
+            Filtered client-side.
+        egress_mode: Only return runners whose profiles support this egress
+            mode.  Requires an additional profile fetch.  Filtered
             client-side.
 
     Note:
-        The ``ingress_mode`` and ``egress_mode`` filters check across **all**
-        runways on each tower, not only the runway specified by
-        ``runway_name``.  A tower will match if *any* of its runways provides
-        the requested mode, even if the runway selected by ``runway_name``
-        does not.
+        The ``service_exposure_mode`` and ``egress_mode`` filters check across
+        **all** profiles on each runner, not only the profile specified by
+        ``profile_name``.  A runner will match if *any* of its profiles
+        provides the requested mode, even if the profile selected by
+        ``profile_name`` does not.
 
     Returns:
-        List of ``Tower`` objects matching the filters.
+        List of ``Runner`` objects matching the filters.
 
     Raises:
         CWSandboxAuthenticationError: If credentials are invalid.
@@ -505,24 +515,26 @@ def list_towers(
     base_url = os.environ.get("CWSANDBOX_BASE_URL", DEFAULT_BASE_URL)
     metadata = resolve_auth_metadata()
     timeout = DEFAULT_DISCOVERY_TIMEOUT_SECONDS
-    view = discovery_pb2.TOWER_VIEW_FULL if include_resources else discovery_pb2.TOWER_VIEW_BASIC
+    view = (
+        discovery_pb2.RUNNER_VIEW_FULL if include_resources else discovery_pb2.RUNNER_VIEW_BASIC
+    )
 
     return (
         _LoopManager.get()
         .run_async(
-            _list_towers_async(
+            _list_runners_async(
                 base_url,
                 metadata,
                 timeout,
                 view=view,
-                tower_group_id=tower_group_id,
-                runway_name=runway_name,
+                runner_group_id=runner_group_id,
+                profile_name=profile_name,
                 gpu_type=gpu_type,
                 architecture=architecture,
                 min_available_cpu_millicores=min_available_cpu_millicores,
                 min_available_memory_bytes=min_available_memory_bytes,
                 min_available_gpu_count=min_available_gpu_count,
-                ingress_mode=ingress_mode,
+                service_exposure_mode=service_exposure_mode,
                 egress_mode=egress_mode,
             )
         )
@@ -530,54 +542,56 @@ def list_towers(
     )
 
 
-async def _get_tower_async(
+async def _get_runner_async(
     base_url: str,
     metadata: tuple[tuple[str, str], ...],
     timeout: float,
     *,
-    tower_id: str,
-) -> Tower:
-    """Async implementation of :func:`get_tower`."""
+    runner_id: str,
+) -> Runner:
+    """Async implementation of :func:`get_runner`."""
     target, is_secure = parse_grpc_target(base_url)
     channel = create_channel(target, is_secure)
     try:
         stub = discovery_pb2_grpc.DiscoveryServiceStub(channel)  # type: ignore[no-untyped-call]
-        request = discovery_pb2.GetAvailableTowerRequest(
-            tower_id=tower_id,
-            view=discovery_pb2.TOWER_VIEW_FULL,
+        request = discovery_pb2.GetAvailableRunnerRequest(
+            runner_id=runner_id,
+            view=discovery_pb2.RUNNER_VIEW_FULL,
         )
-        proto = await stub.GetAvailableTower(request, metadata=metadata, timeout=timeout)
-        return _tower_from_proto(proto)
+        proto = await stub.GetAvailableRunner(request, metadata=metadata, timeout=timeout)
+        return _runner_from_proto(proto)
     except grpc.aio.AioRpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
-            raise TowerNotFoundError(
-                f"Tower not found: {tower_id!r}",
-                tower_id=tower_id,
+            raise RunnerNotFoundError(
+                f"Runner not found: {runner_id!r}",
+                runner_id=runner_id,
             ) from e
-        raise translate_grpc_error(e, operation="Get tower", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="Get runner", fallback_cls=DiscoveryError
+        ) from e
     finally:
         await channel.close(grace=None)
 
 
-def get_tower(tower_id: str) -> Tower:
-    """Get a single tower by ID.
+def get_runner(runner_id: str) -> Runner:
+    """Get a single runner by ID.
 
     Always returns full details including resource availability.
 
     Args:
-        tower_id: Unique identifier of the tower.
+        runner_id: Unique identifier of the runner.
 
     Returns:
-        ``Tower`` with full details.
+        ``Runner`` with full details.
 
     Raises:
-        ValueError: If *tower_id* is empty.
-        TowerNotFoundError: If no tower exists with the given ID.
+        ValueError: If *runner_id* is empty.
+        RunnerNotFoundError: If no runner exists with the given ID.
         CWSandboxAuthenticationError: If credentials are invalid.
         CWSandboxError: On network or service errors.
     """
-    if not tower_id or not tower_id.strip():
-        raise ValueError("tower_id must not be empty")
+    if not runner_id or not runner_id.strip():
+        raise ValueError("runner_id must not be empty")
 
     base_url = os.environ.get("CWSANDBOX_BASE_URL", DEFAULT_BASE_URL)
     metadata = resolve_auth_metadata()
@@ -585,79 +599,88 @@ def get_tower(tower_id: str) -> Tower:
 
     return (
         _LoopManager.get()
-        .run_async(_get_tower_async(base_url, metadata, timeout, tower_id=tower_id))
+        .run_async(_get_runner_async(base_url, metadata, timeout, runner_id=runner_id))
         .result()
     )
 
 
-async def _list_runways_async(
+async def _list_profiles_async(
     base_url: str,
     metadata: tuple[tuple[str, str], ...],
     timeout: float,
     *,
     gpu_type: str | None = None,
     architecture: str | None = None,
-    tower_id: str | None = None,
-    ingress_mode: str | None = None,
+    runner_id: str | None = None,
+    service_exposure_mode: str | None = None,
     egress_mode: str | None = None,
-) -> list[Runway]:
-    """Async implementation of :func:`list_runways`."""
+) -> list[Profile]:
+    """Async implementation of :func:`list_profiles`."""
     target, is_secure = parse_grpc_target(base_url)
     channel = create_channel(target, is_secure)
     try:
         stub = discovery_pb2_grpc.DiscoveryServiceStub(channel)  # type: ignore[no-untyped-call]
-        request = discovery_pb2.ListRunwaysRequest(page_size=100)
+        request = discovery_pb2.ListProfilesRequest(page_size=100)
         if gpu_type is not None:
             request.gpu_type = gpu_type
         if architecture is not None:
             request.architecture = architecture
-        if tower_id is not None:
-            request.tower_id = tower_id
+        if runner_id is not None:
+            request.runner_id = runner_id
 
         protos = await _paginate_async(
-            stub.ListRunways,
+            stub.ListProfiles,
             request,
-            "runways",
+            "profiles",
             metadata,
             timeout,
         )
-        results = [_runway_from_proto(r) for r in protos]
-        if ingress_mode is not None:
-            results = [r for r in results if any(m.name == ingress_mode for m in r.ingress_modes)]
+        results = [_profile_from_proto(p) for p in protos]
+        if service_exposure_mode is not None:
+            results = [
+                p
+                for p in results
+                if any(m.name == service_exposure_mode for m in p.service_exposure_modes)
+            ]
         if egress_mode is not None:
-            results = [r for r in results if any(m.name == egress_mode for m in r.egress_modes)]
+            results = [
+                p for p in results if any(m.name == egress_mode for m in p.egress_modes)
+            ]
         return results
     except grpc.aio.AioRpcError as e:
-        raise translate_grpc_error(e, operation="List runways", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="List profiles", fallback_cls=DiscoveryError
+        ) from e
     finally:
         await channel.close(grace=None)
 
 
-def list_runways(
+def list_profiles(
     *,
     gpu_type: str | None = None,
     architecture: str | None = None,
-    tower_id: str | None = None,
-    ingress_mode: str | None = None,
+    runner_id: str | None = None,
+    service_exposure_mode: str | None = None,
     egress_mode: str | None = None,
-) -> list[Runway]:
-    """List available runways, optionally filtered.
+) -> list[Profile]:
+    """List available profiles, optionally filtered.
 
     Creates a gRPC channel, issues the RPC(s), and closes the channel before
     returning.  Automatically paginates when the server returns a
     ``next_page_token``.
 
     Args:
-        gpu_type: Only return runways that support this GPU type.
-        architecture: Only return runways that support this CPU architecture.
-        tower_id: Only return runways belonging to this tower.
-        ingress_mode: Only return runways that support this ingress mode.
-            Filtered client-side after fetching results from the backend.
-        egress_mode: Only return runways that support this egress mode.
+        gpu_type: Only return profiles that support this GPU type.
+        architecture: Only return profiles that support this CPU architecture.
+        runner_id: Only return profiles belonging to this runner.
+        service_exposure_mode: Only return profiles that support this service
+            exposure mode. Filtered client-side after fetching results from
+            the backend.
+        egress_mode: Only return profiles that support this egress mode.
             Filtered client-side after fetching results from the backend.
 
     Returns:
-        List of ``Runway`` objects matching the filters.
+        List of ``Profile`` objects matching the filters.
 
     Raises:
         CWSandboxAuthenticationError: If credentials are invalid.
@@ -670,14 +693,14 @@ def list_runways(
     return (
         _LoopManager.get()
         .run_async(
-            _list_runways_async(
+            _list_profiles_async(
                 base_url,
                 metadata,
                 timeout,
                 gpu_type=gpu_type,
                 architecture=architecture,
-                tower_id=tower_id,
-                ingress_mode=ingress_mode,
+                runner_id=runner_id,
+                service_exposure_mode=service_exposure_mode,
                 egress_mode=egress_mode,
             )
         )
@@ -685,54 +708,56 @@ def list_runways(
     )
 
 
-async def _get_runway_async(
+async def _get_profile_async(
     base_url: str,
     metadata: tuple[tuple[str, str], ...],
     timeout: float,
     *,
-    runway_name: str,
-    tower_id: str | None = None,
-) -> Runway:
-    """Async implementation of :func:`get_runway`."""
+    profile_name: str,
+    runner_id: str | None = None,
+) -> Profile:
+    """Async implementation of :func:`get_profile`."""
     target, is_secure = parse_grpc_target(base_url)
     channel = create_channel(target, is_secure)
     try:
         stub = discovery_pb2_grpc.DiscoveryServiceStub(channel)  # type: ignore[no-untyped-call]
-        request = discovery_pb2.GetRunwayRequest(runway_name=runway_name)
-        if tower_id is not None:
-            request.tower_id = tower_id
-        proto = await stub.GetRunway(request, metadata=metadata, timeout=timeout)
-        return _runway_from_proto(proto)
+        request = discovery_pb2.GetProfileRequest(profile_name=profile_name)
+        if runner_id is not None:
+            request.runner_id = runner_id
+        proto = await stub.GetProfile(request, metadata=metadata, timeout=timeout)
+        return _profile_from_proto(proto)
     except grpc.aio.AioRpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
-            raise RunwayNotFoundError(
-                f"Runway not found: {runway_name!r}",
-                runway_name=runway_name,
-                tower_id=tower_id,
+            raise ProfileNotFoundError(
+                f"Profile not found: {profile_name!r}",
+                profile_name=profile_name,
+                runner_id=runner_id,
             ) from e
-        raise translate_grpc_error(e, operation="Get runway", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="Get profile", fallback_cls=DiscoveryError
+        ) from e
     finally:
         await channel.close(grace=None)
 
 
-def get_runway(runway_name: str, *, tower_id: str | None = None) -> Runway:
-    """Get a single runway by name.
+def get_profile(profile_name: str, *, runner_id: str | None = None) -> Profile:
+    """Get a single profile by name.
 
     Args:
-        runway_name: Name of the runway to retrieve.
-        tower_id: Optionally scope the lookup to a specific tower.
+        profile_name: Name of the profile to retrieve.
+        runner_id: Optionally scope the lookup to a specific runner.
 
     Returns:
-        ``Runway`` matching the given name.
+        ``Profile`` matching the given name.
 
     Raises:
-        ValueError: If *runway_name* is empty.
-        RunwayNotFoundError: If no matching runway is found.
+        ValueError: If *profile_name* is empty.
+        ProfileNotFoundError: If no matching profile is found.
         CWSandboxAuthenticationError: If credentials are invalid.
         CWSandboxError: On network or service errors.
     """
-    if not runway_name or not runway_name.strip():
-        raise ValueError("runway_name must not be empty")
+    if not profile_name or not profile_name.strip():
+        raise ValueError("profile_name must not be empty")
 
     base_url = os.environ.get("CWSANDBOX_BASE_URL", DEFAULT_BASE_URL)
     metadata = resolve_auth_metadata()
@@ -741,8 +766,8 @@ def get_runway(runway_name: str, *, tower_id: str | None = None) -> Runway:
     return (
         _LoopManager.get()
         .run_async(
-            _get_runway_async(
-                base_url, metadata, timeout, runway_name=runway_name, tower_id=tower_id
+            _get_profile_async(
+                base_url, metadata, timeout, profile_name=profile_name, runner_id=runner_id
             )
         )
         .result()
