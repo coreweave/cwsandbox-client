@@ -510,6 +510,9 @@ class Sandbox:
         self._start_accepted_at: float | None = None
         self._startup_recorded: bool = False
 
+        # Trace context: set during start(), used as link for wait()/exec()
+        self._trace_context: Any = None
+
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
 
@@ -1698,7 +1701,12 @@ class Sandbox:
             with tracer.start_as_current_span(
                 "sandbox.start",
                 attributes={"sandbox.image": self._container_image or ""},
-            ):
+            ) as start_span:
+                # Save span context so wait()/exec() can link back to the same trace
+                try:
+                    self._trace_context = start_span.get_span_context()
+                except Exception:
+                    pass
                 try:
                     response = await self._stub.Start(
                         request,
@@ -2020,8 +2028,17 @@ class Sandbox:
             result = sb.exec(["echo", "ready"]).result()
             ```
         """
+        links = []
+        if self._trace_context is not None:
+            try:
+                from opentelemetry.trace import Link
+                links = [Link(self._trace_context)]
+            except Exception:
+                pass
         with get_tracer().start_as_current_span(
-            "sandbox.wait", attributes={"sandbox.id": self._sandbox_id or ""}
+            "sandbox.wait",
+            attributes={"sandbox.id": self._sandbox_id or ""},
+            links=links,
         ):
             self._loop_manager.run_sync(self._wait_until_running_async(timeout))
         return self
@@ -2665,6 +2682,13 @@ class Sandbox:
 
         # Tracing: start a span covering the full exec lifecycle.
         tracer = get_tracer()
+        _exec_links = []
+        if self._trace_context is not None:
+            try:
+                from opentelemetry.trace import Link
+                _exec_links = [Link(self._trace_context)]
+            except Exception:
+                pass
         _exec_span = tracer.start_as_current_span(
             "sandbox.exec",
             attributes={
@@ -2672,6 +2696,7 @@ class Sandbox:
                 "exec.argv0": command[0] if command else "",
                 "exec.argc": len(command),
             },
+            links=_exec_links,
         )
         _exec_cm = _exec_span.__enter__()
         channel = await self._get_or_create_streaming_channel()
