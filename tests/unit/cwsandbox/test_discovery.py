@@ -1901,3 +1901,168 @@ class TestGetProfileNotFoundVariants:
             get_profile("missing")
         assert exc_info.value.profile_name == "missing"
         assert exc_info.value.runner_id is None
+
+
+# ---------------------------------------------------------------------------
+# NOT_FOUND with AIP-193 ErrorInfo: structured fields propagate
+# ---------------------------------------------------------------------------
+
+
+def _pack_error_info_status(*, reason: str, metadata: dict[str, str] | None = None) -> bytes:
+    """Build a serialized google.rpc.Status carrying an ErrorInfo detail."""
+    from google.protobuf import any_pb2
+    from google.rpc import error_details_pb2, status_pb2
+
+    status = status_pb2.Status(code=5, message="not found")
+    info = error_details_pb2.ErrorInfo(
+        reason=reason,
+        domain="cwsandbox.com",
+        metadata=metadata or {},
+    )
+    packed = any_pb2.Any()
+    packed.Pack(info)
+    status.details.append(packed)
+    return status.SerializeToString()
+
+
+class TestDiscoveryNotFoundStructuredFields:
+    """NOT_FOUND in discovery must thread ErrorInfo into the direct exception."""
+
+    @patch(_PATCH_STUB)
+    @patch(_PATCH_PARSE)
+    @patch(_PATCH_AUTH)
+    @patch(_PATCH_CHANNEL)
+    @patch(_PATCH_LM)
+    def test_get_runner_not_found_propagates_error_info(
+        self,
+        mock_lm: MagicMock,
+        mock_channel: MagicMock,
+        mock_auth: MagicMock,
+        mock_parse: MagicMock,
+        mock_stub_cls: MagicMock,
+    ) -> None:
+        _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
+        status_bytes = _pack_error_info_status(
+            reason="CWSANDBOX_RUNNER_NOT_FOUND",
+            metadata={"runner_id": "missing"},
+        )
+        err = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.NOT_FOUND,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(
+                ("grpc-status-details-bin", status_bytes),
+            ),
+            details="not found",
+        )
+        stub = MagicMock()
+        stub.GetAvailableRunner = AsyncMock(side_effect=err)
+        mock_stub_cls.return_value = stub
+
+        with pytest.raises(RunnerNotFoundError) as exc_info:
+            get_runner("missing")
+
+        assert exc_info.value.runner_id == "missing"
+        assert exc_info.value.reason == "CWSANDBOX_RUNNER_NOT_FOUND"
+        assert exc_info.value.metadata == {"runner_id": "missing"}
+        assert exc_info.value.retry_delay is None
+
+    @patch(_PATCH_STUB)
+    @patch(_PATCH_PARSE)
+    @patch(_PATCH_AUTH)
+    @patch(_PATCH_CHANNEL)
+    @patch(_PATCH_LM)
+    def test_get_runner_not_found_without_error_info_preserves_none(
+        self,
+        mock_lm: MagicMock,
+        mock_channel: MagicMock,
+        mock_auth: MagicMock,
+        mock_parse: MagicMock,
+        mock_stub_cls: MagicMock,
+    ) -> None:
+        _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
+        err = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.NOT_FOUND,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="not found",
+        )
+        stub = MagicMock()
+        stub.GetAvailableRunner = AsyncMock(side_effect=err)
+        mock_stub_cls.return_value = stub
+
+        with pytest.raises(RunnerNotFoundError) as exc_info:
+            get_runner("missing")
+
+        assert exc_info.value.reason is None
+        assert exc_info.value.metadata == {}
+        assert exc_info.value.retry_delay is None
+
+    @patch(_PATCH_STUB)
+    @patch(_PATCH_PARSE)
+    @patch(_PATCH_AUTH)
+    @patch(_PATCH_CHANNEL)
+    @patch(_PATCH_LM)
+    def test_get_profile_not_found_propagates_error_info(
+        self,
+        mock_lm: MagicMock,
+        mock_channel: MagicMock,
+        mock_auth: MagicMock,
+        mock_parse: MagicMock,
+        mock_stub_cls: MagicMock,
+    ) -> None:
+        _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
+        status_bytes = _pack_error_info_status(
+            reason="CWSANDBOX_PROFILE_NOT_FOUND",
+            metadata={"profile_name": "missing"},
+        )
+        err = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.NOT_FOUND,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(
+                ("grpc-status-details-bin", status_bytes),
+            ),
+            details="not found",
+        )
+        stub = MagicMock()
+        stub.GetProfile = AsyncMock(side_effect=err)
+        mock_stub_cls.return_value = stub
+
+        with pytest.raises(ProfileNotFoundError) as exc_info:
+            get_profile("missing", runner_id="runner-1")
+
+        assert exc_info.value.profile_name == "missing"
+        assert exc_info.value.runner_id == "runner-1"
+        assert exc_info.value.reason == "CWSANDBOX_PROFILE_NOT_FOUND"
+        assert exc_info.value.metadata == {"profile_name": "missing"}
+        assert exc_info.value.retry_delay is None
+
+    @patch(_PATCH_STUB)
+    @patch(_PATCH_PARSE)
+    @patch(_PATCH_AUTH)
+    @patch(_PATCH_CHANNEL)
+    @patch(_PATCH_LM)
+    def test_get_profile_not_found_without_error_info_preserves_none(
+        self,
+        mock_lm: MagicMock,
+        mock_channel: MagicMock,
+        mock_auth: MagicMock,
+        mock_parse: MagicMock,
+        mock_stub_cls: MagicMock,
+    ) -> None:
+        _setup_grpc_mocks(mock_lm, mock_channel, mock_auth, mock_parse)
+        err = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.NOT_FOUND,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="not found",
+        )
+        stub = MagicMock()
+        stub.GetProfile = AsyncMock(side_effect=err)
+        mock_stub_cls.return_value = stub
+
+        with pytest.raises(ProfileNotFoundError) as exc_info:
+            get_profile("missing")
+
+        assert exc_info.value.reason is None
+        assert exc_info.value.metadata == {}
+        assert exc_info.value.retry_delay is None

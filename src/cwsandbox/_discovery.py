@@ -18,6 +18,12 @@ import grpc.aio
 
 from cwsandbox._auth import resolve_auth_metadata
 from cwsandbox._defaults import DEFAULT_BASE_URL, DEFAULT_DISCOVERY_TIMEOUT_SECONDS
+from cwsandbox._error_info import (
+    CWSANDBOX_PROFILE_NOT_FOUND,
+    CWSANDBOX_RUNNER_NOT_FOUND,
+    is_not_found,
+    parse_error_info,
+)
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox._proto import discovery_pb2, discovery_pb2_grpc
@@ -555,12 +561,18 @@ async def _get_runner_async(
         proto = await stub.GetAvailableRunner(request, metadata=metadata, timeout=timeout)
         return _runner_from_proto(proto)
     except grpc.aio.AioRpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
+        parsed = parse_error_info(e)
+        if is_not_found(e, parsed, CWSANDBOX_RUNNER_NOT_FOUND):
             raise RunnerNotFoundError(
                 f"Runner not found: {runner_id!r}",
                 runner_id=runner_id,
+                reason=parsed.reason if parsed is not None else None,
+                metadata=parsed.metadata if parsed is not None else None,
+                retry_delay=parsed.retry_delay if parsed is not None else None,
             ) from e
-        raise translate_grpc_error(e, operation="Get runner", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="Get runner", fallback_cls=DiscoveryError, parsed=parsed
+        ) from e
     finally:
         await channel.close(grace=None)
 
@@ -715,13 +727,19 @@ async def _get_profile_async(
         proto = await stub.GetProfile(request, metadata=metadata, timeout=timeout)
         return _profile_from_proto(proto)
     except grpc.aio.AioRpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
+        parsed = parse_error_info(e)
+        if is_not_found(e, parsed, CWSANDBOX_PROFILE_NOT_FOUND):
             raise ProfileNotFoundError(
                 f"Profile not found: {profile_name!r}",
                 profile_name=profile_name,
                 runner_id=runner_id,
+                reason=parsed.reason if parsed is not None else None,
+                metadata=parsed.metadata if parsed is not None else None,
+                retry_delay=parsed.retry_delay if parsed is not None else None,
             ) from e
-        raise translate_grpc_error(e, operation="Get profile", fallback_cls=DiscoveryError) from e
+        raise translate_grpc_error(
+            e, operation="Get profile", fallback_cls=DiscoveryError, parsed=parsed
+        ) from e
     finally:
         await channel.close(grace=None)
 

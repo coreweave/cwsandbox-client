@@ -4,10 +4,14 @@
 
 """Unit tests for cwsandbox._network module."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import grpc
 import pytest
+from google.protobuf import any_pb2
+from google.protobuf.duration_pb2 import Duration
+from google.rpc import error_details_pb2, status_pb2
 
 from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox.exceptions import (
@@ -16,6 +20,22 @@ from cwsandbox.exceptions import (
     DiscoveryError,
     SandboxError,
 )
+
+
+def _status_bytes(reason: str, metadata: dict[str, str] | None = None, retry: int = 0) -> bytes:
+    status = status_pb2.Status(code=2, message="test")
+    info = error_details_pb2.ErrorInfo(
+        reason=reason, domain="cwsandbox.com", metadata=metadata or {}
+    )
+    packed = any_pb2.Any()
+    packed.Pack(info)
+    status.details.append(packed)
+    if retry:
+        retry_detail = error_details_pb2.RetryInfo(retry_delay=Duration(seconds=retry))
+        packed_retry = any_pb2.Any()
+        packed_retry.Pack(retry_detail)
+        status.details.append(packed_retry)
+    return status.SerializeToString()
 
 
 class TestParseGrpcTarget:
@@ -126,10 +146,16 @@ class TestCreateChannel:
         assert result is mock_channel
 
 
-def _make_rpc_error(code: grpc.StatusCode, details: str) -> grpc.RpcError:
+def _make_rpc_error(
+    code: grpc.StatusCode,
+    details: str,
+    *,
+    trailing: list[tuple[str, bytes | str]] | None = None,
+) -> grpc.RpcError:
     err = MagicMock()
     err.code.return_value = code
     err.details.return_value = details
+    err.trailing_metadata.return_value = trailing if trailing is not None else []
     return err
 
 
@@ -202,3 +228,65 @@ class TestTranslateGrpcError:
             result = translate_grpc_error(err, fallback_cls=SandboxError)
             assert isinstance(result, CWSandboxAuthenticationError)
             assert not isinstance(result, SandboxError)
+
+
+class TestTranslateGrpcErrorWithErrorInfo:
+    """ErrorInfo / RetryInfo are threaded onto exceptions returned by the shared translator."""
+
+    def test_reason_attached_to_fallback_exception(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.INTERNAL,
+            "oops",
+            trailing=[("grpc-status-details-bin", _status_bytes("CWSANDBOX_RUNNER_NOT_FOUND"))],
+        )
+        result = translate_grpc_error(err, fallback_cls=SandboxError)
+        assert isinstance(result, SandboxError)
+        assert result.reason == "CWSANDBOX_RUNNER_NOT_FOUND"
+
+    def test_metadata_attached(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.INTERNAL,
+            "oops",
+            trailing=[
+                (
+                    "grpc-status-details-bin",
+                    _status_bytes("CWSANDBOX_FILE_NOT_FOUND", metadata={"filepath": "/tmp/x"}),
+                )
+            ],
+        )
+        result = translate_grpc_error(err, fallback_cls=DiscoveryError)
+        assert isinstance(result, DiscoveryError)
+        assert result.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert result.metadata == {"filepath": "/tmp/x"}
+
+    def test_retry_delay_attached(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.UNAVAILABLE,
+            "server down",
+            trailing=[
+                (
+                    "grpc-status-details-bin",
+                    _status_bytes("CWSANDBOX_BACKEND_UNAVAILABLE", retry=7),
+                )
+            ],
+        )
+        result = translate_grpc_error(err, fallback_cls=DiscoveryError)
+        assert isinstance(result, DiscoveryError)
+        assert result.retry_delay == timedelta(seconds=7)
+
+    def test_reason_attached_to_auth_error(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.UNAUTHENTICATED,
+            "bad token",
+            trailing=[("grpc-status-details-bin", _status_bytes("CWSANDBOX_AUTH_EXPIRED"))],
+        )
+        result = translate_grpc_error(err)
+        assert isinstance(result, CWSandboxAuthenticationError)
+        assert result.reason == "CWSANDBOX_AUTH_EXPIRED"
+
+    def test_no_error_info_keeps_defaults(self) -> None:
+        err = _make_rpc_error(grpc.StatusCode.INTERNAL, "oops")
+        result = translate_grpc_error(err, fallback_cls=SandboxError)
+        assert result.reason is None
+        assert result.metadata == {}
+        assert result.retry_delay is None
