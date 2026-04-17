@@ -188,6 +188,32 @@ def test_sandbox_read_nonexistent_file(sandbox_defaults: SandboxDefaults) -> Non
         assert exc_info.value.filepath == "/nonexistent/path/to/file.txt"
 
 
+def test_sandbox_file_error_surfaces_aip193_details(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test SandboxFileError carries AIP-193 reason and metadata from backend.
+
+    The backend classifies file-op failures with CWSANDBOX_* reason codes and
+    attaches google.rpc.ErrorInfo details. The SDK maps those reasons to
+    specific exception types and exposes reason/metadata/retry_delay attributes.
+    """
+    from datetime import timedelta
+
+    from cwsandbox.exceptions import SandboxFileError
+
+    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+        with pytest.raises(SandboxFileError) as exc_info:
+            sandbox.read_file("/nonexistent/path/to/file.txt").result()
+
+        error = exc_info.value
+        assert error.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert error.metadata.get("filepath") == "/nonexistent/path/to/file.txt"
+        # retry_delay is absent for file errors today, but guard the shape so
+        # a future backend change that starts emitting RetryInfo surfaces
+        # parser regressions through the integration path too.
+        assert error.retry_delay is None or isinstance(error.retry_delay, timedelta)
+
+
 def test_sandbox_file_operations_binary(sandbox_defaults: SandboxDefaults) -> None:
     """Test reading/writing binary content (non-UTF8)."""
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:

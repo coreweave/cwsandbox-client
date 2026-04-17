@@ -38,6 +38,15 @@ from cwsandbox._defaults import (
     STREAMING_RESPONSE_QUEUE_SIZE,
     SandboxDefaults,
 )
+from cwsandbox._error_info import (
+    CWSANDBOX_COMMAND_TIMEOUT,
+    CWSANDBOX_ERROR_DOMAIN,
+    CWSANDBOX_SANDBOX_NOT_FOUND,
+    FILE_ERROR_REASONS,
+    UNAVAILABLE_REASONS,
+    is_not_found,
+    parse_error_info,
+)
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox._proto import (
@@ -168,38 +177,128 @@ def _translate_rpc_error(
     *,
     sandbox_id: str | None = None,
     operation: str = "operation",
+    filepath: str | None = None,
 ) -> CWSandboxError:
     """Translate gRPC RpcError to appropriate CWSandbox exception.
 
-    Handles sandbox-specific codes first, then delegates to the shared
-    transport-level translator for auth and generic errors.
+    Resolves the exception class in this priority order:
+
+    1. If AIP-193 ``ErrorInfo`` is present with a matching ``domain`` and the
+       ``reason`` matches a known ``CWSANDBOX_*`` string, use the reason-
+       specific mapping (file ops, sandbox-not-found, timeout, unavailable).
+       Reason mapping only applies when the ErrorInfo ``domain`` matches
+       ``CWSANDBOX_ERROR_DOMAIN``. This is a namespace gate, not a peer-
+       identity check: any peer with a valid TLS certificate can set the
+       domain field, but distinct AIP-193 services (``google.rpc.*``,
+       third-party sidecars, service-mesh-injected details) typically use
+       their own domain, so the gate prevents accidental collisions with
+       reason strings emitted by other AIP-193 services in the gRPC pipe.
+       Peer-identity trust comes from the TLS trust chain, not this check.
+    2. Otherwise fall through to gRPC status code mapping (NOT_FOUND,
+       CANCELLED, DEADLINE_EXCEEDED, UNAVAILABLE).
+    3. Otherwise delegate to the shared transport-level translator.
+
+    Any parsed ``ErrorInfo`` / ``RetryInfo`` fields are attached to the
+    returned exception regardless of which branch picks the class - the
+    ``reason`` attribute is populated even when the domain does not match,
+    so callers that want to inspect raw server metadata still can.
+
+    For ``SandboxFileError``, ``filepath`` is resolved from the caller's
+    ``filepath`` kwarg first, then falls back to
+    ``ErrorInfo.metadata["filepath"]`` if the backend provided one. The
+    explicit kwarg always wins so client-local context survives even
+    when the backend drops metadata.
 
     Args:
-        e: The gRPC RpcError to translate
-        sandbox_id: Optional sandbox ID for context in error messages
-        operation: Description of the operation that failed
+        e: The gRPC RpcError to translate.
+        sandbox_id: Optional sandbox ID for context in error messages.
+        operation: Description of the operation that failed.
+        filepath: Optional file path for file-op callers; used as fallback
+            target for ``SandboxFileError.filepath``.
 
     Returns:
-        An appropriate CWSandbox exception
+        An appropriate CWSandbox exception.
     """
     code = e.code()
     details = e.details() or str(e)
+    parsed = parse_error_info(e)
+    reason = parsed.reason if parsed is not None else None
+    metadata = parsed.metadata if parsed is not None else None
+    retry_delay = parsed.retry_delay if parsed is not None else None
+    domain_trusted = parsed is not None and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+
+    if domain_trusted and reason is not None:
+        parsed_metadata = parsed.metadata if parsed is not None else {}
+        if reason in FILE_ERROR_REASONS:
+            effective_filepath = (
+                filepath if filepath is not None else parsed_metadata.get("filepath")
+            )
+            return SandboxFileError(
+                f"File operation failed ({reason}): {details}",
+                filepath=effective_filepath,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if reason == CWSANDBOX_SANDBOX_NOT_FOUND:
+            return SandboxNotFoundError(
+                f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
+                sandbox_id=sandbox_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if reason == CWSANDBOX_COMMAND_TIMEOUT:
+            return SandboxTimeoutError(
+                f"{operation} timed out: {details}",
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if reason in UNAVAILABLE_REASONS:
+            return SandboxNotRunningError(
+                f"Service unavailable: {details}",
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
 
     if code == grpc.StatusCode.NOT_FOUND:
         return SandboxNotFoundError(
             f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
             sandbox_id=sandbox_id,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.CANCELLED:
         return SandboxNotRunningError(
             f"{operation} was cancelled"
-            + (f" (sandbox {sandbox_id} connection closed)" if sandbox_id else "")
+            + (f" (sandbox {sandbox_id} connection closed)" if sandbox_id else ""),
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-        return SandboxTimeoutError(f"{operation} timed out: {details}")
+        return SandboxTimeoutError(
+            f"{operation} timed out: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
     if code == grpc.StatusCode.UNAVAILABLE:
-        return SandboxNotRunningError(f"Service unavailable: {details}")
-    return translate_grpc_error(e, operation=operation, fallback_cls=SandboxError)
+        return SandboxNotRunningError(
+            f"Service unavailable: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    return translate_grpc_error(
+        e,
+        operation=operation,
+        fallback_cls=SandboxError,
+        parsed=parsed,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1049,7 +1148,8 @@ class Sandbox:
             try:
                 response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
-                if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                parsed = parse_error_info(e)
+                if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
                     return
                 raise _translate_rpc_error(
                     e, sandbox_id=sandbox_id, operation="Delete sandbox"
@@ -2231,7 +2331,8 @@ class Sandbox:
                         metadata=self._auth_metadata,
                     )
                 except grpc.RpcError as e:
-                    if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                    parsed = parse_error_info(e)
+                    if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
                         logger.debug(
                             "Sandbox %s not found during stop (missing_ok=True)",
                             sandbox_id,
@@ -2534,7 +2635,10 @@ class Sandbox:
 
                     elif response.HasField("error"):
                         await output_queue.put(
-                            SandboxError(f"Log stream error: {response.error.message}")
+                            SandboxError(
+                                f"Log stream error: {response.error.message}",
+                                reason=response.error.code or None,
+                            )
                         )
                         return
 
@@ -2773,6 +2877,7 @@ class Sandbox:
                         ready_event.set()
                         raise SandboxExecutionError(
                             f"Exec stream error: {response.error.message}",
+                            reason=response.error.code or None,
                         )
             except asyncio.CancelledError:
                 raise
@@ -2963,9 +3068,13 @@ class Sandbox:
                         return
             except grpc.aio.AioRpcError as e:
                 if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                    parsed = parse_error_info(e)
                     await response_queue.put(
                         SandboxTimeoutError(
-                            f"Command {shlex.join(command)} timed out after {timeout}s"
+                            f"Command {shlex.join(command)} timed out after {timeout}s",
+                            reason=parsed.reason if parsed is not None else None,
+                            metadata=parsed.metadata if parsed is not None else None,
+                            retry_delay=parsed.retry_delay if parsed is not None else None,
                         )
                     )
                 else:
@@ -3031,6 +3140,7 @@ class Sandbox:
                     ready_event.set()  # Unblock stdin sender on terminal message
                     raise SandboxExecutionError(
                         f"Exec stream error: {response.error.message}",
+                        reason=response.error.code or None,
                     )
         finally:
             # Unblock stdin sender if still waiting for ready signal
@@ -3293,7 +3403,12 @@ class Sandbox:
                 request, timeout=timeout, metadata=self._auth_metadata
             )
         except grpc.RpcError as e:
-            raise _translate_rpc_error(e, sandbox_id=self._sandbox_id, operation="Read file") from e
+            raise _translate_rpc_error(
+                e,
+                sandbox_id=self._sandbox_id,
+                operation="Read file",
+                filepath=filepath,
+            ) from e
 
         if not response.success:
             logger.warning("Failed to read file %s from sandbox %s", filepath, self._sandbox_id)
@@ -3367,7 +3482,10 @@ class Sandbox:
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
-                e, sandbox_id=self._sandbox_id, operation="Write file"
+                e,
+                sandbox_id=self._sandbox_id,
+                operation="Write file",
+                filepath=filepath,
             ) from e
 
         if not response.success:

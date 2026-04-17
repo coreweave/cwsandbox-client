@@ -1180,6 +1180,68 @@ class TestSandboxAutoStartFileOps:
             assert "metadata" in call_kwargs
 
 
+class TestSandboxFileOpErrorTranslation:
+    """read_file / write_file surface AIP-193 reason on SandboxFileError.
+
+    Covers the public API path: the stub raises grpc.RpcError carrying
+    AIP-193 trailing metadata, the SDK maps it to SandboxFileError, and
+    the caller-side filepath argument wins over backend metadata so
+    client-local context survives even when the backend reports a
+    different/normalized path.
+    """
+
+    def _setup_running_sandbox(self) -> "Sandbox":
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-file-err"
+        sandbox._state = _Running(sandbox_id="sb-file-err")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        return sandbox
+
+    def test_read_file_rpc_error_surfaces_caller_filepath_and_reason(self) -> None:
+        from cwsandbox.exceptions import SandboxFileError
+
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.RetrieveFile = AsyncMock(
+            side_effect=_MockRpcErrorWithDetails(
+                grpc.StatusCode.INTERNAL,
+                "file missing",
+                reason="CWSANDBOX_FILE_NOT_FOUND",
+                metadata={"filepath": "/backend-normalized-path"},
+            )
+        )
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            with pytest.raises(SandboxFileError) as exc_info:
+                sandbox.read_file("/caller-requested-path").result()
+
+        assert exc_info.value.filepath == "/caller-requested-path"
+        assert exc_info.value.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        # Backend metadata still round-trips so callers can inspect it.
+        assert exc_info.value.metadata == {"filepath": "/backend-normalized-path"}
+
+    def test_write_file_rpc_error_surfaces_caller_filepath_and_reason(self) -> None:
+        from cwsandbox.exceptions import SandboxFileError
+
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.AddFile = AsyncMock(
+            side_effect=_MockRpcErrorWithDetails(
+                grpc.StatusCode.INTERNAL,
+                "permission denied",
+                reason="CWSANDBOX_FILE_PERMISSION_DENIED",
+                metadata={"filepath": "/backend-normalized-path"},
+            )
+        )
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            with pytest.raises(SandboxFileError) as exc_info:
+                sandbox.write_file("/caller-requested-path", b"data").result()
+
+        assert exc_info.value.filepath == "/caller-requested-path"
+        assert exc_info.value.reason == "CWSANDBOX_FILE_PERMISSION_DENIED"
+        assert exc_info.value.metadata == {"filepath": "/backend-normalized-path"}
+
+
 class TestSandboxWaitUntilComplete:
     """Tests for Sandbox.wait_until_complete method."""
 
@@ -2302,6 +2364,96 @@ class TestSandboxDeleteClassMethod:
             result = await Sandbox.delete("nonexistent-id", missing_ok=True)
             assert result is None
 
+    # -- missing_ok / status-code / reason matrix -------------------------
+    #
+    # Same matrix as TestStoppingStopFlow's stop() variant: delete(missing_ok=True)
+    # must swallow a not-found condition signalled by EITHER the transport-level
+    # status code OR the AIP-193 reason with a trusted domain.
+
+    _NOT_FOUND_PAIRS = [
+        # transport-level NOT_FOUND, no reason (pre-AIP-193 servers)
+        (grpc.StatusCode.NOT_FOUND, None),
+        # AIP-193 reason on a non-not-found status code (the case f-1 fixed)
+        (grpc.StatusCode.INTERNAL, "CWSANDBOX_SANDBOX_NOT_FOUND"),
+        (grpc.StatusCode.FAILED_PRECONDITION, "CWSANDBOX_SANDBOX_NOT_FOUND"),
+    ]
+
+    @staticmethod
+    def _make_error(code: grpc.StatusCode, reason: str | None) -> grpc.RpcError:
+        if reason is None:
+            return MockRpcError(code, "Not found")
+        return _MockRpcErrorWithDetails(code, "Not found", reason=reason)
+
+    @pytest.mark.parametrize(("code", "reason"), _NOT_FOUND_PAIRS)
+    @pytest.mark.asyncio
+    async def test_delete_missing_ok_true_swallows_not_found_variants(
+        self, mock_api_key: str, code: grpc.StatusCode, reason: str | None
+    ) -> None:
+        """delete(missing_ok=True) silently succeeds for every not-found pair."""
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(side_effect=self._make_error(code, reason))
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            result = await Sandbox.delete("sb-1", missing_ok=True)
+
+        assert result is None
+
+    @pytest.mark.parametrize(("code", "reason"), _NOT_FOUND_PAIRS)
+    @pytest.mark.asyncio
+    async def test_delete_missing_ok_false_raises_for_not_found_variants(
+        self, mock_api_key: str, code: grpc.StatusCode, reason: str | None
+    ) -> None:
+        """delete(missing_ok=False) raises SandboxNotFoundError for all not-found pairs."""
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(side_effect=self._make_error(code, reason))
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            with pytest.raises(SandboxNotFoundError):
+                await Sandbox.delete("sb-1", missing_ok=False)
+
+    @pytest.mark.asyncio
+    async def test_delete_control_internal_without_reason_raises_generic_error(
+        self, mock_api_key: str
+    ) -> None:
+        """Control: INTERNAL without a matching reason is NOT a not-found condition."""
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Delete = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.INTERNAL, "server error")
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            with pytest.raises(SandboxError) as exc_info:
+                await Sandbox.delete("sb-1", missing_ok=False)
+
+        assert not isinstance(exc_info.value, SandboxNotFoundError)
+
 
 class TestSandboxServiceAddressAndExposedPorts:
     """Tests for service_address and exposed_ports properties."""
@@ -3269,6 +3421,250 @@ class TestTranslateRpcError:
         result = _translate_rpc_error(error, operation="Test")
 
         assert isinstance(result, SandboxError)
+
+
+class _MockRpcErrorWithDetails(grpc.RpcError):
+    """MockRpcError variant that exposes trailing metadata for AIP-193 tests."""
+
+    def __init__(
+        self,
+        code: grpc.StatusCode,
+        details: str,
+        *,
+        reason: str | None = None,
+        domain: str = "cwsandbox.com",
+        metadata: dict[str, str] | None = None,
+        retry_seconds: int = 0,
+    ) -> None:
+        super().__init__()
+        self._code = code
+        self._details = details
+        self._trailing: list[tuple[str, bytes]] = []
+        if reason is not None or retry_seconds:
+            from google.protobuf import any_pb2
+            from google.protobuf.duration_pb2 import Duration
+            from google.rpc import error_details_pb2, status_pb2
+
+            status = status_pb2.Status(code=2, message=details or "err")
+            if reason is not None:
+                info = error_details_pb2.ErrorInfo(
+                    reason=reason, domain=domain, metadata=metadata or {}
+                )
+                packed = any_pb2.Any()
+                packed.Pack(info)
+                status.details.append(packed)
+            if retry_seconds:
+                retry = error_details_pb2.RetryInfo(retry_delay=Duration(seconds=retry_seconds))
+                packed_retry = any_pb2.Any()
+                packed_retry.Pack(retry)
+                status.details.append(packed_retry)
+            self._trailing = [("grpc-status-details-bin", status.SerializeToString())]
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+    def trailing_metadata(self) -> list[tuple[str, bytes]]:
+        return self._trailing
+
+
+class TestTranslateRpcErrorReasonMapping:
+    """Reason-based mapping takes priority over status-code mapping."""
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "CWSANDBOX_FILE_NOT_FOUND",
+            "CWSANDBOX_FILE_IS_DIRECTORY",
+            "CWSANDBOX_FILE_IO_FAILED",
+            "CWSANDBOX_FILE_PERMISSION_DENIED",
+        ],
+    )
+    def test_file_reason_returns_sandbox_file_error(self, reason: str) -> None:
+        """Every reason in FILE_ERROR_REASONS maps to SandboxFileError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxFileError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "file problem",
+            reason=reason,
+            metadata={"filepath": "/data/x.txt"},
+        )
+        result = _translate_rpc_error(error, operation="Read file")
+
+        assert isinstance(result, SandboxFileError)
+        assert result.filepath == "/data/x.txt"
+        assert result.reason == reason
+        assert result.metadata == {"filepath": "/data/x.txt"}
+
+    def test_explicit_filepath_wins_over_metadata(self) -> None:
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxFileError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "bad",
+            reason="CWSANDBOX_FILE_IS_DIRECTORY",
+            metadata={"filepath": "/backend-side"},
+        )
+        result = _translate_rpc_error(error, filepath="/caller-side")
+
+        assert isinstance(result, SandboxFileError)
+        assert result.filepath == "/caller-side"
+
+    def test_sandbox_not_found_reason(self) -> None:
+        from cwsandbox._sandbox import _translate_rpc_error
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "no such sandbox",
+            reason="CWSANDBOX_SANDBOX_NOT_FOUND",
+        )
+        result = _translate_rpc_error(error, sandbox_id="sb-1")
+
+        assert isinstance(result, SandboxNotFoundError)
+        assert result.sandbox_id == "sb-1"
+        assert result.reason == "CWSANDBOX_SANDBOX_NOT_FOUND"
+
+    def test_command_timeout_reason_returns_timeout_error(self) -> None:
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxTimeoutError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "timed out",
+            reason="CWSANDBOX_COMMAND_TIMEOUT",
+        )
+        result = _translate_rpc_error(error, operation="Execute command")
+
+        assert isinstance(result, SandboxTimeoutError)
+        assert result.reason == "CWSANDBOX_COMMAND_TIMEOUT"
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "CWSANDBOX_RUNNER_UNAVAILABLE",
+            "CWSANDBOX_BACKEND_UNAVAILABLE",
+        ],
+    )
+    def test_unavailable_reason_returns_not_running(self, reason: str) -> None:
+        """Every reason in UNAVAILABLE_REASONS maps to SandboxNotRunningError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxNotRunningError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "service down",
+            reason=reason,
+            retry_seconds=2,
+        )
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxNotRunningError)
+        assert result.reason == reason
+        assert result.retry_delay is not None
+        assert result.retry_delay.total_seconds() == 2
+
+    def test_runner_not_found_reason_is_not_mapped(self) -> None:
+        """CWSANDBOX_RUNNER_NOT_FOUND stays as plain SandboxError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "runner not found",
+            reason="CWSANDBOX_RUNNER_NOT_FOUND",
+        )
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxError)
+        assert not isinstance(result, SandboxNotFoundError)
+        assert result.reason == "CWSANDBOX_RUNNER_NOT_FOUND"
+
+    def test_unknown_reason_falls_through_to_status_code(self) -> None:
+        """Unknown reasons should not block status-code-based mapping."""
+        from cwsandbox._sandbox import _translate_rpc_error
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.NOT_FOUND,
+            "missing",
+            reason="CWSANDBOX_SOMETHING_NEW",
+        )
+        result = _translate_rpc_error(error, sandbox_id="sb-9")
+
+        # NOT_FOUND status-code branch still applies because reason did not match.
+        assert isinstance(result, SandboxNotFoundError)
+        assert result.sandbox_id == "sb-9"
+        assert result.reason == "CWSANDBOX_SOMETHING_NEW"
+
+    def test_no_error_info_backward_compat(self) -> None:
+        """Existing status-code behaviour preserved when no ErrorInfo present."""
+        from cwsandbox._sandbox import _translate_rpc_error
+
+        error = MockRpcError(grpc.StatusCode.INTERNAL, "plain failure")
+        result = _translate_rpc_error(error, operation="Op")
+
+        assert isinstance(result, SandboxError)
+        assert result.reason is None
+        assert result.metadata == {}
+
+    def test_file_reason_without_filepath_or_metadata(self) -> None:
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxFileError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "io failed",
+            reason="CWSANDBOX_FILE_IO_FAILED",
+        )
+        result = _translate_rpc_error(error)
+
+        assert isinstance(result, SandboxFileError)
+        assert result.filepath is None
+
+    def test_untrusted_domain_does_not_drive_mapping(self) -> None:
+        """A hostile peer cannot spoof CWSANDBOX_* reasons under another domain."""
+        from datetime import timedelta
+
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxFileError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "spoof attempt",
+            reason="CWSANDBOX_FILE_NOT_FOUND",
+            domain="evil.example.com",
+            metadata={"filepath": "/attacker-controlled"},
+            retry_seconds=3,
+        )
+        result = _translate_rpc_error(error, sandbox_id="sb-1")
+
+        # Falls through to status-code mapping - NOT a SandboxFileError.
+        assert not isinstance(result, SandboxFileError)
+        assert isinstance(result, SandboxError)
+        # reason/metadata/retry_delay still populated so callers can inspect;
+        # mapping did not fire.
+        assert result.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert result.metadata == {"filepath": "/attacker-controlled"}
+        assert result.retry_delay == timedelta(seconds=3)
+
+    def test_empty_domain_does_not_drive_mapping(self) -> None:
+        """ErrorInfo without domain cannot trigger reason mapping."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxFileError
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INTERNAL,
+            "no domain",
+            reason="CWSANDBOX_FILE_NOT_FOUND",
+            domain="",
+        )
+        result = _translate_rpc_error(error)
+
+        assert not isinstance(result, SandboxFileError)
+        assert result.reason == "CWSANDBOX_FILE_NOT_FOUND"
 
 
 class TestExecStdinReadySignal:
@@ -4365,6 +4761,84 @@ class TestStoppingStopFlow:
         assert result is None
         assert isinstance(sandbox._state, _Terminal)
         assert sandbox._state.status == SandboxStatus.TERMINATED
+
+    # -- missing_ok / status-code / reason matrix -------------------------
+    #
+    # missing_ok swallows a "not found" condition signalled by EITHER the
+    # transport-level status code OR the AIP-193 reason with a trusted
+    # domain. Every not-found pair below must silently succeed when
+    # missing_ok=True, and raise SandboxNotFoundError when missing_ok=False.
+    # The control pair (INTERNAL without a matching reason) is not a
+    # not-found condition, so it must always raise (generic SandboxError
+    # when missing_ok=False; the missing_ok=True case is irrelevant and
+    # covered by the raise-by-default case).
+
+    _NOT_FOUND_PAIRS = [
+        # transport-level NOT_FOUND, no reason (pre-AIP-193 servers)
+        (grpc.StatusCode.NOT_FOUND, None),
+        # AIP-193 reason on a non-not-found status code (the case f-1 fixed)
+        (grpc.StatusCode.INTERNAL, "CWSANDBOX_SANDBOX_NOT_FOUND"),
+        (grpc.StatusCode.FAILED_PRECONDITION, "CWSANDBOX_SANDBOX_NOT_FOUND"),
+    ]
+
+    @staticmethod
+    def _make_error(code: grpc.StatusCode, reason: str | None) -> grpc.RpcError:
+        if reason is None:
+            return MockRpcError(code, "Not found")
+        return _MockRpcErrorWithDetails(code, "Not found", reason=reason)
+
+    @pytest.mark.parametrize(("code", "reason"), _NOT_FOUND_PAIRS)
+    def test_stop_missing_ok_true_swallows_not_found_variants(
+        self, code: grpc.StatusCode, reason: str | None
+    ) -> None:
+        """stop(missing_ok=True) silently succeeds for every not-found pair."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.Stop = AsyncMock(side_effect=self._make_error(code, reason))
+
+        result = sandbox.stop(missing_ok=True).result()
+
+        assert result is None
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.TERMINATED
+
+    @pytest.mark.parametrize(("code", "reason"), _NOT_FOUND_PAIRS)
+    def test_stop_missing_ok_false_raises_for_not_found_variants(
+        self, code: grpc.StatusCode, reason: str | None
+    ) -> None:
+        """stop(missing_ok=False) raises SandboxNotFoundError for all not-found pairs."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.Stop = AsyncMock(side_effect=self._make_error(code, reason))
+
+        with pytest.raises(SandboxNotFoundError):
+            sandbox.stop(missing_ok=False).result()
+
+    def test_stop_control_internal_without_reason_raises_generic_error(self) -> None:
+        """Control: INTERNAL without a matching reason is NOT a not-found condition."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.Stop = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.INTERNAL, "server error")
+        )
+
+        with pytest.raises(SandboxError) as exc_info:
+            sandbox.stop(missing_ok=False).result()
+
+        # Generic SandboxError, NOT SandboxNotFoundError
+        assert not isinstance(exc_info.value, SandboxNotFoundError)
 
     def test_repeated_stop_joins_shared_task(self) -> None:
         """Repeated stop() calls join the same task."""
