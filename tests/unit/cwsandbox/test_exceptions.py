@@ -4,6 +4,8 @@
 
 """Unit tests for cwsandbox.exceptions module."""
 
+from datetime import timedelta
+
 from cwsandbox._types import ProcessResult
 from cwsandbox.exceptions import (
     AsyncFunctionError,
@@ -89,3 +91,69 @@ class TestSandboxExecutionError:
         assert exc.exec_result.stdout_bytes == b"output"
         assert exc.exec_result.stderr_bytes == b"error message"
         assert exc.exec_result.returncode == 1
+
+
+class TestStructuredErrorAttributes:
+    """Tests for reason/metadata/retry_delay on CWSandboxError and subclasses."""
+
+    def test_base_defaults(self) -> None:
+        exc = CWSandboxError("boom")
+        assert exc.reason is None
+        assert exc.metadata == {}
+        assert exc.retry_delay is None
+
+    def test_base_accepts_structured_fields(self) -> None:
+        exc = CWSandboxError(
+            "boom",
+            reason="CWSANDBOX_FILE_NOT_FOUND",
+            metadata={"filepath": "/x"},
+            retry_delay=timedelta(seconds=3),
+        )
+        assert exc.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert exc.metadata == {"filepath": "/x"}
+        assert exc.retry_delay == timedelta(seconds=3)
+
+    def test_metadata_is_copied(self) -> None:
+        original = {"filepath": "/x"}
+        exc = CWSandboxError("boom", metadata=original)
+        original["filepath"] = "/y"
+        assert exc.metadata == {"filepath": "/x"}
+
+    def test_sandbox_not_found_carries_fields(self) -> None:
+        exc = SandboxNotFoundError(
+            "missing",
+            sandbox_id="sb-1",
+            reason="CWSANDBOX_SANDBOX_NOT_FOUND",
+            metadata={"sandbox_id": "sb-1"},
+        )
+        assert exc.sandbox_id == "sb-1"
+        assert exc.reason == "CWSANDBOX_SANDBOX_NOT_FOUND"
+        assert exc.metadata == {"sandbox_id": "sb-1"}
+
+    def test_sandbox_file_error_carries_fields(self) -> None:
+        exc = SandboxFileError(
+            "missing",
+            filepath="/data/x.txt",
+            reason="CWSANDBOX_FILE_NOT_FOUND",
+            metadata={"filepath": "/data/x.txt"},
+        )
+        assert exc.filepath == "/data/x.txt"
+        assert exc.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert exc.metadata == {"filepath": "/data/x.txt"}
+
+    def test_sandbox_execution_error_carries_fields(self) -> None:
+        exc = SandboxExecutionError(
+            "exec failed",
+            reason="CWSANDBOX_COMMAND_TIMEOUT",
+            retry_delay=timedelta(seconds=1),
+        )
+        assert exc.reason == "CWSANDBOX_COMMAND_TIMEOUT"
+        assert exc.retry_delay == timedelta(seconds=1)
+
+    def test_backward_compat_no_kwargs(self) -> None:
+        """Exceptions constructed without new kwargs still work."""
+        assert SandboxNotRunningError("nope").reason is None
+        assert SandboxTimeoutError("slow").reason is None
+        assert SandboxTerminatedError("gone").reason is None
+        assert SandboxFailedError("boom").reason is None
+        assert CWSandboxAuthenticationError("denied").reason is None
