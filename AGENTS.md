@@ -125,7 +125,7 @@ Utility methods:
 
 Key constants (from `_defaults.py`):
 - `DEFAULT_CONTAINER_IMAGE = "python:3.11"`
-- `DEFAULT_COMMAND = "tail"`, `DEFAULT_ARGS = ("-f", "/dev/null")`
+- `DEFAULT_COMMAND = "/bin/sh"`, `DEFAULT_ARGS = ("-c", 'trap "exit 0" TERM INT; sleep infinity & wait')` - shell-trapped keep-alive so PID 1 responds to SIGTERM on stop
 - `DEFAULT_BASE_URL = "https://api.cwsandbox.com"`
 - `DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0` - Client-side HTTP timeout
 - `DEFAULT_MAX_LIFETIME_SECONDS = None` - Server controls sandbox lifetime

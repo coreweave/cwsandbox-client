@@ -666,7 +666,8 @@ class Sandbox:
 
         Does NOT wait for RUNNING status. Use .wait() to block until ready.
         If positional args are provided, the first is the command and the rest
-        are its arguments. If no args are provided, uses defaults (tail -f /dev/null).
+        are its arguments. If no args are provided, uses a shell-trapped
+        keep-alive default that responds to SIGTERM on stop.
 
         Args:
             *args: Optional command and arguments (e.g., "echo", "hello", "world").
@@ -698,7 +699,7 @@ class Sandbox:
 
         Examples:
             ```python
-            # Using defaults (tail -f /dev/null)
+            # Using defaults (shell-trapped keep-alive)
             sb = Sandbox.run()
 
             # Fire and forget style
@@ -3533,16 +3534,15 @@ class Sandbox:
         """Stream logs from the sandbox's main process.
 
         Streams stdout/stderr from the sandbox's **main command** — the
-        entrypoint passed to ``Sandbox.run()`` (or the default
-        ``tail -f /dev/null``). Output from commands started via ``exec()``
-        is **not** included; use ``Process.stdout``/``Process.stderr`` for
-        those.
+        entrypoint passed to ``Sandbox.run()`` (or the default shell-trapped
+        keep-alive). Output from commands started via ``exec()`` is **not**
+        included; use ``Process.stdout``/``Process.stderr`` for those.
 
         .. note::
 
-            Sandboxes created with the default command (``tail -f /dev/null``)
-            do not produce any log output. To see logs here, pass a command
-            that writes to stdout/stderr when calling ``Sandbox.run()``.
+            Sandboxes created with the default keep-alive command do not
+            produce any log output. To see logs here, pass a command that
+            writes to stdout/stderr when calling ``Sandbox.run()``.
 
         Returns a StreamReader that yields log lines as strings. The method
         returns immediately — iteration on the StreamReader blocks until

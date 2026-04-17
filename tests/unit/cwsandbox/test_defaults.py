@@ -338,7 +338,7 @@ class TestSandboxDefaultsFromDict:
             }
         )
         assert defaults.tags == ()
-        assert defaults.args == ("-f", "/dev/null")
+        assert defaults.args == ("-c", 'trap "exit 0" TERM INT; sleep infinity & wait')
         assert defaults.environment_variables == {}
 
     def test_from_dict_drops_none_for_scalar_fields(self) -> None:
@@ -353,7 +353,7 @@ class TestSandboxDefaultsFromDict:
             }
         )
         assert defaults.container_image == "python:3.11"
-        assert defaults.command == "tail"
+        assert defaults.command == "/bin/sh"
         assert defaults.base_url == "https://api.cwsandbox.com"
         assert defaults.temp_dir == "/tmp"
         assert defaults.request_timeout_seconds == 300.0

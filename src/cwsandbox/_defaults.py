@@ -11,8 +11,13 @@ from typing import Any
 from cwsandbox._types import NetworkOptions, ResourceOptions, Secret
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
-DEFAULT_COMMAND: str = "tail"
-DEFAULT_ARGS: tuple[str, ...] = ("-f", "/dev/null")
+# Shell-trapped keep-alive: installs an explicit SIGTERM handler so the PID 1
+# process actually responds to stop signals instead of waiting out the full
+# terminationGracePeriodSeconds. `tail -f /dev/null` does not install a
+# handler and gets silently ignored, which has triggered production node
+# drains via SUNK's scheduler-epilog timeout.
+DEFAULT_COMMAND: str = "/bin/sh"
+DEFAULT_ARGS: tuple[str, ...] = ("-c", 'trap "exit 0" TERM INT; sleep infinity & wait')
 DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
@@ -102,8 +107,8 @@ class SandboxDefaults:
         ```python
         defaults = SandboxDefaults(
             container_image="python:3.12",
-            command="tail",
-            args=("-f", "/dev/null"),
+            command="/bin/sh",
+            args=("-c", 'trap "exit 0" TERM INT; sleep infinity & wait'),
             request_timeout_seconds=60,
             max_lifetime_seconds=3600,  # 1 hour sandbox lifetime
             tags=("my-workload", "experiment-42"),
