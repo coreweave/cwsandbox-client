@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
+from cwsandbox._sandbox import SandboxStatus
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
 
 
@@ -491,11 +492,11 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
     # (sandbox._is_done should be True, but we can't easily verify this externally)
 
 
-# Infrastructure filtering tests (runway_ids, tower_ids)
+# Infrastructure filtering tests (profile_ids, runner_ids)
 
 
-def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with specific runway_ids and tower_ids.
+def test_sandbox_with_runway_and_runner_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with specific profile_ids and runner_ids.
 
     Creates a sandbox to discover valid runway/tower IDs, then creates another
     sandbox targeting those specific IDs to verify the parameters work.
@@ -503,16 +504,16 @@ def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) ->
     # First, create a sandbox to discover valid infrastructure IDs
     with Sandbox.run(defaults=sandbox_defaults) as discovery_sandbox:
         discovery_sandbox.wait()
-        discovered_runway_id = discovery_sandbox.runway_id
-        discovered_tower_id = discovery_sandbox.tower_id
+        discovered_profile_id = discovery_sandbox.profile_id
+        discovered_runner_id = discovery_sandbox.runner_id
 
-        assert discovered_runway_id is not None, "Discovery sandbox should have runway_id"
-        assert discovered_tower_id is not None, "Discovery sandbox should have tower_id"
+        assert discovered_profile_id is not None, "Discovery sandbox should have profile_id"
+        assert discovered_runner_id is not None, "Discovery sandbox should have runner_id"
 
         # Create a second sandbox targeting those specific IDs while first is still running
         with Sandbox.run(
-            runway_ids=[discovered_runway_id],
-            tower_ids=[discovered_tower_id],
+            profile_ids=[discovered_profile_id],
+            runner_ids=[discovered_runner_id],
             defaults=sandbox_defaults,
         ) as targeted_sandbox:
             targeted_sandbox.wait()
@@ -522,18 +523,18 @@ def test_sandbox_with_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) ->
             assert targeted_sandbox.status == "running"
 
             # The sandbox should land on the specified runway/tower
-            assert targeted_sandbox.runway_id is not None
-            assert targeted_sandbox.tower_id is not None
+            assert targeted_sandbox.profile_id is not None
+            assert targeted_sandbox.runner_id is not None
 
 
-def test_sandbox_with_empty_runway_and_tower_ids(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with empty runway_ids and tower_ids lists.
+def test_sandbox_with_empty_runway_and_runner_ids(sandbox_defaults: SandboxDefaults) -> None:
+    """Test sandbox creation with empty profile_ids and runner_ids lists.
 
     Verifies that empty lists are accepted (clearing any defaults).
     """
     with Sandbox.run(
-        runway_ids=[],
-        tower_ids=[],
+        profile_ids=[],
+        runner_ids=[],
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
@@ -1172,3 +1173,59 @@ def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> N
     recovered = Sandbox.from_id(sandbox_id).result()
     assert recovered.sandbox_id == sandbox_id
     assert recovered.status in ("completed", "terminated", "failed", "unspecified")
+
+
+def test_stop_reaches_terminal_through_terminating(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that stop() polls through TERMINATING to a real terminal state.
+
+    Validates the full stop lifecycle: stop RPC -> TERMINATING drain ->
+    COMPLETED or FAILED. If the backend doesn't support TERMINATING yet,
+    the sandbox still reaches a terminal state (TERMINATED on old backends).
+    """
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    sandbox.wait()
+    assert sandbox.status == SandboxStatus.RUNNING
+
+    sandbox.stop().result()
+
+    assert sandbox.status in (
+        SandboxStatus.COMPLETED,
+        SandboxStatus.FAILED,
+        SandboxStatus.TERMINATED,
+    )
+
+
+def test_stop_raise_on_termination_with_stop_owned(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Test that wait_until_complete(raise_on_termination=True) raises after stop().
+
+    The _stop_owned flag should cause SandboxTerminatedError even when the
+    backend's final status is COMPLETED (not TERMINATED).
+    """
+    from cwsandbox.exceptions import SandboxTerminatedError
+
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    sandbox.wait()
+
+    sandbox.stop()
+
+    with pytest.raises(SandboxTerminatedError):
+        sandbox.wait_until_complete(raise_on_termination=True).result()
+
+
+def test_natural_exit_no_raise_on_termination(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that a naturally exiting sandbox does not raise with raise_on_termination=True.
+
+    A sandbox whose command exits on its own (not via stop()) should NOT raise
+    SandboxTerminatedError, even if polling observes TERMINATING during drain.
+    """
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults)
+
+    sandbox.wait_until_complete(raise_on_termination=True, timeout=60.0).result()
+
+    assert sandbox.status in (
+        SandboxStatus.COMPLETED,
+        SandboxStatus.FAILED,
+        SandboxStatus.TERMINATED,
+    )

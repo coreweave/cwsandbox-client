@@ -48,19 +48,19 @@ Key methods:
 - `run(*args, **kwargs)`: Create and start sandbox, return immediately. Accepts advanced configuration kwargs (see below).
 - `start()`: Send start request, return `OperationRef[None]`. Call `.result()` to block until backend accepts.
 - `wait()`: Block until RUNNING status, returns self for chaining
-- `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
+- `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Polls through TERMINATING automatically. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
 - `shell(command=None, *, width=None, height=None)`: Start an interactive TTY session, return `TerminalSession`. Always allocates a TTY and enables stdin. Output is raw bytes (merged stdout/stderr) with no buffering — safe for long-running interactive sessions. Defaults to `["/bin/bash"]`.
 - `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
-- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
-- `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable.
+- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the stop RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
+- `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
 
 Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
-- `sandbox_id`, `tower_id`, `runway_id`, `tower_group_id`, `returncode`, `started_at`
+- `sandbox_id`, `runner_id`, `profile_id`, `runner_group_id`, `returncode`, `started_at`
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 
 Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
@@ -76,7 +76,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
+- `Sandbox.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 
@@ -87,7 +87,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runway_ids=None, tower_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
+- `session.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -105,12 +105,12 @@ with Session(defaults) as session:
 
 Fields (all optional with sensible defaults):
 - `container_image`, `command`, `args` - Container configuration
-- `base_url` - API endpoint (default: `https://atc.cw-sandbox.com`)
+- `base_url` - API endpoint (default: `https://api.cwsandbox.com`)
 - `request_timeout_seconds` - Client-side HTTP timeout (default: 300.0)
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
-- `runway_ids`, `tower_ids` - Infrastructure filtering (optional tuple of IDs)
+- `profile_ids`, `runner_ids` - Infrastructure filtering (optional tuple of IDs)
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Network configuration via `NetworkOptions`
 - `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
@@ -126,7 +126,7 @@ Utility methods:
 Key constants (from `_defaults.py`):
 - `DEFAULT_CONTAINER_IMAGE = "python:3.11"`
 - `DEFAULT_COMMAND = "tail"`, `DEFAULT_ARGS = ("-f", "/dev/null")`
-- `DEFAULT_BASE_URL = "https://atc.cw-sandbox.com"`
+- `DEFAULT_BASE_URL = "https://api.cwsandbox.com"`
 - `DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0` - Client-side HTTP timeout
 - `DEFAULT_MAX_LIFETIME_SECONDS = None` - Server controls sandbox lifetime
 - `DEFAULT_GRACEFUL_SHUTDOWN_SECONDS = 10.0`
@@ -148,7 +148,7 @@ data = ref.result()               # Block when result needed
 data = await ref
 ```
 
-**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states: `PENDING`, `CREATING`, `RUNNING`, `PAUSED`, `COMPLETED`, `TERMINATED`, `FAILED`, `UNSPECIFIED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
+**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states. Lifecycle: `CREATING` -> `RUNNING` -> `TERMINATING` -> `COMPLETED` | `FAILED`. Values: `PENDING`, `CREATING`, `RUNNING`, `PAUSED`, `TERMINATING`, `COMPLETED`, `FAILED`, `TERMINATED` (deprecated), `UNSPECIFIED`. `TERMINATING` is non-terminal: the sandbox is draining through its grace period. `TERMINATED` is deprecated in favor of the `TERMINATING` -> `COMPLETED`/`FAILED` flow but still emitted by older backends. Terminal statuses (used for caching and polling): `COMPLETED`, `FAILED`, `TERMINATED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
 
 **Exec Types** (`_types.py`): Types for command execution, returned by `Sandbox.exec()`:
 
@@ -165,9 +165,9 @@ data = await ref
 **`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
 
 Fields:
-- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
+- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
 - `exposed_ports: tuple[int, ...] | None` - Ports to expose (required with `ingress_mode`). Lists are normalized to tuples for immutability.
-- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the runway configurations of towers you have access to.
+- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
 
 Usage:
 ```python
@@ -359,46 +359,46 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 ### Discovery API
 
-Module-level sync functions (`_discovery.py`) for querying available towers and runways. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed).
+Module-level sync functions (`_discovery.py`) for querying available runners and profiles. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed).
 
 **Functions:**
-- `list_towers(*, tower_group_id=None, runway_name=None, gpu_type=None, architecture=None, include_resources=False)` -> `list[Tower]`: List available towers with optional filtering. Set `include_resources=True` for live resource availability. Auto-paginates.
-- `get_tower(tower_id)` -> `Tower`: Get a single tower by ID. Always returns full details including resources. Raises `TowerNotFoundError` if not found.
-- `list_runways(*, gpu_type=None, architecture=None, tower_id=None)` -> `list[Runway]`: List available runways with optional filtering. Auto-paginates.
-- `get_runway(runway_name, *, tower_id=None)` -> `Runway`: Get a single runway by name. Raises `RunwayNotFoundError` if not found.
+- `list_runners(*, runner_group_id=None, profile_name=None, gpu_type=None, architecture=None, include_resources=False, min_available_cpu_millicores=None, min_available_memory_bytes=None, min_available_gpu_count=None, service_exposure_mode=None, egress_mode=None)` -> `list[Runner]`: List available runners with optional filtering. Set `include_resources=True` for live resource availability (automatically enabled by `min_available_*` filters). The `service_exposure_mode` and `egress_mode` filters require an additional profile fetch and check across all profiles on each runner. Auto-paginates.
+- `get_runner(runner_id)` -> `Runner`: Get a single runner by ID. Always returns full details including resources. Raises `RunnerNotFoundError` if not found.
+- `list_profiles(*, gpu_type=None, architecture=None, runner_id=None, service_exposure_mode=None, egress_mode=None)` -> `list[Profile]`: List available profiles with optional filtering. The `service_exposure_mode` and `egress_mode` filters are applied client-side. Auto-paginates.
+- `get_profile(profile_name, *, runner_id=None)` -> `Profile`: Get a single profile by name, optionally scoped to a runner. Raises `ProfileNotFoundError` if not found.
 
 **Types:**
-- `Tower`: Frozen dataclass with tower capabilities (CPU, memory, GPU), health status, `runway_names`, and optional `TowerResources`. Has human-readable `__repr__`.
-- `TowerResources`: Live resource availability (`available_cpu_millicores`, `available_memory_bytes`, `available_gpu_count`, `running_sandboxes`).
-- `Runway`: Frozen dataclass with `runway_name`, `tower_id`, `supported_gpu_types`, `supported_architectures`, and `ingress_modes`/`egress_modes`.
-- `IngressMode`, `EgressMode`: Wrapper dataclasses (with `name` field) for forward compatibility.
+- `Runner`: Frozen dataclass with runner capabilities (CPU, memory, GPU), health status, `profile_names`, and optional `RunnerResources`. Has human-readable `__repr__`.
+- `RunnerResources`: Live resource availability (`available_cpu_millicores`, `available_memory_bytes`, `available_gpu_count`, `running_sandboxes`).
+- `Profile`: Frozen dataclass with `profile_name`, `runner_id`, `supported_gpu_types`, `supported_architectures`, and `service_exposure_modes`/`egress_modes`.
+- `ServiceExposureMode`, `EgressMode`: Wrapper dataclasses (with `name` field) for forward compatibility.
 
 **Utilities:**
 - `format_bytes(value)`: Format bytes as human-readable string (e.g., `17179869184` -> `'16.0 GiB'`).
-- `format_cpu(millicores)`: Format CPU millicores (e.g., `4000` -> `'4.0 cores'`).
+- `format_cpu(millicores)`: Format CPU millicores (e.g., `4000` -> `'4.0 vCPU'`).
 
 Usage:
 ```python
 import cwsandbox
 
-# List all towers with resources
-towers = cwsandbox.list_towers(include_resources=True)
-for t in towers:
-    print(t)  # Human-readable repr
+# List all runners with resources
+runners = cwsandbox.list_runners(include_resources=True)
+for r in runners:
+    print(r)  # Human-readable repr
 
-# Get a specific tower
-tower = cwsandbox.get_tower("tower-123")
-print(f"CPU: {cwsandbox.format_cpu(tower.max_cpu_millicores)}")
+# Get a specific runner
+runner = cwsandbox.get_runner("runner-123")
+print(f"CPU: {cwsandbox.format_cpu(runner.max_cpu_millicores)}")
 
-# List runways, filter by GPU type
-runways = cwsandbox.list_runways(gpu_type="A100")
+# List profiles, filter by GPU type
+profiles = cwsandbox.list_profiles(gpu_type="A100")
 ```
 
-Note: `runway_names` from discovery are the same strings used in `SandboxDefaults(runway_ids=[...])` for infrastructure targeting. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
+Note: `profile_names` from discovery are the same strings used in `SandboxDefaults(profile_ids=[...])` for infrastructure targeting. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
 
 ### Backend Communication
 
-Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`atc_pb2`, `atc_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
+Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`gateway_pb2`, `gateway_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
 
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 
@@ -406,7 +406,7 @@ Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The
 
 ### Related Repositories
 
-- **Backend**: [github.com/coreweave/aviato](https://github.com/coreweave/aviato) - Server-side implementation (Go). Use `/repo-explore` to investigate backend behavior, API contracts, or debug client-server issues.
+- **Backend**: [github.com/coreweave/sandbox](https://github.com/coreweave/sandbox) - Server-side implementation (Go). Use `/repo-explore` to investigate backend behavior, API contracts, or debug client-server issues.
 
 ## Test Structure
 
@@ -459,8 +459,9 @@ CWSandboxError
 │   ├── SandboxNotFoundError         # .sandbox_id attribute
 │   ├── SandboxExecutionError        # .exec_result, .exception_type, .exception_message attributes
 │   └── SandboxFileError             # .filepath attribute
-├── TowerNotFoundError               # .tower_id attribute
-├── RunwayNotFoundError              # .runway_name, .tower_id attributes
+├── DiscoveryError
+│   ├── RunnerNotFoundError          # .runner_id attribute
+│   └── ProfileNotFoundError         # .profile_name, .runner_id attributes
 └── FunctionError
     ├── AsyncFunctionError
     └── FunctionSerializationError

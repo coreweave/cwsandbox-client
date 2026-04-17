@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from cwsandbox import Sandbox
-from cwsandbox._proto import atc_pb2
+from cwsandbox._proto import gateway_pb2
 from cwsandbox._sandbox import SandboxStatus, _NotStarted, _Running, _Starting, _Terminal
 from cwsandbox.exceptions import (
     SandboxFailedError,
@@ -59,9 +59,9 @@ def _get_response(status: int, **kwargs: object) -> MagicMock:
     """Build a mock GetSandboxResponse with the given proto status."""
     resp = MagicMock()
     resp.sandbox_status = status
-    resp.tower_id = kwargs.get("tower_id", "")
-    resp.tower_group_id = kwargs.get("tower_group_id", "")
-    resp.runway_id = kwargs.get("runway_id", "")
+    resp.runner_id = kwargs.get("runner_id", "")
+    resp.runner_group_id = kwargs.get("runner_group_id", "")
+    resp.profile_id = kwargs.get("profile_id", "")
     resp.started_at_time = kwargs.get("started_at_time", None)
     resp.returncode = kwargs.get("returncode", 0)
     return resp
@@ -84,8 +84,8 @@ class TestRunningDedup:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                return _get_response(atc_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -151,8 +151,8 @@ class TestRunningDedup:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(atc_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_PAUSED)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_PAUSED)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -183,8 +183,8 @@ class TestRunningDedup:
             poll_round += 1
             if poll_round == 1:
                 advance.set()
-                return _get_response(atc_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -212,8 +212,8 @@ class TestRunningDedup:
             call_count += 1
             if call_count <= 3:
                 await asyncio.sleep(0.05)
-                return _get_response(atc_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
 
         sandbox = _make_sandbox(timeout=60.0)
         sandbox._stub.Get = mock_get
@@ -233,12 +233,16 @@ class TestRunningDedup:
     async def test_stop_while_waiting(self) -> None:
         """Calling stop() while a waiter is blocked raises SandboxNotRunningError."""
         poll_started = asyncio.Event()
+        stop_called = asyncio.Event()
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            poll_started.set()
-            # Block long enough for stop() to fire
-            await asyncio.sleep(10)
-            return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
+            if not stop_called.is_set():
+                poll_started.set()
+                # Block long enough for stop() to fire
+                await asyncio.sleep(10)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            # After stop, return terminal immediately
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -250,7 +254,8 @@ class TestRunningDedup:
         waiter = asyncio.create_task(sandbox._wait_until_running_async())
         await poll_started.wait()
 
-        # Stop the sandbox (cancels the running task)
+        # Stop the sandbox (cancels the running task, polls to terminal)
+        stop_called.set()
         await sandbox._stop_async()
 
         with pytest.raises(SandboxNotRunningError):
@@ -266,7 +271,7 @@ class TestRunningDedup:
             attempt += 1
             if attempt == 1:
                 raise Exception("transient network error")
-            return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._stub.Get = mock_get
@@ -300,8 +305,8 @@ class TestCompleteDedup:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stub.Get = mock_get
@@ -320,7 +325,7 @@ class TestCompleteDedup:
         """One waiter raises on TERMINATED, the other does not."""
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            return _get_response(atc_pb2.SANDBOX_STATUS_TERMINATED)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_TERMINATED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stub.Get = mock_get
@@ -387,8 +392,8 @@ class TestCompleteDedup:
             poll_round += 1
             if poll_round == 1:
                 advance.set()
-                return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stub.Get = mock_get
@@ -416,8 +421,8 @@ class TestCompleteDedup:
             call_count += 1
             if call_count <= 3:
                 await asyncio.sleep(0.05)
-                return _get_response(atc_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(atc_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING, timeout=60.0)
         sandbox._stub.Get = mock_get
@@ -437,12 +442,19 @@ class TestCompleteDedup:
     async def test_stop_while_waiting(self) -> None:
         """Calling stop() during wait raises SandboxNotRunningError."""
         poll_started = asyncio.Event()
+        stop_called = asyncio.Event()
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            poll_started.set()
-            # Block long enough for stop() to fire
-            await asyncio.sleep(10)
-            return _get_response(atc_pb2.SANDBOX_STATUS_COMPLETED)
+            if not stop_called.is_set():
+                poll_started.set()
+                # Wait for stop to be called, not a fixed sleep
+                try:
+                    await asyncio.wait_for(stop_called.wait(), timeout=5.0)
+                except TimeoutError:
+                    pass
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            # After stop, return terminal immediately
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stub.Get = mock_get
@@ -454,10 +466,13 @@ class TestCompleteDedup:
         waiter = asyncio.create_task(sandbox._wait_until_complete_async())
         await poll_started.wait()
 
-        # Stop the sandbox (cancels the complete task)
+        # Stop the sandbox - sets _Stopping and polls to terminal
+        stop_called.set()
         await sandbox._stop_async()
 
-        with pytest.raises(SandboxNotRunningError):
+        # Waiter sees either CancelledError (-> SandboxNotRunningError via
+        # _stop_owned) or a terminal state (-> SandboxTerminatedError)
+        with pytest.raises((SandboxNotRunningError, SandboxTerminatedError)):
             await waiter
 
     @pytest.mark.asyncio
@@ -470,7 +485,7 @@ class TestCompleteDedup:
             attempt += 1
             if attempt == 1:
                 raise Exception("transient network error")
-            return _get_response(atc_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stub.Get = mock_get

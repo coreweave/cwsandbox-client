@@ -41,8 +41,8 @@ from cwsandbox._defaults import (
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
 from cwsandbox._proto import (
-    atc_pb2,
-    atc_pb2_grpc,
+    gateway_pb2,
+    gateway_pb2_grpc,
     streaming_pb2,
     streaming_pb2_grpc,
 )
@@ -83,14 +83,19 @@ logger = logging.getLogger(__name__)
 class SandboxStatus(StrEnum):
     """Sandbox lifecycle status values.
 
+    Lifecycle: CREATING -> RUNNING -> TERMINATING -> COMPLETED | FAILED
+
     Attributes:
         PENDING: Sandbox has been accepted but not yet scheduled.
         CREATING: Sandbox container is being created.
         RUNNING: Sandbox is running and ready for operations.
         PAUSED: Sandbox is paused (resources may be reclaimed).
+        TERMINATING: Sandbox is draining through its grace period before exit.
         COMPLETED: Sandbox exited normally (check ``returncode``).
         FAILED: Sandbox failed to start or encountered a fatal error.
-        TERMINATED: Sandbox was stopped externally (via ``stop()`` or timeout).
+        TERMINATED: Sandbox was stopped via ``stop()`` or timeout (deprecated
+            in favor of the TERMINATING -> COMPLETED/FAILED flow, but still
+            emitted by older backends).
         UNSPECIFIED: Status is unknown or not yet reported by the backend.
     """
 
@@ -98,6 +103,7 @@ class SandboxStatus(StrEnum):
     CREATING = "creating"
     PENDING = "pending"
     PAUSED = "paused"
+    TERMINATING = "terminating"
     COMPLETED = "completed"
     FAILED = "failed"
     TERMINATED = "terminated"
@@ -107,17 +113,17 @@ class SandboxStatus(StrEnum):
     def from_proto(cls, proto_status: int) -> SandboxStatus:
         """Convert protobuf status enum to SandboxStatus."""
         try:
-            proto_name = atc_pb2.SandboxStatus.Name(proto_status)
+            proto_name = gateway_pb2.SandboxStatus.Name(proto_status)
             enum_name = proto_name.replace("SANDBOX_STATUS_", "")
             return cls[enum_name]
-        except ValueError:
+        except (ValueError, KeyError):
             logger.warning("Unknown sandbox status %s, treating as UNSPECIFIED", proto_status)
             return cls.UNSPECIFIED
 
     def to_proto(self) -> int:
         """Convert SandboxStatus to protobuf enum"""
         proto_name = f"SANDBOX_STATUS_{self.name}"
-        return atc_pb2.SandboxStatus.Value(proto_name)
+        return gateway_pb2.SandboxStatus.Value(proto_name)
 
 
 def _validate_cwd(cwd: str | None) -> None:
@@ -216,9 +222,19 @@ class _Starting:
 class _Running:
     sandbox_id: str
     status: SandboxStatus = SandboxStatus.RUNNING
-    tower_id: str | None = None
-    runway_id: str | None = None
-    tower_group_id: str | None = None
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class _Stopping:
+    sandbox_id: str
+    status: SandboxStatus = SandboxStatus.TERMINATING
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
     started_at: datetime | None = None
 
 
@@ -227,13 +243,13 @@ class _Terminal:
     sandbox_id: str
     status: SandboxStatus
     returncode: int | None = None
-    tower_id: str | None = None
-    runway_id: str | None = None
-    tower_group_id: str | None = None
+    runner_id: str | None = None
+    profile_id: str | None = None
+    runner_group_id: str | None = None
     started_at: datetime | None = None
 
 
-_LifecycleState = _NotStarted | _Starting | _Running | _Terminal
+_LifecycleState = _NotStarted | _Starting | _Running | _Stopping | _Terminal
 
 
 class _SandboxInfoLike(Protocol):
@@ -259,9 +275,9 @@ def _lifecycle_state_from_info(
     *,
     sandbox_id: str,
     status: SandboxStatus,
-    tower_id: str | None = None,
-    runway_id: str | None = None,
-    tower_group_id: str | None = None,
+    runner_id: str | None = None,
+    profile_id: str | None = None,
+    runner_group_id: str | None = None,
     started_at: datetime | None = None,
     returncode: int | None = None,
 ) -> _LifecycleState:
@@ -273,9 +289,18 @@ def _lifecycle_state_from_info(
         return _Running(
             sandbox_id=sandbox_id,
             status=status,
-            tower_id=tower_id,
-            runway_id=runway_id,
-            tower_group_id=tower_group_id,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
+            started_at=started_at,
+        )
+    if status == SandboxStatus.TERMINATING:
+        return _Stopping(
+            sandbox_id=sandbox_id,
+            status=status,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
             started_at=started_at,
         )
     if status in _TERMINAL_STATUSES:
@@ -283,9 +308,9 @@ def _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
             returncode=returncode,
-            tower_id=tower_id,
-            runway_id=runway_id,
-            tower_group_id=tower_group_id,
+            runner_id=runner_id,
+            profile_id=profile_id,
+            runner_group_id=runner_group_id,
             started_at=started_at,
         )
     return _Starting(sandbox_id=sandbox_id, status=status)
@@ -321,8 +346,8 @@ class Sandbox:
     Attributes:
         sandbox_id: Unique identifier for this sandbox.
         status: Cached status from last API call.
-        tower_id: Tower ID where sandbox is running.
-        runway_id: Runway ID for this sandbox.
+        runner_id: Runner ID where sandbox is running.
+        profile_id: Profile ID for this sandbox.
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
     """
@@ -338,8 +363,8 @@ class Sandbox:
         base_url: str | None = None,
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -363,8 +388,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
                 the backend controls the default.
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -418,21 +443,21 @@ class Sandbox:
         )
         self._annotations = self._defaults.merge_annotations(annotations)
 
-        self._runway_ids: list[str] | None
-        if runway_ids is not None:
-            self._runway_ids = list(runway_ids)
-        elif self._defaults.runway_ids:
-            self._runway_ids = list(self._defaults.runway_ids)
+        self._profile_ids: list[str] | None
+        if profile_ids is not None:
+            self._profile_ids = list(profile_ids)
+        elif self._defaults.profile_ids:
+            self._profile_ids = list(self._defaults.profile_ids)
         else:
-            self._runway_ids = None
+            self._profile_ids = None
 
-        self._tower_ids: list[str] | None
-        if tower_ids is not None:
-            self._tower_ids = list(tower_ids)
-        elif self._defaults.tower_ids:
-            self._tower_ids = list(self._defaults.tower_ids)
+        self._runner_ids: list[str] | None
+        if runner_ids is not None:
+            self._runner_ids = list(runner_ids)
+        elif self._defaults.runner_ids:
+            self._runner_ids = list(self._defaults.runner_ids)
         else:
-            self._tower_ids = None
+            self._runner_ids = None
 
         self._start_kwargs: dict[str, Any] = {}
         # Use explicit resources or fall back to defaults, then normalize
@@ -472,7 +497,7 @@ class Sandbox:
             self._start_kwargs["secrets"] = list(seen.values())
 
         self._channel: grpc.aio.Channel | None = None
-        self._stub: atc_pb2_grpc.ATCServiceStub | None = None
+        self._stub: gateway_pb2_grpc.GatewayServiceStub | None = None
         self._auth_metadata: tuple[tuple[str, str], ...] = ()
         self._streaming_channel: grpc.aio.Channel | None = None
         self._streaming_channel_lock = asyncio.Lock()
@@ -488,6 +513,11 @@ class Sandbox:
         # Shared polling task for _wait_until_complete_async deduplication
         self._complete_task: asyncio.Task[SandboxStatus] | None = None
         self._complete_lock = asyncio.Lock()
+
+        # Shared stop task so repeated stop() calls join the same operation
+        self._stop_task: asyncio.Task[None] | None = None
+        self._stop_lock = asyncio.Lock()
+        self._stop_owned: bool = False
 
         self._status_updated_at: datetime | None = None
         self._service_address: str | None = None
@@ -521,8 +551,8 @@ class Sandbox:
         request_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         s3_mount: dict[str, Any] | None = None,
@@ -547,8 +577,8 @@ class Sandbox:
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
-            runway_ids: Optional list of runway IDs
-            tower_ids: Optional list of tower IDs
+            profile_ids: Optional list of profile IDs
+            runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox
@@ -604,8 +634,8 @@ class Sandbox:
             request_timeout_seconds=request_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
-            runway_ids=runway_ids,
-            tower_ids=tower_ids,
+            profile_ids=profile_ids,
+            runner_ids=runner_ids,
             resources=resources,
             mounted_files=mounted_files,
             s3_mount=s3_mount,
@@ -674,8 +704,8 @@ class Sandbox:
         sandbox._container_image = None
         sandbox._tags = None
         sandbox._max_lifetime_seconds = None
-        sandbox._runway_ids = None
-        sandbox._tower_ids = None
+        sandbox._profile_ids = None
+        sandbox._runner_ids = None
         sandbox._environment_variables = {}
         sandbox._annotations = {}
         sandbox._channel = None
@@ -691,6 +721,9 @@ class Sandbox:
         sandbox._running_lock = asyncio.Lock()
         sandbox._complete_task = None
         sandbox._complete_lock = asyncio.Lock()
+        sandbox._stop_task = None
+        sandbox._stop_lock = asyncio.Lock()
+        sandbox._stop_owned = False
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -717,9 +750,9 @@ class Sandbox:
         sandbox._state = _lifecycle_state_from_info(
             sandbox_id=str(info.sandbox_id),
             status=status,
-            tower_id=getattr(info, "tower_id", None) or None,
-            runway_id=getattr(info, "runway_id", None) or None,
-            tower_group_id=getattr(info, "tower_group_id", None) or None,
+            runner_id=getattr(info, "runner_id", None) or None,
+            profile_id=getattr(info, "profile_id", None) or None,
+            runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
         )
         return sandbox
@@ -730,8 +763,8 @@ class Sandbox:
         *,
         tags: list[str] | None = None,
         status: str | None = None,
-        runway_ids: list[str] | None = None,
-        tower_ids: list[str] | None = None,
+        profile_ids: list[str] | None = None,
+        runner_ids: list[str] | None = None,
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
@@ -750,8 +783,8 @@ class Sandbox:
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
-            runway_ids: Filter by runway IDs
-            tower_ids: Filter by tower IDs
+            profile_ids: Filter by profile IDs
+            runner_ids: Filter by runner IDs
             include_stopped: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
@@ -784,8 +817,8 @@ class Sandbox:
             cls._list_async(
                 tags=tags,
                 status=status,
-                runway_ids=runway_ids,
-                tower_ids=tower_ids,
+                profile_ids=profile_ids,
+                runner_ids=runner_ids,
                 include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
@@ -799,8 +832,8 @@ class Sandbox:
         *,
         tags: builtins.list[str] | None = None,
         status: str | None = None,
-        runway_ids: builtins.list[str] | None = None,
-        tower_ids: builtins.list[str] | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
@@ -821,7 +854,7 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request_kwargs: dict[str, Any] = {}
@@ -829,14 +862,14 @@ class Sandbox:
                 request_kwargs["tags"] = tags
             if status_enum:
                 request_kwargs["status"] = status_enum.to_proto()
-            if runway_ids is not None:
-                request_kwargs["runway_ids"] = runway_ids
-            if tower_ids is not None:
-                request_kwargs["tower_ids"] = tower_ids
+            if profile_ids is not None:
+                request_kwargs["profile_ids"] = profile_ids
+            if runner_ids is not None:
+                request_kwargs["runner_ids"] = runner_ids
 
             if include_stopped:
                 request_kwargs["include_stopped"] = True
-            request = atc_pb2.ListSandboxesRequest(**request_kwargs)
+            request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
             try:
                 response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -919,10 +952,10 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = atc_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+            request = gateway_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
                 response = await stub.Get(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -1009,10 +1042,10 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = atc_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+            request = gateway_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
                 response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
@@ -1045,17 +1078,17 @@ class Sandbox:
         return None
 
     @property
-    def tower_id(self) -> str | None:
-        """Tower where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.tower_id
+    def runner_id(self) -> str | None:
+        """Runner where sandbox is running, or None if not started."""
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
+            return self._state.runner_id
         return None
 
     @property
-    def runway_id(self) -> str | None:
-        """Runway where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.runway_id
+    def profile_id(self) -> str | None:
+        """Profile where sandbox is running, or None if not started."""
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
+            return self._state.profile_id
         return None
 
     @property
@@ -1073,7 +1106,9 @@ class Sandbox:
         match self._state:
             case _NotStarted():
                 return None
-            case _Starting(status=s) | _Running(status=s) | _Terminal(status=s):
+            case (
+                _Starting(status=s) | _Running(status=s) | _Stopping(status=s) | _Terminal(status=s)
+            ):
                 return s
 
     @property
@@ -1094,15 +1129,15 @@ class Sandbox:
         Populated after start() completes or when obtained via list()/from_id().
         None only for sandboxes that haven't been started yet.
         """
-        if isinstance(self._state, (_Running, _Terminal)):
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
             return self._state.started_at
         return None
 
     @property
-    def tower_group_id(self) -> str | None:
-        """Tower group ID where the sandbox is running."""
-        if isinstance(self._state, (_Running, _Terminal)):
-            return self._state.tower_group_id
+    def runner_group_id(self) -> str | None:
+        """Runner group ID where the sandbox is running."""
+        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
+            return self._state.runner_group_id
         return None
 
     @property
@@ -1110,12 +1145,12 @@ class Sandbox:
         """External address for accessing sandbox services.
 
         Returns an address like '166.19.9.70:8080' for network-accessible sandboxes
-        (SSH, web services). Availability depends on tower configuration.
+        (SSH, web services). Availability depends on runner configuration.
 
         Returns None if:
         - Sandbox hasn't been started yet
         - Sandbox was obtained via from_id() or list()
-        - Tower uses ClusterIP instead of LoadBalancer
+        - Runner uses ClusterIP instead of LoadBalancer
         """
         return self._service_address
 
@@ -1186,18 +1221,33 @@ class Sandbox:
         return isinstance(self._state, _NotStarted) and self._state.cancelled
 
     @property
+    def _is_stopping(self) -> bool:
+        """True when sandbox is in the TERMINATING grace period."""
+        return isinstance(self._state, _Stopping)
+
+    @property
     def _is_done(self) -> bool:
         """True when sandbox has reached a terminal state or was cancelled before start."""
         return isinstance(self._state, _Terminal) or self._is_cancelled
 
-    @staticmethod
     def _raise_or_return_for_terminal(
-        state: _Terminal, *, raise_on_termination: bool = True
+        self, state: _Terminal, *, raise_on_termination: bool = True
     ) -> None:
-        """Raise the appropriate error for FAILED/TERMINATED, or return for COMPLETED."""
+        """Raise the appropriate error for FAILED/TERMINATED, or return for COMPLETED.
+
+        Raises SandboxTerminatedError when raise_on_termination is True and either:
+        - The backend reported legacy TERMINATED status (old backends), or
+        - This client sent a successful Stop RPC (_stop_owned).
+
+        Limitation: external kills (infrastructure, lifetime limits, other clients)
+        that result in COMPLETED are not detectable as terminations until the
+        backend provides termination_reason metadata.
+        """
         if state.status == SandboxStatus.FAILED:
             raise SandboxFailedError(f"Sandbox {state.sandbox_id} failed")
         if state.status == SandboxStatus.TERMINATED and raise_on_termination:
+            raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
+        if self._stop_owned and raise_on_termination:
             raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
 
     def _apply_sandbox_info(
@@ -1210,8 +1260,8 @@ class Sandbox:
         Guards against regressing from terminal or cancelled states.
 
         Args:
-            info: Protobuf response with sandbox_status, tower_id, runway_id,
-                tower_group_id, started_at_time, and optionally returncode fields.
+            info: Protobuf response with sandbox_status, runner_id, profile_id,
+                runner_group_id, started_at_time, and optionally returncode fields.
             source: Controls returncode behavior:
                 "poll" - set returncode (polling observed the exit)
                 "query" - omit returncode (get_status/list/from_id)
@@ -1228,6 +1278,18 @@ class Sandbox:
         # Polling: UNSPECIFIED means the sandbox exited cleanly
         if source == "poll" and status == SandboxStatus.UNSPECIFIED:
             status = SandboxStatus.COMPLETED
+
+        # Guard: once in _Stopping, only allow forward transitions to _Terminal.
+        # Stale poll responses reporting RUNNING/_Starting are rejected.
+        if isinstance(self._state, _Stopping) and status not in _TERMINAL_STATUSES:
+            if status != SandboxStatus.TERMINATING:
+                logger.debug(
+                    "Rejecting stale %s while in _Stopping for sandbox %s",
+                    status,
+                    self._state.sandbox_id,
+                )
+            return self._state
+
         if not isinstance(self._state, _NotStarted):
             sandbox_id = self._state.sandbox_id
         else:
@@ -1243,15 +1305,17 @@ class Sandbox:
         else:
             returncode = None
 
-        return _lifecycle_state_from_info(
+        new_state = _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
-            tower_id=getattr(info, "tower_id", None) or None,
-            runway_id=getattr(info, "runway_id", None) or None,
-            tower_group_id=getattr(info, "tower_group_id", None) or None,
+            runner_id=getattr(info, "runner_id", None) or None,
+            profile_id=getattr(info, "profile_id", None) or None,
+            runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
             returncode=returncode,
         )
+
+        return new_state
 
     def _on_exec_complete(
         self,
@@ -1296,6 +1360,7 @@ class Sandbox:
         if isinstance(self._state, _Terminal):
             self._status_updated_at = datetime.now(UTC)
             return self._state.status
+        # _Stopping is mutable (will transition to _Terminal), so always fetch
         if isinstance(self._state, _NotStarted):
             if self._state.cancelled:
                 raise SandboxNotRunningError("Sandbox was cancelled before starting")
@@ -1304,7 +1369,7 @@ class Sandbox:
         await self._ensure_client()
         assert self._stub is not None
 
-        request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+        request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
             response = await self._stub.Get(
                 request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
@@ -1461,7 +1526,7 @@ class Sandbox:
 
     def __del__(self) -> None:
         """Warn if sandbox was not properly stopped."""
-        if hasattr(self, "_state") and isinstance(self._state, (_Starting, _Running)):
+        if hasattr(self, "_state") and isinstance(self._state, (_Starting, _Running, _Stopping)):
             warnings.warn(
                 f"Sandbox {self._state.sandbox_id} was not stopped. "
                 "Use 'sandbox.stop().result()' or the context manager pattern.",
@@ -1477,7 +1542,7 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(self._base_url)
         channel = create_channel(target, is_secure)
-        stub = atc_pb2_grpc.ATCServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
         self._channel = channel
         self._stub = stub
         self._auth_metadata = auth_metadata
@@ -1513,7 +1578,7 @@ class Sandbox:
         self,
         timeout_seconds: float | None = None,
         timeout_message: str = "",
-    ) -> atc_pb2.GetSandboxResponse:
+    ) -> gateway_pb2.GetSandboxResponse:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
@@ -1550,9 +1615,9 @@ class Sandbox:
                 if elapsed > timeout_seconds:
                     raise SandboxTimeoutError(timeout_message)
 
-            request = atc_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+            request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
-                response: atc_pb2.GetSandboxResponse = await self._stub.Get(
+                response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
                     request,
                     timeout=self._request_timeout_seconds,
                     metadata=self._auth_metadata,
@@ -1570,12 +1635,13 @@ class Sandbox:
 
             # Stable states - return for caller to handle
             if response.sandbox_status in (
-                atc_pb2.SANDBOX_STATUS_RUNNING,
-                atc_pb2.SANDBOX_STATUS_PAUSED,
-                atc_pb2.SANDBOX_STATUS_COMPLETED,
-                atc_pb2.SANDBOX_STATUS_FAILED,
-                atc_pb2.SANDBOX_STATUS_TERMINATED,
-                atc_pb2.SANDBOX_STATUS_UNSPECIFIED,
+                gateway_pb2.SANDBOX_STATUS_RUNNING,
+                gateway_pb2.SANDBOX_STATUS_PAUSED,
+                gateway_pb2.SANDBOX_STATUS_TERMINATING,
+                gateway_pb2.SANDBOX_STATUS_COMPLETED,
+                gateway_pb2.SANDBOX_STATUS_FAILED,
+                gateway_pb2.SANDBOX_STATUS_TERMINATED,
+                gateway_pb2.SANDBOX_STATUS_UNSPECIFIED,
             ):
                 return response
 
@@ -1617,10 +1683,10 @@ class Sandbox:
 
             if self._max_lifetime_seconds is not None:
                 request_kwargs["max_lifetime_seconds"] = int(self._max_lifetime_seconds)
-            if self._runway_ids is not None:
-                request_kwargs["runway_ids"] = self._runway_ids
-            if self._tower_ids is not None:
-                request_kwargs["tower_ids"] = self._tower_ids
+            if self._profile_ids is not None:
+                request_kwargs["profile_ids"] = self._profile_ids
+            if self._runner_ids is not None:
+                request_kwargs["runner_ids"] = self._runner_ids
             if self._environment_variables:
                 request_kwargs["environment_variables"] = self._environment_variables
             if self._annotations:
@@ -1691,7 +1757,7 @@ class Sandbox:
 
             logger.debug("Starting sandbox with image %s", self._container_image)
 
-            request = atc_pb2.StartSandboxRequest(**request_kwargs)
+            request = gateway_pb2.StartSandboxRequest(**request_kwargs)
             self._start_accepted_at = time.monotonic()
             try:
                 response = await self._stub.Start(
@@ -1770,6 +1836,11 @@ class Sandbox:
                 if self._session is not None:
                     self._session._record_startup_time(startup_time)
             logger.debug("Sandbox %s is running", self._sandbox_id)
+        elif isinstance(self._state, _Stopping):
+            logger.info(
+                "Sandbox %s entered TERMINATING during startup, draining to terminal",
+                self._sandbox_id,
+            )
         elif isinstance(self._state, _Terminal):
             if self._state.status == SandboxStatus.FAILED:
                 raise SandboxFailedError(f"Sandbox {self._sandbox_id} failed to start")
@@ -1845,6 +1916,10 @@ class Sandbox:
                 f"Sandbox {self._sandbox_id} did not become ready within {effective_timeout}s"
             ) from None
         except asyncio.CancelledError:
+            if self._stop_owned:
+                raise SandboxNotRunningError(
+                    f"Sandbox {self._sandbox_id} has been stopped"
+                ) from None
             if (
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
@@ -1954,6 +2029,8 @@ class Sandbox:
         except TimeoutError:
             raise SandboxTimeoutError(f"Timed out waiting for sandbox {sandbox_id}") from None
         except asyncio.CancelledError:
+            if self._stop_owned:
+                raise SandboxNotRunningError(f"Sandbox {sandbox_id} has been stopped") from None
             if (
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
@@ -2029,14 +2106,19 @@ class Sandbox:
         Args:
             timeout: Maximum seconds to wait. None means use default timeout.
             raise_on_termination: If True (default), raises SandboxTerminatedError
-                if sandbox was terminated externally.
+                when this client called stop() or the backend reports legacy
+                TERMINATED status. External kills (infrastructure, lifetime limits,
+                other clients) that result in COMPLETED are not detectable until
+                the backend provides termination_reason metadata.
+                Set to False to suppress SandboxTerminatedError entirely.
 
         Returns:
             OperationRef[Sandbox]: Use .result() to block or await in async contexts.
 
         Raises:
             SandboxTimeoutError: If timeout expires
-            SandboxTerminatedError: If sandbox was terminated (and raise_on_termination=True)
+            SandboxTerminatedError: If sandbox was stopped by this client or
+                reported as TERMINATED by backend (and raise_on_termination=True)
             SandboxFailedError: If sandbox failed
 
         Examples:
@@ -2076,6 +2158,141 @@ class Sandbox:
         future = self._loop_manager.run_async(_await_running())
         return asyncio.wrap_future(future).__await__()
 
+    async def _await_terminal_after_stop(self) -> None:
+        """Ensure a complete-polling task is running and wait for terminal state.
+
+        Shared by both the Stop-RPC path and the already-stopping path so that
+        stop().result() always resolves only after the sandbox reaches a
+        terminal state (COMPLETED or FAILED).
+        """
+        async with self._complete_lock:
+            if isinstance(self._state, _Terminal):
+                return
+            if self._complete_task is None:
+                self._complete_task = asyncio.create_task(self._do_poll_complete())
+                self._complete_task.add_done_callback(self._on_complete_task_done)
+            task = self._complete_task
+
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
+
+    async def _do_stop(
+        self,
+        *,
+        snapshot_on_stop: bool = False,
+        graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
+        missing_ok: bool = False,
+    ) -> None:
+        """Body of the shared _stop_task: send Stop RPC, poll to terminal, cleanup.
+
+        Only the first caller's parameters (snapshot_on_stop, graceful_shutdown_seconds)
+        are used. Later stop() calls join the existing task.
+        """
+        sent_rpc = False
+
+        # Acquire _start_lock to serialize with startup
+        async with self._start_lock:
+            if self._is_done:
+                return
+            if self._is_stopping:
+                # Already draining (e.g. background poll saw TERMINATING).
+                # Skip the Stop RPC but fall through to await terminal.
+                logger.debug(
+                    "Sandbox %s already stopping, waiting for terminal",
+                    self._sandbox_id,
+                )
+            elif self._sandbox_id is None:
+                self._state = _NotStarted(cancelled=True)
+                return
+            else:
+                sandbox_id = self._sandbox_id
+                prev = self._state
+
+                await self._ensure_client()
+                assert self._stub is not None
+
+                max_timeout = int(graceful_shutdown_seconds) + int(
+                    DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                )
+                request = gateway_pb2.StopSandboxRequest(
+                    sandbox_id=sandbox_id,
+                    graceful_shutdown_seconds=int(graceful_shutdown_seconds),
+                    snapshot_on_stop=snapshot_on_stop,
+                    max_timeout_seconds=max_timeout,
+                )
+
+                # Send Stop RPC first, then update state on success
+                try:
+                    response = await self._stub.Stop(
+                        request,
+                        timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+                        metadata=self._auth_metadata,
+                    )
+                except grpc.RpcError as e:
+                    if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
+                        logger.debug(
+                            "Sandbox %s not found during stop (missing_ok=True)",
+                            sandbox_id,
+                        )
+                        self._state = _Terminal(
+                            sandbox_id=sandbox_id,
+                            status=SandboxStatus.TERMINATED,
+                            runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                            profile_id=(prev.profile_id if isinstance(prev, (_Running,)) else None),
+                            runner_group_id=(
+                                prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                            ),
+                            started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
+                        )
+                        if self._complete_task is not None and not self._complete_task.done():
+                            self._complete_task.cancel()
+                            self._complete_task = None
+                        return
+                    raise _translate_rpc_error(
+                        e, sandbox_id=sandbox_id, operation="Stop sandbox"
+                    ) from e
+
+                if not response.success:
+                    error_msg = response.error_message or "unknown error"
+                    raise SandboxError(f"Failed to stop sandbox: {error_msg}")
+
+                # RPC succeeded: transition to _Stopping
+                self._state = _Stopping(
+                    sandbox_id=sandbox_id,
+                    runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                    profile_id=(prev.profile_id if isinstance(prev, (_Running,)) else None),
+                    runner_group_id=(
+                        prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                    ),
+                    started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
+                )
+                self._stop_owned = True
+                sent_rpc = True
+                logger.info("Sandbox %s stop accepted, draining", sandbox_id)
+
+        # Cancel the running poll only when we sent the Stop RPC.
+        # In the observe-only path (_is_stopping), the poll already
+        # completed naturally when the background poller saw TERMINATING.
+        if sent_rpc and self._running_task is not None and not self._running_task.done():
+            self._running_task.cancel()
+            self._running_task = None
+
+        await self._await_terminal_after_stop()
+
+    def _on_stop_task_done(self, task: asyncio.Task[None]) -> None:
+        """Clear _stop_task reference when task completes."""
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.debug(
+                "Stop task for sandbox %s failed: %s",
+                self._sandbox_id,
+                exc,
+            )
+        if self._stop_task is task:
+            self._stop_task = None
+
     async def _stop_async(
         self,
         *,
@@ -2083,78 +2300,37 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
     ) -> None:
-        """Internal async: Stop the sandbox."""
-        # Acquire _start_lock to wait for any in-flight start() to complete
-        async with self._start_lock:
+        """Internal async: Stop the sandbox using shared _stop_task pattern.
+
+        First caller creates the task; later callers join it.
+        """
+        async with self._stop_lock:
             if self._is_done:
                 logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
                 return
-            if self._sandbox_id is None:
+            if self._sandbox_id is None and not self._is_stopping:
                 logger.debug("stop() called on sandbox that was never started")
                 self._state = _NotStarted(cancelled=True)
                 return
-            sandbox_id = self._sandbox_id
-            assert sandbox_id is not None
-            prev = self._state
-            self._state = _Terminal(
-                sandbox_id=sandbox_id,
-                status=SandboxStatus.TERMINATED,
-                tower_id=prev.tower_id if isinstance(prev, (_Running, _Terminal)) else None,
-                runway_id=prev.runway_id if isinstance(prev, (_Running, _Terminal)) else None,
-                tower_group_id=(
-                    prev.tower_group_id if isinstance(prev, (_Running, _Terminal)) else None
-                ),
-                started_at=prev.started_at if isinstance(prev, (_Running, _Terminal)) else None,
-            )
-
-        # Cancel the shared polling tasks so waiters get CancelledError
-        if self._running_task is not None and not self._running_task.done():
-            self._running_task.cancel()
-            self._running_task = None
-        if self._complete_task is not None and not self._complete_task.done():
-            self._complete_task.cancel()
-            self._complete_task = None
-
-        await self._ensure_client()
-        assert self._stub is not None
-
-        logger.debug("Stopping sandbox %s", self._sandbox_id)
-
-        max_timeout = int(graceful_shutdown_seconds) + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
-        request = atc_pb2.StopSandboxRequest(
-            sandbox_id=self._sandbox_id,
-            graceful_shutdown_seconds=int(graceful_shutdown_seconds),
-            snapshot_on_stop=snapshot_on_stop,
-            max_timeout_seconds=max_timeout,
-        )
-
-        try:
-            try:
-                response = await self._stub.Stop(
-                    request,
-                    timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
-                    metadata=self._auth_metadata,
-                )
-            except grpc.RpcError as e:
-                if e.code() == grpc.StatusCode.NOT_FOUND and missing_ok:
-                    logger.debug(
-                        "Sandbox %s not found during stop (missing_ok=True)",
-                        self._sandbox_id,
+            if self._stop_task is None:
+                self._stop_task = asyncio.create_task(
+                    self._do_stop(
+                        snapshot_on_stop=snapshot_on_stop,
+                        graceful_shutdown_seconds=graceful_shutdown_seconds,
+                        missing_ok=missing_ok,
                     )
-                    return
-                raise _translate_rpc_error(
-                    e, sandbox_id=self._sandbox_id, operation="Stop sandbox"
-                ) from e
+                )
+                self._stop_task.add_done_callback(self._on_stop_task_done)
+            task = self._stop_task
 
-            if response.success:
-                logger.info("Sandbox %s stopped successfully", self._sandbox_id)
-            else:
-                error_msg = response.error_message or "unknown error"
-                raise SandboxError(f"Failed to stop sandbox: {error_msg}")
+        # Join the shared stop task
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
         finally:
-            # Deregister from session regardless of outcome - the sandbox
-            # is no longer usable either way
-            if self._session is not None:
+            # Deregister from session if we own the stop
+            if self._stop_owned and self._session is not None:
                 self._session._deregister_sandbox(self)
             # Close channels to release resources
             if self._streaming_channel is not None:
@@ -2174,6 +2350,14 @@ class Sandbox:
     ) -> OperationRef[None]:
         """Stop sandbox, return OperationRef immediately.
 
+        The sandbox transitions through TERMINATING (grace period draining)
+        before reaching a terminal state (COMPLETED or FAILED). The returned
+        OperationRef resolves when the backend confirms a terminal state, not
+        just when the stop RPC succeeds.
+
+        Multiple callers share the same underlying stop task: the first caller
+        creates it, subsequent callers join it.
+
         The sandbox is deregistered from its session regardless of whether
         the stop was successful, since the sandbox is no longer usable.
 
@@ -2184,16 +2368,20 @@ class Sandbox:
                 doesn't exist.
 
         Returns:
-            OperationRef[None]: Use .result() to block until complete.
+            OperationRef[None]: Use .result() to block until terminal.
             Raises SandboxError on failure, SandboxNotFoundError if not found
             (unless missing_ok=True).
 
         Examples:
             ```python
-            sb.stop().result()  # Block until stopped
+            sb.stop().result()  # Block until terminal (COMPLETED/FAILED)
 
             # Ignore if already deleted
             sb.stop(missing_ok=True).result()
+
+            # wait_until_complete() after stop() resolves when terminal
+            sb.stop()
+            sb.wait_until_complete().result()  # Polls through TERMINATING
             ```
         """
         future = self._loop_manager.run_async(
@@ -2225,18 +2413,18 @@ class Sandbox:
             await self._ensure_started_async()
             if self._sandbox_id is None:
                 raise SandboxNotRunningError("No sandbox is running")
-            if self._is_done and follow:
+            if (self._is_stopping or self._is_done) and follow:
                 raise SandboxNotRunningError(
-                    f"Sandbox {self._sandbox_id} has been stopped"
+                    f"Sandbox {self._sandbox_id} is terminating"
                     " (follow=True requires a running sandbox)"
                 )
 
-            if not self._is_done:
+            if not self._is_done and not self._is_stopping:
                 await self._wait_until_running_async()
 
             await self._ensure_client()
             channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
             auth_metadata = self._auth_metadata
 
@@ -2401,7 +2589,7 @@ class Sandbox:
 
         try:
             await self._ensure_started_async()
-            if self._is_done:
+            if self._is_done or self._is_stopping:
                 raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
             if self._sandbox_id is None:
                 raise SandboxNotRunningError("No sandbox is running")
@@ -2410,7 +2598,7 @@ class Sandbox:
 
             await self._ensure_client()
             channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
             auth_metadata = self._auth_metadata
 
@@ -2642,7 +2830,7 @@ class Sandbox:
             raise ValueError("Command cannot be empty")
 
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
@@ -2652,7 +2840,7 @@ class Sandbox:
 
         await self._ensure_client()
         channel = await self._get_or_create_streaming_channel()
-        stub = streaming_pb2_grpc.ATCStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
         auth_metadata = self._auth_metadata
 
@@ -3081,7 +3269,7 @@ class Sandbox:
     ) -> bytes:
         """Internal async: Read a file from the sandbox filesystem."""
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
@@ -3094,7 +3282,7 @@ class Sandbox:
 
         logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
 
-        request = atc_pb2.RetrieveFileSandboxRequest(
+        request = gateway_pb2.RetrieveFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
             max_timeout_seconds=int(timeout),
@@ -3148,7 +3336,7 @@ class Sandbox:
     ) -> None:
         """Internal async: Write a file to the sandbox filesystem."""
         await self._ensure_started_async()
-        if self._is_done:
+        if self._is_done or self._is_stopping:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
@@ -3166,7 +3354,7 @@ class Sandbox:
             len(contents),
         )
 
-        request = atc_pb2.AddFileSandboxRequest(
+        request = gateway_pb2.AddFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
             file_contents=contents,

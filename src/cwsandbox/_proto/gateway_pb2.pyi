@@ -23,6 +23,7 @@ class SandboxStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SANDBOX_STATUS_TERMINATED: _ClassVar[SandboxStatus]
     SANDBOX_STATUS_PENDING: _ClassVar[SandboxStatus]
     SANDBOX_STATUS_PAUSED: _ClassVar[SandboxStatus]
+    SANDBOX_STATUS_TERMINATING: _ClassVar[SandboxStatus]
 
 class ActionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -59,6 +60,7 @@ SANDBOX_STATUS_FAILED: SandboxStatus
 SANDBOX_STATUS_TERMINATED: SandboxStatus
 SANDBOX_STATUS_PENDING: SandboxStatus
 SANDBOX_STATUS_PAUSED: SandboxStatus
+SANDBOX_STATUS_TERMINATING: SandboxStatus
 ACTION_TYPE_UNSPECIFIED: ActionType
 ACTION_TYPE_EXEC: ActionType
 ACTION_TYPE_ADD_FILE: ActionType
@@ -141,7 +143,7 @@ class KubernetesSecretSource(_message.Message):
     secret_key: str
     def __init__(self, secret_name: _Optional[str] = ..., secret_key: _Optional[str] = ...) -> None: ...
 
-class TowerClusterSecretReference(_message.Message):
+class RunnerClusterSecretReference(_message.Message):
     __slots__ = ("kubernetes", "env_var")
     KUBERNETES_FIELD_NUMBER: _ClassVar[int]
     ENV_VAR_FIELD_NUMBER: _ClassVar[int]
@@ -196,7 +198,7 @@ class ObjectStorageAccess(_message.Message):
     def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
 
 class StartSandboxRequest(_message.Message):
-    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "runway_ids", "tower_ids", "max_lifetime_seconds", "max_timeout_seconds", "tower_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
+    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "profile_ids", "runner_ids", "max_lifetime_seconds", "max_timeout_seconds", "runner_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -221,11 +223,11 @@ class StartSandboxRequest(_message.Message):
     MOUNTED_FILES_FIELD_NUMBER: _ClassVar[int]
     S3_MOUNT_FIELD_NUMBER: _ClassVar[int]
     NETWORK_FIELD_NUMBER: _ClassVar[int]
-    RUNWAY_IDS_FIELD_NUMBER: _ClassVar[int]
-    TOWER_IDS_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_IDS_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     MAX_LIFETIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
-    TOWER_CLUSTER_SECRETS_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_CLUSTER_SECRETS_FIELD_NUMBER: _ClassVar[int]
     OBJECT_STORAGE_ACCESS_FIELD_NUMBER: _ClassVar[int]
     POD_ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
     SECRET_STORES_FIELD_NUMBER: _ClassVar[int]
@@ -241,27 +243,27 @@ class StartSandboxRequest(_message.Message):
     mounted_files: _containers.RepeatedCompositeFieldContainer[MountedFile]
     s3_mount: S3Mount
     network: NetworkOptions
-    runway_ids: _containers.RepeatedScalarFieldContainer[str]
-    tower_ids: _containers.RepeatedScalarFieldContainer[str]
+    profile_ids: _containers.RepeatedScalarFieldContainer[str]
+    runner_ids: _containers.RepeatedScalarFieldContainer[str]
     max_lifetime_seconds: int
     max_timeout_seconds: int
-    tower_cluster_secrets: _containers.RepeatedCompositeFieldContainer[TowerClusterSecretReference]
+    runner_cluster_secrets: _containers.RepeatedCompositeFieldContainer[RunnerClusterSecretReference]
     object_storage_access: ObjectStorageAccess
     pod_annotations: _containers.ScalarMap[str, str]
     secret_stores: _containers.RepeatedCompositeFieldContainer[_secrets_pb2.SecretStoreReference]
     resource_limits: ResourceRequest
     resource_requests: ResourceRequest
-    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., tower_cluster_secrets: _Optional[_Iterable[_Union[TowerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
+    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., runner_cluster_secrets: _Optional[_Iterable[_Union[RunnerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StartSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "runway_id", "tower_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode", "requested_resource_limits", "requested_resource_requests")
+    __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "profile_id", "runner_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode", "requested_resource_limits", "requested_resource_requests")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ADDRESS_FIELD_NUMBER: _ClassVar[int]
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     REQUESTED_RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    RUNWAY_ID_FIELD_NUMBER: _ClassVar[int]
-    TOWER_ID_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_ID_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
@@ -272,14 +274,14 @@ class StartSandboxResponse(_message.Message):
     service_address: str
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     requested_resources: ResourceRequest
-    runway_id: str
-    tower_id: str
+    profile_id: str
+    runner_id: str
     sandbox_status: SandboxStatus
     applied_ingress_mode: str
     applied_egress_mode: str
     requested_resource_limits: ResourceRequest
     requested_resource_requests: ResourceRequest
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., runway_id: _Optional[str] = ..., tower_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., requested_resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., requested_resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., profile_id: _Optional[str] = ..., runner_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., requested_resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., requested_resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StopSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "graceful_shutdown_seconds", "snapshot_on_stop", "max_timeout_seconds")
@@ -310,14 +312,14 @@ class GetSandboxRequest(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class GetSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
     CURRENT_RESOURCE_USAGE_FIELD_NUMBER: _ClassVar[int]
-    TOWER_ID_FIELD_NUMBER: _ClassVar[int]
-    TOWER_GROUP_ID_FIELD_NUMBER: _ClassVar[int]
-    RUNWAY_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_GROUP_ID_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ADDRESS_FIELD_NUMBER: _ClassVar[int]
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
@@ -326,30 +328,30 @@ class GetSandboxResponse(_message.Message):
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
     current_resource_usage: ResourceUsage
-    tower_id: str
-    tower_group_id: str
-    runway_id: str
+    runner_id: str
+    runner_group_id: str
+    profile_id: str
     service_address: str
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
-    __slots__ = ("tags", "status", "runway_ids", "tower_ids", "max_timeout_seconds", "include_stopped")
+    __slots__ = ("tags", "status", "profile_ids", "runner_ids", "max_timeout_seconds", "include_stopped")
     TAGS_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
-    RUNWAY_IDS_FIELD_NUMBER: _ClassVar[int]
-    TOWER_IDS_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_IDS_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_STOPPED_FIELD_NUMBER: _ClassVar[int]
     tags: _containers.RepeatedScalarFieldContainer[str]
     status: SandboxStatus
-    runway_ids: _containers.RepeatedScalarFieldContainer[str]
-    tower_ids: _containers.RepeatedScalarFieldContainer[str]
+    profile_ids: _containers.RepeatedScalarFieldContainer[str]
+    runner_ids: _containers.RepeatedScalarFieldContainer[str]
     max_timeout_seconds: int
     include_stopped: bool
-    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., runway_ids: _Optional[_Iterable[str]] = ..., tower_ids: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ...) -> None: ...
+    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ...) -> None: ...
 
 class ListSandboxesResponse(_message.Message):
     __slots__ = ("sandboxes",)
@@ -358,14 +360,14 @@ class ListSandboxesResponse(_message.Message):
     def __init__(self, sandboxes: _Optional[_Iterable[_Union[SandboxInfo, _Mapping]]] = ...) -> None: ...
 
 class SandboxInfo(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "tower_id", "tower_group_id", "runway_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
     CURRENT_RESOURCE_USAGE_FIELD_NUMBER: _ClassVar[int]
-    TOWER_ID_FIELD_NUMBER: _ClassVar[int]
-    TOWER_GROUP_ID_FIELD_NUMBER: _ClassVar[int]
-    RUNWAY_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_GROUP_ID_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ADDRESS_FIELD_NUMBER: _ClassVar[int]
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
@@ -374,14 +376,14 @@ class SandboxInfo(_message.Message):
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
     current_resource_usage: ResourceUsage
-    tower_id: str
-    tower_group_id: str
-    runway_id: str
+    runner_id: str
+    runner_group_id: str
+    profile_id: str
     service_address: str
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., tower_id: _Optional[str] = ..., tower_group_id: _Optional[str] = ..., runway_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class DeleteSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id", "max_timeout_seconds")
