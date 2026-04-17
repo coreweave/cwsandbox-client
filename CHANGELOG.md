@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v0.17.0 (2026-04-17)
+
+### Bug Fixes
+
+- Update DEFAULT_BASE_URL from cw-sandbox.com to api.cwsandbox.com
+  ([`f52364f`](https://github.com/coreweave/cwsandbox-client/commit/f52364ff2ca334ba6bc72bd93620f1509d712e94))
+
+DNS migrated from gateway.cw-sandbox.com to api.cwsandbox.com as part of the cw-sandbox.com →
+  cwsandbox.com domain consolidation.
+
+### Documentation
+
+- Remove local MkDocs and GitHub Pages infrastructure
+  ([`c1c1058`](https://github.com/coreweave/cwsandbox-client/commit/c1c10582e5b4175455938f2c6b184bcc9d3182f5))
+
+Remove the local MkDocs/GitHub Pages docs setup from this repo and point users to the canonical docs
+  site instead.
+
+This change: - removes MkDocs configuration and GitHub Pages publishing infrastructure - removes
+  local tutorial/guide/API docs content that was only used by the MkDocs site - updates repository
+  docs to point to https://docs.coreweave.com/products/coreweave-sandbox/client - keeps
+  docs/README.md as a minimal pointer to the external docs site instead of a full landing page -
+  removes docs-tooling lockfile entries tied to the old local docs build
+
+API reference is no longer built in this repo with mkdocstrings. The replacement lives in
+  coreweave/docs: the generate-cwsandbox-api-ref.yaml workflow generates Mintlify MDX API reference
+  pages from cwsandbox source using Griffe for a given release tag and opens a PR in the docs repo.
+
+### Features
+
+- Add TERMINATING status and _Stopping lifecycle state
+  ([`3f96b9a`](https://github.com/coreweave/cwsandbox-client/commit/3f96b9ac9ca1dc7c33c774954783947dd5045e7f))
+
+Handle SANDBOX_STATUS_TERMINATING=9 from the backend proto. Add _Stopping lifecycle state, shared
+  _stop_task pattern, and _stop_owned provenance for raise_on_termination. Bump vendored proto stubs
+  from BSR.
+
+- Rename aviato → sandbox (align with server rebrand)
+  ([`b3027eb`](https://github.com/coreweave/cwsandbox-client/commit/b3027eb21fc900a85b5c42501fb00e62bab4f26b))
+
+Update vendored proto stubs and SDK to match the server-side rename from aviato/v1beta1 to
+  sandbox/v1beta2:
+
+- Proto: atc_pb2 → gateway_pb2, ATCService → GatewayService, ATCStreamingService →
+  GatewayStreamingService - Public API: tower_ids → runner_ids, runway_ids → profile_ids,
+  tower_group_id → runner_group_id - CLI flags: --tower-id → --runner-id, --runway-id → --profile-id
+  - All gRPC service paths updated to coreweave.sandbox.v1beta2.*
+
+Generated stubs from aviato repo's `make buf-gen-python` output. All 658 unit tests pass.
+
+- Rename discovery API (Tower/Runway -> Runner/Profile)
+  ([`5a25996`](https://github.com/coreweave/cwsandbox-client/commit/5a259960c8dfd56b05f7d9dbf508753b1ff783f0))
+
+Align public types and functions with v1beta2 proto rename.
+
+
 ## v0.16.0 (2026-04-07)
 
 ### Chores
