@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.18.0 (2026-04-20)
+
+### Features
+
+- **tests**: Pin e2e sandboxes to specific runner(s)
+  ([`a8b7e41`](https://github.com/coreweave/cwsandbox-client/commit/a8b7e4149ae563d9b6d8282e1ce8b2066f128e00))
+
+Engineers rolling out runner-side changes need to verify behavior against only the affected
+  runner(s). Before this, `sandbox_defaults` left `runner_ids=None` and every e2e sandbox was
+  auto-scheduled, forcing ad-hoc conftest edits to target a runner.
+
+Add a pytest CLI flag `--cwsandbox-runner-ids=<csv>` and env var `CWSANDBOX_TEST_RUNNER_IDS` that
+  feed into `sandbox_defaults.runner_ids`. CLI wins over env; passing the flag empty clears the env
+  for a single invocation. A session-scoped autouse fixture calls `list_runners()` once to fail fast
+  on unknown IDs, naming the source (CLI vs env) in the error. When no targeting is configured the
+  fixture returns immediately - no discovery call, no added latency, byte-identical to the prior
+  default.
+
+Scope is intentionally narrow: only `runner_ids` is touched. `container_image`, `resources`, `tags`,
+  and `max_lifetime_seconds` remain as they were.
+
+
 ## v0.17.0 (2026-04-17)
 
 ### Bug Fixes
