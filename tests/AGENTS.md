@@ -13,9 +13,11 @@ tests/
 ├── unit/cwsandbox/        # Mock-based tests, no network calls (284 tests)
 │   ├── conftest.py     # Auth env var clearing (autouse=True)
 │   └── test_*.py       # 10 test files (one per source module + utilities)
-└── integration/cwsandbox/ # Real backend operations (31 tests)
-    ├── conftest.py     # Shared fixtures
-    └── test_*.py       # 3 test files (auth, sandbox, session)
+└── integration/           # Real backend operations (31 tests)
+    ├── conftest.py     # Integration-root CLI options (e.g., --cwsandbox-runner-ids)
+    └── cwsandbox/
+        ├── conftest.py # Shared fixtures (auth, sandbox_defaults, runner-ID resolution)
+        └── test_*.py   # 3 test files (auth, sandbox, session)
 ```
 
 ## Running Tests
@@ -46,7 +48,14 @@ uv run pytest -k "test_create"                   # By name pattern
 | Fixture | Scope | Autouse | Description |
 |---------|-------|---------|-------------|
 | `require_auth` | module | Yes | Skips tests if no auth configured |
-| `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 300s lifetime, `("integration-test",)` tags |
+| `_validate_runner_ids` | session | Yes | Fails fast (pytest.UsageError) when `--cwsandbox-runner-ids` or `CWSANDBOX_TEST_RUNNER_IDS` names a runner the discovery service does not know. Zero-cost when no runner targeting is configured. |
+| `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 60s lifetime, `("integration-test", <session-tag>)` tags. Populates `runner_ids` from `--cwsandbox-runner-ids` (CLI) or `CWSANDBOX_TEST_RUNNER_IDS` (env) when set. |
+
+### Integration CLI flags (`tests/integration/conftest.py`)
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--cwsandbox-runner-ids=<csv>` | `CWSANDBOX_TEST_RUNNER_IDS` | Comma-separated runner IDs to pin e2e sandboxes to. CLI wins over env. Pass empty (`--cwsandbox-runner-ids=`) to clear the env and auto-schedule. |
 
 Set environment variables before running integration tests. A `.env` file in the project root is automatically loaded via python-dotenv.
 
@@ -88,6 +97,30 @@ Set environment variables before running tests (in priority order):
 A `.env` file in the project root is automatically loaded via python-dotenv.
 
 Tests skip gracefully with clear messages when no auth is configured. The `require_auth` fixture in conftest.py validates auth upfront rather than letting tests fail with opaque RPC errors.
+
+### Targeting specific runners
+
+When rolling out a change to a specific runner, pin every e2e sandbox to that runner rather than letting the backend auto-schedule. The `sandbox_defaults` fixture reads the target list from either the pytest CLI flag or an env var; the CLI flag wins when both are set.
+
+```bash
+# CLI: pin to one runner for a single test
+mise run test:e2e -- --cwsandbox-runner-ids=runner-a
+
+# CLI: pin to a set
+mise run test:e2e -- --cwsandbox-runner-ids=runner-a,runner-b
+
+# Env: convenient when iterating in a shell
+CWSANDBOX_TEST_RUNNER_IDS=runner-a mise run test:e2e
+
+# Clear the env for one invocation (auto-schedule)
+CWSANDBOX_TEST_RUNNER_IDS=runner-a mise run test:e2e -- --cwsandbox-runner-ids=
+```
+
+Parsing normalises the list: whitespace is stripped, empty tokens are dropped, and duplicates are collapsed preserving first-seen order. If any resolved ID is unknown to the discovery service, pytest stops immediately with `pytest.UsageError` naming the missing IDs and their source (CLI vs env). When no targeting is configured, no discovery call is made - the default path is byte-identical to pre-change.
+
+Scope: this constrains runner placement only. Profile selection remains backend-driven; `container_image`, `resources`, `tags`, `max_lifetime_seconds` are unchanged.
+
+xdist caveat: every xdist worker targets the same runner tuple. When pinning to a single runner, lower `-n` (or run sequential with `mise run test:e2e`) to avoid queueing all workers behind one node.
 
 ## Test File Reference
 
