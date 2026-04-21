@@ -70,6 +70,22 @@ def _resolve_runner_ids(
     return None, None
 
 
+@pytest.fixture(scope="session")
+def configured_runner_ids(
+    pytestconfig: pytest.Config,
+) -> tuple[str, ...] | None:
+    """Runner IDs resolved from --cwsandbox-runner-ids / CWSANDBOX_TEST_RUNNER_IDS.
+
+    Returns None when no pin is configured. Use this fixture in tests that
+    construct their own SandboxDefaults or call Sandbox.run() without
+    defaults, so the runner pin still applies.
+    """
+    cli_value = pytestconfig.getoption(_CLI_RUNNER_IDS)
+    env_value = os.environ.get(_ENV_RUNNER_IDS)
+    runner_ids, _ = _resolve_runner_ids(cli_value, env_value)
+    return runner_ids
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _validate_runner_ids(pytestconfig: pytest.Config) -> None:
     """Fail fast when configured runner IDs are unknown.
@@ -171,7 +187,9 @@ def cleanup_session_sandboxes() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="module")
-def sandbox_defaults(request: pytest.FixtureRequest) -> SandboxDefaults:
+def sandbox_defaults(
+    configured_runner_ids: tuple[str, ...] | None,
+) -> SandboxDefaults:
     """Module-scoped defaults for creating test sandboxes.
 
     Uses reduced resources and short lifetime for local Kind cluster
@@ -181,15 +199,12 @@ def sandbox_defaults(request: pytest.FixtureRequest) -> SandboxDefaults:
     enabling cleanup of orphaned sandboxes at session end.
 
     Respects ``CWSANDBOX_BASE_URL`` for pointing at local backends (e.g.,
-    Tilt/Kind). Respects ``CWSANDBOX_TEST_RUNNER_IDS`` or
-    ``--cwsandbox-runner-ids`` to pin sandboxes to specific runner(s) --
-    CLI wins, empty CLI clears the env var. Only ``runner_ids`` is touched
-    by this targeting; all other defaults are unchanged.
+    Tilt/Kind). Inherits the runner pin from ``configured_runner_ids``
+    (resolved from ``--cwsandbox-runner-ids`` / ``CWSANDBOX_TEST_RUNNER_IDS``).
+    Only ``runner_ids`` is touched by this targeting; all other defaults are
+    unchanged.
     """
     base_url = os.environ.get("CWSANDBOX_BASE_URL")
-    cli_value = request.config.getoption(_CLI_RUNNER_IDS)
-    env_value = os.environ.get(_ENV_RUNNER_IDS)
-    runner_ids, _ = _resolve_runner_ids(cli_value, env_value)
 
     # Build kwargs, only including base_url if explicitly set
     kwargs: dict[str, object] = {
@@ -200,7 +215,7 @@ def sandbox_defaults(request: pytest.FixtureRequest) -> SandboxDefaults:
     }
     if base_url:
         kwargs["base_url"] = base_url
-    if runner_ids is not None:
-        kwargs["runner_ids"] = runner_ids
+    if configured_runner_ids is not None:
+        kwargs["runner_ids"] = configured_runner_ids
 
     return SandboxDefaults(**kwargs)  # type: ignore[arg-type]
