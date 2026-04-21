@@ -49,7 +49,8 @@ uv run pytest -k "test_create"                   # By name pattern
 |---------|-------|---------|-------------|
 | `require_auth` | module | Yes | Skips tests if no auth configured |
 | `_validate_runner_ids` | session | Yes | Fails fast (pytest.UsageError) when `--cwsandbox-runner-ids` or `CWSANDBOX_TEST_RUNNER_IDS` names a runner the discovery service does not know. Zero-cost when no runner targeting is configured. |
-| `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 60s lifetime, `("integration-test", <session-tag>)` tags. Populates `runner_ids` from `--cwsandbox-runner-ids` (CLI) or `CWSANDBOX_TEST_RUNNER_IDS` (env) when set. |
+| `configured_runner_ids` | session | No | Returns `tuple[str, ...] \| None` resolved from `--cwsandbox-runner-ids` / `CWSANDBOX_TEST_RUNNER_IDS` (CLI wins). Consume this in tests that construct their own `SandboxDefaults` or call `Sandbox.run()` without defaults, so the runner pin still applies. |
+| `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 60s lifetime, `("integration-test", <session-tag>)` tags. Inherits `runner_ids` from `configured_runner_ids` when set. |
 
 ### Integration CLI flags (`tests/integration/conftest.py`)
 
@@ -121,6 +122,15 @@ Parsing normalises the list: whitespace is stripped, empty tokens are dropped, a
 Scope: this constrains runner placement only. Profile selection remains backend-driven; `container_image`, `resources`, `tags`, `max_lifetime_seconds` are unchanged.
 
 xdist caveat: every xdist worker targets the same runner tuple. When pinning to a single runner, lower `-n` (or run sequential with `mise run test:e2e`) to avoid queueing all workers behind one node.
+
+### Contract for new e2e tests
+
+Any test path that may create a sandbox - directly via `Sandbox.run()`, indirectly via `Session`, or via a `@session.function()` - MUST honor the configured runner pin. To comply, either:
+
+1. Consume `sandbox_defaults` (or `sandbox_defaults.with_overrides(...)`) - the pin is inherited automatically, OR
+2. Accept the `configured_runner_ids` fixture and forward it: pass `runner_ids=list(configured_runner_ids)` to `Sandbox.run()` when non-None.
+
+**Opt-out:** tests that are specifically validating `runner_ids` or `profile_ids` semantics (e.g., `test_sandbox_with_runway_and_runner_ids`) may opt out. Document the opt-out with an in-test comment explaining why the pin is not forwarded. Note that an explicit `runner_ids=[]` intentionally clears any default.
 
 ## Test File Reference
 
