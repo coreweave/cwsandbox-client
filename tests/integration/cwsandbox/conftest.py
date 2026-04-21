@@ -219,3 +219,38 @@ def sandbox_defaults(
         kwargs["runner_ids"] = configured_runner_ids
 
     return SandboxDefaults(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.fixture(scope="module")
+def discovered_infrastructure(
+    configured_runner_ids: tuple[str, ...] | None,
+) -> tuple[str, str]:
+    """Return ``(runner_id, profile_name)`` for pin-targeting tests.
+
+    Picks the first healthy runner that advertises at least one profile, via
+    ``cwsandbox.list_runners()``. When ``--cwsandbox-runner-ids`` /
+    ``CWSANDBOX_TEST_RUNNER_IDS`` is configured, candidates are filtered to
+    that allowlist so the CLI pin and the fixture pick cannot conflict. When
+    no allowlist is configured, the fixture additionally requires enough free
+    capacity to satisfy ``sandbox_defaults`` (500m CPU, 256Mi memory) so a
+    stale or capacity-blind pick cannot masquerade as a pin-targeting
+    regression. Fails fast with a clear message if no candidate matches.
+    """
+    if configured_runner_ids is not None:
+        # Explicit allowlist: trust the user's pin over discovery's capacity
+        # view (which can be stale or reflect soft limits the scheduler does
+        # not enforce).
+        runners = list_runners()
+        allow = set(configured_runner_ids)
+        candidates = [r for r in runners if r.healthy and r.profile_names and r.runner_id in allow]
+        assert candidates, f"No healthy runners with profiles in allowlist {configured_runner_ids}"
+    else:
+        runners = list_runners(
+            include_resources=True,
+            min_available_cpu_millicores=500,
+            min_available_memory_bytes=256 * 1024 * 1024,
+        )
+        candidates = [r for r in runners if r.healthy and r.profile_names]
+        assert candidates, "No healthy runners with available capacity and profiles"
+    runner = candidates[0]
+    return runner.runner_id, runner.profile_names[0]

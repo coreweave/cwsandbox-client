@@ -51,6 +51,7 @@ uv run pytest -k "test_create"                   # By name pattern
 | `_validate_runner_ids` | session | Yes | Fails fast (pytest.UsageError) when `--cwsandbox-runner-ids` or `CWSANDBOX_TEST_RUNNER_IDS` names a runner the discovery service does not know. Zero-cost when no runner targeting is configured. |
 | `configured_runner_ids` | session | No | Returns `tuple[str, ...] \| None` resolved from `--cwsandbox-runner-ids` / `CWSANDBOX_TEST_RUNNER_IDS` (CLI wins). Consume this in tests that construct their own `SandboxDefaults` or call `Sandbox.run()` without defaults, so the runner pin still applies. |
 | `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 60s lifetime, `("integration-test", <session-tag>)` tags. Inherits `runner_ids` from `configured_runner_ids` when set. |
+| `discovered_infrastructure` | module | No | Returns `(runner_id, profile_name)` for pin-targeting tests. Selects the first healthy runner with profiles from `cwsandbox.list_runners()`, honoring `configured_runner_ids` allowlist when set. Fails fast with a clear message if no candidates match. |
 
 ### Integration CLI flags (`tests/integration/conftest.py`)
 
