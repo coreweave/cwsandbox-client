@@ -121,8 +121,6 @@ Parsing normalises the list: whitespace is stripped, empty tokens are dropped, a
 
 Scope: this constrains runner placement only. Profile selection remains backend-driven; `container_image`, `resources`, `tags`, `max_lifetime_seconds` are unchanged.
 
-xdist caveat: every xdist worker targets the same runner tuple. When pinning to a single runner, lower `-n` (or run sequential with `mise run test:e2e`) to avoid queueing all workers behind one node.
-
 ### Contract for new e2e tests
 
 Any test path that may create a sandbox - directly via `Sandbox.run()`, indirectly via `Session`, or via a `@session.function()` - MUST honor the configured runner pin. To comply, either:
