@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v0.19.0 (2026-04-21)
+
+### Features
+
+- Add ErrorInfo parser and carry structured fields on CWSandboxError
+  ([`ecde028`](https://github.com/coreweave/cwsandbox-client/commit/ecde0283b3dc7584a3de477211bf13ccc307b8c6))
+
+Parse google.rpc.Status details from gRPC trailing metadata per AIP-193 and surface ErrorInfo.reason
+  / ErrorInfo.metadata / RetryInfo.retry_delay on CWSandboxError. The parser is defensive and never
+  raises, so callers can still fall back to status-code-only handling when details are absent or
+  malformed.
+
+RetryInfo.retry_delay converts via protobuf's Duration.ToTimedelta() and returns None when the value
+  would overflow Python's timedelta. Default-constructed empty RetryInfo{} entries are skipped so
+  consumers can distinguish "retry advisory present" from "no hint".
+
+- Consume ErrorInfo in shared gRPC error translators
+  ([`55f006a`](https://github.com/coreweave/cwsandbox-client/commit/55f006a27a5c50898286cb726b0a67c39a83708c))
+
+Wire the AIP-193 parser into the shared transport translator and the discovery domain translator so
+  every CWSandbox exception that originates from a gRPC error carries the parsed reason / metadata /
+  retry_delay alongside the existing message. Discovery NOT_FOUND paths now thread structured fields
+  into RunnerNotFoundError / ProfileNotFoundError consistently with the sandbox translator.
+
+Callers that have already parsed trailing metadata can pass the parsed result to the translator;
+  otherwise it parses internally.
+
+- Map CWSANDBOX_* reasons to specific sandbox exceptions
+  ([`5fc2151`](https://github.com/coreweave/cwsandbox-client/commit/5fc21514c648a80a0eddfb9d8c4341e2f41590cb))
+
+Translate CWSANDBOX_FILE_*, CWSANDBOX_SANDBOX_NOT_FOUND, CWSANDBOX_COMMAND_TIMEOUT, and
+  CWSANDBOX_*_UNAVAILABLE reasons to SandboxFileError / SandboxNotFoundError / SandboxTimeoutError /
+  SandboxNotRunningError when the ErrorInfo carries the CoreWeave domain. The domain gate namespaces
+  reason-based mapping so third-party gRPC intermediaries can't accidentally collide with
+  CWSANDBOX_* strings.
+
+CWSANDBOX_RUNNER_NOT_FOUND is intentionally not mapped - it represents internal state inconsistency
+  rather than a user-facing missing sandbox, so it falls through to the status-code path and keeps
+  the reason attribute for introspection.
+
+SandboxFileError.filepath falls back to ErrorInfo.metadata["filepath"] when the caller doesn't
+  supply one, so file-op exceptions from the backend can still name the offending path.
+
+
 ## v0.18.0 (2026-04-20)
 
 ### Features
