@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.19.1 (2026-04-21)
+
+### Bug Fixes
+
+- **tests**: Close e2e runner-pin bypass in minimal-defaults tests
+  ([`7268276`](https://github.com/coreweave/cwsandbox-client/commit/72682762f021587d06b9ec115ce6bfefb636ec04))
+
+Six e2e tests bypass the CWSANDBOX_TEST_RUNNER_IDS / --cwsandbox-runner-ids pin because they
+  construct their own SandboxDefaults or call Sandbox.run() without defaults. During runner-scoped
+  rollouts these tests can land on unrelated runners and produce false failures masquerading as
+  regressions in the PR under test.
+
+Expose a session-scoped configured_runner_ids fixture as the test-facing interface, refactor
+  sandbox_defaults to consume it, and wire the minimal-defaults tests to forward the pin via
+  Sandbox.run() kwargs. Keep the "minimal SandboxDefaults" intent of each bypass test intact by
+  forwarding at the call site rather than injecting into the constructor. Switch the burstable-QoS
+  test to sandbox_defaults.with_overrides(resources=...) so it inherits the pin transitively. Add
+  placement assertions for both forwarding patterns (call-site kwarg and defaults-inherited) so the
+  bypass is self-verifying when a pin is configured.
+
+Tighten assertions on test_sandbox_with_runway_and_runner_ids to check equality with the discovered
+  profile_id / runner_id rather than non-None. tests/AGENTS.md now names this test as the legitimate
+  opt-out exemplar, so the assertions need to actually verify the targeting semantic rather than
+  pass whenever any sandbox starts.
+
+Document the fixture and a contract in tests/AGENTS.md so future tests comply without reintroducing
+  the bypass.
+
+
 ## v0.19.0 (2026-04-21)
 
 ### Features
