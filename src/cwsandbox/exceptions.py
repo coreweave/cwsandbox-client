@@ -9,11 +9,43 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import timedelta
+
     from cwsandbox._types import ProcessResult
 
 
 class CWSandboxError(Exception):
-    """Base exception for all CWSandbox operations."""
+    """Base exception for all CWSandbox operations.
+
+    Attributes:
+        reason: Structured error reason parsed from ``google.rpc.ErrorInfo``
+            (e.g. ``"CWSANDBOX_FILE_NOT_FOUND"``), or ``None`` when the error
+            did not carry AIP-193 details.
+        metadata: Machine-readable metadata from ``ErrorInfo.metadata``. Empty
+            dict when the error carried no metadata.
+        retry_delay: Suggested client retry delay parsed from
+            ``google.rpc.RetryInfo``, or ``None`` when absent.
+
+    Note:
+        ``reason``, ``metadata``, and ``retry_delay`` are raw server-supplied
+        values and populate even when the ErrorInfo domain is not trusted.
+        Callers that branch on ``reason`` should also verify the exception
+        class, which IS domain-gated.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.metadata: dict[str, str] = dict(metadata) if metadata else {}
+        self.retry_delay = retry_delay
 
 
 class CWSandboxAuthenticationError(CWSandboxError):
@@ -47,8 +79,16 @@ class SandboxNotFoundError(SandboxError):
         sandbox_id: The ID of the sandbox that was not found, or None.
     """
 
-    def __init__(self, message: str, *, sandbox_id: str | None = None) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        sandbox_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
         self.sandbox_id = sandbox_id
 
 
@@ -68,8 +108,11 @@ class SandboxExecutionError(SandboxError):
         exec_result: ProcessResult | None = None,
         exception_type: str | None = None,
         exception_message: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
         self.exec_result = exec_result
         self.exception_type = exception_type
         self.exception_message = exception_message
@@ -85,8 +128,16 @@ class SandboxFileError(SandboxError):
         filepath: The path of the file that caused the error, or None.
     """
 
-    def __init__(self, message: str, *, filepath: str | None = None) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        filepath: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
         self.filepath = filepath
 
 
@@ -106,8 +157,16 @@ class RunnerNotFoundError(DiscoveryError):
         runner_id: The ID of the runner that was not found.
     """
 
-    def __init__(self, message: str, *, runner_id: str) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        runner_id: str,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
         self.runner_id = runner_id
 
 
@@ -119,8 +178,17 @@ class ProfileNotFoundError(DiscoveryError):
         runner_id: The runner ID if specified in the request, or None.
     """
 
-    def __init__(self, message: str, *, profile_name: str, runner_id: str | None = None) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        profile_name: str,
+        runner_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
         self.profile_name = profile_name
         self.runner_id = runner_id
 

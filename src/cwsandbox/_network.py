@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import grpc
 import grpc.aio
 
+from cwsandbox._error_info import ParsedError, parse_error_info
 from cwsandbox.exceptions import CWSandboxAuthenticationError, CWSandboxError
 
 
@@ -84,12 +85,18 @@ def translate_grpc_error(
     *,
     operation: str = "operation",
     fallback_cls: type[CWSandboxError] = CWSandboxError,
+    parsed: ParsedError | None = None,
 ) -> CWSandboxError:
     """Translate a gRPC error into a transport-level CWSandbox exception.
 
     Handles cross-cutting gRPC status codes (auth, timeout, unavailable).
     Domain modules should check domain-specific codes (e.g. NOT_FOUND)
     before calling this function.
+
+    Any AIP-193 ``ErrorInfo`` / ``RetryInfo`` details present in the gRPC
+    trailing metadata are parsed and attached to the returned exception
+    (``reason``, ``metadata``, ``retry_delay``) regardless of which branch
+    picks the exception class.
 
     Args:
         e: The gRPC error to translate.
@@ -98,20 +105,54 @@ def translate_grpc_error(
             pass their domain base class (e.g. ``SandboxError``,
             ``DiscoveryError``) so that ``except DomainError`` catches
             transport failures too. Defaults to ``CWSandboxError``.
+        parsed: Pre-parsed AIP-193 details to avoid re-walking
+            ``trailing_metadata()``. When ``None``, this function parses
+            internally; callers that already parsed may pass the value.
 
     Returns:
         An appropriate CWSandbox exception. Caller should
         ``raise result from e`` to preserve the chain.
     """
+    if parsed is None:
+        parsed = parse_error_info(e)
+
     code = e.code()
     details = e.details() or str(e)
+    reason = parsed.reason if parsed is not None else None
+    metadata = parsed.metadata if parsed is not None else None
+    retry_delay = parsed.retry_delay if parsed is not None else None
 
     if code == grpc.StatusCode.UNAUTHENTICATED:
-        return CWSandboxAuthenticationError(f"Authentication failed: {details}")
+        return CWSandboxAuthenticationError(
+            f"Authentication failed: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
     if code == grpc.StatusCode.PERMISSION_DENIED:
-        return CWSandboxAuthenticationError(f"Permission denied: {details}")
+        return CWSandboxAuthenticationError(
+            f"Permission denied: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
     if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-        return fallback_cls(f"{operation} timed out: {details}")
+        return fallback_cls(
+            f"{operation} timed out: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
     if code == grpc.StatusCode.UNAVAILABLE:
-        return fallback_cls(f"Service unavailable: {details}")
-    return fallback_cls(f"{operation} failed: {details}")
+        return fallback_cls(
+            f"Service unavailable: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    return fallback_cls(
+        f"{operation} failed: {details}",
+        reason=reason,
+        metadata=metadata,
+        retry_delay=retry_delay,
+    )
