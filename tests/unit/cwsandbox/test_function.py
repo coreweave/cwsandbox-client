@@ -899,3 +899,101 @@ class TestRemoteFunctionResourceOptions:
             assert isinstance(call_kwargs["resources"], ResourceOptions)
             assert call_kwargs["resources"].requests == {"cpu": "1", "memory": "256Mi"}
             assert call_kwargs["resources"].limits == {"cpu": "8", "memory": "2Gi"}
+
+
+class TestRemoteFunctionProfileNames:
+    """Tests for profile_names passthrough in RemoteFunction."""
+
+    def test_function_stores_profile_names(self) -> None:
+        """RemoteFunction stores profile_names passed to constructor."""
+        from cwsandbox import Session
+
+        session = Session()
+
+        def f(x: int) -> int:
+            return x
+
+        remote_fn = RemoteFunction(f, session=session, profile_names=["prod"])
+        assert remote_fn._profile_names == ["prod"]
+
+    @pytest.mark.asyncio
+    async def test_execute_async_passes_profile_names_to_sandbox(self) -> None:
+        """_execute_async wires profile_names into sandbox_kwargs for Sandbox construction."""
+        from cwsandbox import Session
+        from cwsandbox._types import Serialization
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(
+            add,
+            session=session,
+            serialization=Serialization.JSON,
+            profile_ids=["id-1"],
+            profile_names=["name-1"],
+        )
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
+        mock_sandbox.sandbox_id = "test-sandbox-id"
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
+        result_json = json.dumps(5).encode()
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(result_json))
+
+        with patch("cwsandbox._sandbox.Sandbox") as MockSandbox:
+            MockSandbox.return_value = mock_sandbox
+            await remote_fn._execute_async(2, 3)
+
+            call_kwargs = MockSandbox.call_args[1]
+            assert call_kwargs["profile_ids"] == ["id-1"]
+            assert call_kwargs["profile_names"] == ["name-1"]
+
+    @pytest.mark.asyncio
+    async def test_session_defaults_profile_names_flow_through_function(
+        self, mock_api_key: str
+    ) -> None:
+        """Session(profile_names=...) + @session.function() reaches StartSandboxRequest.
+
+        Exercises the full seam: RemoteFunction has no explicit profile_names, so
+        sandbox_kwargs omits the key. Sandbox.__init__ must then fall back to
+        SandboxDefaults.profile_names and surface them on the wire request.
+        """
+        from cwsandbox import SandboxDefaults, Session
+
+        defaults = SandboxDefaults(profile_names=("prod",))
+        session = Session(defaults)
+
+        @session.function()
+        def foo() -> int:
+            return 1
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+
+        class _StopTest(Exception):
+            pass
+
+        captured: list[Any] = []
+
+        async def capture_start(request: Any, *args: Any, **kwargs: Any) -> Any:
+            captured.append(request)
+            raise _StopTest("captured Start request")
+
+        mock_stub.Start = AsyncMock(side_effect=capture_start)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+            pytest.raises(_StopTest),
+        ):
+            await foo._execute_async()
+
+        assert len(captured) == 1
+        assert list(captured[0].profile_names) == ["prod"]

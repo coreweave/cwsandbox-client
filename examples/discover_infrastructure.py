@@ -64,8 +64,8 @@ def main() -> None:
     print("\n--- Use With Sandbox.run ---")
     if profiles:
         name = profiles[0].profile_name
-        print("  # Use a discovered profile with Sandbox.run:")
-        print(f'  # sandbox = Sandbox.run(profile_ids=["{name}"])')
+        print("  # Pass a discovered profile name to Sandbox.run:")
+        print(f'  # sandbox = Sandbox.run(profile_names=["{name}"])')
     else:
         print("  # No profiles discovered - check credentials and connectivity.")
 

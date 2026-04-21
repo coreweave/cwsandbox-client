@@ -10,7 +10,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults
+from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults, _resolve_selector
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
@@ -324,6 +324,7 @@ class Session:
         container_image: str | None = None,
         tags: list[str] | None = None,
         profile_ids: list[str] | None = None,
+        profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
@@ -346,7 +347,12 @@ class Session:
             args: Arguments for the command
             container_image: Container image to use
             tags: Tags for the sandbox (merged with session defaults)
-            profile_ids: Optional list of profile IDs
+            profile_ids: Optional list of profile IDs for infrastructure selection.
+                See SandboxDefaults.profile_ids for semantics. Prefer
+                ``profile_names`` when selecting by name.
+            profile_names: Optional list of profile names for infrastructure
+                selection (preferred over profile_ids). See
+                SandboxDefaults.profile_names for semantics.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -406,6 +412,7 @@ class Session:
             container_image=container_image,
             tags=tags,
             profile_ids=profile_ids,
+            profile_names=profile_names,
             runner_ids=runner_ids,
             resources=resources,
             mounted_files=mounted_files,
@@ -430,6 +437,7 @@ class Session:
         tags: builtins.list[str] | None = None,
         status: str | None = None,
         profile_ids: builtins.list[str] | None = None,
+        profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         adopt: bool = False,
@@ -449,7 +457,14 @@ class Session:
         Args:
             tags: Additional tags to filter by (merged with session's default tags)
             status: Filter by status
-            profile_ids: Filter by profile IDs (defaults to session's profile_ids if set)
+            profile_ids: Optional list of profile IDs for infrastructure selection
+                (defaults to session's profile_ids if set). See
+                SandboxDefaults.profile_ids for semantics. Prefer
+                ``profile_names`` when selecting by name.
+            profile_names: Optional list of profile names for infrastructure
+                selection (preferred over profile_ids). Defaults to session's
+                profile_names if set. See SandboxDefaults.profile_names for
+                semantics.
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
             include_stopped: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
@@ -485,6 +500,7 @@ class Session:
                 tags=tags,
                 status=status,
                 profile_ids=profile_ids,
+                profile_names=profile_names,
                 runner_ids=runner_ids,
                 include_stopped=include_stopped,
                 adopt=adopt,
@@ -498,6 +514,7 @@ class Session:
         tags: builtins.list[str] | None = None,
         status: str | None = None,
         profile_ids: builtins.list[str] | None = None,
+        profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
         include_stopped: bool = False,
         adopt: bool = False,
@@ -507,25 +524,15 @@ class Session:
 
         merged_tags = self._defaults.merge_tags(tags)
 
-        # Use session's default profile/runner IDs if not overridden
-        if profile_ids is not None:
-            effective_profile_ids = list(profile_ids)
-        elif self._defaults.profile_ids:
-            effective_profile_ids = list(self._defaults.profile_ids)
-        else:
-            effective_profile_ids = None
-
-        if runner_ids is not None:
-            effective_runner_ids = list(runner_ids)
-        elif self._defaults.runner_ids:
-            effective_runner_ids = list(self._defaults.runner_ids)
-        else:
-            effective_runner_ids = None
+        effective_profile_ids = _resolve_selector(profile_ids, self._defaults.profile_ids)
+        effective_profile_names = _resolve_selector(profile_names, self._defaults.profile_names)
+        effective_runner_ids = _resolve_selector(runner_ids, self._defaults.runner_ids)
 
         sandboxes = await Sandbox._list_async(
             tags=merged_tags if merged_tags else None,
             status=status,
             profile_ids=effective_profile_ids,
+            profile_names=effective_profile_names,
             runner_ids=effective_runner_ids,
             include_stopped=include_stopped,
             base_url=None
@@ -638,6 +645,7 @@ class Session:
         serialization: Serialization = Serialization.JSON,
         temp_dir: str | None = None,
         profile_ids: builtins.list[str] | None = None,
+        profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
@@ -662,7 +670,12 @@ class Session:
                 but only in trusted environments.
             temp_dir: Override temp directory for payload/result files in sandbox.
                 Defaults to session default. Created if missing.
-            profile_ids: Optional list of profile IDs
+            profile_ids: Optional list of profile IDs for infrastructure selection.
+                See SandboxDefaults.profile_ids for semantics. Prefer
+                ``profile_names`` when selecting by name.
+            profile_names: Optional list of profile names for infrastructure
+                selection (preferred over profile_ids). See
+                SandboxDefaults.profile_names for semantics.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -724,6 +737,7 @@ class Session:
                 serialization=serialization,
                 temp_dir=temp_dir or self._defaults.temp_dir,
                 profile_ids=profile_ids,
+                profile_names=profile_names,
                 runner_ids=runner_ids,
                 resources=resources,
                 mounted_files=list(mounted_files) if mounted_files else None,
