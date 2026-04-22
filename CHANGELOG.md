@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.19.2 (2026-04-22)
+
+### Bug Fixes
+
+- Trap SIGTERM in default keep-alive command
+  ([`6e70120`](https://github.com/coreweave/cwsandbox-client/commit/6e7012035a1de4f34902b09acd103c176b182027))
+
+`tail -f /dev/null` runs as PID 1 and the kernel does not deliver default signal actions to PID 1
+  unless a handler is installed. Stops silently waited out the full terminationGracePeriodSeconds
+  (30s) before SIGKILL, which tripped SUNK's scheduler-epilog timeout at ~28s and drained a
+  production node.
+
+Replace the default with a shell-trapped variant:
+
+/bin/sh -c 'trap "exit 0" TERM INT; sleep infinity & wait'
+
+The trap installs an explicit SIGTERM handler; `sleep infinity &` plus `wait` lets the shell block
+  on a signal-interruptible primitive. Clean exit 0 keeps stop-initiated termination mapped to
+  COMPLETED.
+
+Scratch/distroless images without /bin/sh are already incompatible with shell-based defaults and
+  must supply their own command (this was also true of the old default).
+
+### Documentation
+
+- **tests**: Drop outdated xdist single-runner caveat
+  ([`7c0a373`](https://github.com/coreweave/cwsandbox-client/commit/7c0a373948d61dd7241f4aaf1127620f46241f4e))
+
+The e2e test runners handle parallel worker loads without the queueing concern the caveat described.
+  Keeping the note misleads future readers into dropping concurrency unnecessarily.
+
+
 ## v0.19.1 (2026-04-21)
 
 ### Bug Fixes
