@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.19.3 (2026-04-22)
+
+### Refactoring
+
+- **tests**: Use Discovery API for pin-targeting tests
+  ([`52a6472`](https://github.com/coreweave/cwsandbox-client/commit/52a64722eb3dd907176fdf8c01784a0b5d386ac0))
+
+The legacy test_sandbox_with_runway_and_runner_ids spun up a throwaway sandbox purely to read
+  profile_id/runner_id, then started a second sandbox pinned to those IDs. That takes ~74s
+  end-to-end. The Discovery API exposes the same information via a sub-second unary RPC, so there is
+  no reason to keep burning a sandbox just to read it back.
+
+Replace the single test with three focused pin-targeting tests - profile only, runner only, combined
+  - each sourcing its IDs from a new module-scoped discovered_infrastructure fixture. The fixture
+  calls list_runners(), filters to healthy runners that advertise at least one profile, and honors
+  configured_runner_ids so the --cwsandbox-runner-ids allowlist and the fixture pick cannot
+  conflict.
+
+Each new test asserts exact equality on the pinned fields. The legacy assertions only checked "is
+  not None", which would pass even when the backend silently ignored the pin; the recent
+  feat/close-e2e-runner-pin-bypass-gap PR fixed that gap for minimal-defaults tests, and this change
+  extends the same bar to the pin-targeting tests themselves.
+
+test_sandbox_with_empty_runway_and_runner_ids is unchanged: its whole purpose is to verify that
+  empty lists clear defaults, which is orthogonal to pin semantics.
+
+
 ## v0.19.2 (2026-04-22)
 
 ### Bug Fixes
