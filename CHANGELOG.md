@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.20.0 (2026-04-22)
+
+### Chores
+
+- **proto**: Regenerate stubs with profile_names fields
+  ([`cd5e6bc`](https://github.com/coreweave/cwsandbox-client/commit/cd5e6bced2c53cd7739909577eb9159da6815aea))
+
+Bump buf.build plugin pins so the vendored stubs pick up two newly added proto fields:
+  StartSandboxRequest.profile_names (field 33) and ListSandboxesRequest.profile_names (field 7). The
+  previous pins predated these fields and produced stubs that silently dropped them.
+
+Refs: https://github.com/coreweave/cwsandbox-client/issues/110
+
+### Features
+
+- Add profile_names field support across SDK surfaces
+  ([`5acc816`](https://github.com/coreweave/cwsandbox-client/commit/5acc816abb0a646914e4faaf2c97cc9a33edd0bf))
+
+Adds a name-based profile selector alongside the existing ID-based profile_ids. profile_names is the
+  preferred form; profile_ids remains supported and both may be combined.
+
+The two selectors resolve independently through None/empty/defaults precedence: setting one
+  explicitly does not suppress the other's default. Threaded through SandboxDefaults,
+  Sandbox.run/list, Session.sandbox/list, @session.function, and cwsandbox ls with a new
+  --profile-name flag.
+
+Requires a backend version that accepts the new wire fields; older backends silently drop
+  profile_names.
+
+Closes #110
+
+
 ## v0.19.3 (2026-04-22)
 
 ### Refactoring
