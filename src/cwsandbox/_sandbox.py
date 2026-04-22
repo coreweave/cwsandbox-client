@@ -482,7 +482,9 @@ class Sandbox:
             args: Optional arguments for the command
             defaults: Optional SandboxDefaults to apply
             container_image: Container image to use (default: python:3.11)
-            tags: Optional tags for the sandbox
+            tags: Optional tags for the sandbox. Tags must contain only
+                alphanumeric characters, ``-``, ``_``, or ``.``, and must
+                start and end with an alphanumeric character (max 63 chars).
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
             request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
@@ -536,7 +538,7 @@ class Sandbox:
             else self._defaults.max_lifetime_seconds
         )
 
-        self._tags: list[str] | None = self._defaults.merge_tags(tags)
+        self._tags: list[str] = self._defaults.merge_tags(tags)
         self._environment_variables = self._defaults.merge_environment_variables(
             environment_variables
         )
@@ -676,7 +678,9 @@ class Sandbox:
             defaults: Optional SandboxDefaults to apply
             request_timeout_seconds: Timeout for API requests (client-side)
             max_lifetime_seconds: Max sandbox lifetime (server-side)
-            tags: Optional tags for the sandbox
+            tags: Optional tags for the sandbox. Tags must contain only
+                alphanumeric characters, ``-``, ``_``, or ``.``, and must
+                start and end with an alphanumeric character (max 63 chars).
             profile_ids: Optional list of profile IDs
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
@@ -801,8 +805,8 @@ class Sandbox:
         # Not applicable for discovered sandboxes
         sandbox._command = None
         sandbox._args = None
-        sandbox._container_image = None
-        sandbox._tags = None
+        sandbox._container_image = getattr(info, "container_image", None) or None
+        sandbox._tags = list(getattr(info, "tags", None) or [])
         sandbox._max_lifetime_seconds = None
         sandbox._profile_ids = None
         sandbox._runner_ids = None
@@ -1242,6 +1246,19 @@ class Sandbox:
         return None
 
     @property
+    def tags(self) -> tuple[str, ...]:
+        """Tags associated with this sandbox.
+
+        Returns an empty tuple when the sandbox has no tags.
+        """
+        return tuple(self._tags)
+
+    @property
+    def container_image(self) -> str | None:
+        """Container image used by this sandbox, or None if unknown."""
+        return self._container_image
+
+    @property
     def service_address(self) -> str | None:
         """External address for accessing sandbox services.
 
@@ -1369,6 +1386,7 @@ class Sandbox:
 
         Returns:
             The new _LifecycleState (does NOT mutate self._state).
+            Side effect: updates self._tags from the response.
         """
         if isinstance(self._state, _Terminal):
             return self._state
@@ -1405,6 +1423,11 @@ class Sandbox:
             returncode = info.returncode
         else:
             returncode = None
+
+        self._tags = list(getattr(info, "tags", None) or [])
+        container_image = getattr(info, "container_image", None)
+        if container_image:
+            self._container_image = container_image
 
         new_state = _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
@@ -1779,7 +1802,7 @@ class Sandbox:
                 "command": self._command,
                 "args": self._args or [],
                 "container_image": self._container_image,
-                "tags": self._tags or [],
+                "tags": self._tags,
             }
 
             if self._max_lifetime_seconds is not None:
@@ -1879,6 +1902,7 @@ class Sandbox:
             )
             self._applied_ingress_mode = response.applied_ingress_mode or None
             self._applied_egress_mode = response.applied_egress_mode or None
+            self._tags = list(getattr(response, "tags", None) or [])
 
             # Extract resource limits/requests echoed back from the start response
             if response.HasField("requested_resource_limits"):

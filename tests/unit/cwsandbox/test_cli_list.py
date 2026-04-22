@@ -33,6 +33,8 @@ class TestListCommand:
         mock_sb.status.value = "running"
         mock_sb.runner_id = "tower-1"
         mock_sb.profile_id = "runway-1"
+        mock_sb.container_image = "python:3.11"
+        mock_sb.tags = ("dev", "test")
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -47,9 +49,12 @@ class TestListCommand:
         assert result.exit_code == 0
         assert "abc-123" in result.output
         assert "running" in result.output
-        assert "tower-1" in result.output
-        assert "runway-1" in result.output
+        assert "python:3.11" in result.output
+        assert "IMAGE" in result.output
         assert "2026-01-15" in result.output
+        # Basic table does not show tower, runway, or tags
+        assert "TOWER" not in result.output
+        assert "TAGS" not in result.output
 
     def test_list_empty(self) -> None:
         """cwsandbox ls shows message when no sandboxes found."""
@@ -101,6 +106,8 @@ class TestListCommand:
         mock_sb.runner_id = "tower-1"
         mock_sb.profile_id = "runway-1"
         mock_sb.runner_group_id = "tg-1"
+        mock_sb.tags = ("dev", "test")
+        mock_sb.container_image = "python:3.11"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -122,6 +129,8 @@ class TestListCommand:
                     "profile_id": "runway-1",
                     "runner_group_id": "tg-1",
                     "started_at": "2026-01-15T10:30:00+00:00",
+                    "container_image": "python:3.11",
+                    "tags": ["dev", "test"],
                 }
             ],
             indent=2,
@@ -141,6 +150,74 @@ class TestListCommand:
 
         assert result.exit_code == 0
         assert result.output.strip() == "[]"
+
+    def test_list_json_no_tags(self) -> None:
+        """cwsandbox ls --output json emits empty list for sandbox with no tags."""
+        mock_sb = MagicMock()
+        mock_sb.sandbox_id = "abc-123"
+        mock_sb.status.value = "running"
+        mock_sb.runner_id = "tower-1"
+        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_group_id = "tg-1"
+        mock_sb.tags = None
+        mock_sb.container_image = None
+        mock_sb.started_at = None
+
+        mock_op_ref = MagicMock()
+        mock_op_ref.result.return_value = [mock_sb]
+
+        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.list.return_value = mock_op_ref
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ls", "--output", "json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data[0]["tags"] == []
+        assert data[0]["container_image"] is None
+
+    def test_list_wide_output(self) -> None:
+        """cwsandbox ls -o wide adds RUNNER, RUNNER GROUP, PROFILE, TAGS columns."""
+        sb_with_tags = MagicMock()
+        sb_with_tags.sandbox_id = "abc-123"
+        sb_with_tags.status.value = "running"
+        sb_with_tags.runner_id = "runner-1"
+        sb_with_tags.runner_group_id = "rg-1"
+        sb_with_tags.profile_id = "profile-1"
+        sb_with_tags.container_image = "python:3.11"
+        sb_with_tags.tags = ("gpu", "dev")
+        sb_with_tags.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
+
+        sb_no_tags = MagicMock()
+        sb_no_tags.sandbox_id = "def-456"
+        sb_no_tags.status.value = "running"
+        sb_no_tags.runner_id = "runner-1"
+        sb_no_tags.runner_group_id = None
+        sb_no_tags.profile_id = "profile-1"
+        sb_no_tags.container_image = "python:3.11"
+        sb_no_tags.tags = ()
+        sb_no_tags.started_at = None
+
+        mock_op_ref = MagicMock()
+        mock_op_ref.result.return_value = [sb_with_tags, sb_no_tags]
+
+        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.list.return_value = mock_op_ref
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ls", "-o", "wide"])
+
+        assert result.exit_code == 0
+        assert "RUNNER" in result.output
+        assert "RUNNER GROUP" in result.output
+        assert "PROFILE" in result.output
+        assert "TAGS" in result.output
+        assert "gpu,dev" in result.output
+        # Sandbox with no tags shows "-"
+        lines = result.output.strip().split("\n")
+        no_tag_line = [line for line in lines if "def-456" in line][0]
+        assert no_tag_line.rstrip().endswith("-")
 
     def test_list_api_error(self) -> None:
         """cwsandbox ls shows clean error for CWSandboxError from API failure."""

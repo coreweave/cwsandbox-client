@@ -51,6 +51,7 @@ def _make_proto_info(
         runner_group_id=runner_group_id,
         started_at_time=started_at_time,
         returncode=returncode,
+        tags=[],
     )
 
 
