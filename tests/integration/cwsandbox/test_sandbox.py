@@ -555,36 +555,64 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
 # Infrastructure filtering tests (profile_ids, runner_ids)
 
 
-def test_sandbox_with_runway_and_runner_ids(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with specific profile_ids and runner_ids.
+def test_sandbox_pinned_to_profile(
+    sandbox_defaults: SandboxDefaults,
+    discovered_infrastructure: tuple[str, str],
+) -> None:
+    """Pinning a sandbox to a profile lands on that profile exactly.
 
-    Creates a sandbox to discover valid runway/tower IDs, then creates another
-    sandbox targeting those specific IDs to verify the parameters work.
+    Exact-equality assertion closes the pin-bypass shape: ``is not None``
+    would pass even if the backend silently ignored ``profile_ids``.
     """
-    # First, create a sandbox to discover valid infrastructure IDs
-    with Sandbox.run(defaults=sandbox_defaults) as discovery_sandbox:
-        discovery_sandbox.wait()
-        discovered_profile_id = discovery_sandbox.profile_id
-        discovered_runner_id = discovery_sandbox.runner_id
+    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
+    # test validates profile_ids semantics. sandbox_defaults still carries
+    # runner_ids under a pin rollout; that is compatible with profile-only
+    # intent because discovered_infrastructure filters its pick through the
+    # same --cwsandbox-runner-ids allowlist, so the inherited runner pin and
+    # the chosen profile agree on the targeted runner.
+    _, profile_name = discovered_infrastructure
 
-        assert discovered_profile_id is not None, "Discovery sandbox should have profile_id"
-        assert discovered_runner_id is not None, "Discovery sandbox should have runner_id"
+    with Sandbox.run(profile_ids=[profile_name], defaults=sandbox_defaults) as sandbox:
+        sandbox.wait()
+        assert sandbox.status == "running"
+        assert sandbox.profile_id == profile_name
 
-        # Create a second sandbox targeting those specific IDs while first is still running
-        with Sandbox.run(
-            profile_ids=[discovered_profile_id],
-            runner_ids=[discovered_runner_id],
-            defaults=sandbox_defaults,
-        ) as targeted_sandbox:
-            targeted_sandbox.wait()
 
-            # Verify sandbox started successfully on the targeted infrastructure
-            assert targeted_sandbox.sandbox_id is not None
-            assert targeted_sandbox.status == "running"
+def test_sandbox_pinned_to_runner(
+    sandbox_defaults: SandboxDefaults,
+    discovered_infrastructure: tuple[str, str],
+) -> None:
+    """Pinning a sandbox to a runner lands on that runner exactly."""
+    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
+    # test validates runner_ids semantics directly. The discovered_infrastructure
+    # fixture already honors the --cwsandbox-runner-ids allowlist when picking.
+    runner_id, _ = discovered_infrastructure
 
-            # The backend must place the sandbox on the requested infrastructure.
-            assert targeted_sandbox.profile_id == discovered_profile_id
-            assert targeted_sandbox.runner_id == discovered_runner_id
+    with Sandbox.run(runner_ids=[runner_id], defaults=sandbox_defaults) as sandbox:
+        sandbox.wait()
+        assert sandbox.status == "running"
+        assert sandbox.runner_id == runner_id
+
+
+def test_sandbox_pinned_to_profile_and_runner(
+    sandbox_defaults: SandboxDefaults,
+    discovered_infrastructure: tuple[str, str],
+) -> None:
+    """Pinning to both profile and runner lands on both exactly."""
+    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
+    # test validates profile_ids and runner_ids semantics together. The
+    # discovered_infrastructure fixture already honors --cwsandbox-runner-ids.
+    runner_id, profile_name = discovered_infrastructure
+
+    with Sandbox.run(
+        profile_ids=[profile_name],
+        runner_ids=[runner_id],
+        defaults=sandbox_defaults,
+    ) as sandbox:
+        sandbox.wait()
+        assert sandbox.status == "running"
+        assert sandbox.profile_id == profile_name
+        assert sandbox.runner_id == runner_id
 
 
 def test_sandbox_with_empty_runway_and_runner_ids(
