@@ -46,8 +46,8 @@ def logs(
     entrypoint passed to Sandbox.run()). Output from exec commands is not
     included — use 'cwsandbox exec' for those.
 
-    Note: sandboxes created with the default command (tail -f /dev/null) do
-    not produce any log output.
+    Note: sandboxes created with the default keep-alive command do not
+    produce any log output.
 
     SANDBOX_ID is the ID of the sandbox to stream logs from.
     """

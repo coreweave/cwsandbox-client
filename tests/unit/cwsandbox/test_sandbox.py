@@ -292,9 +292,12 @@ class TestSandboxRun:
             sandbox = Sandbox.run()
             mock_start.assert_called_once()
             mock_ref.result.assert_called_once()
-            # Default command is "tail" with args ["-f", "/dev/null"]
-            assert sandbox._command == "tail"
-            assert sandbox._args == ["-f", "/dev/null"]
+            # Default is a shell-trapped keep-alive so PID 1 responds to SIGTERM
+            assert sandbox._command == "/bin/sh"
+            assert sandbox._args == [
+                "-c",
+                'trap "exit 0" TERM INT; sleep infinity & wait',
+            ]
 
     def test_run_calls_start(self) -> None:
         """Test Sandbox.run calls start().result() on the sandbox."""

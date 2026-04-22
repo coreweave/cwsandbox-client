@@ -16,6 +16,7 @@ import pytest
 
 from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
 from cwsandbox._sandbox import SandboxStatus
+from cwsandbox.exceptions import SandboxError
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
 
 
@@ -1302,3 +1303,31 @@ def test_natural_exit_no_raise_on_termination(sandbox_defaults: SandboxDefaults)
         SandboxStatus.FAILED,
         SandboxStatus.TERMINATED,
     )
+
+
+def test_default_command_produces_no_logs(sandbox_defaults: SandboxDefaults) -> None:
+    """The default keep-alive command is silent on stdout/stderr while running.
+
+    The docs advertise that the default produces no log output. A regression
+    here usually means the shell is emitting job-control chatter (e.g.
+    "[1] 5 terminated"), which would surprise users tailing logs and break
+    the advertised contract. Post-stop logs are not checked: the backend
+    may reap completed sandboxes before the follow-up stream_logs call can
+    reach them, which is orthogonal to the log-silence contract.
+    """
+    sandbox = Sandbox.run(defaults=sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        reader = sandbox.stream_logs(tail_lines=10)
+        try:
+            lines = list(reader)
+        finally:
+            reader.close()
+        assert lines == [], f"default command produced log output: {lines!r}"
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass

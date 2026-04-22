@@ -24,6 +24,22 @@ class TestSessionSandbox:
 
         assert isinstance(sandbox, Sandbox)
 
+    def test_sandbox_no_command_uses_shell_trap_default(self) -> None:
+        """Session.sandbox() without a command falls back to the SIGTERM-trap default.
+
+        Covers the session-defaulting path: if neither the caller nor custom
+        defaults supply a command, the SDK must use the shell-trapped keep-alive
+        so PID 1 responds to SIGTERM on stop.
+        """
+        session = Session()
+        sandbox = session.sandbox()
+
+        assert sandbox._command == "/bin/sh"
+        assert sandbox._args == [
+            "-c",
+            'trap "exit 0" TERM INT; sleep infinity & wait',
+        ]
+
     def test_sandbox_inherits_environment_variables_from_session_defaults(self) -> None:
         """Test session.sandbox inherits environment variables from session defaults."""
         from cwsandbox import SandboxDefaults
