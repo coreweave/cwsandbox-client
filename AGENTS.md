@@ -76,7 +76,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them.
+- `Sandbox.list(tags=None, status=None, profile_ids=None, profile_names=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them. `profile_names` and `profile_ids` resolve independently; either or both may be supplied.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 
@@ -87,7 +87,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, profile_ids=None, runner_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes.
+- `session.list(tags=None, status=None, profile_ids=None, profile_names=None, runner_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes. `profile_ids` and `profile_names` each fall back to the matching session default independently.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -110,7 +110,7 @@ Fields (all optional with sensible defaults):
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
-- `profile_ids`, `runner_ids` - Infrastructure filtering (optional tuple of IDs)
+- `profile_ids`, `profile_names`, `runner_ids` - Infrastructure filtering (optional tuples). `profile_names` is the preferred form; both fields resolve independently through the None/empty/defaults precedence
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Network configuration via `NetworkOptions`
 - `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
@@ -394,7 +394,7 @@ print(f"CPU: {cwsandbox.format_cpu(runner.max_cpu_millicores)}")
 profiles = cwsandbox.list_profiles(gpu_type="A100")
 ```
 
-Note: `profile_names` from discovery are the same strings used in `SandboxDefaults(profile_ids=[...])` for infrastructure targeting. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
+Note: `profile_names` from discovery map directly to `SandboxDefaults(profile_names=[...])` (preferred) or `SandboxDefaults(profile_ids=[...])` for backward compatibility. The backend unions both fields server-side, so either works; `profile_names` is clearer. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
 
 ### Backend Communication
 

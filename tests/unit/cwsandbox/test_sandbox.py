@@ -2640,6 +2640,156 @@ class TestSandboxProfileAndRunnerIds:
             sandbox = Sandbox.run(runner_ids=["runner-1"])
             assert sandbox._runner_ids == ["runner-1"]
 
+    def test_profile_names_stored_on_sandbox(self) -> None:
+        """Test profile_names are stored on sandbox instance."""
+        sandbox = Sandbox(profile_names=["prod", "dev"])
+        assert sandbox._profile_names == ["prod", "dev"]
+
+    def test_empty_profile_names_overrides_defaults(self) -> None:
+        """Test empty profile_names list overrides defaults."""
+        from cwsandbox._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(profile_names=("default-profile",))
+        sandbox = Sandbox(profile_names=[], defaults=defaults)
+        assert sandbox._profile_names == []
+
+    def test_none_profile_names_uses_defaults(self) -> None:
+        """Test None profile_names falls back to defaults."""
+        from cwsandbox._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(profile_names=("default-profile",))
+        sandbox = Sandbox(defaults=defaults)
+        assert sandbox._profile_names == ["default-profile"]
+
+    def test_run_passes_profile_names(self) -> None:
+        """Test Sandbox.run passes profile_names to sandbox."""
+        with patch.object(Sandbox, "start"):
+            sandbox = Sandbox.run(profile_names=["prod"])
+            assert sandbox._profile_names == ["prod"]
+
+    def test_profile_ids_and_profile_names_independent(self) -> None:
+        """Setting one field does not suppress the other's default."""
+        from cwsandbox._defaults import SandboxDefaults
+
+        defaults = SandboxDefaults(
+            profile_ids=("default-id",),
+            profile_names=("default-name",),
+        )
+        # Explicit profile_ids=[] clears only profile_ids; profile_names default survives
+        sb = Sandbox(profile_ids=[], defaults=defaults)
+        assert sb._profile_ids == []
+        assert sb._profile_names == ["default-name"]
+
+        # Explicit profile_names=[] clears only profile_names; profile_ids default survives
+        sb = Sandbox(profile_names=[], defaults=defaults)
+        assert sb._profile_ids == ["default-id"]
+        assert sb._profile_names == []
+
+
+class TestSandboxProfileNamesRequestFields:
+    """Request-level tests: profile_names reaches StartSandboxRequest / ListSandboxesRequest."""
+
+    @pytest.mark.asyncio
+    async def test_start_async_includes_profile_names_in_request(self) -> None:
+        """Sandbox.run(profile_names=...) places values on StartSandboxRequest.profile_names."""
+        sandbox = Sandbox(command="sleep", args=["infinity"], profile_names=["prod", "dev"])
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = ()
+
+        await sandbox._start_async()
+
+        request = mock_stub.Start.call_args[0][0]
+        assert list(request.profile_names) == ["prod", "dev"]
+
+    @pytest.mark.asyncio
+    async def test_start_async_mixed_profile_ids_and_names(self) -> None:
+        """Both profile_ids and profile_names pass through independently (no client merge)."""
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            profile_ids=["id-1"],
+            profile_names=["name-1"],
+        )
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandbox_id = "test-id"
+        mock_response.service_address = ""
+        mock_response.exposed_ports = []
+        mock_response.applied_ingress_mode = ""
+        mock_response.applied_egress_mode = ""
+        mock_stub.Start = AsyncMock(return_value=mock_response)
+        sandbox._channel = MagicMock()
+        sandbox._stub = mock_stub
+        sandbox._auth_metadata = ()
+
+        await sandbox._start_async()
+
+        request = mock_stub.Start.call_args[0][0]
+        assert list(request.profile_ids) == ["id-1"]
+        assert list(request.profile_names) == ["name-1"]
+
+    @pytest.mark.asyncio
+    async def test_list_async_includes_profile_names_in_request(self) -> None:
+        """Sandbox.list(profile_names=...) places values on ListSandboxesRequest.profile_names."""
+        from cwsandbox._sandbox import Sandbox as _Sandbox
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandboxes = []
+        mock_stub.List = AsyncMock(return_value=mock_response)
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+
+        with (
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("x", False)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            await _Sandbox._list_async(profile_names=["prod", "dev"])
+
+        request = mock_stub.List.call_args[0][0]
+        assert list(request.profile_names) == ["prod", "dev"]
+
+    @pytest.mark.asyncio
+    async def test_list_async_mixed_profile_ids_and_names(self) -> None:
+        """Sandbox.list sends both profile_ids and profile_names without merging."""
+        from cwsandbox._sandbox import Sandbox as _Sandbox
+
+        mock_stub = MagicMock()
+        mock_response = MagicMock()
+        mock_response.sandboxes = []
+        mock_stub.List = AsyncMock(return_value=mock_response)
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+
+        with (
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("x", False)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            await _Sandbox._list_async(profile_ids=["id-1"], profile_names=["name-1"])
+
+        request = mock_stub.List.call_args[0][0]
+        assert list(request.profile_ids) == ["id-1"]
+        assert list(request.profile_names) == ["name-1"]
+
 
 class TestNetworkOptionsTypeGuard:
     """Tests for network parameter type guard validation."""

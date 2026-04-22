@@ -40,6 +40,7 @@ class TestSandboxDefaults:
 
         # Profile/runner IDs should default to None (no filtering)
         assert defaults.profile_ids is None
+        assert defaults.profile_names is None
         assert defaults.runner_ids is None
 
         # Network should default to None (backend defaults)
@@ -264,13 +265,20 @@ class TestSandboxDefaultsFromDict:
                 "tags": ["tag1", "tag2"],
                 "args": ["-f", "/dev/null"],
                 "profile_ids": ["r1"],
+                "profile_names": ["n1", "n2"],
                 "runner_ids": ["t1", "t2"],
             }
         )
         assert defaults.tags == ("tag1", "tag2")
         assert defaults.args == ("-f", "/dev/null")
         assert defaults.profile_ids == ("r1",)
+        assert defaults.profile_names == ("n1", "n2")
         assert defaults.runner_ids == ("t1", "t2")
+
+    def test_from_dict_rejects_bare_string_profile_names(self) -> None:
+        """from_dict raises on bare string for profile_names (not a sequence)."""
+        with pytest.raises(TypeError, match="profile_names must be a sequence of strings"):
+            SandboxDefaults.from_dict({"profile_names": "not-a-list"})
 
     def test_from_dict_coerces_network_dict(self) -> None:
         """from_dict converts network dict to NetworkOptions."""
@@ -389,3 +397,51 @@ class TestSandboxDefaultsFromDict:
         """from_dict raises TypeError when a bare string is passed for a tuple field."""
         with pytest.raises(TypeError, match="must be a sequence of strings"):
             SandboxDefaults.from_dict({"tags": "prod"})
+
+
+class TestResolveSelector:
+    """Tests for the _resolve_selector helper."""
+
+    def test_override_wins_over_default(self) -> None:
+        """Explicit override (non-empty) takes precedence over default."""
+        from cwsandbox._defaults import _resolve_selector
+
+        assert _resolve_selector(["a", "b"], None) == ["a", "b"]
+
+    def test_empty_override_preserves_clear_intent(self) -> None:
+        """Explicit empty list clears the default; does NOT fall through."""
+        from cwsandbox._defaults import _resolve_selector
+
+        assert _resolve_selector([], ("x",)) == []
+
+    def test_none_override_falls_back_to_nonempty_default(self) -> None:
+        """Unset override resolves to the default when the default is non-empty."""
+        from cwsandbox._defaults import _resolve_selector
+
+        assert _resolve_selector(None, ("x",)) == ["x"]
+
+    def test_empty_default_collapses_to_none(self) -> None:
+        """When override is None and default is empty, result is None."""
+        from cwsandbox._defaults import _resolve_selector
+
+        assert _resolve_selector(None, ()) is None
+
+    def test_both_none_returns_none(self) -> None:
+        """When override and default are both None, result is None."""
+        from cwsandbox._defaults import _resolve_selector
+
+        assert _resolve_selector(None, None) is None
+
+    def test_bare_string_override_raises(self) -> None:
+        """A bare string override raises TypeError (would otherwise split into characters)."""
+        from cwsandbox._defaults import _resolve_selector
+
+        with pytest.raises(TypeError, match="override must be a sequence of strings"):
+            _resolve_selector("prod", None)
+
+    def test_bare_string_default_raises(self) -> None:
+        """A bare string default raises TypeError (would otherwise split into characters)."""
+        from cwsandbox._defaults import _resolve_selector
+
+        with pytest.raises(TypeError, match="default must be a sequence of strings"):
+            _resolve_selector(None, "prod")

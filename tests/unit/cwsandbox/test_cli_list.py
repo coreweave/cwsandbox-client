@@ -83,8 +83,56 @@ class TestListCommand:
             tags=["test", "dev"],
             status="running",
             profile_ids=None,
+            profile_names=None,
             runner_ids=None,
         )
+
+    def test_list_with_profile_names(self) -> None:
+        """--profile-name is repeatable and reaches Sandbox.list()."""
+        mock_op_ref = MagicMock()
+        mock_op_ref.result.return_value = []
+
+        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.list.return_value = mock_op_ref
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ls", "--profile-name", "foo", "--profile-name", "bar"])
+
+        assert result.exit_code == 0
+        mock_sandbox_cls.list.assert_called_once_with(
+            tags=None,
+            status=None,
+            profile_ids=None,
+            profile_names=["foo", "bar"],
+            runner_ids=None,
+        )
+
+    def test_list_mixed_profile_id_and_name(self) -> None:
+        """Mixing --profile-id and --profile-name passes both fields through."""
+        mock_op_ref = MagicMock()
+        mock_op_ref.result.return_value = []
+
+        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.list.return_value = mock_op_ref
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ls", "--profile-id", "id1", "--profile-name", "name1"])
+
+        assert result.exit_code == 0
+        mock_sandbox_cls.list.assert_called_once_with(
+            tags=None,
+            status=None,
+            profile_ids=["id1"],
+            profile_names=["name1"],
+            runner_ids=None,
+        )
+
+    def test_list_help_mentions_profile_name(self) -> None:
+        """--profile-name appears in --help output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["ls", "--help"])
+        assert result.exit_code == 0
+        assert "--profile-name" in result.output
 
     def test_list_invalid_status(self) -> None:
         """cwsandbox ls rejects invalid status values."""

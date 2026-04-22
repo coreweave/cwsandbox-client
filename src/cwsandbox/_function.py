@@ -85,6 +85,7 @@ class RemoteFunction(Generic[P, R]):
         serialization: Serialization = Serialization.JSON,
         temp_dir: str = DEFAULT_TEMP_DIR,
         profile_ids: list[str] | None = None,
+        profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
@@ -103,7 +104,12 @@ class RemoteFunction(Generic[P, R]):
             container_image: Override container image for this function
             serialization: Serialization mode (JSON by default for safety)
             temp_dir: Directory for temporary payload/result files in sandbox
-            profile_ids: Optional list of profile IDs
+            profile_ids: Optional list of profile IDs for infrastructure selection.
+                See SandboxDefaults.profile_ids for semantics. Prefer
+                ``profile_names`` when selecting by name.
+            profile_names: Optional list of profile names for infrastructure
+                selection (preferred over profile_ids). See
+                SandboxDefaults.profile_names for semantics.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -145,6 +151,7 @@ class RemoteFunction(Generic[P, R]):
         self._serialization = serialization
         self._temp_dir = temp_dir
         self._profile_ids = list(profile_ids) if profile_ids is not None else None
+        self._profile_names = list(profile_names) if profile_names is not None else None
         self._runner_ids = list(runner_ids) if runner_ids is not None else None
         self._resources = resources
         self._mounted_files = mounted_files
@@ -259,6 +266,8 @@ class RemoteFunction(Generic[P, R]):
         sandbox_kwargs: dict[str, Any] = {}
         if self._profile_ids is not None:
             sandbox_kwargs["profile_ids"] = self._profile_ids
+        if self._profile_names is not None:
+            sandbox_kwargs["profile_names"] = self._profile_names
         if self._runner_ids is not None:
             sandbox_kwargs["runner_ids"] = self._runner_ids
         if self._resources is not None:

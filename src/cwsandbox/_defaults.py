@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
@@ -60,6 +60,36 @@ STREAMING_OUTPUT_QUEUE_SIZE: int = 4096
 MAX_LINE_BUFFER_BYTES: int = 1024 * 1024  # 1 MB
 
 
+def _resolve_selector(
+    override: Iterable[str] | None,
+    default: Iterable[str] | None,
+) -> list[str] | None:
+    """Resolve a selector field using None/empty/defaults precedence.
+
+    - If override is not None (including explicit empty list), return list(override).
+    - Else if default is truthy (non-empty), return list(default).
+    - Else return None.
+
+    This captures the independent-precedence invariant used for profile_ids,
+    profile_names, and runner_ids across Sandbox and Session.
+
+    Raises:
+        TypeError: If ``override`` or ``default`` is a bare string. Strings
+            are iterable in Python, so passing one would silently split it
+            into characters (``"prod"`` -> ``["p", "r", "o", "d"]``). Callers
+            must pass a sequence of strings (list/tuple), not a bare string.
+    """
+    if isinstance(override, str):
+        raise TypeError("selector override must be a sequence of strings, not a bare string")
+    if isinstance(default, str):
+        raise TypeError("selector default must be a sequence of strings, not a bare string")
+    if override is not None:
+        return list(override)
+    if default:
+        return list(default)
+    return None
+
+
 def _merge_dicts(base: dict[str, str], additional: dict[str, str] | None) -> dict[str, str]:
     """Merge two string dicts, with additional values overriding base on collision."""
     merged = dict(base)
@@ -92,8 +122,18 @@ class SandboxDefaults:
             None lets the backend control the default.
         temp_dir: Temp directory path inside the sandbox.
         tags: Tags for filtering and organizing sandboxes.
-        profile_ids: Restrict to specific profile IDs.
-        runner_ids: Restrict to specific runner IDs.
+        profile_ids: Legacy selector accepting profile IDs. Prefer
+            ``profile_names``. Resolves independently of ``profile_names`` —
+            setting one explicitly does not suppress the other's default.
+            Pass an empty list to explicitly clear any default; pass None
+            (the default) to inherit any configured default.
+        profile_names: Select sandboxes by profile name. Resolves
+            independently of ``profile_ids`` — both may be combined.
+            Pass an empty list to explicitly clear any default; pass None
+            (the default) to inherit any configured default.
+        runner_ids: Restrict to specific runner IDs. Pass an empty list to
+            explicitly clear any default; pass None (the default) to inherit
+            any configured default.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Network configuration via ``NetworkOptions``.
@@ -127,6 +167,7 @@ class SandboxDefaults:
     temp_dir: str = DEFAULT_TEMP_DIR
     tags: tuple[str, ...] = field(default_factory=tuple)
     profile_ids: tuple[str, ...] | None = None
+    profile_names: tuple[str, ...] | None = None
     runner_ids: tuple[str, ...] | None = None
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
@@ -174,7 +215,8 @@ class SandboxDefaults:
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
-        - ``args``, ``tags``, ``profile_ids``, ``runner_ids`` lists -> tuples
+        - ``args``, ``tags``, ``profile_ids``, ``profile_names``,
+          ``runner_ids`` lists -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:
@@ -207,7 +249,7 @@ class SandboxDefaults:
                 Secret(**s) if not isinstance(s, Secret) else s for s in secrets
             )
         # Coerce sequences -> tuples for tuple fields (reject bare strings)
-        for key in ("args", "tags", "profile_ids", "runner_ids"):
+        for key in ("args", "tags", "profile_ids", "profile_names", "runner_ids"):
             val = kwargs.get(key)
             if val is None or isinstance(val, tuple):
                 continue

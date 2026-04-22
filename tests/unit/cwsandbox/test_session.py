@@ -671,6 +671,57 @@ class TestSessionList:
             assert call_args.include_stopped is True
 
 
+class TestSessionProfileNames:
+    """Tests for profile_names support on Session methods."""
+
+    def test_sandbox_passes_profile_names_to_created_sandbox(self) -> None:
+        """Session.sandbox(profile_names=...) propagates to the created Sandbox."""
+        session = Session()
+        sandbox = session.sandbox(profile_names=["prod", "dev"])
+        assert sandbox._profile_names == ["prod", "dev"]
+
+    @pytest.mark.asyncio
+    async def test_list_independent_precedence_with_session_defaults(
+        self, mock_api_key: str
+    ) -> None:
+        """Explicit profile_names must not suppress inherited profile_ids default."""
+        from cwsandbox import SandboxDefaults
+        from cwsandbox._proto import gateway_pb2
+
+        defaults = SandboxDefaults(
+            profile_ids=("default-id",),
+            profile_names=("default-name",),
+        )
+        session = Session(defaults)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[]))
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            # Explicit profile_names should not clear the inherited profile_ids default.
+            await session.list(profile_names=["explicit-name"])
+
+            request = mock_stub.List.call_args[0][0]
+            assert list(request.profile_ids) == ["default-id"]
+            assert list(request.profile_names) == ["explicit-name"]
+
+    def test_function_passes_profile_names_to_remote_function(self) -> None:
+        """@session.function(profile_names=...) stores them on the RemoteFunction."""
+        session = Session()
+
+        @session.function(profile_names=["prod"])
+        def f(x: int) -> int:
+            return x + 1
+
+        assert f._profile_names == ["prod"]
+
+
 class TestSessionFromId:
     """Tests for Session.from_id method."""
 

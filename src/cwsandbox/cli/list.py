@@ -28,6 +28,12 @@ _STATUS_CHOICES = [s.value for s in SandboxStatus if s != SandboxStatus.UNSPECIF
     "--profile-id", "-r", "profile_ids", multiple=True, help="Filter by profile ID (repeatable)."
 )
 @click.option(
+    "--profile-name",
+    "profile_names",
+    multiple=True,
+    help="Filter by profile name (repeatable).",
+)
+@click.option(
     "--runner-id", "-T", "runner_ids", multiple=True, help="Filter by runner ID (repeatable)."
 )
 @click.option(
@@ -42,6 +48,7 @@ def list_sandboxes(
     status: str | None,
     tags: tuple[str, ...],
     profile_ids: tuple[str, ...],
+    profile_names: tuple[str, ...],
     runner_ids: tuple[str, ...],
     output_format: str,
 ) -> None:
@@ -53,6 +60,7 @@ def list_sandboxes(
         tags=list(tags) if tags else None,
         status=status,
         profile_ids=list(profile_ids) if profile_ids else None,
+        profile_names=list(profile_names) if profile_names else None,
         runner_ids=list(runner_ids) if runner_ids else None,
     ).result()
 
