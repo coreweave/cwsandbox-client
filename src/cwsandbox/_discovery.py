@@ -11,7 +11,6 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 import grpc
 import grpc.aio
@@ -25,10 +24,14 @@ from cwsandbox._error_info import (
     parse_error_info,
 )
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
+from cwsandbox._network import (
+    create_channel,
+    paginate_async,
+    parse_grpc_target,
+    translate_grpc_error,
+)
 from cwsandbox._proto import discovery_pb2, discovery_pb2_grpc
 from cwsandbox.exceptions import (
-    CWSandboxError,
     DiscoveryError,
     ProfileNotFoundError,
     RunnerNotFoundError,
@@ -226,60 +229,6 @@ class Profile:
 # ---------------------------------------------------------------------------
 
 
-async def _paginate_async(
-    rpc_method: Any,
-    request: Any,
-    items_field: str,
-    metadata: tuple[tuple[str, str], ...],
-    timeout: float,
-) -> list[Any]:
-    """Auto-paginate a list RPC.
-
-    Follows ``next_page_token`` until the server returns an empty token or
-    the overall deadline is reached.
-
-    Args:
-        rpc_method: Bound stub method (e.g. ``stub.ListAvailableRunners``).
-        request: The protobuf request message. Its ``page_token`` field is
-            mutated in-place between pages.
-        items_field: Name of the repeated field on the response that holds
-            the result items (e.g. ``"runners"``).
-        metadata: gRPC call metadata (auth headers).
-        timeout: Total wall-clock seconds allowed for all pages.
-
-    Returns:
-        Flat list of proto items collected across all pages.
-
-    Raises:
-        CWSandboxError: On timeout, pagination loop, or exceeding page limit.
-    """
-    all_items: list[Any] = []
-    deadline = time.monotonic() + timeout
-    max_pages = 100
-    seen_tokens: set[str] = set()
-
-    for _ in range(max_pages):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise CWSandboxError("Discovery request timed out during pagination")
-
-        response = await rpc_method(request, metadata=metadata, timeout=remaining)
-        items = getattr(response, items_field)
-        all_items.extend(items)
-
-        next_token = response.next_page_token
-        if not next_token:
-            break
-        if next_token in seen_tokens:
-            raise CWSandboxError("Discovery pagination loop detected: repeated page token")
-        seen_tokens.add(next_token)
-        request.page_token = next_token
-    else:
-        raise CWSandboxError(f"Discovery pagination exceeded {max_pages} pages")
-
-    return all_items
-
-
 # ---------------------------------------------------------------------------
 # Proto-to-dataclass conversion
 # ---------------------------------------------------------------------------
@@ -389,12 +338,13 @@ async def _list_runners_async(
         if architecture is not None:
             request.architecture = architecture
 
-        protos = await _paginate_async(
+        protos = await paginate_async(
             stub.ListAvailableRunners,
             request,
             "runners",
             metadata,
             deadline - time.monotonic(),
+            operation="List runners",
         )
         results = [_runner_from_proto(r) for r in protos]
 
@@ -632,12 +582,13 @@ async def _list_profiles_async(
         if runner_id is not None:
             request.runner_id = runner_id
 
-        protos = await _paginate_async(
+        protos = await paginate_async(
             stub.ListProfiles,
             request,
             "profiles",
             metadata,
             timeout,
+            operation="List profiles",
         )
         results = [_profile_from_proto(p) for p in protos]
         if service_exposure_mode is not None:

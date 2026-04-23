@@ -23,7 +23,6 @@ from cwsandbox._discovery import (
     Runner,
     RunnerResources,
     ServiceExposureMode,
-    _paginate_async,
     _profile_from_proto,
     _runner_from_proto,
     format_bytes,
@@ -439,115 +438,6 @@ class TestProfileFromProto:
         profile = _profile_from_proto(proto)
         assert profile.service_exposure_modes == ()
         assert profile.egress_modes == ()
-
-
-# ---------------------------------------------------------------------------
-# Pagination tests
-# ---------------------------------------------------------------------------
-
-
-class TestPaginateAsync:
-    """Tests for _paginate_async."""
-
-    def _run(self, coro: object) -> object:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)  # type: ignore[arg-type]
-        finally:
-            loop.close()
-
-    def test_single_page(self) -> None:
-        response = MagicMock()
-        response.items = ["a", "b"]
-        response.next_page_token = ""
-
-        rpc = AsyncMock(return_value=response)
-        request = MagicMock()
-        request.page_token = ""
-
-        result = self._run(_paginate_async(rpc, request, "items", (), timeout=10.0))
-        assert result == ["a", "b"]
-        rpc.assert_awaited_once()
-
-    def test_multi_page(self) -> None:
-        page1 = MagicMock()
-        page1.items = ["a"]
-        page1.next_page_token = "tok1"
-
-        page2 = MagicMock()
-        page2.items = ["b"]
-        page2.next_page_token = "tok2"
-
-        page3 = MagicMock()
-        page3.items = ["c"]
-        page3.next_page_token = ""
-
-        rpc = AsyncMock(side_effect=[page1, page2, page3])
-        request = MagicMock()
-        request.page_token = ""
-
-        result = self._run(_paginate_async(rpc, request, "items", (), timeout=30.0))
-        assert result == ["a", "b", "c"]
-        assert rpc.await_count == 3
-
-    def test_empty_response(self) -> None:
-        response = MagicMock()
-        response.items = []
-        response.next_page_token = ""
-
-        rpc = AsyncMock(return_value=response)
-        request = MagicMock()
-        request.page_token = ""
-
-        result = self._run(_paginate_async(rpc, request, "items", (), timeout=10.0))
-        assert result == []
-
-    def test_repeated_token_raises(self) -> None:
-        page = MagicMock()
-        page.items = ["a"]
-        page.next_page_token = "same-token"
-
-        rpc = AsyncMock(return_value=page)
-        request = MagicMock()
-        request.page_token = ""
-
-        with pytest.raises(CWSandboxError, match="pagination loop"):
-            self._run(_paginate_async(rpc, request, "items", (), timeout=10.0))
-
-    def test_max_pages_exceeded(self) -> None:
-        """Exceeding the 100-page limit raises CWSandboxError."""
-
-        call_count = 0
-
-        async def _fake_rpc(req: object, **kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            resp = MagicMock()
-            resp.items = [call_count]
-            resp.next_page_token = f"tok-{call_count}"
-            return resp
-
-        rpc = _fake_rpc
-        request = MagicMock()
-        request.page_token = ""
-
-        with pytest.raises(CWSandboxError, match="exceeded 100 pages"):
-            self._run(_paginate_async(rpc, request, "items", (), timeout=600.0))
-
-    def test_timeout_during_pagination(self) -> None:
-        """A deadline that expires mid-pagination raises CWSandboxError."""
-
-        async def _slow_rpc(req: object, **kwargs: object) -> MagicMock:
-            resp = MagicMock()
-            resp.items = ["a"]
-            resp.next_page_token = "next"
-            return resp
-
-        request = MagicMock()
-        request.page_token = ""
-
-        with pytest.raises(CWSandboxError, match="timed out"):
-            self._run(_paginate_async(_slow_rpc, request, "items", (), timeout=0.0))
 
 
 # ---------------------------------------------------------------------------

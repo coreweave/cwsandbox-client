@@ -340,7 +340,7 @@ class GetSandboxResponse(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
-    __slots__ = ("tags", "status", "profile_ids", "runner_ids", "profile_names", "max_timeout_seconds", "include_stopped")
+    __slots__ = ("tags", "status", "profile_ids", "runner_ids", "profile_names", "max_timeout_seconds", "include_stopped", "page_size", "page_token")
     TAGS_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     PROFILE_IDS_FIELD_NUMBER: _ClassVar[int]
@@ -348,6 +348,8 @@ class ListSandboxesRequest(_message.Message):
     PROFILE_NAMES_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_STOPPED_FIELD_NUMBER: _ClassVar[int]
+    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
+    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     tags: _containers.RepeatedScalarFieldContainer[str]
     status: SandboxStatus
     profile_ids: _containers.RepeatedScalarFieldContainer[str]
@@ -355,13 +357,17 @@ class ListSandboxesRequest(_message.Message):
     profile_names: _containers.RepeatedScalarFieldContainer[str]
     max_timeout_seconds: int
     include_stopped: bool
-    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ...) -> None: ...
+    page_size: int
+    page_token: str
+    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ...) -> None: ...
 
 class ListSandboxesResponse(_message.Message):
-    __slots__ = ("sandboxes",)
+    __slots__ = ("sandboxes", "next_page_token")
     SANDBOXES_FIELD_NUMBER: _ClassVar[int]
+    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     sandboxes: _containers.RepeatedCompositeFieldContainer[SandboxInfo]
-    def __init__(self, sandboxes: _Optional[_Iterable[_Union[SandboxInfo, _Mapping]]] = ...) -> None: ...
+    next_page_token: str
+    def __init__(self, sandboxes: _Optional[_Iterable[_Union[SandboxInfo, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
 
 class SandboxInfo(_message.Message):
     __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
