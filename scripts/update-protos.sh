@@ -15,9 +15,9 @@ set -euo pipefail
 # Version pins - update these when bumping protos
 # ---------------------------------------------------------------------------
 # buf.build plugin versions (prefix differs per package, commit suffix is shared)
-GRPC_VERSION="1.80.0.1.20260421205249+cbd4f819dd44"
-PB_VERSION="26.1.0.2.20260421205249+cbd4f819dd44"
-PYI_VERSION="26.1.0.2.20260421205249+cbd4f819dd44"
+GRPC_VERSION="1.80.0.1.20260423151950+a3a6fd3eb260"
+PB_VERSION="26.1.0.2.20260423151950+a3a6fd3eb260"
+PYI_VERSION="26.1.0.2.20260423151950+a3a6fd3eb260"
 
 # ---------------------------------------------------------------------------
 # Constants

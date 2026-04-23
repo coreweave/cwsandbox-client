@@ -14,6 +14,8 @@ Generated SDK imports:
 
 from __future__ import annotations
 
+import time
+from typing import Any
 from urllib.parse import urlparse
 
 import grpc
@@ -156,3 +158,60 @@ def translate_grpc_error(
         metadata=metadata,
         retry_delay=retry_delay,
     )
+
+
+async def paginate_async(
+    rpc_method: Any,
+    request: Any,
+    items_field: str,
+    metadata: tuple[tuple[str, str], ...],
+    timeout: float,
+    *,
+    operation: str = "Request",
+) -> list[Any]:
+    """Auto-paginate a list RPC.
+
+    Follows ``next_page_token`` until the server returns an empty token or
+    the overall deadline is reached.
+
+    Args:
+        rpc_method: Bound stub method (e.g. ``stub.ListAvailableRunners``).
+        request: The protobuf request message. Its ``page_token`` field is
+            mutated in-place between pages.
+        items_field: Name of the repeated field on the response that holds
+            the result items (e.g. ``"runners"``).
+        metadata: gRPC call metadata (auth headers).
+        timeout: Total wall-clock seconds allowed for all pages.
+        operation: Human-readable label used in timeout/loop error messages.
+
+    Returns:
+        Flat list of proto items collected across all pages.
+
+    Raises:
+        CWSandboxError: On timeout, pagination loop, or exceeding page limit.
+    """
+    all_items: list[Any] = []
+    deadline = time.monotonic() + timeout
+    max_pages = 100
+    seen_tokens: set[str] = set()
+
+    for _ in range(max_pages):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CWSandboxError(f"{operation} timed out during pagination")
+
+        response = await rpc_method(request, metadata=metadata, timeout=remaining)
+        items = getattr(response, items_field)
+        all_items.extend(items)
+
+        next_token = response.next_page_token
+        if not next_token:
+            break
+        if next_token in seen_tokens:
+            raise CWSandboxError(f"{operation} pagination loop detected: repeated page token")
+        seen_tokens.add(next_token)
+        request.page_token = next_token
+    else:
+        raise CWSandboxError(f"{operation} pagination exceeded {max_pages} pages")
+
+    return all_items

@@ -2745,6 +2745,7 @@ class TestSandboxProfileNamesRequestFields:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandboxes = []
+        mock_response.next_page_token = ""
         mock_stub.List = AsyncMock(return_value=mock_response)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -2771,6 +2772,7 @@ class TestSandboxProfileNamesRequestFields:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandboxes = []
+        mock_response.next_page_token = ""
         mock_stub.List = AsyncMock(return_value=mock_response)
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()

@@ -49,7 +49,12 @@ from cwsandbox._error_info import (
     parse_error_info,
 )
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._network import create_channel, parse_grpc_target, translate_grpc_error
+from cwsandbox._network import (
+    create_channel,
+    paginate_async,
+    parse_grpc_target,
+    translate_grpc_error,
+)
 from cwsandbox._proto import (
     gateway_pb2,
     gateway_pb2_grpc,
@@ -984,7 +989,14 @@ class Sandbox:
                 request_kwargs["include_stopped"] = True
             request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
             try:
-                response = await stub.List(request, timeout=timeout, metadata=auth_metadata)
+                sandbox_infos = await paginate_async(
+                    stub.List,
+                    request,
+                    "sandboxes",
+                    auth_metadata,
+                    timeout,
+                    operation="List sandboxes",
+                )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="List sandboxes") from e
 
@@ -994,7 +1006,7 @@ class Sandbox:
                     base_url=effective_base_url,
                     timeout_seconds=timeout,
                 )
-                for sb in response.sandboxes
+                for sb in sandbox_infos
             ]
         finally:
             await channel.close(grace=None)
