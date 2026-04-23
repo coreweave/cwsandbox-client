@@ -3808,27 +3808,43 @@ class TestTranslateRpcError:
         assert isinstance(result, SandboxNotRunningError)
         assert "test-456" in str(result)
 
-    def test_deadline_exceeded_returns_sandbox_timeout_error(self) -> None:
-        """Test DEADLINE_EXCEEDED status code returns SandboxTimeoutError."""
+    def test_deadline_exceeded_returns_request_timeout_error(self) -> None:
+        """DEADLINE_EXCEEDED returns SandboxRequestTimeoutError (subclass of Timeout)."""
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxTimeoutError
+        from cwsandbox.exceptions import SandboxRequestTimeoutError, SandboxTimeoutError
 
         error = MockRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "timeout after 30s")
         result = _translate_rpc_error(error, operation="Execute command")
 
+        assert isinstance(result, SandboxRequestTimeoutError)
+        # Parent class still matches (callers catching SandboxTimeoutError work).
         assert isinstance(result, SandboxTimeoutError)
         assert "timed out" in str(result)
 
-    def test_unavailable_returns_sandbox_not_running_error(self) -> None:
-        """Test UNAVAILABLE status code returns SandboxNotRunningError."""
+    def test_unavailable_returns_unavailable_error(self) -> None:
+        """UNAVAILABLE returns SandboxUnavailableError (subclass of SandboxNotRunningError)."""
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxNotRunningError
+        from cwsandbox.exceptions import SandboxNotRunningError, SandboxUnavailableError
 
         error = MockRpcError(grpc.StatusCode.UNAVAILABLE, "connection refused")
         result = _translate_rpc_error(error)
 
+        assert isinstance(result, SandboxUnavailableError)
+        # Parent class still matches (callers catching SandboxNotRunningError work).
         assert isinstance(result, SandboxNotRunningError)
         assert "unavailable" in str(result).lower()
+
+    def test_resource_exhausted_returns_resource_exhausted_error(self) -> None:
+        """RESOURCE_EXHAUSTED returns explicit SandboxResourceExhaustedError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxError, SandboxResourceExhaustedError
+
+        error = MockRpcError(grpc.StatusCode.RESOURCE_EXHAUSTED, "quota exceeded")
+        result = _translate_rpc_error(error, operation="Start sandbox")
+
+        assert isinstance(result, SandboxResourceExhaustedError)
+        assert isinstance(result, SandboxError)
+        assert "exhausted" in str(result).lower()
 
     def test_permission_denied_returns_auth_error(self) -> None:
         """Test PERMISSION_DENIED status code returns CWSandboxAuthenticationError."""
@@ -3978,9 +3994,15 @@ class TestTranslateRpcErrorReasonMapping:
         assert result.sandbox_id == "sb-1"
         assert result.reason == "CWSANDBOX_SANDBOX_NOT_FOUND"
 
-    def test_command_timeout_reason_returns_timeout_error(self) -> None:
+    def test_command_timeout_reason_returns_command_timeout_error(self) -> None:
+        """CWSANDBOX_COMMAND_TIMEOUT reason returns SandboxCommandTimeoutError.
+
+        The command timeout subclass is FATAL (the user's command itself
+        exceeded its budget), distinct from the retryable
+        SandboxRequestTimeoutError used for transport-layer deadlines.
+        """
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxTimeoutError
+        from cwsandbox.exceptions import SandboxCommandTimeoutError, SandboxTimeoutError
 
         error = _MockRpcErrorWithDetails(
             grpc.StatusCode.INTERNAL,
@@ -3989,6 +4011,8 @@ class TestTranslateRpcErrorReasonMapping:
         )
         result = _translate_rpc_error(error, operation="Execute command")
 
+        assert isinstance(result, SandboxCommandTimeoutError)
+        # Parent class still matches.
         assert isinstance(result, SandboxTimeoutError)
         assert result.reason == "CWSANDBOX_COMMAND_TIMEOUT"
 
@@ -3999,10 +4023,14 @@ class TestTranslateRpcErrorReasonMapping:
             "CWSANDBOX_BACKEND_UNAVAILABLE",
         ],
     )
-    def test_unavailable_reason_returns_not_running(self, reason: str) -> None:
-        """Every reason in UNAVAILABLE_REASONS maps to SandboxNotRunningError."""
+    def test_unavailable_reason_returns_unavailable_error(self, reason: str) -> None:
+        """Every reason in UNAVAILABLE_REASONS maps to SandboxUnavailableError.
+
+        The retryable unavailable subclass, not the raw SandboxNotRunningError
+        (which stays fatal for local-stop/CANCELLED paths).
+        """
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxNotRunningError
+        from cwsandbox.exceptions import SandboxNotRunningError, SandboxUnavailableError
 
         error = _MockRpcErrorWithDetails(
             grpc.StatusCode.INTERNAL,
@@ -4012,6 +4040,8 @@ class TestTranslateRpcErrorReasonMapping:
         )
         result = _translate_rpc_error(error)
 
+        assert isinstance(result, SandboxUnavailableError)
+        # Parent class still matches.
         assert isinstance(result, SandboxNotRunningError)
         assert result.reason == reason
         assert result.retry_delay is not None

@@ -472,6 +472,13 @@ CWSandboxError
     └── FunctionSerializationError
 ```
 
+**Poll retry classification**: The sandbox-status poll loop splits exception
+classes into retryable and fatal, dispatched purely by ``isinstance`` against a
+registry tuple. See ``_classify_poll_error`` and ``_RETRYABLE_POLL_EXCEPTIONS``
+in ``src/cwsandbox/_sandbox.py`` for the current membership. Retryable classes
+are subclasses of the existing umbrella exceptions, so callers catching the
+parent classes continue to work unchanged.
+
 ## Examples
 
 The `examples/` directory contains runnable scripts demonstrating common patterns:

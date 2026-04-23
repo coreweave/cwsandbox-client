@@ -9,6 +9,7 @@ import builtins
 import contextlib
 import logging
 import os
+import random
 import shlex
 import threading
 import time
@@ -314,6 +315,38 @@ def _translate_rpc_error(
         fallback_cls=SandboxError,
         parsed=parsed,
     )
+
+
+_PollErrorClassification = Literal["retryable", "fatal"]
+
+
+# Maximum time to honor for a server-hinted retry_delay (AIP-193 RetryInfo).
+# Ensures one hinted sleep cannot consume the entire retry budget in a
+# single sleep - the remaining budget is also a ceiling, so a misconfigured
+# server emitting a large hint still only stalls the poll by at most
+# min(hint, budget, 10s).
+MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
+
+
+_RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
+    SandboxUnavailableError,
+    SandboxRequestTimeoutError,
+    SandboxResourceExhaustedError,
+)
+
+
+def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
+    """Classify a translated poll exception as retryable or fatal.
+
+    NOT_FOUND is always fatal regardless of the reason or transport code
+    that produced it - callers that receive ``SandboxNotFoundError`` have an
+    authoritative "gone" signal and must not retry it at the poll level.
+    """
+    if isinstance(exc, SandboxNotFoundError):
+        return "fatal"
+    if isinstance(exc, _RETRYABLE_POLL_EXCEPTIONS):
+        return "retryable"
+    return "fatal"
 
 
 # ---------------------------------------------------------------------------
@@ -1873,6 +1906,120 @@ class Sandbox:
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
             )
 
+    async def _poll_with_retry(self) -> gateway_pb2.GetSandboxResponse:
+        """Poll ``_poll_until_stable`` with bounded retry on transient errors.
+
+        The retry budget (``poll_retry_budget_seconds``) caps wall-clock time
+        spent retrying after a transient failure; it does not cap normal
+        polling. See :attr:`SandboxDefaults.poll_retry_budget_seconds` for
+        the full contract.
+
+        Raises:
+            SandboxNotFoundError: Fatal immediately; never retried.
+            CWSandboxError: Any non-retryable exception from
+                ``_poll_until_stable``. On budget exhaustion, the last
+                translated exception is re-raised unchanged rather than
+                wrapped.
+        """
+        # Retry state (deadline, prev sleep, attempts, last exception) is
+        # local to this coroutine, not on ``self``. The shared _running_task
+        # / _complete_task design lets multiple waiters await the same poll;
+        # state on ``self`` would race between concurrent invocations and
+        # leak budget across unrelated polls.
+        #
+        # Clamp the first RPC timeout to the retry budget so a single wedged
+        # Get cannot stall longer than the budget ceiling. Do not start the
+        # deadline timer yet: the budget is for retry bursts, and healthy
+        # polling across transient states (CREATING, PENDING) must not
+        # consume it. The timer starts on the first retryable failure below.
+        rpc_timeout_override: float | None = None
+        if self._poll_retry_budget_seconds > 0:
+            rpc_timeout_override = min(
+                self._poll_rpc_timeout_seconds,
+                self._poll_retry_budget_seconds,
+            )
+
+        retry_deadline: float | None = None
+        last_exc: CWSandboxError | None = None
+        prev_sleep = DEFAULT_POLL_INTERVAL_SECONDS
+        attempts = 0
+
+        while True:
+            try:
+                return await self._poll_until_stable(
+                    rpc_timeout_override=rpc_timeout_override,
+                )
+            except CWSandboxError as exc:
+                last_exc = exc
+                classification = _classify_poll_error(exc)
+                if classification != "retryable":
+                    raise
+                if self._poll_retry_budget_seconds <= 0:
+                    raise
+
+                # First retryable failure: start the deadline timer.
+                if retry_deadline is None:
+                    retry_deadline = time.monotonic() + self._poll_retry_budget_seconds
+
+                attempts += 1
+                now = time.monotonic()
+                if now >= retry_deadline:
+                    logger.debug(
+                        "poll retry budget exhausted for sandbox %s after %d attempt(s)",
+                        self._sandbox_id,
+                        attempts,
+                    )
+                    raise
+                remaining = retry_deadline - now
+                # AIP-193 RetryInfo hints are honored literally (the server
+                # may already be jittering); otherwise use AWS-style
+                # decorrelated jitter on the computed backoff to avoid
+                # fleet-scale thundering herd during regional outages.
+                hinted_delay = exc.retry_delay.total_seconds() if exc.retry_delay else None
+                if hinted_delay is not None and hinted_delay > 0:
+                    sleep_for = min(hinted_delay, remaining, MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
+                    source = "hinted"
+                else:
+                    base = DEFAULT_POLL_INTERVAL_SECONDS
+                    cap = DEFAULT_MAX_POLL_INTERVAL_SECONDS
+                    jitter_ceiling = max(
+                        base,
+                        min(cap, prev_sleep * DEFAULT_POLL_BACKOFF_FACTOR, remaining),
+                    )
+                    sleep_for = min(random.uniform(base, jitter_ceiling), remaining)
+                    source = "computed-jittered"
+                cause = exc.__cause__ if isinstance(exc.__cause__, grpc.RpcError) else None
+                code = cause.code() if cause is not None else None
+                logger.debug(
+                    "poll retry for sandbox %s: code=%s sleep=%.2fs source=%s remaining=%.2fs",
+                    self._sandbox_id,
+                    code,
+                    sleep_for,
+                    source,
+                    remaining,
+                )
+            await asyncio.sleep(sleep_for)
+            prev_sleep = sleep_for
+            # Re-check deadline after the sleep: a long hinted delay plus the
+            # elapsed retry loop can exhaust the budget while we slept. Re-raise
+            # the last translated exception rather than issuing an RPC that
+            # would overrun the overall budget. The deadline is always set by
+            # this point because the first retryable failure sets it above.
+            assert retry_deadline is not None
+            now = time.monotonic()
+            if now >= retry_deadline:
+                assert last_exc is not None
+                raise last_exc
+            # Clamp the next RPC timeout to whatever budget remains, so a
+            # wedged Get cannot run past the overall ceiling. Floor at 0.1s
+            # to avoid degenerate zero-timeout RPCs that would fail before
+            # the gRPC stack even dispatches them.
+            post_sleep_remaining = retry_deadline - now
+            rpc_timeout_override = min(
+                self._poll_rpc_timeout_seconds,
+                max(0.1, post_sleep_remaining),
+            )
+
     async def _ensure_started_async(self) -> None:
         """Ensure sandbox has been started, starting it if needed."""
         if self._sandbox_id is None:
@@ -2047,7 +2194,7 @@ class Sandbox:
         SandboxStatus for per-waiter raise_on_termination control.
         """
         assert self._sandbox_id is not None
-        response = await self._poll_until_stable()
+        response = await self._poll_with_retry()
 
         self._state = self._apply_sandbox_info(response, source="poll")
         self._status_updated_at = datetime.now(UTC)
@@ -2169,7 +2316,7 @@ class Sandbox:
         assert self._sandbox_id is not None
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
         while True:
-            response = await self._poll_until_stable()
+            response = await self._poll_with_retry()
 
             self._state = self._apply_sandbox_info(response, source="poll")
             self._status_updated_at = datetime.now(UTC)
@@ -2343,6 +2490,13 @@ class Sandbox:
             SandboxTerminatedError: If sandbox was stopped by this client or
                 reported as TERMINATED by backend (and raise_on_termination=True)
             SandboxFailedError: If sandbox failed
+
+        Note:
+            ``poll_retry_budget_seconds`` is a hard sub-timeout inside the
+            user's ``timeout`` parameter. A 30s retry budget with a 300s user
+            timeout can surface budget-exhaustion errors around 30s. Callers
+            that want longer retry should configure
+            ``poll_retry_budget_seconds`` accordingly.
 
         Examples:
             ```python

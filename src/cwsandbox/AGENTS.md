@@ -100,4 +100,6 @@ mise run test:e2e      # Requires auth credentials
 
 - **Exec API**: `exec()` returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming output.
 
+- **Poll retry classification**: `_classify_poll_error` in `_sandbox.py` dispatches purely on exception class against `_RETRYABLE_POLL_EXCEPTIONS`. `SandboxNotFoundError` short-circuits to fatal so reason-mapped NOT_FOUND is always terminal regardless of transport code. When adding a new retryable condition, create a subclass of the appropriate umbrella exception and add it to `_RETRYABLE_POLL_EXCEPTIONS`; do not widen the classification to a parent class, or callers catching that parent will see unexpected retry behavior.
+
 - **Poll config validation**: `_validate_poll_config(budget, rpc_timeout)` in `_defaults.py` enforces finite, non-negative values (strictly positive for rpc_timeout). It is called from `SandboxDefaults.__post_init__`, `Sandbox.__init__` (after the None-fallback to defaults), and `Sandbox._from_sandbox_info`. NaN/inf/negative values are rejected at construction time so they cannot reach the retry loop where NaN would silently defeat the wall-clock deadline check.
