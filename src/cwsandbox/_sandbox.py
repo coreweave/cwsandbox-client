@@ -72,14 +72,18 @@ from cwsandbox._types import (
 )
 from cwsandbox.exceptions import (
     CWSandboxError,
+    SandboxCommandTimeoutError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxRequestTimeoutError,
+    SandboxResourceExhaustedError,
     SandboxTerminatedError,
     SandboxTimeoutError,
+    SandboxUnavailableError,
 )
 
 if TYPE_CHECKING:
@@ -250,14 +254,14 @@ def _translate_rpc_error(
                 retry_delay=retry_delay,
             )
         if reason == CWSANDBOX_COMMAND_TIMEOUT:
-            return SandboxTimeoutError(
+            return SandboxCommandTimeoutError(
                 f"{operation} timed out: {details}",
                 reason=reason,
                 metadata=metadata,
                 retry_delay=retry_delay,
             )
         if reason in UNAVAILABLE_REASONS:
-            return SandboxNotRunningError(
+            return SandboxUnavailableError(
                 f"Service unavailable: {details}",
                 reason=reason,
                 metadata=metadata,
@@ -281,15 +285,22 @@ def _translate_rpc_error(
             retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-        return SandboxTimeoutError(
+        return SandboxRequestTimeoutError(
             f"{operation} timed out: {details}",
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.UNAVAILABLE:
-        return SandboxNotRunningError(
+        return SandboxUnavailableError(
             f"Service unavailable: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+        return SandboxResourceExhaustedError(
+            f"{operation} resource exhausted: {details}",
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,

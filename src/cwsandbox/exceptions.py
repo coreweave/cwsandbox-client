@@ -141,6 +141,41 @@ class SandboxFileError(SandboxError):
         self.filepath = filepath
 
 
+class SandboxUnavailableError(SandboxNotRunningError):
+    """Raised when the sandbox service is transiently unavailable.
+
+    Emitted for gRPC ``UNAVAILABLE`` and AIP-193 UNAVAILABLE_REASONS.
+    Poll loop treats this as retryable. This retry contract is
+    poll-specific; callers of non-poll operations must decide their
+    own retry policy.
+    """
+
+
+class SandboxRequestTimeoutError(SandboxTimeoutError):
+    """Raised when a gRPC request exceeded its deadline.
+
+    Emitted for gRPC ``DEADLINE_EXCEEDED``. Poll loop treats this as
+    retryable.
+    """
+
+
+class SandboxCommandTimeoutError(SandboxTimeoutError):
+    """Raised when the user's command inside the sandbox timed out.
+
+    Emitted when the backend signals ``CWSANDBOX_COMMAND_TIMEOUT`` via
+    AIP-193 reason. This is NOT retryable - the command itself exceeded
+    its timeout budget.
+    """
+
+
+class SandboxResourceExhaustedError(SandboxError):
+    """Raised when the sandbox service is under resource pressure.
+
+    Emitted for gRPC ``RESOURCE_EXHAUSTED``. Poll loop treats this as
+    retryable, but callers should back off - the server is overloaded.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 
