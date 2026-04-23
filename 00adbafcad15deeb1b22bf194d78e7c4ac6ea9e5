@@ -1,0 +1,30 @@
+## Conversation
+Amend of 837d886 after commitlint CI failed on PR #118 with
+body-max-line-length (100). User asked: fix, force push, mark PR ready,
+tag NavarrePratt.
+
+## Actions
+- Inspected PR 118 status (gh pr view): only commitlint red; CI check,
+  protobuf-compat (x2), and PR-title lint all green.
+- Pulled the failed log: first body paragraph was one ~256-char line.
+- Verified PR isDraft=true locally via gh pr view.
+- Amended commit with the same message content rewrapped at ~72 cols;
+  force-pushed with --force-with-lease.
+
+## Errors & Mistakes
+None.
+
+## Dead Ends
+None.
+
+## Hints for Future Agents
+- commitlint in this repo enforces body-max-line-length=100. Wrap commit
+  bodies at ~72 cols to stay safe under Github web renders too.
+- Use --force-with-lease, not plain --force, for amended pushes on PR
+  branches.
+
+## Codebase Discoveries
+None beyond the commitlint rule above.
+
+## Open Questions
+None.
