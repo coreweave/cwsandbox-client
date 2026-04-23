@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.21.0 (2026-04-23)
+
+### Features
+
+- Paginate sandbox listings ([#118](https://github.com/coreweave/cwsandbox-client/pull/118),
+  [`12eaf38`](https://github.com/coreweave/cwsandbox-client/commit/12eaf386f55e451177fc45618292868d55fe4bd0))
+
+Regenerate gateway protos with the ListSandboxes pagination fields and route Sandbox.list() through
+  a shared paginate_async helper. Reuse the helper for discovery list RPCs so all paginated list
+  calls share deadline, loop-detection, and max-page handling.
+
+This prevents high-volume listings from silently stopping at the server's first-page cap.
+
+
 ## v0.20.0 (2026-04-22)
 
 ### Chores
