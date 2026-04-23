@@ -31,6 +31,26 @@ def test_sandbox_lifecycle(sandbox_defaults: SandboxDefaults) -> None:
         assert result.stdout.strip() == "hello"
 
 
+def test_wait_until_complete_latency_guard(sandbox_defaults: SandboxDefaults) -> None:
+    """Guard against gross regressions in poll-loop latency.
+
+    Starts a fast-completing sandbox (``echo hello``) and asserts that
+    ``wait_until_complete`` returns within a generous ceiling. This is a
+    regression guard, not a tight SLA - the ceiling is wide enough to absorb
+    sandbox startup variance plus the new poll defaults (retry budget /
+    per-RPC timeout) without flaking, but tight enough to catch, for example,
+    accidentally waiting out the full 30s retry budget on every call.
+    """
+    sandbox = Sandbox.run("echo", "hello", defaults=sandbox_defaults)
+    try:
+        start = time.perf_counter()
+        sandbox.wait_until_complete().result()
+        elapsed = time.perf_counter() - start
+        assert elapsed < 60.0, f"wait_until_complete took {elapsed:.1f}s (ceiling 60s)"
+    finally:
+        sandbox.stop(missing_ok=True).result()
+
+
 def test_sandbox_run_factory(sandbox_defaults: SandboxDefaults) -> None:
     """Test Sandbox.run factory method returns sandbox with ID and reaches running state."""
     with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
@@ -1359,3 +1379,36 @@ def test_default_command_produces_no_logs(sandbox_defaults: SandboxDefaults) -> 
             sandbox.stop(missing_ok=True).result()
         except SandboxError:
             pass
+
+
+def test_concurrent_stop_and_wait_until_complete(sandbox_defaults: SandboxDefaults) -> None:
+    """Both stop() and wait_until_complete() share the same _complete_task.
+
+    This exercises the shared shielded-task semantics end-to-end: an
+    in-flight wait_until_complete and a concurrent stop must both resolve
+    to the same terminal state without either observing a duplicate poll
+    or a divergent outcome. The retry wrapper and post-stop NOT_FOUND
+    race handler both sit inside that shared task, so a regression in
+    either would surface here as a hang, an exception in one waiter but
+    not the other, or a state mismatch.
+
+    Note: the forced-deletion NOT_FOUND path (aviato#798 test plan)
+    remains manual-verification until the backend offers deterministic
+    NOT_FOUND injection. Unit tests in
+    tests/unit/cwsandbox/test_sandbox_polling.py exercise it directly.
+    """
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    sandbox.wait()
+    assert sandbox.status == SandboxStatus.RUNNING
+
+    wait_ref = sandbox.wait_until_complete(timeout=60.0, raise_on_termination=False)
+    stop_ref = sandbox.stop()
+
+    wait_ref.result()
+    stop_ref.result()
+
+    assert sandbox.status in (
+        SandboxStatus.COMPLETED,
+        SandboxStatus.FAILED,
+        SandboxStatus.TERMINATED,
+    )

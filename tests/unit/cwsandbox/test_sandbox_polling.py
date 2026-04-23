@@ -34,6 +34,7 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
+    SandboxTerminalStateUnavailableError,
     SandboxTerminatedError,
     SandboxTimeoutError,
     SandboxUnavailableError,
@@ -1223,7 +1224,392 @@ class TestPollRetryRpcTimeoutClamp:
 
 
 # ---------------------------------------------------------------------------
-# _synthesize_terminal_state and post-stop NOT_FOUND handling
+# Post-stop NOT_FOUND handling (bounded retry + typed propagation)
+#
+# The backend persists terminal state for stopped sandboxes, so Get should
+# return COMPLETED or FAILED after a successful Stop. NOT_FOUND here is a
+# narrow race with the backend's terminal-state write, or backend-rollout
+# skew. The client retries briefly and, if NOT_FOUND persists, raises
+# SandboxTerminalStateUnavailableError rather than invent a terminal state.
+# ---------------------------------------------------------------------------
+
+
+def _now() -> datetime:
+    """Return a timezone-aware datetime for tests."""
+    return datetime.now(UTC)
+
+
+def _install_fake_monotonic(monkeypatch: pytest.MonkeyPatch, step: float = 1.0) -> list[float]:
+    """Replace ``time.monotonic`` in _sandbox.py with a virtual clock.
+
+    Each call returns a value that advances by ``step`` seconds. With
+    ``step=1.0`` and a 2.0s retry budget, the retry loop exhausts after
+    3 calls (start + 2 checks) regardless of wall-clock time.
+
+    Returns the underlying values list so tests can inspect advancement.
+    """
+    values: list[float] = []
+
+    def fake_monotonic() -> float:
+        v = float(len(values)) * step
+        values.append(v)
+        return v
+
+    monkeypatch.setattr("cwsandbox._sandbox.time.monotonic", fake_monotonic)
+    return values
+
+
+class TestPostStopNotFoundRetry:
+    """Race-handling behavior for post-stop NOT_FOUND on stop-owned sandboxes."""
+
+    @pytest.mark.asyncio
+    async def test_not_found_then_completed_resolves_to_completed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NOT_FOUND on the first poll, then COMPLETED within budget.
+
+        Waiter sees the real backend terminal state - never a synthesized
+        fiction. raise_on_termination is False because _stop_owned routes
+        COMPLETED through SandboxTerminatedError otherwise.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stop_owned = True
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.COMPLETED
+        assert call_count == 2  # initial + one retry hit authoritative
+
+    @pytest.mark.asyncio
+    async def test_not_found_then_failed_resolves_to_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NOT_FOUND on the first poll, then FAILED within budget.
+
+        This is the case the old synthesis used to mask: a crashed workload
+        (FAILED) would have been turned into a fabricated COMPLETED. With the
+        retry, the authoritative FAILED surfaces.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stop_owned = True
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_persistent_not_found_raises_terminal_state_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NOT_FOUND past the retry budget surfaces as a typed exception.
+
+        State is NOT mutated to a fabricated terminal - the caller sees the
+        ambiguity explicitly and can decide how to handle it.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+        _install_fake_monotonic(monkeypatch, step=1.5)
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        pre_state = _Running(sandbox_id="test-sandbox", status=SandboxStatus.RUNNING)
+        sandbox = _make_sandbox()
+        sandbox._state = pre_state
+        sandbox._stop_owned = True
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxTerminalStateUnavailableError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        # State was not mutated to a fabricated terminal; waiter sees the error.
+        assert sandbox._state is pre_state
+
+    @pytest.mark.asyncio
+    async def test_non_stop_owned_not_found_still_immediate_fatal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """External delete (no stop context) propagates immediately - no retry."""
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        # _stop_owned defaults to False; _missing_ok_observe also False
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxNotFoundError):
+            await sandbox._wait_until_complete_async()
+
+        # Single call: no retry for non-stop-owned NOT_FOUND.
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cached_terminal_state_preserved_on_not_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If _state is already terminal when NOT_FOUND arrives, preserve it.
+
+        Defensive: in the normal flow the outer loop returns on terminal
+        states before NOT_FOUND is possible, but Stop-path code can mutate
+        _state concurrently. The NOT_FOUND handler must not overwrite an
+        existing terminal with a retry that might race further.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        existing = _Terminal(sandbox_id="test-sandbox", status=SandboxStatus.FAILED)
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            # Mutate state concurrently on first call to simulate the race.
+            sandbox._state = existing
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stop_owned = True
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        # No retry happened - the defensive preserve-cached-terminal branch
+        # short-circuited and returned FAILED status.
+        assert sandbox._state is existing
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_waiters_share_outcome(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Both waiters on the shared task see the same authoritative outcome.
+
+        The first Get returns NOT_FOUND; the retry returns COMPLETED. A
+        second waiter registered on the shared task gets the same result.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        get_barrier = asyncio.Event()
+        second_waiter_joined = asyncio.Event()
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                get_barrier.set()
+                await second_waiter_joined.wait()
+                raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stop_owned = True
+        sandbox._stub.Get = mock_get
+
+        waiter_a = asyncio.create_task(
+            sandbox._wait_until_complete_async(raise_on_termination=False)
+        )
+        await get_barrier.wait()
+        shared_task_a = sandbox._complete_task
+        assert shared_task_a is not None
+
+        waiter_b = asyncio.create_task(
+            sandbox._wait_until_complete_async(raise_on_termination=False)
+        )
+        await asyncio.sleep(0)  # yield so waiter_b registers
+        assert sandbox._complete_task is shared_task_a
+
+        second_waiter_joined.set()
+        await asyncio.gather(waiter_a, waiter_b)
+
+        # Both waiters saw the same real COMPLETED from the retry path.
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.COMPLETED
+        # Get called twice: initial NOT_FOUND + retry COMPLETED. Both waiters
+        # shared the same poll, not 2x per-waiter.
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_ok_observe_path_uses_same_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """stop(missing_ok=True) on an already-draining sandbox gets same retry.
+
+        The observe-only path (_missing_ok_observe=True, _is_stopping state)
+        is not _stop_owned but still expects the backend to produce a
+        terminal state; NOT_FOUND retries and converges.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+
+        sandbox = _make_sandbox()
+        sandbox._state = _Stopping(sandbox_id="test-sandbox")
+        # _stop_owned stays False; observe-only flag gates the retry.
+        sandbox._missing_ok_observe = True
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.COMPLETED
+        assert call_count == 3  # NOT_FOUND, NOT_FOUND, COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_missing_ok_observe_persistent_not_found_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Observe-only path with persistent NOT_FOUND raises the typed error."""
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", AsyncMock())
+        _install_fake_monotonic(monkeypatch, step=1.5)
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        sandbox = _make_sandbox()
+        sandbox._state = _Stopping(sandbox_id="test-sandbox")
+        sandbox._missing_ok_observe = True
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxTerminalStateUnavailableError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+
+class TestStopThenWaitThroughRealDoStop:
+    """Exercise stop()/wait race through the full _do_stop path.
+
+    Rather than fabricating ``_stop_owned = True``, drive the real ``_do_stop``
+    coroutine so that the Stop RPC flips ``_stop_owned`` naturally. A waiter
+    started concurrently observes the backend's authoritative terminal state
+    when the race resolves, or ``SandboxTerminalStateUnavailableError`` when
+    the backend never reports it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_then_wait_resolves_to_real_completed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Race converges to authoritative COMPLETED inside the retry budget."""
+        _install_recording_sleep(monkeypatch)
+
+        get_calls = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal get_calls
+            get_calls += 1
+            if get_calls <= 2:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            if get_calls <= 3:
+                raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+        stop_response = MagicMock()
+        stop_response.success = True
+        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._channel.close = AsyncMock()
+
+        waiter = asyncio.create_task(sandbox._wait_until_complete_async(raise_on_termination=False))
+
+        await sandbox._stop_async()
+        await waiter
+
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.COMPLETED
+        assert sandbox._stop_owned is True
+
+    @pytest.mark.asyncio
+    async def test_stop_then_wait_persistent_not_found_raises_typed_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Persistent NOT_FOUND after real _do_stop raises the typed exception.
+
+        No fabricated COMPLETED. The waiter receives
+        SandboxTerminalStateUnavailableError and the caller decides what to
+        do; nothing downstream treats this as success.
+        """
+        _install_recording_sleep(monkeypatch)
+        _install_fake_monotonic(monkeypatch, step=1.5)
+
+        get_calls = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal get_calls
+            get_calls += 1
+            if get_calls <= 2:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+        stop_response = MagicMock()
+        stop_response.success = True
+        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._channel.close = AsyncMock()
+
+        waiter = asyncio.create_task(sandbox._wait_until_complete_async(raise_on_termination=False))
+
+        # Both _stop_async (awaiting the shared task via _await_terminal_after_stop)
+        # and the separate waiter see the same raised exception. Gather both
+        # with return_exceptions=True so we can assert on each without the
+        # first raise aborting the test.
+        results = await asyncio.gather(sandbox._stop_async(), waiter, return_exceptions=True)
+
+        # Neither path sees a fabricated COMPLETED - the typed error surfaces
+        # to both. CancelledError is acceptable for the waiter if _stop_async
+        # cancelled the shared task before it raised.
+        for result in results:
+            assert isinstance(
+                result, (SandboxTerminalStateUnavailableError, asyncio.CancelledError)
+            ), f"unexpected result: {result!r}"
+
+        assert sandbox._stop_owned is True
+        # State is not a synthesized COMPLETED with a returncode set from the
+        # fabricated path. It may be _Stopping or an intermediate state.
+        if isinstance(sandbox._state, _Terminal):
+            assert sandbox._state.status != SandboxStatus.COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# retry_delay (AIP-193 RetryInfo) honored in backoff
 # ---------------------------------------------------------------------------
 
 

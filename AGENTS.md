@@ -459,6 +459,7 @@ CWSandboxError
 │   │   ├── SandboxRequestTimeoutError   # gRPC request deadline (DEADLINE_EXCEEDED)
 │   │   └── SandboxCommandTimeoutError   # user command exceeded its timeout (AIP-193 CWSANDBOX_COMMAND_TIMEOUT)
 │   ├── SandboxResourceExhaustedError    # backend resource pressure (gRPC RESOURCE_EXHAUSTED)
+│   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
 │   ├── SandboxTerminatedError
 │   ├── SandboxFailedError
 │   ├── SandboxNotFoundError             # .sandbox_id attribute

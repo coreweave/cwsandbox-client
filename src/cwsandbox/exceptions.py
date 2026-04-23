@@ -176,6 +176,22 @@ class SandboxResourceExhaustedError(SandboxError):
     """
 
 
+class SandboxTerminalStateUnavailableError(SandboxError):
+    """Raised when the backend does not report a terminal state after stop.
+
+    After a successful ``stop()``, the backend should return the persisted
+    terminal state (COMPLETED or FAILED) on subsequent ``Get`` calls. A
+    narrow race between the backend's terminal-state write and the client's
+    next poll, or backend-rollout skew, can surface as NOT_FOUND. The SDK
+    retries for a brief budget; if NOT_FOUND persists past that budget,
+    this exception is raised.
+
+    Callers seeing this should treat the outcome as ambiguous - the stop
+    succeeded, but whether the user's workload completed or failed is not
+    observable from the client.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 

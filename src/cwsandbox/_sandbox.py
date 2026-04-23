@@ -85,6 +85,7 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
+    SandboxTerminalStateUnavailableError,
     SandboxTerminatedError,
     SandboxTimeoutError,
     SandboxUnavailableError,
@@ -326,6 +327,15 @@ _PollErrorClassification = Literal["retryable", "fatal"]
 # server emitting a large hint still only stalls the poll by at most
 # min(hint, budget, 10s).
 MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
+
+# Bounded retry budget for post-stop NOT_FOUND responses. The backend
+# persists terminal state for stopped sandboxes, so Get should return
+# COMPLETED or FAILED. NOT_FOUND here is expected only in a narrow race
+# between the backend's terminal-state write and our next poll, or in
+# backend-rollout skew; retrying briefly lets the backend converge. If
+# NOT_FOUND persists past this budget, SandboxTerminalStateUnavailableError
+# is raised so the caller sees the ambiguity explicitly.
+NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS: float = 2.0
 
 
 _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
@@ -680,6 +690,12 @@ class Sandbox:
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stop_owned: bool = False
+        # Set when a caller invokes stop(missing_ok=True) on a sandbox that
+        # is already draining (observe-only path). Widens the NOT_FOUND
+        # retry gate in _do_poll_complete so the observe-only waiter treats
+        # NOT_FOUND as a backend race (retry briefly for authoritative
+        # terminal state) rather than propagating SandboxNotFoundError.
+        self._missing_ok_observe: bool = False
 
         self._status_updated_at: datetime | None = None
         self._service_address: str | None = None
@@ -912,6 +928,7 @@ class Sandbox:
         sandbox._stop_task = None
         sandbox._stop_lock = asyncio.Lock()
         sandbox._stop_owned = False
+        sandbox._missing_ok_observe = False
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -2299,6 +2316,43 @@ class Sandbox:
                 ) from None
             raise
 
+    async def _retry_post_stop_not_found(self) -> gateway_pb2.GetSandboxResponse:
+        """Retry ``Get`` for a bounded budget after a post-stop NOT_FOUND.
+
+        Raises:
+            SandboxTerminalStateUnavailableError: NOT_FOUND persists past
+                the retry budget.
+        """
+        sandbox_id = self._sandbox_id
+        deadline = time.monotonic() + NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS
+        retry_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                logger.info(
+                    "Sandbox %s: NOT_FOUND past %.1fs retry budget; "
+                    "surfacing terminal-state ambiguity to caller",
+                    sandbox_id,
+                    NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS,
+                )
+                raise SandboxTerminalStateUnavailableError(
+                    f"Stop succeeded for sandbox {sandbox_id}, but backend "
+                    f"did not report terminal state within "
+                    f"{NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS:.1f}s. "
+                    f"The terminal outcome (COMPLETED or FAILED) is not "
+                    f"observable from the client."
+                )
+            # Sleep the retry interval, clamped by the remaining budget.
+            await asyncio.sleep(min(retry_interval, deadline - now))
+            try:
+                return await self._poll_with_retry()
+            except SandboxNotFoundError:
+                retry_interval = min(
+                    retry_interval * DEFAULT_POLL_BACKOFF_FACTOR,
+                    DEFAULT_MAX_POLL_INTERVAL_SECONDS,
+                )
+                continue
+
     async def _do_poll_complete(self) -> SandboxStatus:
         """Poll until sandbox reaches terminal state and return the status.
 
@@ -2316,7 +2370,23 @@ class Sandbox:
         assert self._sandbox_id is not None
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
         while True:
-            response = await self._poll_with_retry()
+            try:
+                response = await self._poll_with_retry()
+            except SandboxNotFoundError:
+                # Post-stop NOT_FOUND is a narrow race: the backend persists
+                # terminal state for stopped sandboxes, but its DB write may
+                # not have committed yet when we poll. Retry briefly so the
+                # backend can report its authoritative state.
+                if not (self._stop_owned or (self._is_stopping and self._missing_ok_observe)):
+                    raise
+                # Defensive: if we somehow already hold a terminal state,
+                # preserve it rather than let a transient NOT_FOUND replace
+                # it. In the normal flow this cannot happen because the
+                # outer loop returns on terminal states, but Stop-path code
+                # may mutate self._state concurrently.
+                if isinstance(self._state, _Terminal) and self._state.status in _TERMINAL_STATUSES:
+                    return self._state.status
+                response = await self._retry_post_stop_not_found()
 
             self._state = self._apply_sandbox_info(response, source="poll")
             self._status_updated_at = datetime.now(UTC)
@@ -2405,7 +2475,13 @@ class Sandbox:
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
             ):
-                raise SandboxNotRunningError(f"Sandbox {sandbox_id} has been stopped") from None
+                # missing_ok stop can cancel an in-flight waiter before
+                # _stop_owned is set.  Route through the normal terminal
+                # policy gate so raise_on_termination=False suppresses the
+                # error as callers expect.
+                return self._raise_or_return_for_terminal(
+                    self._state, raise_on_termination=raise_on_termination
+                )
             raise
 
         assert isinstance(self._state, _Terminal)
@@ -2580,6 +2656,12 @@ class Sandbox:
                     "Sandbox %s already stopping, waiting for terminal",
                     self._sandbox_id,
                 )
+                if missing_ok:
+                    # Widen the NOT_FOUND retry gate in _do_poll_complete so
+                    # the observe-only waiter treats NOT_FOUND as a race and
+                    # retries briefly for an authoritative terminal state,
+                    # rather than propagating SandboxNotFoundError.
+                    self._missing_ok_observe = True
             elif self._sandbox_id is None:
                 self._state = _NotStarted(cancelled=True)
                 return
