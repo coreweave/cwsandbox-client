@@ -539,6 +539,8 @@ class Session:
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
+            poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
         )
 
         if adopt:
@@ -596,6 +598,8 @@ class Session:
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
             timeout_seconds=self._defaults.request_timeout_seconds,
+            poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
         )
 
         if adopt:

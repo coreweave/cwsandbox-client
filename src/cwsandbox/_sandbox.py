@@ -31,6 +31,8 @@ from cwsandbox._defaults import (
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_POLL_RETRY_BUDGET_SECONDS,
+    DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_LINE_BUFFER_BYTES,
     STDIN_CHUNK_SIZE,
@@ -38,6 +40,7 @@ from cwsandbox._defaults import (
     STREAMING_RESPONSE_QUEUE_SIZE,
     SandboxDefaults,
     _resolve_selector,
+    _validate_poll_config,
 )
 from cwsandbox._error_info import (
     CWSANDBOX_COMMAND_TIMEOUT,
@@ -473,6 +476,8 @@ class Sandbox:
         tags: list[str] | None = None,
         base_url: str | None = None,
         request_timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         profile_ids: list[str] | None = None,
         profile_names: list[str] | None = None,
@@ -498,6 +503,11 @@ class Sandbox:
             tags: Optional tags for the sandbox
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
             request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
                 the backend controls the default.
             profile_ids: Optional list of profile IDs for infrastructure selection.
@@ -547,6 +557,20 @@ class Sandbox:
             request_timeout_seconds
             if request_timeout_seconds is not None
             else self._defaults.request_timeout_seconds
+        )
+        self._poll_retry_budget_seconds = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else self._defaults.poll_retry_budget_seconds
+        )
+        self._poll_rpc_timeout_seconds = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else self._defaults.poll_rpc_timeout_seconds
+        )
+        _validate_poll_config(
+            self._poll_retry_budget_seconds,
+            self._poll_rpc_timeout_seconds,
         )
         self._max_lifetime_seconds = (
             max_lifetime_seconds
@@ -654,6 +678,8 @@ class Sandbox:
         container_image: str | None = None,
         defaults: SandboxDefaults | None = None,
         request_timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
         profile_ids: list[str] | None = None,
@@ -682,6 +708,11 @@ class Sandbox:
             container_image: Container image to use
             defaults: Optional SandboxDefaults to apply
             request_timeout_seconds: Timeout for API requests (client-side)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to
+                0 to disable retry.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
             profile_ids: Optional list of profile IDs for infrastructure selection.
@@ -744,6 +775,8 @@ class Sandbox:
             container_image=container_image,
             defaults=defaults,
             request_timeout_seconds=request_timeout_seconds,
+            poll_retry_budget_seconds=poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
             profile_ids=profile_ids,
@@ -804,6 +837,8 @@ class Sandbox:
         *,
         base_url: str,
         timeout_seconds: float,
+        poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS,
+        poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
         sandbox = cls.__new__(cls)
@@ -811,6 +846,12 @@ class Sandbox:
         sandbox._status_updated_at = datetime.now(UTC)
         sandbox._base_url = base_url
         sandbox._request_timeout_seconds = timeout_seconds
+        sandbox._poll_retry_budget_seconds = poll_retry_budget_seconds
+        sandbox._poll_rpc_timeout_seconds = poll_rpc_timeout_seconds
+        _validate_poll_config(
+            sandbox._poll_retry_budget_seconds,
+            sandbox._poll_rpc_timeout_seconds,
+        )
         # Not applicable for discovered sandboxes
         sandbox._command = None
         sandbox._args = None
@@ -883,6 +924,8 @@ class Sandbox:
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List existing sandboxes with optional filters.
 
@@ -909,6 +952,12 @@ class Sandbox:
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry. Applied to returned Sandbox instances.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from ``timeout_seconds``. Applied to
+                returned Sandbox instances.
 
         Returns:
             OperationRef[list[Sandbox]]: Use .result() to block for results,
@@ -943,6 +992,8 @@ class Sandbox:
                 include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
+                poll_retry_budget_seconds=poll_retry_budget_seconds,
+                poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -959,6 +1010,8 @@ class Sandbox:
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
         effective_base_url = (
@@ -967,6 +1020,17 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
+        effective_poll_retry_budget = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else DEFAULT_POLL_RETRY_BUDGET_SECONDS
+        )
+        effective_poll_rpc_timeout = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else DEFAULT_POLL_RPC_TIMEOUT_SECONDS
+        )
+        _validate_poll_config(effective_poll_retry_budget, effective_poll_rpc_timeout)
 
         status_enum = None
         if status is not None:
@@ -1004,6 +1068,8 @@ class Sandbox:
                     sb,
                     base_url=effective_base_url,
                     timeout_seconds=timeout,
+                    poll_retry_budget_seconds=effective_poll_retry_budget,
+                    poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
                 )
                 for sb in response.sandboxes
             ]
@@ -1017,6 +1083,8 @@ class Sandbox:
         *,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> OperationRef[Sandbox]:
         """Attach to an existing sandbox by ID.
 
@@ -1027,6 +1095,12 @@ class Sandbox:
             sandbox_id: The ID of the existing sandbox
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry. Applied to the returned Sandbox instance.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from ``timeout_seconds``. Applied to
+                the returned Sandbox instance.
 
         Returns:
             OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
@@ -1052,6 +1126,8 @@ class Sandbox:
                 sandbox_id,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
+                poll_retry_budget_seconds=poll_retry_budget_seconds,
+                poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -1063,6 +1139,8 @@ class Sandbox:
         *,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> Sandbox:
         """Internal async: Attach to an existing sandbox by ID."""
         effective_base_url = (
@@ -1071,6 +1149,17 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
+        effective_poll_retry_budget = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else DEFAULT_POLL_RETRY_BUDGET_SECONDS
+        )
+        effective_poll_rpc_timeout = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else DEFAULT_POLL_RPC_TIMEOUT_SECONDS
+        )
+        _validate_poll_config(effective_poll_retry_budget, effective_poll_rpc_timeout)
 
         auth_metadata = resolve_auth_metadata()
 
@@ -1089,6 +1178,8 @@ class Sandbox:
                 response,
                 base_url=effective_base_url,
                 timeout_seconds=timeout,
+                poll_retry_budget_seconds=effective_poll_retry_budget,
+                poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
             )
         finally:
             await channel.close(grace=None)
@@ -1497,7 +1588,9 @@ class Sandbox:
         request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
             response = await self._stub.Get(
-                request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
+                request,
+                timeout=self._poll_rpc_timeout_seconds,
+                metadata=self._auth_metadata,
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
@@ -1701,19 +1794,23 @@ class Sandbox:
 
     async def _poll_until_stable(
         self,
-        timeout_seconds: float | None = None,
-        timeout_message: str = "",
+        *,
+        rpc_timeout_override: float | None = None,
     ) -> gateway_pb2.GetSandboxResponse:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
         PAUSED, COMPLETED, FAILED, TERMINATED, or UNSPECIFIED). Transient
-        states like CREATING and PENDING are polled through.
+        states like CREATING and PENDING are polled through. Polls
+        indefinitely, relying on external cancellation via stop() or
+        asyncio.wait_for.
 
         Args:
-            timeout_seconds: Maximum time to wait, or None for no timeout
-                (relies on external cancellation via stop() or asyncio.wait_for).
-            timeout_message: Message for SandboxTimeoutError if timeout occurs
+            rpc_timeout_override: Per-call override for the Get RPC timeout.
+                When set, used instead of ``self._poll_rpc_timeout_seconds``.
+                ``_poll_with_retry`` passes this to clamp each retried RPC to
+                the remaining retry budget so a large per-call timeout cannot
+                exceed the overall budget.
 
         Returns:
             The GetSandboxResponse with a stable status
@@ -1726,8 +1823,12 @@ class Sandbox:
         await self._ensure_client()
         assert self._stub is not None
 
-        start_time = time.monotonic()
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        effective_rpc_timeout = (
+            rpc_timeout_override
+            if rpc_timeout_override is not None
+            else self._poll_rpc_timeout_seconds
+        )
 
         while True:
             if self._is_done or self._channel is None:
@@ -1735,16 +1836,11 @@ class Sandbox:
                     f"Sandbox {self._sandbox_id} was stopped while polling"
                 )
 
-            if timeout_seconds is not None:
-                elapsed = time.monotonic() - start_time
-                if elapsed > timeout_seconds:
-                    raise SandboxTimeoutError(timeout_message)
-
             request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
                 response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
                     request,
-                    timeout=self._request_timeout_seconds,
+                    timeout=effective_rpc_timeout,
                     metadata=self._auth_metadata,
                 )
             except grpc.RpcError as e:

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
@@ -30,6 +31,18 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 300.0
 
 # Timeout for lightweight discovery RPCs (list/get runners and profiles).
 DEFAULT_DISCOVERY_TIMEOUT_SECONDS: float = 30.0
+
+# Wall-clock budget per retry burst (one trip to a stable status) on poll
+# RPCs.  The budget resets on any successful response, so a long-lived
+# sandbox that hits a transient error, recovers, then hits another much
+# later gets a fresh budget each time.  Set to 0.0 to disable retries
+# entirely (the first transient error re-raises).
+DEFAULT_POLL_RETRY_BUDGET_SECONDS: float = 30.0
+
+# Per-call timeout for poll Get RPCs (seconds). Kept separate from
+# request_timeout_seconds so a wedged poll fails fast instead of blocking
+# on the broader request timeout.
+DEFAULT_POLL_RPC_TIMEOUT_SECONDS: float = 15.0
 
 # If not set, the backend controls the default lifetime of the sandboxes
 DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
@@ -98,6 +111,28 @@ def _merge_dicts(base: dict[str, str], additional: dict[str, str] | None) -> dic
     return merged
 
 
+def _validate_poll_config(
+    poll_retry_budget_seconds: float,
+    poll_rpc_timeout_seconds: float,
+) -> None:
+    """Validate poll config values. Raises ValueError on bad input.
+
+    The NaN rejection is load-bearing: NaN would silently defeat the
+    ``retry_deadline`` check in the retry loop (all comparisons with
+    NaN return False, so a retry would never time out).
+    """
+    if not math.isfinite(poll_retry_budget_seconds) or poll_retry_budget_seconds < 0:
+        raise ValueError(
+            "poll_retry_budget_seconds must be a non-negative finite float "
+            f"(got {poll_retry_budget_seconds!r}). Use 0.0 to disable retry."
+        )
+    if not math.isfinite(poll_rpc_timeout_seconds) or poll_rpc_timeout_seconds <= 0:
+        raise ValueError(
+            "poll_rpc_timeout_seconds must be a positive finite float "
+            f"(got {poll_rpc_timeout_seconds!r})."
+        )
+
+
 @dataclass(frozen=True)
 class SandboxDefaults:
     """Immutable configuration defaults for sandbox creation.
@@ -117,7 +152,17 @@ class SandboxDefaults:
         command: Entrypoint command to run.
         args: Arguments passed to the command.
         base_url: CWSandbox API endpoint URL.
-        request_timeout_seconds: Client-side HTTP timeout in seconds.
+        request_timeout_seconds: Client-side HTTP timeout in seconds for most
+            RPCs. Poll Get RPCs use ``poll_rpc_timeout_seconds`` instead.
+        poll_retry_budget_seconds: Wall-clock budget per retry burst (one trip
+            to a stable status).  The budget resets on any successful response,
+            so a long-lived sandbox that hits a transient error, recovers, then
+            hits another much later gets a fresh budget each time.  Retryable
+            transient codes are UNAVAILABLE, DEADLINE_EXCEEDED, and
+            RESOURCE_EXHAUSTED.  Set to 0.0 to disable retries entirely.
+        poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs. Kept
+            separate from ``request_timeout_seconds`` so a wedged poll fails
+            fast instead of blocking on the broader request timeout.
         max_lifetime_seconds: Server-side sandbox lifetime limit in seconds.
             None lets the backend control the default.
         temp_dir: Temp directory path inside the sandbox.
@@ -163,6 +208,8 @@ class SandboxDefaults:
     args: tuple[str, ...] = DEFAULT_ARGS
     base_url: str = DEFAULT_BASE_URL
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
+    poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS
+    poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
     temp_dir: str = DEFAULT_TEMP_DIR
     tags: tuple[str, ...] = field(default_factory=tuple)
@@ -174,6 +221,13 @@ class SandboxDefaults:
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate numeric poll configuration fields."""
+        _validate_poll_config(
+            self.poll_retry_budget_seconds,
+            self.poll_rpc_timeout_seconds,
+        )
 
     def merge_tags(self, additional: list[str] | None) -> list[str]:
         """Combine default tags with additional tags.
@@ -231,6 +285,8 @@ class SandboxDefaults:
             "args",
             "base_url",
             "request_timeout_seconds",
+            "poll_retry_budget_seconds",
+            "poll_rpc_timeout_seconds",
             "temp_dir",
             "tags",
             "environment_variables",

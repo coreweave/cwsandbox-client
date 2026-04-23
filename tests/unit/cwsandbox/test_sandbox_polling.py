@@ -497,3 +497,26 @@ class TestCompleteDedup:
 
         await sandbox._wait_until_complete_async()
         assert sandbox.status == SandboxStatus.COMPLETED
+
+
+class TestPollRpcTimeout:
+    """Verify poll Get RPCs use poll_rpc_timeout_seconds, not request_timeout_seconds."""
+
+    @pytest.mark.asyncio
+    async def test_poll_get_uses_poll_rpc_timeout(self) -> None:
+        """The poll Get call passes _poll_rpc_timeout_seconds as its timeout."""
+        captured_timeouts: list[float] = []
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            captured_timeouts.append(timeout)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+
+        sandbox = _make_sandbox(timeout=300.0)
+        sandbox._poll_rpc_timeout_seconds = 5.0
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_running_async()
+
+        assert captured_timeouts == [5.0]
+        # request_timeout_seconds is preserved for non-poll RPCs
+        assert sandbox._request_timeout_seconds == 300.0

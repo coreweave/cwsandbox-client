@@ -670,6 +670,47 @@ class TestSessionList:
             call_args = mock_stub.List.call_args[0][0]
             assert call_args.include_stopped is True
 
+    @pytest.mark.asyncio
+    async def test_list_propagates_poll_defaults_to_sandboxes(self, mock_api_key: str) -> None:
+        """session.list() passes the defaults' poll fields to returned Sandboxes."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox import SandboxDefaults
+        from cwsandbox._proto import gateway_pb2
+
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
+        )
+
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=12.0,
+            poll_rpc_timeout_seconds=7.0,
+        )
+        session = Session(defaults)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await session.list()
+
+            assert len(sandboxes) == 1
+            assert sandboxes[0]._poll_retry_budget_seconds == 12.0
+            assert sandboxes[0]._poll_rpc_timeout_seconds == 7.0
+
 
 class TestSessionProfileNames:
     """Tests for profile_names support on Session methods."""
@@ -822,6 +863,44 @@ class TestSessionFromId:
             await session.from_id("test-123", adopt=False)
 
             assert session.sandbox_count == 0
+
+    @pytest.mark.asyncio
+    async def test_from_id_propagates_poll_defaults(self, mock_api_key: str) -> None:
+        """session.from_id() passes the defaults' poll fields to the returned Sandbox."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox import SandboxDefaults
+        from cwsandbox._proto import gateway_pb2
+
+        mock_response = gateway_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
+        )
+
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=12.0,
+            poll_rpc_timeout_seconds=7.0,
+        )
+        session = Session(defaults)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await session.from_id("test-123")
+
+            assert sandbox._poll_retry_budget_seconds == 12.0
+            assert sandbox._poll_rpc_timeout_seconds == 7.0
 
 
 class TestSessionAdopt:

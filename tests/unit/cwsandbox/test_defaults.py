@@ -5,6 +5,7 @@
 """Unit tests for cwsandbox._defaults module."""
 
 import dataclasses
+import math
 
 import pytest
 
@@ -228,6 +229,82 @@ class TestSandboxDefaults:
         assert defaults.secrets[0].store == "wandb"
         assert defaults.secrets[0].name == "HF_TOKEN"
 
+    def test_poll_retry_defaults(self) -> None:
+        """Poll retry config has sensible wall-clock and per-call defaults."""
+        defaults = SandboxDefaults()
+        assert defaults.poll_retry_budget_seconds == 30.0
+        assert defaults.poll_rpc_timeout_seconds == 15.0
+
+    def test_poll_retry_can_be_overridden(self) -> None:
+        """Poll retry fields accept explicit values on construction."""
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=60.0,
+            poll_rpc_timeout_seconds=5.0,
+        )
+        assert defaults.poll_retry_budget_seconds == 60.0
+        assert defaults.poll_rpc_timeout_seconds == 5.0
+
+    def test_poll_retry_budget_zero_disables_retry(self) -> None:
+        """Budget of 0 is accepted - callers use it to opt out of retry."""
+        defaults = SandboxDefaults(poll_retry_budget_seconds=0.0)
+        assert defaults.poll_retry_budget_seconds == 0.0
+
+    def test_with_overrides_preserves_poll_fields(self) -> None:
+        """with_overrides preserves unrelated poll fields."""
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=60.0,
+            poll_rpc_timeout_seconds=5.0,
+        )
+        new_defaults = defaults.with_overrides(container_image="python:3.12")
+        assert new_defaults.poll_retry_budget_seconds == 60.0
+        assert new_defaults.poll_rpc_timeout_seconds == 5.0
+
+    def test_with_overrides_can_change_poll_fields(self) -> None:
+        """with_overrides can change poll fields independently."""
+        defaults = SandboxDefaults()
+        new_defaults = defaults.with_overrides(
+            poll_retry_budget_seconds=45.0,
+            poll_rpc_timeout_seconds=10.0,
+        )
+        assert defaults.poll_retry_budget_seconds == 30.0  # original unchanged
+        assert new_defaults.poll_retry_budget_seconds == 45.0
+        assert new_defaults.poll_rpc_timeout_seconds == 10.0
+
+    def test_poll_retry_budget_seconds_rejects_negative(self) -> None:
+        """Negative poll_retry_budget_seconds raises ValueError."""
+        with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+            SandboxDefaults(poll_retry_budget_seconds=-1.0)
+
+    def test_poll_retry_budget_seconds_rejects_nan(self) -> None:
+        """NaN poll_retry_budget_seconds raises ValueError."""
+        with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+            SandboxDefaults(poll_retry_budget_seconds=math.nan)
+
+    def test_poll_retry_budget_seconds_rejects_inf(self) -> None:
+        """Infinite poll_retry_budget_seconds raises ValueError."""
+        with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+            SandboxDefaults(poll_retry_budget_seconds=math.inf)
+
+    def test_poll_retry_budget_seconds_zero_allowed(self) -> None:
+        """Zero poll_retry_budget_seconds is accepted (disables retry)."""
+        defaults = SandboxDefaults(poll_retry_budget_seconds=0.0)
+        assert defaults.poll_retry_budget_seconds == 0.0
+
+    def test_poll_rpc_timeout_seconds_rejects_zero(self) -> None:
+        """Zero poll_rpc_timeout_seconds raises ValueError - must be strictly positive."""
+        with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+            SandboxDefaults(poll_rpc_timeout_seconds=0.0)
+
+    def test_poll_rpc_timeout_seconds_rejects_negative(self) -> None:
+        """Negative poll_rpc_timeout_seconds raises ValueError."""
+        with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+            SandboxDefaults(poll_rpc_timeout_seconds=-5.0)
+
+    def test_poll_rpc_timeout_seconds_rejects_nan(self) -> None:
+        """NaN poll_rpc_timeout_seconds raises ValueError."""
+        with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+            SandboxDefaults(poll_rpc_timeout_seconds=math.nan)
+
 
 class TestSandboxDefaultsFromDict:
     """Tests for SandboxDefaults.from_dict()."""
@@ -398,6 +475,28 @@ class TestSandboxDefaultsFromDict:
         with pytest.raises(TypeError, match="must be a sequence of strings"):
             SandboxDefaults.from_dict({"tags": "prod"})
 
+    def test_from_dict_poll_retry_fields(self) -> None:
+        """from_dict round-trips poll retry fields."""
+        defaults = SandboxDefaults.from_dict(
+            {
+                "poll_retry_budget_seconds": 60.0,
+                "poll_rpc_timeout_seconds": 5.0,
+            }
+        )
+        assert defaults.poll_retry_budget_seconds == 60.0
+        assert defaults.poll_rpc_timeout_seconds == 5.0
+
+    def test_from_dict_drops_none_for_poll_fields(self) -> None:
+        """from_dict drops None for poll fields so dataclass defaults apply."""
+        defaults = SandboxDefaults.from_dict(
+            {
+                "poll_retry_budget_seconds": None,
+                "poll_rpc_timeout_seconds": None,
+            }
+        )
+        assert defaults.poll_retry_budget_seconds == 30.0
+        assert defaults.poll_rpc_timeout_seconds == 15.0
+
 
 class TestResolveSelector:
     """Tests for the _resolve_selector helper."""
@@ -445,3 +544,55 @@ class TestResolveSelector:
 
         with pytest.raises(TypeError, match="default must be a sequence of strings"):
             _resolve_selector(None, "prod")
+
+
+class TestValidatePollConfig:
+    """Tests for the _validate_poll_config helper.
+
+    Ensures invalid NaN/inf/negative/zero values cannot reach the retry
+    loop (where NaN would silently defeat the retry_deadline check).
+    """
+
+    @pytest.mark.parametrize(
+        "bad_budget",
+        [math.nan, math.inf, -math.inf, -1.0, -0.0001],
+    )
+    def test_rejects_invalid_budget(self, bad_budget: float) -> None:
+        """Invalid poll_retry_budget_seconds values raise ValueError."""
+        from cwsandbox._defaults import _validate_poll_config
+
+        with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+            _validate_poll_config(bad_budget, 15.0)
+
+    def test_accepts_zero_budget(self) -> None:
+        """Budget of 0 is accepted (callers opt out of retry)."""
+        from cwsandbox._defaults import _validate_poll_config
+
+        _validate_poll_config(0.0, 15.0)  # no raise
+
+    def test_accepts_positive_budget(self) -> None:
+        """Positive budget values pass."""
+        from cwsandbox._defaults import _validate_poll_config
+
+        _validate_poll_config(30.0, 15.0)  # no raise
+
+    @pytest.mark.parametrize(
+        "bad_rpc_timeout",
+        [math.nan, math.inf, -math.inf, -1.0, -0.5, 0.0],
+    )
+    def test_rejects_invalid_rpc_timeout(self, bad_rpc_timeout: float) -> None:
+        """Invalid poll_rpc_timeout_seconds values raise ValueError.
+
+        Unlike budget, rpc_timeout must be strictly positive: a zero-timeout
+        RPC would never complete.
+        """
+        from cwsandbox._defaults import _validate_poll_config
+
+        with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+            _validate_poll_config(30.0, bad_rpc_timeout)
+
+    def test_accepts_positive_rpc_timeout(self) -> None:
+        """Positive rpc_timeout values pass."""
+        from cwsandbox._defaults import _validate_poll_config
+
+        _validate_poll_config(30.0, 0.001)  # no raise, any positive finite value

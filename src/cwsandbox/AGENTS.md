@@ -99,3 +99,5 @@ mise run test:e2e      # Requires auth credentials
 ## Notes
 
 - **Exec API**: `exec()` returns a `Process` object. Call `.result()` to block for the final `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming output.
+
+- **Poll config validation**: `_validate_poll_config(budget, rpc_timeout)` in `_defaults.py` enforces finite, non-negative values (strictly positive for rpc_timeout). It is called from `SandboxDefaults.__post_init__`, `Sandbox.__init__` (after the None-fallback to defaults), and `Sandbox._from_sandbox_info`. NaN/inf/negative values are rejected at construction time so they cannot reach the retry loop where NaN would silently defeat the wall-clock deadline check.
