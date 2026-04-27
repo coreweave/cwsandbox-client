@@ -18,6 +18,7 @@ def main() -> None:
     defaults = SandboxDefaults(
         container_image="ubuntu:22.04",
         max_lifetime_seconds=60.0,
+        runner_ids=("prod-east-14-managed",),
         tags=("example", "basic-execution"),
     )
 
