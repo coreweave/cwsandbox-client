@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v0.22.0 (2026-04-29)
+
+### Features
+
+- Add poll retry budget and RPC timeout configuration
+  ([`db6c818`](https://github.com/coreweave/cwsandbox-client/commit/db6c818c48ce6a5fe4f95a39988ee0423f5aa21d))
+
+Plumbing for the upcoming retry wrapper. Two SandboxDefaults fields:
+
+- poll_retry_budget_seconds (30s): wall-clock retry budget. Separate from request_timeout_seconds
+  because one is cumulative across attempts, the other is per-call. - poll_rpc_timeout_seconds
+  (15s): per-call poll Get deadline so a wedged poll fails fast instead of riding the broader
+  request timeout.
+
+_validate_poll_config rejects NaN/inf/negative at every construction site; NaN would silently defeat
+  the wall-clock deadline check once the retry loop lands.
+
+- Add retryable/fatal exception subclasses for poll translation
+  ([`720db5f`](https://github.com/coreweave/cwsandbox-client/commit/720db5fb9f41a7a15528cd84d2c56a9688c34a82))
+
+SandboxNotRunningError and SandboxTimeoutError each span retryable and fatal cases (UNAVAILABLE vs
+  CANCELLED; DEADLINE_EXCEEDED vs command timeout). Class-based dispatch can't distinguish them
+  today, blocking the upcoming poll retry classifier.
+
+Add four subclasses and wire the translator to emit them: SandboxUnavailableError,
+  SandboxRequestTimeoutError, SandboxCommandTimeoutError, SandboxResourceExhaustedError. Umbrella
+  parents are preserved so existing except clauses still catch.
+
+- Retry post-stop NOT_FOUND before surfacing backend ambiguity
+  ([`1adca9b`](https://github.com/coreweave/cwsandbox-client/commit/1adca9b3802650676d1b7ead93d26850db31cab7))
+
+The backend persists terminal state for stopped sandboxes, so post-stop Get should return COMPLETED
+  or FAILED. NOT_FOUND here is a narrow race with the backend's terminal-state write, or rollout
+  skew.
+
+On post-stop NOT_FOUND (_stop_owned or _missing_ok_observe path), retry Get within
+  NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS (2s). If the race resolves, waiters see the real
+  terminal. If NOT_FOUND persists, raise SandboxTerminalStateUnavailableError so callers see the
+  ambiguity explicitly rather than a fabricated terminal.
+
+The retry lives in _do_poll_complete, not _classify_poll_error, because NOT_FOUND retryability is
+  contextual (stop-state-machine-aware), not class-based. External-delete NOT_FOUND still surfaces
+  immediately.
+
+- Retry transient errors in the sandbox-status poll loop
+  ([`50dcbb9`](https://github.com/coreweave/cwsandbox-client/commit/50dcbb97cff8f503d7fda5c61a725dafd1eabd6a))
+
+A single UNAVAILABLE/DEADLINE_EXCEEDED blip or RESOURCE_EXHAUSTED spike previously propagated as a
+  fatal SandboxError even when the sandbox itself was healthy. Wrap the shared _running_task /
+  _complete_task with _poll_with_retry; _classify_poll_error dispatches on subclass, with
+  SandboxNotFoundError short-circuiting to fatal.
+
+Retry state lives in the coroutine, not on self, because concurrent waiters share the poll task.
+
+Honors AIP-193 retry_delay when present (capped so a misconfigured server can't stall). Decorrelated
+  jitter on the no-hint path prevents fleet-wide synchronization during regional outages.
+
+
 ## v0.21.0 (2026-04-23)
 
 ### Features
