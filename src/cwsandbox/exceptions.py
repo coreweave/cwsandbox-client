@@ -141,6 +141,57 @@ class SandboxFileError(SandboxError):
         self.filepath = filepath
 
 
+class SandboxUnavailableError(SandboxNotRunningError):
+    """Raised when the sandbox service is transiently unavailable.
+
+    Emitted for gRPC ``UNAVAILABLE`` and AIP-193 UNAVAILABLE_REASONS.
+    Poll loop treats this as retryable. This retry contract is
+    poll-specific; callers of non-poll operations must decide their
+    own retry policy.
+    """
+
+
+class SandboxRequestTimeoutError(SandboxTimeoutError):
+    """Raised when a gRPC request exceeded its deadline.
+
+    Emitted for gRPC ``DEADLINE_EXCEEDED``. Poll loop treats this as
+    retryable.
+    """
+
+
+class SandboxCommandTimeoutError(SandboxTimeoutError):
+    """Raised when the user's command inside the sandbox timed out.
+
+    Emitted when the backend signals ``CWSANDBOX_COMMAND_TIMEOUT`` via
+    AIP-193 reason. This is NOT retryable - the command itself exceeded
+    its timeout budget.
+    """
+
+
+class SandboxResourceExhaustedError(SandboxError):
+    """Raised when the sandbox service is under resource pressure.
+
+    Emitted for gRPC ``RESOURCE_EXHAUSTED``. Poll loop treats this as
+    retryable, but callers should back off - the server is overloaded.
+    """
+
+
+class SandboxTerminalStateUnavailableError(SandboxError):
+    """Raised when the backend does not report a terminal state after stop.
+
+    After a successful ``stop()``, the backend should return the persisted
+    terminal state (COMPLETED or FAILED) on subsequent ``Get`` calls. A
+    narrow race between the backend's terminal-state write and the client's
+    next poll, or backend-rollout skew, can surface as NOT_FOUND. The SDK
+    retries for a brief budget; if NOT_FOUND persists past that budget,
+    this exception is raised.
+
+    Callers seeing this should treat the outcome as ambiguous - the stop
+    succeeded, but whether the user's workload completed or failed is not
+    observable from the client.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 

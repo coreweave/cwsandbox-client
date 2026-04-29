@@ -453,19 +453,32 @@ CWSandboxError
 ├── CWSandboxAuthenticationError
 ├── SandboxError
 │   ├── SandboxNotRunningError
+│   │   └── SandboxUnavailableError      # transient service unavailability (gRPC UNAVAILABLE / AIP-193 UNAVAILABLE_REASONS)
+│   │   # raw SandboxNotRunningError is also emitted for CANCELLED and local-stop paths
 │   ├── SandboxTimeoutError
+│   │   ├── SandboxRequestTimeoutError   # gRPC request deadline (DEADLINE_EXCEEDED)
+│   │   └── SandboxCommandTimeoutError   # user command exceeded its timeout (AIP-193 CWSANDBOX_COMMAND_TIMEOUT)
+│   ├── SandboxResourceExhaustedError    # backend resource pressure (gRPC RESOURCE_EXHAUSTED)
+│   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
 │   ├── SandboxTerminatedError
 │   ├── SandboxFailedError
-│   ├── SandboxNotFoundError         # .sandbox_id attribute
-│   ├── SandboxExecutionError        # .exec_result, .exception_type, .exception_message attributes
-│   └── SandboxFileError             # .filepath attribute
+│   ├── SandboxNotFoundError             # .sandbox_id attribute
+│   ├── SandboxExecutionError            # .exec_result, .exception_type, .exception_message attributes
+│   └── SandboxFileError                 # .filepath attribute
 ├── DiscoveryError
-│   ├── RunnerNotFoundError          # .runner_id attribute
-│   └── ProfileNotFoundError         # .profile_name, .runner_id attributes
+│   ├── RunnerNotFoundError              # .runner_id attribute
+│   └── ProfileNotFoundError             # .profile_name, .runner_id attributes
 └── FunctionError
     ├── AsyncFunctionError
     └── FunctionSerializationError
 ```
+
+**Poll retry classification**: The sandbox-status poll loop splits exception
+classes into retryable and fatal, dispatched purely by ``isinstance`` against a
+registry tuple. See ``_classify_poll_error`` and ``_RETRYABLE_POLL_EXCEPTIONS``
+in ``src/cwsandbox/_sandbox.py`` for the current membership. Retryable classes
+are subclasses of the existing umbrella exceptions, so callers catching the
+parent classes continue to work unchanged.
 
 ## Examples
 

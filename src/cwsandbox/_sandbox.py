@@ -9,6 +9,7 @@ import builtins
 import contextlib
 import logging
 import os
+import random
 import shlex
 import threading
 import time
@@ -31,6 +32,8 @@ from cwsandbox._defaults import (
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_POLL_RETRY_BUDGET_SECONDS,
+    DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_LINE_BUFFER_BYTES,
     STDIN_CHUNK_SIZE,
@@ -38,6 +41,7 @@ from cwsandbox._defaults import (
     STREAMING_RESPONSE_QUEUE_SIZE,
     SandboxDefaults,
     _resolve_selector,
+    _validate_poll_config,
 )
 from cwsandbox._error_info import (
     CWSANDBOX_COMMAND_TIMEOUT,
@@ -77,14 +81,19 @@ from cwsandbox._types import (
 )
 from cwsandbox.exceptions import (
     CWSandboxError,
+    SandboxCommandTimeoutError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxRequestTimeoutError,
+    SandboxResourceExhaustedError,
+    SandboxTerminalStateUnavailableError,
     SandboxTerminatedError,
     SandboxTimeoutError,
+    SandboxUnavailableError,
 )
 
 if TYPE_CHECKING:
@@ -255,14 +264,14 @@ def _translate_rpc_error(
                 retry_delay=retry_delay,
             )
         if reason == CWSANDBOX_COMMAND_TIMEOUT:
-            return SandboxTimeoutError(
+            return SandboxCommandTimeoutError(
                 f"{operation} timed out: {details}",
                 reason=reason,
                 metadata=metadata,
                 retry_delay=retry_delay,
             )
         if reason in UNAVAILABLE_REASONS:
-            return SandboxNotRunningError(
+            return SandboxUnavailableError(
                 f"Service unavailable: {details}",
                 reason=reason,
                 metadata=metadata,
@@ -286,15 +295,22 @@ def _translate_rpc_error(
             retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-        return SandboxTimeoutError(
+        return SandboxRequestTimeoutError(
             f"{operation} timed out: {details}",
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
         )
     if code == grpc.StatusCode.UNAVAILABLE:
-        return SandboxNotRunningError(
+        return SandboxUnavailableError(
             f"Service unavailable: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+        return SandboxResourceExhaustedError(
+            f"{operation} resource exhausted: {details}",
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
@@ -305,6 +321,47 @@ def _translate_rpc_error(
         fallback_cls=SandboxError,
         parsed=parsed,
     )
+
+
+_PollErrorClassification = Literal["retryable", "fatal"]
+
+
+# Maximum time to honor for a server-hinted retry_delay (AIP-193 RetryInfo).
+# Ensures one hinted sleep cannot consume the entire retry budget in a
+# single sleep - the remaining budget is also a ceiling, so a misconfigured
+# server emitting a large hint still only stalls the poll by at most
+# min(hint, budget, 10s).
+MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
+
+# Bounded retry budget for post-stop NOT_FOUND responses. The backend
+# persists terminal state for stopped sandboxes, so Get should return
+# COMPLETED or FAILED. NOT_FOUND here is expected only in a narrow race
+# between the backend's terminal-state write and our next poll, or in
+# backend-rollout skew; retrying briefly lets the backend converge. If
+# NOT_FOUND persists past this budget, SandboxTerminalStateUnavailableError
+# is raised so the caller sees the ambiguity explicitly.
+NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS: float = 2.0
+
+
+_RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
+    SandboxUnavailableError,
+    SandboxRequestTimeoutError,
+    SandboxResourceExhaustedError,
+)
+
+
+def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
+    """Classify a translated poll exception as retryable or fatal.
+
+    NOT_FOUND is always fatal regardless of the reason or transport code
+    that produced it - callers that receive ``SandboxNotFoundError`` have an
+    authoritative "gone" signal and must not retry it at the poll level.
+    """
+    if isinstance(exc, SandboxNotFoundError):
+        return "fatal"
+    if isinstance(exc, _RETRYABLE_POLL_EXCEPTIONS):
+        return "retryable"
+    return "fatal"
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +524,8 @@ class Sandbox:
         tags: list[str] | None = None,
         base_url: str | None = None,
         request_timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         profile_ids: list[str] | None = None,
         profile_names: list[str] | None = None,
@@ -492,6 +551,11 @@ class Sandbox:
             tags: Optional tags for the sandbox
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
             request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
                 the backend controls the default.
             profile_ids: Optional list of profile IDs for infrastructure selection.
@@ -541,6 +605,20 @@ class Sandbox:
             request_timeout_seconds
             if request_timeout_seconds is not None
             else self._defaults.request_timeout_seconds
+        )
+        self._poll_retry_budget_seconds = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else self._defaults.poll_retry_budget_seconds
+        )
+        self._poll_rpc_timeout_seconds = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else self._defaults.poll_rpc_timeout_seconds
+        )
+        _validate_poll_config(
+            self._poll_retry_budget_seconds,
+            self._poll_rpc_timeout_seconds,
         )
         self._max_lifetime_seconds = (
             max_lifetime_seconds
@@ -617,6 +695,12 @@ class Sandbox:
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stop_owned: bool = False
+        # Set when a caller invokes stop(missing_ok=True) on a sandbox that
+        # is already draining (observe-only path). Widens the NOT_FOUND
+        # retry gate in _do_poll_complete so the observe-only waiter treats
+        # NOT_FOUND as a backend race (retry briefly for authoritative
+        # terminal state) rather than propagating SandboxNotFoundError.
+        self._missing_ok_observe: bool = False
 
         self._status_updated_at: datetime | None = None
         self._service_address: str | None = None
@@ -648,6 +732,8 @@ class Sandbox:
         container_image: str | None = None,
         defaults: SandboxDefaults | None = None,
         request_timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
         tags: list[str] | None = None,
         profile_ids: list[str] | None = None,
@@ -676,6 +762,11 @@ class Sandbox:
             container_image: Container image to use
             defaults: Optional SandboxDefaults to apply
             request_timeout_seconds: Timeout for API requests (client-side)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to
+                0 to disable retry.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
             profile_ids: Optional list of profile IDs for infrastructure selection.
@@ -738,6 +829,8 @@ class Sandbox:
             container_image=container_image,
             defaults=defaults,
             request_timeout_seconds=request_timeout_seconds,
+            poll_retry_budget_seconds=poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
             tags=tags,
             profile_ids=profile_ids,
@@ -798,6 +891,8 @@ class Sandbox:
         *,
         base_url: str,
         timeout_seconds: float,
+        poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS,
+        poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
         sandbox = cls.__new__(cls)
@@ -805,6 +900,12 @@ class Sandbox:
         sandbox._status_updated_at = datetime.now(UTC)
         sandbox._base_url = base_url
         sandbox._request_timeout_seconds = timeout_seconds
+        sandbox._poll_retry_budget_seconds = poll_retry_budget_seconds
+        sandbox._poll_rpc_timeout_seconds = poll_rpc_timeout_seconds
+        _validate_poll_config(
+            sandbox._poll_retry_budget_seconds,
+            sandbox._poll_rpc_timeout_seconds,
+        )
         # Not applicable for discovered sandboxes
         sandbox._command = None
         sandbox._args = None
@@ -832,6 +933,7 @@ class Sandbox:
         sandbox._stop_task = None
         sandbox._stop_lock = asyncio.Lock()
         sandbox._stop_owned = False
+        sandbox._missing_ok_observe = False
         sandbox._loop_manager = _LoopManager.get()
         sandbox._service_address = None
         sandbox._exposed_ports = None
@@ -877,6 +979,8 @@ class Sandbox:
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List existing sandboxes with optional filters.
 
@@ -903,6 +1007,12 @@ class Sandbox:
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry. Applied to returned Sandbox instances.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from ``timeout_seconds``. Applied to
+                returned Sandbox instances.
 
         Returns:
             OperationRef[list[Sandbox]]: Use .result() to block for results,
@@ -937,6 +1047,8 @@ class Sandbox:
                 include_stopped=include_stopped,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
+                poll_retry_budget_seconds=poll_retry_budget_seconds,
+                poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -953,6 +1065,8 @@ class Sandbox:
         include_stopped: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
         effective_base_url = (
@@ -961,6 +1075,17 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
+        effective_poll_retry_budget = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else DEFAULT_POLL_RETRY_BUDGET_SECONDS
+        )
+        effective_poll_rpc_timeout = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else DEFAULT_POLL_RPC_TIMEOUT_SECONDS
+        )
+        _validate_poll_config(effective_poll_retry_budget, effective_poll_rpc_timeout)
 
         status_enum = None
         if status is not None:
@@ -1005,6 +1130,8 @@ class Sandbox:
                     sb,
                     base_url=effective_base_url,
                     timeout_seconds=timeout,
+                    poll_retry_budget_seconds=effective_poll_retry_budget,
+                    poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
                 )
                 for sb in sandbox_infos
             ]
@@ -1018,6 +1145,8 @@ class Sandbox:
         *,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> OperationRef[Sandbox]:
         """Attach to an existing sandbox by ID.
 
@@ -1028,6 +1157,12 @@ class Sandbox:
             sandbox_id: The ID of the existing sandbox
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
+            poll_retry_budget_seconds: Wall-clock budget for retrying transient
+                errors on the sandbox-status poll loop (default: 30s). Set to 0
+                to disable retry. Applied to the returned Sandbox instance.
+            poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
+                (default: 15s). Separate from ``timeout_seconds``. Applied to
+                the returned Sandbox instance.
 
         Returns:
             OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
@@ -1053,6 +1188,8 @@ class Sandbox:
                 sandbox_id,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
+                poll_retry_budget_seconds=poll_retry_budget_seconds,
+                poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -1064,6 +1201,8 @@ class Sandbox:
         *,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
     ) -> Sandbox:
         """Internal async: Attach to an existing sandbox by ID."""
         effective_base_url = (
@@ -1072,6 +1211,17 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
+        effective_poll_retry_budget = (
+            poll_retry_budget_seconds
+            if poll_retry_budget_seconds is not None
+            else DEFAULT_POLL_RETRY_BUDGET_SECONDS
+        )
+        effective_poll_rpc_timeout = (
+            poll_rpc_timeout_seconds
+            if poll_rpc_timeout_seconds is not None
+            else DEFAULT_POLL_RPC_TIMEOUT_SECONDS
+        )
+        _validate_poll_config(effective_poll_retry_budget, effective_poll_rpc_timeout)
 
         auth_metadata = resolve_auth_metadata()
 
@@ -1090,6 +1240,8 @@ class Sandbox:
                 response,
                 base_url=effective_base_url,
                 timeout_seconds=timeout,
+                poll_retry_budget_seconds=effective_poll_retry_budget,
+                poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
             )
         finally:
             await channel.close(grace=None)
@@ -1498,7 +1650,9 @@ class Sandbox:
         request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
             response = await self._stub.Get(
-                request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
+                request,
+                timeout=self._poll_rpc_timeout_seconds,
+                metadata=self._auth_metadata,
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
@@ -1702,19 +1856,23 @@ class Sandbox:
 
     async def _poll_until_stable(
         self,
-        timeout_seconds: float | None = None,
-        timeout_message: str = "",
+        *,
+        rpc_timeout_override: float | None = None,
     ) -> gateway_pb2.GetSandboxResponse:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
         PAUSED, COMPLETED, FAILED, TERMINATED, or UNSPECIFIED). Transient
-        states like CREATING and PENDING are polled through.
+        states like CREATING and PENDING are polled through. Polls
+        indefinitely, relying on external cancellation via stop() or
+        asyncio.wait_for.
 
         Args:
-            timeout_seconds: Maximum time to wait, or None for no timeout
-                (relies on external cancellation via stop() or asyncio.wait_for).
-            timeout_message: Message for SandboxTimeoutError if timeout occurs
+            rpc_timeout_override: Per-call override for the Get RPC timeout.
+                When set, used instead of ``self._poll_rpc_timeout_seconds``.
+                ``_poll_with_retry`` passes this to clamp each retried RPC to
+                the remaining retry budget so a large per-call timeout cannot
+                exceed the overall budget.
 
         Returns:
             The GetSandboxResponse with a stable status
@@ -1727,8 +1885,12 @@ class Sandbox:
         await self._ensure_client()
         assert self._stub is not None
 
-        start_time = time.monotonic()
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        effective_rpc_timeout = (
+            rpc_timeout_override
+            if rpc_timeout_override is not None
+            else self._poll_rpc_timeout_seconds
+        )
 
         while True:
             if self._is_done or self._channel is None:
@@ -1736,16 +1898,11 @@ class Sandbox:
                     f"Sandbox {self._sandbox_id} was stopped while polling"
                 )
 
-            if timeout_seconds is not None:
-                elapsed = time.monotonic() - start_time
-                if elapsed > timeout_seconds:
-                    raise SandboxTimeoutError(timeout_message)
-
             request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
                 response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
                     request,
-                    timeout=self._request_timeout_seconds,
+                    timeout=effective_rpc_timeout,
                     metadata=self._auth_metadata,
                 )
             except grpc.RpcError as e:
@@ -1776,6 +1933,120 @@ class Sandbox:
             poll_interval = min(
                 poll_interval * DEFAULT_POLL_BACKOFF_FACTOR,
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
+            )
+
+    async def _poll_with_retry(self) -> gateway_pb2.GetSandboxResponse:
+        """Poll ``_poll_until_stable`` with bounded retry on transient errors.
+
+        The retry budget (``poll_retry_budget_seconds``) caps wall-clock time
+        spent retrying after a transient failure; it does not cap normal
+        polling. See :attr:`SandboxDefaults.poll_retry_budget_seconds` for
+        the full contract.
+
+        Raises:
+            SandboxNotFoundError: Fatal immediately; never retried.
+            CWSandboxError: Any non-retryable exception from
+                ``_poll_until_stable``. On budget exhaustion, the last
+                translated exception is re-raised unchanged rather than
+                wrapped.
+        """
+        # Retry state (deadline, prev sleep, attempts, last exception) is
+        # local to this coroutine, not on ``self``. The shared _running_task
+        # / _complete_task design lets multiple waiters await the same poll;
+        # state on ``self`` would race between concurrent invocations and
+        # leak budget across unrelated polls.
+        #
+        # Clamp the first RPC timeout to the retry budget so a single wedged
+        # Get cannot stall longer than the budget ceiling. Do not start the
+        # deadline timer yet: the budget is for retry bursts, and healthy
+        # polling across transient states (CREATING, PENDING) must not
+        # consume it. The timer starts on the first retryable failure below.
+        rpc_timeout_override: float | None = None
+        if self._poll_retry_budget_seconds > 0:
+            rpc_timeout_override = min(
+                self._poll_rpc_timeout_seconds,
+                self._poll_retry_budget_seconds,
+            )
+
+        retry_deadline: float | None = None
+        last_exc: CWSandboxError | None = None
+        prev_sleep = DEFAULT_POLL_INTERVAL_SECONDS
+        attempts = 0
+
+        while True:
+            try:
+                return await self._poll_until_stable(
+                    rpc_timeout_override=rpc_timeout_override,
+                )
+            except CWSandboxError as exc:
+                last_exc = exc
+                classification = _classify_poll_error(exc)
+                if classification != "retryable":
+                    raise
+                if self._poll_retry_budget_seconds <= 0:
+                    raise
+
+                # First retryable failure: start the deadline timer.
+                if retry_deadline is None:
+                    retry_deadline = time.monotonic() + self._poll_retry_budget_seconds
+
+                attempts += 1
+                now = time.monotonic()
+                if now >= retry_deadline:
+                    logger.debug(
+                        "poll retry budget exhausted for sandbox %s after %d attempt(s)",
+                        self._sandbox_id,
+                        attempts,
+                    )
+                    raise
+                remaining = retry_deadline - now
+                # AIP-193 RetryInfo hints are honored literally (the server
+                # may already be jittering); otherwise use AWS-style
+                # decorrelated jitter on the computed backoff to avoid
+                # fleet-scale thundering herd during regional outages.
+                hinted_delay = exc.retry_delay.total_seconds() if exc.retry_delay else None
+                if hinted_delay is not None and hinted_delay > 0:
+                    sleep_for = min(hinted_delay, remaining, MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
+                    source = "hinted"
+                else:
+                    base = DEFAULT_POLL_INTERVAL_SECONDS
+                    cap = DEFAULT_MAX_POLL_INTERVAL_SECONDS
+                    jitter_ceiling = max(
+                        base,
+                        min(cap, prev_sleep * DEFAULT_POLL_BACKOFF_FACTOR, remaining),
+                    )
+                    sleep_for = min(random.uniform(base, jitter_ceiling), remaining)
+                    source = "computed-jittered"
+                cause = exc.__cause__ if isinstance(exc.__cause__, grpc.RpcError) else None
+                code = cause.code() if cause is not None else None
+                logger.debug(
+                    "poll retry for sandbox %s: code=%s sleep=%.2fs source=%s remaining=%.2fs",
+                    self._sandbox_id,
+                    code,
+                    sleep_for,
+                    source,
+                    remaining,
+                )
+            await asyncio.sleep(sleep_for)
+            prev_sleep = sleep_for
+            # Re-check deadline after the sleep: a long hinted delay plus the
+            # elapsed retry loop can exhaust the budget while we slept. Re-raise
+            # the last translated exception rather than issuing an RPC that
+            # would overrun the overall budget. The deadline is always set by
+            # this point because the first retryable failure sets it above.
+            assert retry_deadline is not None
+            now = time.monotonic()
+            if now >= retry_deadline:
+                assert last_exc is not None
+                raise last_exc
+            # Clamp the next RPC timeout to whatever budget remains, so a
+            # wedged Get cannot run past the overall ceiling. Floor at 0.1s
+            # to avoid degenerate zero-timeout RPCs that would fail before
+            # the gRPC stack even dispatches them.
+            post_sleep_remaining = retry_deadline - now
+            rpc_timeout_override = min(
+                self._poll_rpc_timeout_seconds,
+                max(0.1, post_sleep_remaining),
             )
 
     async def _ensure_started_async(self) -> None:
@@ -1952,7 +2223,7 @@ class Sandbox:
         SandboxStatus for per-waiter raise_on_termination control.
         """
         assert self._sandbox_id is not None
-        response = await self._poll_until_stable()
+        response = await self._poll_with_retry()
 
         self._state = self._apply_sandbox_info(response, source="poll")
         self._status_updated_at = datetime.now(UTC)
@@ -2057,6 +2328,43 @@ class Sandbox:
                 ) from None
             raise
 
+    async def _retry_post_stop_not_found(self) -> gateway_pb2.GetSandboxResponse:
+        """Retry ``Get`` for a bounded budget after a post-stop NOT_FOUND.
+
+        Raises:
+            SandboxTerminalStateUnavailableError: NOT_FOUND persists past
+                the retry budget.
+        """
+        sandbox_id = self._sandbox_id
+        deadline = time.monotonic() + NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS
+        retry_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                logger.info(
+                    "Sandbox %s: NOT_FOUND past %.1fs retry budget; "
+                    "surfacing terminal-state ambiguity to caller",
+                    sandbox_id,
+                    NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS,
+                )
+                raise SandboxTerminalStateUnavailableError(
+                    f"Stop succeeded for sandbox {sandbox_id}, but backend "
+                    f"did not report terminal state within "
+                    f"{NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS:.1f}s. "
+                    f"The terminal outcome (COMPLETED or FAILED) is not "
+                    f"observable from the client."
+                )
+            # Sleep the retry interval, clamped by the remaining budget.
+            await asyncio.sleep(min(retry_interval, deadline - now))
+            try:
+                return await self._poll_with_retry()
+            except SandboxNotFoundError:
+                retry_interval = min(
+                    retry_interval * DEFAULT_POLL_BACKOFF_FACTOR,
+                    DEFAULT_MAX_POLL_INTERVAL_SECONDS,
+                )
+                continue
+
     async def _do_poll_complete(self) -> SandboxStatus:
         """Poll until sandbox reaches terminal state and return the status.
 
@@ -2074,7 +2382,23 @@ class Sandbox:
         assert self._sandbox_id is not None
         poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
         while True:
-            response = await self._poll_until_stable()
+            try:
+                response = await self._poll_with_retry()
+            except SandboxNotFoundError:
+                # Post-stop NOT_FOUND is a narrow race: the backend persists
+                # terminal state for stopped sandboxes, but its DB write may
+                # not have committed yet when we poll. Retry briefly so the
+                # backend can report its authoritative state.
+                if not (self._stop_owned or (self._is_stopping and self._missing_ok_observe)):
+                    raise
+                # Defensive: if we somehow already hold a terminal state,
+                # preserve it rather than let a transient NOT_FOUND replace
+                # it. In the normal flow this cannot happen because the
+                # outer loop returns on terminal states, but Stop-path code
+                # may mutate self._state concurrently.
+                if isinstance(self._state, _Terminal) and self._state.status in _TERMINAL_STATUSES:
+                    return self._state.status
+                response = await self._retry_post_stop_not_found()
 
             self._state = self._apply_sandbox_info(response, source="poll")
             self._status_updated_at = datetime.now(UTC)
@@ -2163,7 +2487,13 @@ class Sandbox:
                 isinstance(self._state, _Terminal)
                 and self._state.status == SandboxStatus.TERMINATED
             ):
-                raise SandboxNotRunningError(f"Sandbox {sandbox_id} has been stopped") from None
+                # missing_ok stop can cancel an in-flight waiter before
+                # _stop_owned is set.  Route through the normal terminal
+                # policy gate so raise_on_termination=False suppresses the
+                # error as callers expect.
+                return self._raise_or_return_for_terminal(
+                    self._state, raise_on_termination=raise_on_termination
+                )
             raise
 
         assert isinstance(self._state, _Terminal)
@@ -2249,6 +2579,13 @@ class Sandbox:
                 reported as TERMINATED by backend (and raise_on_termination=True)
             SandboxFailedError: If sandbox failed
 
+        Note:
+            ``poll_retry_budget_seconds`` is a hard sub-timeout inside the
+            user's ``timeout`` parameter. A 30s retry budget with a 300s user
+            timeout can surface budget-exhaustion errors around 30s. Callers
+            that want longer retry should configure
+            ``poll_retry_budget_seconds`` accordingly.
+
         Examples:
             ```python
             sb = Sandbox.run("python", "-c", "print('done')")
@@ -2331,6 +2668,12 @@ class Sandbox:
                     "Sandbox %s already stopping, waiting for terminal",
                     self._sandbox_id,
                 )
+                if missing_ok:
+                    # Widen the NOT_FOUND retry gate in _do_poll_complete so
+                    # the observe-only waiter treats NOT_FOUND as a race and
+                    # retries briefly for an authoritative terminal state,
+                    # rather than propagating SandboxNotFoundError.
+                    self._missing_ok_observe = True
             elif self._sandbox_id is None:
                 self._state = _NotStarted(cancelled=True)
                 return

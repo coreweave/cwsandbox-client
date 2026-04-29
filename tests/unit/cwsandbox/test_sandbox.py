@@ -6,6 +6,7 @@
 
 import asyncio
 import concurrent.futures
+import math
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1645,6 +1646,227 @@ class TestSandboxAnnotations:
 
         assert sandbox._annotations == {}
 
+    def test_from_sandbox_info_default_poll_fields(self) -> None:
+        """_from_sandbox_info applies poll defaults when callers omit them."""
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "test-id"
+        mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
+        mock_info.started_at_time = None
+        mock_info.runner_id = None
+        mock_info.profile_id = None
+        mock_info.runner_group_id = None
+
+        sandbox = Sandbox._from_sandbox_info(
+            mock_info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+
+        assert sandbox._poll_retry_budget_seconds == 30.0
+        assert sandbox._poll_rpc_timeout_seconds == 15.0
+
+    def test_from_sandbox_info_preserves_poll_fields(self) -> None:
+        """_from_sandbox_info threads explicit poll values through to instance fields."""
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "test-id"
+        mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
+        mock_info.started_at_time = None
+        mock_info.runner_id = None
+        mock_info.profile_id = None
+        mock_info.runner_group_id = None
+
+        sandbox = Sandbox._from_sandbox_info(
+            mock_info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+            poll_retry_budget_seconds=60.0,
+            poll_rpc_timeout_seconds=5.0,
+        )
+
+        assert sandbox._poll_retry_budget_seconds == 60.0
+        assert sandbox._poll_rpc_timeout_seconds == 5.0
+
+    def test_init_uses_session_defaults_for_poll_fields(self) -> None:
+        """Sandbox.__init__ falls back to SandboxDefaults for poll fields."""
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=45.0,
+            poll_rpc_timeout_seconds=7.5,
+        )
+        sandbox = Sandbox(command="sleep", args=["infinity"], defaults=defaults)
+
+        assert sandbox._poll_retry_budget_seconds == 45.0
+        assert sandbox._poll_rpc_timeout_seconds == 7.5
+
+    def test_init_explicit_poll_fields_override_defaults(self) -> None:
+        """Explicit poll kwargs on Sandbox take precedence over defaults."""
+        defaults = SandboxDefaults(
+            poll_retry_budget_seconds=45.0,
+            poll_rpc_timeout_seconds=7.5,
+        )
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            defaults=defaults,
+            poll_retry_budget_seconds=120.0,
+            poll_rpc_timeout_seconds=20.0,
+        )
+
+        assert sandbox._poll_retry_budget_seconds == 120.0
+        assert sandbox._poll_rpc_timeout_seconds == 20.0
+
+
+class TestSandboxPollConfigValidation:
+    """Tests that Sandbox entry points reject invalid poll config values.
+
+    Invalid NaN/inf/negative values must fail at construction, not later
+    when the retry loop would silently loop forever (NaN comparisons return
+    False, defeating the wall-clock deadline check).
+    """
+
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5])
+    def test_init_rejects_invalid_poll_retry_budget(self, bad_value: float) -> None:
+        """Sandbox(...) raises ValueError on invalid poll_retry_budget_seconds."""
+        with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+            Sandbox(
+                command="sleep",
+                args=["infinity"],
+                poll_retry_budget_seconds=bad_value,
+            )
+
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5, 0.0])
+    def test_init_rejects_invalid_poll_rpc_timeout(self, bad_value: float) -> None:
+        """Sandbox(...) raises ValueError on invalid poll_rpc_timeout_seconds."""
+        with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+            Sandbox(
+                command="sleep",
+                args=["infinity"],
+                poll_rpc_timeout_seconds=bad_value,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5])
+    async def test_list_rejects_invalid_poll_retry_budget(
+        self, bad_value: float, mock_api_key: str
+    ) -> None:
+        """Sandbox.list(...) raises ValueError on invalid poll_retry_budget_seconds.
+
+        The validator runs inside _from_sandbox_info when each returned sandbox
+        is constructed, so the response must contain at least one sandbox to
+        exercise the validation path. Production code raises before the
+        returned Sandbox escapes to the caller.
+        """
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+        )
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+                await Sandbox.list(poll_retry_budget_seconds=bad_value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5, 0.0])
+    async def test_list_rejects_invalid_poll_rpc_timeout(
+        self, bad_value: float, mock_api_key: str
+    ) -> None:
+        """Sandbox.list(...) raises ValueError on invalid poll_rpc_timeout_seconds."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+        )
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+                await Sandbox.list(poll_rpc_timeout_seconds=bad_value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5])
+    async def test_from_id_rejects_invalid_poll_retry_budget(
+        self, bad_value: float, mock_api_key: str
+    ) -> None:
+        """Sandbox.from_id(...) raises ValueError on invalid poll_retry_budget_seconds."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_response = gateway_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(ValueError, match="poll_retry_budget_seconds"):
+                await Sandbox.from_id("test-123", poll_retry_budget_seconds=bad_value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -1.0, -0.5, 0.0])
+    async def test_from_id_rejects_invalid_poll_rpc_timeout(
+        self, bad_value: float, mock_api_key: str
+    ) -> None:
+        """Sandbox.from_id(...) raises ValueError on invalid poll_rpc_timeout_seconds."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_response = gateway_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(ValueError, match="poll_rpc_timeout_seconds"):
+                await Sandbox.from_id("test-123", poll_rpc_timeout_seconds=bad_value)
+
 
 class TestSandboxStop:
     """Tests for Sandbox.stop method."""
@@ -2245,6 +2467,45 @@ class TestSandboxList:
             call_args = mock_stub.List.call_args[0][0]
             assert call_args.include_stopped is False
 
+    @pytest.mark.asyncio
+    async def test_list_propagates_poll_kwargs_to_returned_sandboxes(
+        self, mock_api_key: str
+    ) -> None:
+        """list() wires poll_retry_budget_seconds/poll_rpc_timeout_seconds into sandboxes."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_sandbox_info = gateway_pb2.SandboxInfo(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
+        )
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.List = AsyncMock(
+            return_value=gateway_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await Sandbox.list(
+                poll_retry_budget_seconds=12.0,
+                poll_rpc_timeout_seconds=7.0,
+            )
+
+            assert len(sandboxes) == 1
+            assert sandboxes[0]._poll_retry_budget_seconds == 12.0
+            assert sandboxes[0]._poll_rpc_timeout_seconds == 7.0
+
 
 class TestSandboxFromId:
     """Tests for Sandbox.from_id class method."""
@@ -2301,6 +2562,41 @@ class TestSandboxFromId:
         ):
             with pytest.raises(SandboxNotFoundError, match="not found"):
                 await Sandbox.from_id("nonexistent-id")
+
+    @pytest.mark.asyncio
+    async def test_from_id_propagates_poll_kwargs(self, mock_api_key: str) -> None:
+        """from_id() wires poll_retry_budget_seconds/poll_rpc_timeout_seconds into the sandbox."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import gateway_pb2
+
+        mock_response = gateway_pb2.GetSandboxResponse(
+            sandbox_id="test-123",
+            sandbox_status=gateway_pb2.SANDBOX_STATUS_RUNNING,
+            started_at_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            runner_id="tower-1",
+            runner_group_id="group-1",
+            profile_id="runway-1",
+        )
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.Get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id(
+                "test-123",
+                poll_retry_budget_seconds=12.0,
+                poll_rpc_timeout_seconds=7.0,
+            )
+
+            assert sandbox._poll_retry_budget_seconds == 12.0
+            assert sandbox._poll_rpc_timeout_seconds == 7.0
 
 
 class TestSandboxDeleteClassMethod:
@@ -3514,27 +3810,43 @@ class TestTranslateRpcError:
         assert isinstance(result, SandboxNotRunningError)
         assert "test-456" in str(result)
 
-    def test_deadline_exceeded_returns_sandbox_timeout_error(self) -> None:
-        """Test DEADLINE_EXCEEDED status code returns SandboxTimeoutError."""
+    def test_deadline_exceeded_returns_request_timeout_error(self) -> None:
+        """DEADLINE_EXCEEDED returns SandboxRequestTimeoutError (subclass of Timeout)."""
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxTimeoutError
+        from cwsandbox.exceptions import SandboxRequestTimeoutError, SandboxTimeoutError
 
         error = MockRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "timeout after 30s")
         result = _translate_rpc_error(error, operation="Execute command")
 
+        assert isinstance(result, SandboxRequestTimeoutError)
+        # Parent class still matches (callers catching SandboxTimeoutError work).
         assert isinstance(result, SandboxTimeoutError)
         assert "timed out" in str(result)
 
-    def test_unavailable_returns_sandbox_not_running_error(self) -> None:
-        """Test UNAVAILABLE status code returns SandboxNotRunningError."""
+    def test_unavailable_returns_unavailable_error(self) -> None:
+        """UNAVAILABLE returns SandboxUnavailableError (subclass of SandboxNotRunningError)."""
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxNotRunningError
+        from cwsandbox.exceptions import SandboxNotRunningError, SandboxUnavailableError
 
         error = MockRpcError(grpc.StatusCode.UNAVAILABLE, "connection refused")
         result = _translate_rpc_error(error)
 
+        assert isinstance(result, SandboxUnavailableError)
+        # Parent class still matches (callers catching SandboxNotRunningError work).
         assert isinstance(result, SandboxNotRunningError)
         assert "unavailable" in str(result).lower()
+
+    def test_resource_exhausted_returns_resource_exhausted_error(self) -> None:
+        """RESOURCE_EXHAUSTED returns explicit SandboxResourceExhaustedError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxError, SandboxResourceExhaustedError
+
+        error = MockRpcError(grpc.StatusCode.RESOURCE_EXHAUSTED, "quota exceeded")
+        result = _translate_rpc_error(error, operation="Start sandbox")
+
+        assert isinstance(result, SandboxResourceExhaustedError)
+        assert isinstance(result, SandboxError)
+        assert "exhausted" in str(result).lower()
 
     def test_permission_denied_returns_auth_error(self) -> None:
         """Test PERMISSION_DENIED status code returns CWSandboxAuthenticationError."""
@@ -3684,9 +3996,15 @@ class TestTranslateRpcErrorReasonMapping:
         assert result.sandbox_id == "sb-1"
         assert result.reason == "CWSANDBOX_SANDBOX_NOT_FOUND"
 
-    def test_command_timeout_reason_returns_timeout_error(self) -> None:
+    def test_command_timeout_reason_returns_command_timeout_error(self) -> None:
+        """CWSANDBOX_COMMAND_TIMEOUT reason returns SandboxCommandTimeoutError.
+
+        The command timeout subclass is FATAL (the user's command itself
+        exceeded its budget), distinct from the retryable
+        SandboxRequestTimeoutError used for transport-layer deadlines.
+        """
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxTimeoutError
+        from cwsandbox.exceptions import SandboxCommandTimeoutError, SandboxTimeoutError
 
         error = _MockRpcErrorWithDetails(
             grpc.StatusCode.INTERNAL,
@@ -3695,6 +4013,8 @@ class TestTranslateRpcErrorReasonMapping:
         )
         result = _translate_rpc_error(error, operation="Execute command")
 
+        assert isinstance(result, SandboxCommandTimeoutError)
+        # Parent class still matches.
         assert isinstance(result, SandboxTimeoutError)
         assert result.reason == "CWSANDBOX_COMMAND_TIMEOUT"
 
@@ -3705,10 +4025,14 @@ class TestTranslateRpcErrorReasonMapping:
             "CWSANDBOX_BACKEND_UNAVAILABLE",
         ],
     )
-    def test_unavailable_reason_returns_not_running(self, reason: str) -> None:
-        """Every reason in UNAVAILABLE_REASONS maps to SandboxNotRunningError."""
+    def test_unavailable_reason_returns_unavailable_error(self, reason: str) -> None:
+        """Every reason in UNAVAILABLE_REASONS maps to SandboxUnavailableError.
+
+        The retryable unavailable subclass, not the raw SandboxNotRunningError
+        (which stays fatal for local-stop/CANCELLED paths).
+        """
         from cwsandbox._sandbox import _translate_rpc_error
-        from cwsandbox.exceptions import SandboxNotRunningError
+        from cwsandbox.exceptions import SandboxNotRunningError, SandboxUnavailableError
 
         error = _MockRpcErrorWithDetails(
             grpc.StatusCode.INTERNAL,
@@ -3718,6 +4042,8 @@ class TestTranslateRpcErrorReasonMapping:
         )
         result = _translate_rpc_error(error)
 
+        assert isinstance(result, SandboxUnavailableError)
+        # Parent class still matches.
         assert isinstance(result, SandboxNotRunningError)
         assert result.reason == reason
         assert result.retry_delay is not None
