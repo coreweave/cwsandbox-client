@@ -65,7 +65,7 @@ Properties:
 
 Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
-- `mounted_files` - Files to mount into the sandbox
+- `mounted_files` - Files to mount into the sandbox at startup (read-only at runtime; use `write_file()` for writable files)
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
 - `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)

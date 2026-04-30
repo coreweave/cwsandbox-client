@@ -356,7 +356,10 @@ class Session:
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
-            mounted_files: Files to mount into the sandbox
+            mounted_files: Files to mount into the sandbox at startup. Each dict
+                should have ``mount_path`` (str) and ``file_content`` (bytes).
+                Note: Mounted files are read-only at runtime. To modify a file,
+                use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
@@ -683,7 +686,10 @@ class Session:
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
-            mounted_files: Files to mount into the sandbox
+            mounted_files: Files to mount into the sandbox at startup. Each dict
+                should have ``mount_path`` (str) and ``file_content`` (bytes).
+                Note: Mounted files are read-only at runtime. To modify a file,
+                use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
