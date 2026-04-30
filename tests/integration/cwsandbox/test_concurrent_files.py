@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING
 
 import pytest
 
 from cwsandbox import Sandbox, SandboxDefaults
+
+if TYPE_CHECKING:
+    from cwsandbox._types import OperationRef
 
 
 def test_concurrent_write_file_basic(sandbox_defaults: SandboxDefaults) -> None:
@@ -108,12 +112,14 @@ def test_concurrent_read_write_interleaved(sandbox_defaults: SandboxDefaults) ->
         }
 
         write_refs = [sandbox.write_file(path, content) for path, content in files.items()]
-        for ref in write_refs:
-            ref.result(timeout=60.0)
+        for write_ref in write_refs:
+            write_ref.result(timeout=60.0)
 
-        read_refs = {path: sandbox.read_file(path) for path in files}
-        for path, ref in read_refs.items():
-            actual = ref.result(timeout=30.0)
+        read_refs: dict[str, OperationRef[bytes]] = {
+            path: sandbox.read_file(path) for path in files
+        }
+        for path, read_ref in read_refs.items():
+            actual = read_ref.result(timeout=30.0)
             expected = files[path]
             assert actual == expected, f"Content mismatch for {path}"
 
