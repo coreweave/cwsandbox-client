@@ -6,7 +6,6 @@
 
 import ast
 import json
-import pickle
 from collections.abc import Callable
 from functools import lru_cache, wraps
 from typing import Any, TypeVar
@@ -17,14 +16,11 @@ import pytest
 from cwsandbox._function import (
     RemoteFunction,
     _create_function_payload,
-    _create_json_payload,
     _extract_closure_variables,
     _extract_global_variables,
     _get_function_source_for_sandbox,
     _is_session_function_decorator,
     _parse_exception_from_stderr,
-    _parse_json_result,
-    _parse_sandbox_result,
 )
 from cwsandbox._types import OperationRef
 from tests.unit.cwsandbox.conftest import make_operation_ref, make_process
@@ -327,33 +323,6 @@ class TestExtractGlobalVariables:
         assert global_vars["_TEST_GLOBAL_VAR"] == 42
 
 
-class TestParseSandboxResult:
-    """Tests for _parse_sandbox_result."""
-
-    def test_parses_valid_result(self) -> None:
-        """Test parsing valid sandbox result."""
-        result_value = {"key": "value", "numbers": [1, 2, 3]}
-        result_bytes = pickle.dumps(result_value)
-
-        parsed = _parse_sandbox_result(result_bytes)
-
-        assert parsed == result_value
-
-    def test_parses_simple_types(self) -> None:
-        """Test parsing various simple types."""
-        for value in [42, "hello", [1, 2, 3], None, True]:
-            pickled = pickle.dumps(value)
-
-            parsed = _parse_sandbox_result(pickled)
-
-            assert parsed == value
-
-    def test_invalid_format_raises_error(self) -> None:
-        """Test parsing invalid pickle data raises error."""
-        with pytest.raises(pickle.UnpicklingError):
-            _parse_sandbox_result(b"Invalid pickle content")
-
-
 class TestParseExceptionFromStderr:
     """Tests for _parse_exception_from_stderr."""
 
@@ -436,54 +405,12 @@ ValueError: actual exception"""
 
 
 class TestCreateFunctionPayload:
-    """Tests for _create_function_payload (pickle mode)."""
+    """Tests for _create_function_payload (JSON serialization)."""
 
-    def test_creates_valid_pickle_payload(self) -> None:
-        """Test payload is valid pickle data."""
-        source = "def test_func(x): return x * 2"
-        payload = _create_function_payload(
-            source=source,
-            func_name="test_func",
-            closure_vars={"y": 10},
-            args=(5,),
-            kwargs={"extra": "value"},
-        )
-
-        unpickled = pickle.loads(payload)
-
-        assert unpickled["source"] == source
-        assert unpickled["name"] == "test_func"
-        assert unpickled["closure_vars"] == {"y": 10}
-        assert unpickled["args"] == (5,)
-        assert unpickled["kwargs"] == {"extra": "value"}
-
-    def test_handles_complex_closure_vars(self) -> None:
-        """Test payload handles complex closure variable types."""
-        complex_vars = {
-            "numbers": [1, 2, 3],
-            "nested": {"a": {"b": "c"}},
-            "tuple_data": (1, "two", 3.0),
-        }
-
-        payload = _create_function_payload(
-            source="def f(): pass",
-            func_name="f",
-            closure_vars=complex_vars,
-            args=(),
-            kwargs={},
-        )
-
-        unpickled = pickle.loads(payload)
-        assert unpickled["closure_vars"] == complex_vars
-
-
-class TestJsonSerialization:
-    """Tests for JSON serialization functions."""
-
-    def test_create_json_payload_valid(self) -> None:
-        """Test _create_json_payload creates valid JSON."""
+    def test_creates_valid_json_payload(self) -> None:
+        """Test payload is valid JSON data."""
         source = "def add(x, y): return x + y"
-        payload = _create_json_payload(
+        payload = _create_function_payload(
             source=source,
             func_name="add",
             closure_vars={"multiplier": 2},
@@ -499,9 +426,9 @@ class TestJsonSerialization:
         assert parsed["args"] == [1, 2]
         assert parsed["kwargs"] == {"z": 3}
 
-    def test_create_json_payload_converts_tuple_to_list(self) -> None:
+    def test_converts_tuple_to_list(self) -> None:
         """Test JSON payload converts args tuple to list."""
-        payload = _create_json_payload(
+        payload = _create_function_payload(
             source="def f(): pass",
             func_name="f",
             closure_vars={},
@@ -513,28 +440,23 @@ class TestJsonSerialization:
         assert parsed["args"] == [1, 2, 3]
         assert isinstance(parsed["args"], list)
 
-    def test_parse_json_result_simple_types(self) -> None:
-        """Test _parse_json_result parses simple types."""
-        for value in [42, "hello", [1, 2, 3], None, True, {"key": "value"}]:
-            json_bytes = json.dumps(value).encode()
+    def test_handles_nested_closure_vars(self) -> None:
+        """Test payload handles nested JSON-compatible closure variable types."""
+        complex_vars = {
+            "numbers": [1, 2, 3],
+            "nested": {"a": {"b": "c"}},
+        }
 
-            parsed = _parse_json_result(json_bytes)
+        payload = _create_function_payload(
+            source="def f(): pass",
+            func_name="f",
+            closure_vars=complex_vars,
+            args=(),
+            kwargs={},
+        )
 
-            assert parsed == value
-
-    def test_parse_json_result_nested(self) -> None:
-        """Test _parse_json_result parses nested structures."""
-        value = {"outer": {"inner": [1, 2, {"deep": True}]}}
-        json_bytes = json.dumps(value).encode()
-
-        parsed = _parse_json_result(json_bytes)
-
-        assert parsed == value
-
-    def test_parse_json_result_invalid_raises(self) -> None:
-        """Test _parse_json_result raises on invalid JSON."""
-        with pytest.raises(json.JSONDecodeError):
-            _parse_json_result(b"not valid json {")
+        parsed = json.loads(payload)
+        assert parsed["closure_vars"] == complex_vars
 
 
 class TestRemoteFunction:
@@ -649,18 +571,13 @@ class TestRemoteFunction:
     async def test_execute_async_runs_in_sandbox(self) -> None:
         """Test that _execute_async creates sandbox and runs function."""
         from cwsandbox import Session
-        from cwsandbox._types import Serialization
 
         session = Session()
 
         def add(x: int, y: int) -> int:
             return x + y
 
-        remote_fn = RemoteFunction(
-            add,
-            session=session,
-            serialization=Serialization.JSON,
-        )
+        remote_fn = RemoteFunction(add, session=session)
 
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
@@ -686,7 +603,6 @@ class TestRemoteFunction:
     async def test_execute_async_raises_on_failure(self) -> None:
         """Test _execute_async raises SandboxExecutionError on non-zero exit."""
         from cwsandbox import Session
-        from cwsandbox._types import Serialization
         from cwsandbox.exceptions import SandboxExecutionError
 
         session = Session()
@@ -694,11 +610,7 @@ class TestRemoteFunction:
         def failing_func() -> None:
             raise RuntimeError("boom")
 
-        remote_fn = RemoteFunction(
-            failing_func,
-            session=session,
-            serialization=Serialization.JSON,
-        )
+        remote_fn = RemoteFunction(failing_func, session=session)
 
         mock_sandbox = MagicMock()
         mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
@@ -807,7 +719,6 @@ class TestRemoteFunctionAnnotations:
     async def test_function_annotations_in_sandbox_kwargs(self) -> None:
         """Test annotations are passed to sandbox creation in _execute_async."""
         from cwsandbox import Session
-        from cwsandbox._types import Serialization
 
         session = Session()
 
@@ -817,7 +728,6 @@ class TestRemoteFunctionAnnotations:
         remote_fn = RemoteFunction(
             add,
             session=session,
-            serialization=Serialization.JSON,
             annotations={"team": "platform"},
         )
 
@@ -860,7 +770,7 @@ class TestRemoteFunctionResourceOptions:
     async def test_resource_options_passed_to_sandbox(self) -> None:
         """Test that ResourceOptions flows through .remote() to Sandbox.__init__."""
         from cwsandbox import Session
-        from cwsandbox._types import ResourceOptions, Serialization
+        from cwsandbox._types import ResourceOptions
 
         session = Session()
 
@@ -875,7 +785,6 @@ class TestRemoteFunctionResourceOptions:
         remote_fn = RemoteFunction(
             add,
             session=session,
-            serialization=Serialization.JSON,
             resources=resource_opts,
         )
 
@@ -920,7 +829,6 @@ class TestRemoteFunctionProfileNames:
     async def test_execute_async_passes_profile_names_to_sandbox(self) -> None:
         """_execute_async wires profile_names into sandbox_kwargs for Sandbox construction."""
         from cwsandbox import Session
-        from cwsandbox._types import Serialization
 
         session = Session()
 
@@ -930,7 +838,6 @@ class TestRemoteFunctionProfileNames:
         remote_fn = RemoteFunction(
             add,
             session=session,
-            serialization=Serialization.JSON,
             profile_ids=["id-1"],
             profile_names=["name-1"],
         )
@@ -997,3 +904,199 @@ class TestRemoteFunctionProfileNames:
 
         assert len(captured) == 1
         assert list(captured[0].profile_names) == ["prod"]
+
+
+class TestJsonReturnContract:
+    """Sandbox-side JSON return handling.
+
+    These tests run the real ``_FUNCTION_EXECUTION_TEMPLATE`` script in a
+    subprocess to validate the round-trip without booting a sandbox.
+    """
+
+    @staticmethod
+    def _run_template(
+        tmp_path: Any,
+        source: str,
+        func_name: str,
+        args: list[Any],
+        kwargs: dict[str, Any],
+    ) -> tuple[int, str, str | None]:
+        """Run _FUNCTION_EXECUTION_TEMPLATE for the given function and capture result."""
+        import subprocess
+        import sys
+
+        from cwsandbox._function import (
+            _FUNCTION_EXECUTION_TEMPLATE,
+            _create_function_payload,
+        )
+
+        payload_file = tmp_path / "payload.json"
+        result_file = tmp_path / "result.json"
+        payload_file.write_bytes(
+            _create_function_payload(
+                source=source,
+                func_name=func_name,
+                closure_vars={},
+                args=tuple(args),
+                kwargs=kwargs,
+            )
+        )
+
+        script = _FUNCTION_EXECUTION_TEMPLATE.format(
+            payload_file=str(payload_file),
+            result_file=str(result_file),
+            temp_dir=str(tmp_path),
+        )
+
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        result_text = result_file.read_text() if result_file.exists() else None
+        return proc.returncode, proc.stderr, result_text
+
+    def test_json_return_value_round_trips(self, tmp_path: Any) -> None:
+        """A JSON-serializable return value round-trips through the template."""
+        returncode, _stderr, result_text = self._run_template(
+            tmp_path,
+            source="def echo(value): return value",
+            func_name="echo",
+            args=[{"a": 1, "b": [2, 3]}],
+            kwargs={},
+        )
+        assert returncode == 0
+        assert result_text is not None
+        assert json.loads(result_text) == {"a": 1, "b": [2, 3]}
+
+    def test_non_json_return_value_surfaces_failure(self, tmp_path: Any) -> None:
+        """A non-JSON-serializable return value fails inside the sandbox script.
+
+        Returning values like ``set`` is expected to surface as a non-zero exit
+        code with a ``RESULT_SERIALIZATION_ERROR:`` marker on stderr that the
+        outer SDK distinguishes from a user-code exception.
+        """
+        returncode, stderr, _result_text = self._run_template(
+            tmp_path,
+            source="def returns_set(): return {1, 2, 3}",
+            func_name="returns_set",
+            args=[],
+            kwargs={},
+        )
+        assert returncode != 0
+        assert "RESULT_SERIALIZATION_ERROR:" in stderr
+        assert "TypeError" in stderr
+
+    def test_serialization_marker_parses_into_clear_message(self, tmp_path: Any) -> None:
+        """``RESULT_SERIALIZATION_ERROR:`` is parsed distinctly from user exceptions."""
+        returncode, stderr, _result_text = self._run_template(
+            tmp_path,
+            source="def returns_set(): return {1, 2, 3}",
+            func_name="returns_set",
+            args=[],
+            kwargs={},
+        )
+        assert returncode != 0
+        exc_type, exc_msg = _parse_exception_from_stderr(stderr)
+        assert exc_type == "TypeError"
+        assert exc_msg is not None
+        assert "return value is not JSON-serializable" in exc_msg
+
+
+class TestJsonReturnCoercionContract:
+    """Pin known silent JSON coercions on the return path.
+
+    These document behaviors users must be aware of: stdlib ``json.dumps``
+    rewrites tuples as lists, coerces dict integer keys to strings, and
+    encodes ``NaN`` as a non-strict literal.
+    """
+
+    @staticmethod
+    def _round_trip(tmp_path: Any, source: str, func_name: str) -> tuple[int, str, str | None]:
+        return TestJsonReturnContract._run_template(
+            tmp_path,
+            source=source,
+            func_name=func_name,
+            args=[],
+            kwargs={},
+        )
+
+    def test_tuple_return_becomes_list(self, tmp_path: Any) -> None:
+        returncode, _stderr, result_text = self._round_trip(
+            tmp_path,
+            source="def f(): return (1, 2)",
+            func_name="f",
+        )
+        assert returncode == 0
+        assert result_text is not None
+        assert json.loads(result_text) == [1, 2]
+
+    def test_int_dict_keys_become_strings(self, tmp_path: Any) -> None:
+        returncode, _stderr, result_text = self._round_trip(
+            tmp_path,
+            source='def f(): return {1: "a"}',
+            func_name="f",
+        )
+        assert returncode == 0
+        assert result_text is not None
+        assert json.loads(result_text) == {"1": "a"}
+
+    def test_nan_return_is_not_strict_json(self, tmp_path: Any) -> None:
+        returncode, _stderr, result_text = self._round_trip(
+            tmp_path,
+            source='def f():\n    return float("nan")',
+            func_name="f",
+        )
+        assert returncode == 0
+        assert result_text is not None
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result_text, parse_constant=_reject)
+
+
+def _reject(_token: str) -> Any:
+    raise json.JSONDecodeError("strict mode rejects non-finite", "", 0)
+
+
+class TestCreateFunctionPayloadKeyValidation:
+    """Pre-flight validation for non-string mapping keys."""
+
+    def test_non_string_key_in_closure_var_raises_typeerror(self) -> None:
+        with pytest.raises(TypeError, match="closure_vars"):
+            _create_function_payload(
+                source="def f(): pass",
+                func_name="f",
+                closure_vars={"LOOKUP": {(1, 2): "ok"}},
+                args=(),
+                kwargs={},
+            )
+
+    def test_non_string_key_in_args_raises_typeerror(self) -> None:
+        with pytest.raises(TypeError, match="args"):
+            _create_function_payload(
+                source="def f(x): pass",
+                func_name="f",
+                closure_vars={},
+                args=({1: "a"},),
+                kwargs={},
+            )
+
+    def test_non_string_key_in_kwargs_raises_typeerror(self) -> None:
+        with pytest.raises(TypeError, match="kwargs"):
+            _create_function_payload(
+                source="def f(**kw): pass",
+                func_name="f",
+                closure_vars={},
+                args=(),
+                kwargs={"data": {1: "a"}},
+            )
+
+    def test_non_serializable_argument_raises_typeerror(self) -> None:
+        with pytest.raises(TypeError, match="not JSON-serializable"):
+            _create_function_payload(
+                source="def f(x): pass",
+                func_name="f",
+                closure_vars={},
+                args=({1, 2, 3},),
+                kwargs={},
+            )

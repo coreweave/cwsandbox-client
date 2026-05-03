@@ -9,22 +9,14 @@ import dis
 import inspect
 import json
 import logging
-import pickle
 import textwrap
 import types
 import uuid
 from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
-from pydantic import TypeAdapter
-from pydantic_core import PydanticSerializationError
-
 from cwsandbox._defaults import DEFAULT_TEMP_DIR
-from cwsandbox._types import NetworkOptions, OperationRef, ResourceOptions, Serialization
-from cwsandbox.exceptions import (
-    AsyncFunctionError,
-    FunctionSerializationError,
-    SandboxExecutionError,
-)
+from cwsandbox._types import NetworkOptions, OperationRef, ResourceOptions
+from cwsandbox.exceptions import AsyncFunctionError, SandboxExecutionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -82,7 +74,6 @@ class RemoteFunction(Generic[P, R]):
         *,
         session: Session,
         container_image: str | None = None,
-        serialization: Serialization = Serialization.JSON,
         temp_dir: str = DEFAULT_TEMP_DIR,
         profile_ids: list[str] | None = None,
         profile_names: list[str] | None = None,
@@ -102,7 +93,6 @@ class RemoteFunction(Generic[P, R]):
             fn: The function to wrap for remote execution
             session: The sandbox session to use for execution
             container_image: Override container image for this function
-            serialization: Serialization mode (JSON by default for safety)
             temp_dir: Directory for temporary payload/result files in sandbox
             profile_ids: Optional list of profile IDs for infrastructure selection.
                 See SandboxDefaults.profile_ids for semantics. Prefer
@@ -151,7 +141,6 @@ class RemoteFunction(Generic[P, R]):
         self._fn = fn
         self._session = session
         self._container_image = container_image
-        self._serialization = serialization
         self._temp_dir = temp_dir
         self._profile_ids = list(profile_ids) if profile_ids is not None else None
         self._profile_names = list(profile_names) if profile_names is not None else None
@@ -251,16 +240,14 @@ class RemoteFunction(Generic[P, R]):
         merged_vars = {**global_vars, **closure_vars}
 
         file_id = uuid.uuid4()
-        payload_file = f"{self._temp_dir}/sandbox_payload_{file_id.hex}.bin"
-        result_file = f"{self._temp_dir}/sandbox_result_{file_id.hex}.bin"
+        payload_file = f"{self._temp_dir}/sandbox_payload_{file_id.hex}.json"
+        result_file = f"{self._temp_dir}/sandbox_result_{file_id.hex}.json"
 
-        mode_config = _SERIALIZATION_MODES[self._serialization.value]
-
-        payload_bytes = mode_config.create_payload(
+        payload_bytes = _create_function_payload(
             source, self._fn.__name__, merged_vars, args, kwargs
         )
 
-        execution_script = mode_config.template.format(
+        execution_script = _FUNCTION_EXECUTION_TEMPLATE.format(
             payload_file=payload_file,
             result_file=result_file,
             temp_dir=self._temp_dir,
@@ -337,7 +324,7 @@ class RemoteFunction(Generic[P, R]):
                 )
 
             result_content = await sandbox.read_file(result_file)
-            result_value = mode_config.parse_result(result_content)
+            result_value = json.loads(result_content)
 
             logger.debug("Function %s completed successfully", self._fn.__name__)
             return result_value  # type: ignore[no-any-return]
@@ -491,7 +478,17 @@ def _parse_exception_from_stderr(stderr: str) -> tuple[str | None, str | None]:
     exception_message = None
 
     for line in stderr.split("\n"):
-        if line.startswith("EXCEPTION:"):
+        if line.startswith("RESULT_SERIALIZATION_ERROR:"):
+            payload = line[len("RESULT_SERIALIZATION_ERROR:") :].strip()
+            type_part, _, msg_part = payload.partition(":")
+            exception_type = type_part.strip() or None
+            message_body = msg_part.strip()
+            exception_message = (
+                f"return value is not JSON-serializable: {message_body}"
+                if message_body
+                else "return value is not JSON-serializable"
+            )
+        elif line.startswith("EXCEPTION:"):
             exception_message = line[len("EXCEPTION:") :].strip()
         elif ": " in line and not line.startswith(" "):
             parts = line.split(": ", 1)
@@ -503,6 +500,25 @@ def _parse_exception_from_stderr(stderr: str) -> tuple[str | None, str | None]:
     return exception_type, exception_message
 
 
+def _validate_json_string_keys(value: Any, path: str) -> None:
+    """Recursively validate that any dict contained in ``value`` has only str keys.
+
+    JSON objects only have string keys. ``json.dumps`` silently coerces int/float/bool
+    keys to strings, which would change the user's contract on the sandbox side.
+    """
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"Function payload contains a dict with non-string keys: "
+                    f"{path} (key {key!r} has type {type(key).__name__})"
+                )
+            _validate_json_string_keys(sub, f"{path}[{key!r}]")
+    elif isinstance(value, (list, tuple)):
+        for index, sub in enumerate(value):
+            _validate_json_string_keys(sub, f"{path}[{index}]")
+
+
 def _create_function_payload(
     source: str,
     func_name: str,
@@ -510,37 +526,10 @@ def _create_function_payload(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> bytes:
-    """Create a pickled function execution payload."""
-    payload = {
-        "source": source,
-        "name": func_name,
-        "closure_vars": closure_vars,
-        "args": args,
-        "kwargs": kwargs,
-    }
-    try:
-        return pickle.dumps(payload)
-    except (pickle.PickleError, TypeError) as e:
-        raise FunctionSerializationError(
-            f"Cannot serialize function '{func_name}' using PICKLE mode: {e}\n\n"
-            f"Avoid lambdas, thread locks, file handles, and other non-picklable objects "
-            f"in arguments, referenced globals, or closures"
-        ) from e
-
-
-def _parse_sandbox_result(result_content: bytes) -> Any:
-    """Parse function execution result from sandbox result file."""
-    return pickle.loads(result_content)
-
-
-def _create_json_payload(
-    source: str,
-    func_name: str,
-    closure_vars: dict[str, Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> bytes:
-    """Create JSON-serializable payload using Pydantic."""
+    """Create a JSON-serialized function execution payload."""
+    _validate_json_string_keys(closure_vars, "closure_vars")
+    _validate_json_string_keys(list(args), "args")
+    _validate_json_string_keys(kwargs, "kwargs")
     payload = {
         "source": source,
         "name": func_name,
@@ -548,52 +537,13 @@ def _create_json_payload(
         "args": list(args),
         "kwargs": kwargs,
     }
-    adapter = TypeAdapter(dict[str, Any])
     try:
-        return adapter.dump_json(payload)
-    except PydanticSerializationError as e:
-        raise FunctionSerializationError(
-            f"Cannot serialize function '{func_name}' using JSON mode: {e}\n\n"
-            f"Try serialization=Serialization.PICKLE or use only JSON-compatible types "
-            f"(str, int, float, dict, list, etc.) in arguments, referenced globals, and closures"
-        ) from e
-
-
-def _parse_json_result(result_content: bytes) -> Any:
-    """Parse JSON-serialized result."""
-    return json.loads(result_content)
+        return json.dumps(payload).encode()
+    except TypeError as exc:
+        raise TypeError(f"Function arguments are not JSON-serializable: {exc}") from exc
 
 
 _FUNCTION_EXECUTION_TEMPLATE = """
-import os
-import pickle
-import sys
-
-temp_dir = "{temp_dir}"
-payload_file = "{payload_file}"
-result_file = "{result_file}"
-
-os.makedirs(temp_dir, exist_ok=True)
-
-with open(payload_file, "rb") as f:
-    payload = pickle.load(f)
-
-exec_globals = payload["closure_vars"].copy()
-exec(payload["source"], exec_globals)
-func = exec_globals[payload["name"]]
-
-try:
-    result = func(*payload["args"], **payload["kwargs"])
-    with open(result_file, "wb") as f:
-        pickle.dump(result, f)
-except Exception as e:
-    import traceback
-    print("EXCEPTION:" + str(e), file=sys.stderr)
-    traceback.print_exc(file=sys.stderr)
-    sys.exit(1)
-"""
-
-_JSON_EXECUTION_TEMPLATE = """
 import json
 import os
 import sys
@@ -617,40 +567,19 @@ func = exec_globals[payload["name"]]
 
 try:
     result = func(*args, **kwargs)
-    with open(result_file, "w") as f:
-        json.dump(result, f)
 except Exception as e:
     import traceback
     print("EXCEPTION:" + str(e), file=sys.stderr)
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
+
+try:
+    with open(result_file, "w") as f:
+        json.dump(result, f)
+except (TypeError, ValueError) as e:
+    print(
+        "RESULT_SERIALIZATION_ERROR:" + type(e).__name__ + ":" + str(e),
+        file=sys.stderr,
+    )
+    sys.exit(1)
 """
-
-
-class _SerializationMode:
-    """Configuration for a serialization mode."""
-
-    def __init__(
-        self,
-        create_payload: Callable[..., bytes],
-        parse_result: Callable[[bytes], Any],
-        template: str,
-    ) -> None:
-        self.create_payload = create_payload
-        self.parse_result = parse_result
-        self.template = template
-
-
-# TODO: Investigate cloudpickle as an alternative to source extraction.
-_SERIALIZATION_MODES: dict[str, _SerializationMode] = {
-    Serialization.PICKLE.value: _SerializationMode(
-        create_payload=_create_function_payload,
-        parse_result=_parse_sandbox_result,
-        template=_FUNCTION_EXECUTION_TEMPLATE,
-    ),
-    Serialization.JSON.value: _SerializationMode(
-        create_payload=_create_json_payload,
-        parse_result=_parse_json_result,
-        template=_JSON_EXECUTION_TEMPLATE,
-    ),
-}

@@ -101,7 +101,7 @@ python examples/function_decorator.py
 Demonstrates:
 - Using `Session(defaults)` for session management
 - The `@session.function()` decorator
-- Pickle and JSON serialization modes
+- JSON serialization for arguments and return values
 - Functions with closure variables
 
 ### Resource Configuration (`resource_configuration.py`)

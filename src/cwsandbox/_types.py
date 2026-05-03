@@ -96,20 +96,6 @@ class OperationRef(Generic[T]):
         return asyncio.wrap_future(self._future).__await__()
 
 
-class Serialization(StrEnum):
-    """Serialization modes for sandbox function execution.
-
-    Attributes:
-        JSON: Safe, human-readable JSON serialization. Limited to JSON-serializable
-            types (str, int, float, dict, list, bool, None). Default mode.
-        PICKLE: Python pickle serialization. Supports complex types (numpy arrays,
-            custom classes) but requires trust - only use in trusted environments.
-    """
-
-    PICKLE = "pickle"
-    JSON = "json"
-
-
 class ExecOutcome(StrEnum):
     """Outcome classification for exec() calls.
 

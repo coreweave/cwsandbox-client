@@ -28,7 +28,6 @@ classifiers = [
 dependencies = [
     "googleapis-common-protos>=1.63.0",
     "protobuf>=5,<7",
-    "pydantic>=2.0.0",
     "grpcio>=1.78.0",
 ]
 

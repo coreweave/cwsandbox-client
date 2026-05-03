@@ -12,7 +12,6 @@ from cwsandbox.exceptions import (
     CWSandboxAuthenticationError,
     CWSandboxError,
     FunctionError,
-    FunctionSerializationError,
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
@@ -46,7 +45,6 @@ class TestExceptionHierarchy:
     def test_function_error_is_base_for_function_exceptions(self) -> None:
         """Test FunctionError is the base for function-related exceptions."""
         assert issubclass(AsyncFunctionError, FunctionError)
-        assert issubclass(FunctionSerializationError, FunctionError)
 
     def test_cwsandbox_error_is_exception(self) -> None:
         """Test CWSandboxError inherits from Exception."""

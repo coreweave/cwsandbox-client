@@ -16,7 +16,6 @@ from cwsandbox._types import (
     OperationRef,
     Process,
     ProcessResult,
-    Serialization,
     StreamReader,
     StreamWriter,
     TerminalResult,
@@ -110,28 +109,6 @@ class TestOperationRef:
 
             result = ref.result(timeout=5.0)
             assert result == 42
-
-
-class TestSerialization:
-    """Tests for Serialization enum."""
-
-    def test_serialization_is_string_enum(self) -> None:
-        """Test Serialization members can be used as strings.
-
-        This is important because the enum values may be used in string contexts
-        (e.g., logging, error messages) and should work seamlessly.
-        """
-        assert isinstance(Serialization.PICKLE, str)
-        assert isinstance(Serialization.JSON, str)
-
-    def test_serialization_members_exist(self) -> None:
-        """Test expected serialization modes are available.
-
-        Users depend on these members existing - if we remove one,
-        their code breaks.
-        """
-        assert hasattr(Serialization, "PICKLE")
-        assert hasattr(Serialization, "JSON")
 
 
 class TestNetworkOptions:

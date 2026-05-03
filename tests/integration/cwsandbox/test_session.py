@@ -10,7 +10,7 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 
 import pytest
 
-from cwsandbox import Sandbox, SandboxDefaults, Serialization
+from cwsandbox import Sandbox, SandboxDefaults
 
 GLOBAL_CONSTANT = 42
 
@@ -39,24 +39,11 @@ def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
         assert r2.stdout.strip() == "sandbox-2"
 
 
-def test_session_function_pickle(sandbox_defaults: SandboxDefaults) -> None:
-    """Test session function execution with pickle serialization."""
-    with Sandbox.session(sandbox_defaults) as session:
-
-        @session.function(serialization=Serialization.PICKLE)
-        def add(x: int, y: int) -> int:
-            return x + y
-
-        result = add.remote(2, 3).result()
-
-        assert result == 5
-
-
 def test_session_function_json(sandbox_defaults: SandboxDefaults) -> None:
     """Test session function execution with JSON serialization."""
     with Sandbox.session(sandbox_defaults) as session:
 
-        @session.function(serialization=Serialization.JSON)
+        @session.function()
         def create_dict(key: str, value: int) -> dict[str, int]:
             return {key: value}
 
@@ -136,25 +123,6 @@ def test_session_close_stops_orphaned_sandboxes(sandbox_defaults: SandboxDefault
 
     # Session close should have stopped the orphaned sandbox
     assert session.sandbox_count == 0
-
-
-def test_session_function_pickle_complex_types(sandbox_defaults: SandboxDefaults) -> None:
-    """Test session function with complex types using pickle serialization."""
-    with Sandbox.session(sandbox_defaults) as session:
-
-        @session.function(serialization=Serialization.PICKLE)
-        def process_nested(data: dict) -> dict:
-            return {
-                "processed": True,
-                "original": data,
-                "computed": data["value"] * 2,
-            }
-
-        result = process_nested.remote({"value": 21, "nested": {"key": "val"}}).result()
-
-        assert result["processed"] is True
-        assert result["computed"] == 42
-        assert result["original"]["nested"]["key"] == "val"
 
 
 # Async context manager tests
