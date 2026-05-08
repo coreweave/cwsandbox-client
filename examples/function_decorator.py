@@ -7,13 +7,13 @@
 This example demonstrates:
 - Using Session for managing sandboxes
 - The @session.function() decorator for remote function execution
-- Both JSON (default) and PICKLE serialization modes
+- JSON serialization for arguments and return values
 - Closure and global variable capture
 - .map() for parallel execution across multiple inputs
 - .local() for testing without creating sandboxes
 """
 
-from cwsandbox import SandboxDefaults, Serialization, Session
+from cwsandbox import SandboxDefaults, Session
 
 # Module-level global variable (will be captured automatically)
 GLOBAL_MULTIPLIER = 100
@@ -26,7 +26,7 @@ def main() -> None:
     )
 
     with Session(defaults) as session:
-        # Basic function with JSON serialization (default, safe)
+        # Basic JSON-serializable function
         @session.function()
         def add(x: int, y: int) -> int:
             return x + y
@@ -55,20 +55,6 @@ def main() -> None:
         result = compute_with_context.remote(5).result()
         print(f"compute_with_context(5) = {result}")
         print(f"  (5 * {GLOBAL_MULTIPLIER} + {local_offset} = {result})")
-        print()
-
-        # Function with PICKLE serialization (for complex types)
-        # Only use in trusted environments!
-        @session.function(serialization=Serialization.PICKLE)
-        def process_complex(data: list[dict]) -> dict:
-            return {
-                "count": len(data),
-                "first": data[0] if data else None,
-            }
-
-        complex_data = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
-        result = process_complex.remote(complex_data).result()
-        print(f"process_complex result: {result}")
         print()
 
         # .map() for parallel execution across multiple inputs

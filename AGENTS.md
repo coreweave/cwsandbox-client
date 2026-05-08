@@ -289,18 +289,17 @@ Key methods:
 
 Configuration options (passed to decorator):
 - `container_image` - Override image for this function
-- `serialization` - `Serialization.JSON` (default) or `Serialization.PICKLE`
 - Plus advanced configuration kwargs (see Sandbox section above)
 
 Internals:
 1. Extracts function source via AST, removes the `@session.function` decorator
 2. Captures closure variables from `__closure__` and `co_freevars`
 3. Walks bytecode (`LOAD_GLOBAL`, `STORE_GLOBAL`, `DELETE_GLOBAL`) to find referenced globals
-4. Serializes payload (JSON or PICKLE), creates ephemeral sandbox, executes, reads result
+4. Serializes payload as JSON, creates ephemeral sandbox, executes, reads JSON result
 
-Serialization modes via `Serialization` enum:
-- `JSON` (default) - Safe, human-readable, limited to JSON-serializable types
-- `PICKLE` - Supports complex Python objects (numpy arrays, custom classes) but requires trust
+Arguments, closures, referenced globals, and return values must be
+JSON-serializable (str, int, float, dict, list, bool, None). Non-JSON
+values surface as a `SandboxExecutionError` from inside the sandbox.
 
 ### Event Loop Management (`_loop_manager.py`)
 
@@ -469,8 +468,7 @@ CWSandboxError
 │   ├── RunnerNotFoundError              # .runner_id attribute
 │   └── ProfileNotFoundError             # .profile_name, .runner_id attributes
 └── FunctionError
-    ├── AsyncFunctionError
-    └── FunctionSerializationError
+    └── AsyncFunctionError
 ```
 
 **Poll retry classification**: The sandbox-status poll loop splits exception
