@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v0.23.0 (2026-05-08)
+
+### Documentation
+
+- Clarify mounted_files are read-only at runtime
+  ([`d0b6895`](https://github.com/coreweave/cwsandbox-client/commit/d0b68955a75347189805cf7f2c1f867b4e6c3caf))
+
+Update docstrings across Sandbox.run(), Session.sandbox(), and @session.function() to document that
+  mounted files are read-only and suggest using write_file() for writable files.
+
+https://claude.ai/code/session_01BrtogWK3Y6KWdcLNsKxxJV
+
+### Features
+
+- Remove pickle serialization from remote functions
+  ([`12056f3`](https://github.com/coreweave/cwsandbox-client/commit/12056f3b8efaed7f1beb723ee318e98e60c7839a))
+
+BREAKING CHANGE: `Serialization`, `FunctionSerializationError`, and the `serialization=` keyword
+  argument on `Session.function()` and `RemoteFunction` are removed. JSON is the only serialization
+  mode for remote functions; arguments, closures, captured globals, and return values must be
+  JSON-serializable.
+
+### Breaking Changes
+
+- `serialization`, `FunctionSerializationError`, and the `serialization=` keyword argument on
+  `Session.function()` and `RemoteFunction` are removed. JSON is the only serialization mode for
+  remote functions; arguments, closures, captured globals, and return values must be
+  JSON-serializable.
+
+
 ## v0.22.0 (2026-04-29)
 
 ### Features
