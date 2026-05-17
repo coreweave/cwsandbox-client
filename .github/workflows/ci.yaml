@@ -28,7 +28,10 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install project
-        run: uv sync --all-extras
+        # `--all-extras` is not used because `harbor` conflicts with `cli`
+        # and `dev` (Harbor's transitive deps pin click<8.2; cli/dev require
+        # click>=8.2). The `harbor` extra is exercised in its own job below.
+        run: uv sync --extra cli --extra dev
 
       - name: Check formatting
         run: uv run ruff format --check .
@@ -41,6 +44,46 @@ jobs:
 
       - name: Unit tests
         run: uv run pytest
+
+  harbor-adapter:
+    # Verify the `harbor` extra resolves and `cwsandbox.harbor` imports cleanly.
+    # This extra is mutually exclusive with `cli`/`dev` via [tool.uv] conflicts
+    # (Harbor pins click<8.2), so it gets its own job.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        # Harbor requires Python >=3.12; the `harbor` dep is gated by a
+        # `python_version >= '3.12'` marker in pyproject.toml. Override
+        # the repo's .python-version (3.11) since the harbor extra is
+        # the entire point of this job.
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project with harbor extra
+        # `--python 3.12` overrides `.python-version` (3.11). Without this,
+        # uv creates a 3.11 venv and the `python_version >= '3.12'` marker
+        # excludes harbor from the install set.
+        run: uv sync --python 3.12 --extra harbor
+
+      - name: Smoke-test adapter import
+        run: |
+          uv run --python 3.12 python -c "
+          from cwsandbox.harbor import CWSandboxEnvironment
+          assert CWSandboxEnvironment.type() == 'cwsandbox', \
+              f'unexpected type: {CWSandboxEnvironment.type()!r}'
+          print('cwsandbox.harbor imports cleanly')
+          "
 
   protobuf-compat:
     runs-on: ubuntu-latest
@@ -64,7 +107,10 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install project
-        run: uv sync --all-extras
+        # `--all-extras` is not used because `harbor` conflicts with `cli`
+        # and `dev` (Harbor's transitive deps pin click<8.2; cli/dev require
+        # click>=8.2). The `harbor` extra is exercised in its own job below.
+        run: uv sync --extra cli --extra dev
 
       - name: Pin protobuf version
         run: uv pip install 'protobuf${{ matrix.protobuf-version }}'

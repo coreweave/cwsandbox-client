@@ -79,6 +79,50 @@ mypy src/                                 # Type check
 pytest                                    # Unit tests
 ```
 
+### Iterating on the Harbor adapter
+
+The `cwsandbox.harbor` module integrates with the
+[Harbor framework](https://github.com/harbor-framework/harbor). A few caveats:
+
+1. **Python 3.12+ required for the harbor extra.** Harbor itself only supports
+   3.12+, while cwsandbox's base supports 3.11+. The `harbor` dep is gated by
+   a `python_version >= '3.12'` marker, so on 3.11 it silently won't install.
+2. **The `harbor` extra is mutually exclusive with `cli` and `dev`** — Harbor's
+   transitive deps (e.g., LiteLLM) pin `click<8.2`, which conflicts with the
+   `click>=8.2` requirement in both the `cli` and `dev` extras. Declared in
+   `[tool.uv] conflicts`. This means you can't `uv sync --extra dev --extra harbor`
+   simultaneously.
+
+Recommended dev loop for the adapter:
+
+```bash
+# A separate Python 3.12 venv just for the adapter, alongside the
+# main dev venv. Won't have pytest/mypy/ruff installed.
+uv venv --python 3.12 .venv-harbor
+uv pip install --python .venv-harbor -e '.[harbor]'
+
+# Verify imports
+.venv-harbor/bin/python -c \
+  "from cwsandbox.harbor import CWSandboxEnvironment; print(CWSandboxEnvironment.type())"
+```
+
+For end-to-end Harbor evaluation, install both into a Harbor checkout's venv
+and invoke its CLI:
+
+```bash
+cd /path/to/harbor
+uv pip install -e /path/to/cwsandbox-client[harbor]
+harbor run ... --environment-import-path cwsandbox.harbor:CWSandboxEnvironment
+```
+
+Caveat: `uv sync` in the Harbor repo may re-resolve and replace the editable
+install with the PyPI version. Re-run `uv pip install -e` after each
+`uv sync`, or use:
+
+```bash
+uv run --with-editable /path/to/cwsandbox-client harbor ...
+```
+
 ### Optional: mise shortcuts
 
 If you installed `mise`, you can use shorter commands:
