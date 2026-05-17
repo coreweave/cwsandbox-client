@@ -56,7 +56,8 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install project
-        run: uv sync --all-extras
+        # See ci.yaml: `harbor` conflicts with `cli`/`dev` via click pin.
+        run: uv sync --extra cli --extra dev
 
       - name: Bump version
         id: bump-version

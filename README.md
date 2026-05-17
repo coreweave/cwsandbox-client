@@ -26,6 +26,37 @@ async with Sandbox.run("sleep", "infinity") as sb:
     print(result.stdout)  # 4
 ```
 
+## Using with Harbor
+
+CW Sandbox can serve as a [Harbor](https://github.com/harbor-framework/harbor)
+execution environment. Install both packages together via the optional
+`harbor` extra:
+
+```bash
+pip install "harbor>=0.6.6" "cwsandbox[harbor]"
+```
+
+Then point Harbor at the adapter with `--environment-import-path`:
+
+```bash
+harbor run -d "<org/dataset>" -m "<model>" -a "<agent>" \
+  --environment-import-path cwsandbox.harbor:CWSandboxEnvironment \
+  --ek docker_image=<your-pre-built-image>
+```
+
+Or in a job/trial YAML:
+
+```yaml
+environment:
+  import_path: cwsandbox.harbor:CWSandboxEnvironment
+  kwargs:
+    docker_image: <your-pre-built-image>
+```
+
+CW Sandbox requires pre-built container images — it cannot build Dockerfiles.
+Set `docker_image` either as a constructor kwarg (`--ek docker_image=...`) or
+under `[environment]` in your `task.toml`.
+
 ## Development
 
 See [DEVELOPMENT.md](https://github.com/coreweave/cwsandbox-client/blob/main/DEVELOPMENT.md) for setup and workflow.
