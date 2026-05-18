@@ -580,6 +580,14 @@ class TestSessionList:
             assert "session-tag" in call_args.tags
 
     @pytest.mark.asyncio
+    async def test_list_rejects_bare_string_tags(self, mock_api_key: str) -> None:
+        """Test session.list() rejects bare string tags."""
+        session = Session()
+
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            await session.list(tags="prod")  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
     async def test_list_with_adopt_registers_sandboxes(self, mock_api_key: str) -> None:
         """Test session.list(adopt=True) registers sandboxes with session."""
         from google.protobuf import timestamp_pb2
