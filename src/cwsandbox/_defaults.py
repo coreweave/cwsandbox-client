@@ -114,6 +114,24 @@ def _merge_dicts(base: dict[str, str], additional: dict[str, str] | None) -> dic
     return merged
 
 
+def _normalize_tags(tags: Iterable[str] | None) -> tuple[str, ...]:
+    """Normalize tag sequences and reject bare strings.
+
+    Strings are iterable in Python, so accepting one would split it into
+    characters (``"prod"`` -> ``("p", "r", "o", "d")``).
+    """
+    if tags is None:
+        return ()
+    if isinstance(tags, str):
+        raise TypeError("tags must be a sequence of strings, not a bare string")
+
+    normalized = tuple(tags)
+    for tag in normalized:
+        if not isinstance(tag, str):
+            raise TypeError("tags must contain only strings")
+    return normalized
+
+
 def _validate_poll_config(
     poll_retry_budget_seconds: float,
     poll_rpc_timeout_seconds: float,
@@ -231,16 +249,17 @@ class SandboxDefaults:
             self.poll_retry_budget_seconds,
             self.poll_rpc_timeout_seconds,
         )
+        object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
-    def merge_tags(self, additional: list[str] | None) -> list[str]:
+    def merge_tags(self, additional: Iterable[str] | None) -> list[str]:
         """Combine default tags with additional tags.
 
         Tags from both sources are included. Order is: defaults first,
         then additional tags appended.
         """
         base = list(self.tags)
-        if additional:
-            base.extend(additional)
+        if additional is not None:
+            base.extend(_normalize_tags(additional))
         return base
 
     def merge_environment_variables(self, additional: dict[str, str] | None) -> dict[str, str]:

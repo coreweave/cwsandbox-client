@@ -40,6 +40,7 @@ from cwsandbox._defaults import (
     STREAMING_OUTPUT_QUEUE_SIZE,
     STREAMING_RESPONSE_QUEUE_SIZE,
     SandboxDefaults,
+    _normalize_tags,
     _resolve_selector,
     _validate_poll_config,
 )
@@ -1075,6 +1076,7 @@ class Sandbox:
         poll_rpc_timeout_seconds: float | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
+        normalized_tags = _normalize_tags(tags)
         effective_base_url = (
             base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
@@ -1105,8 +1107,8 @@ class Sandbox:
 
         try:
             request_kwargs: dict[str, Any] = {}
-            if tags:
-                request_kwargs["tags"] = tags
+            if normalized_tags:
+                request_kwargs["tags"] = list(normalized_tags)
             if status_enum:
                 request_kwargs["status"] = status_enum.to_proto()
             if profile_ids is not None:

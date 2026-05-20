@@ -2055,6 +2055,11 @@ class TestSandboxKwargsValidation:
         assert stored[0].env_var == "HF_TOKEN"
         assert sandbox._environment_variables == {"TEST_ENV_VAR": "test-value"}
 
+    def test_init_rejects_bare_string_tags(self) -> None:
+        """Test Sandbox.__init__ rejects bare string tags."""
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            Sandbox(command="echo", args=["hello"], tags="prod")  # type: ignore[arg-type]
+
     def test_init_with_invalid_kwargs(self) -> None:
         """Test Sandbox.__init__ rejects invalid kwargs."""
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -2376,6 +2381,12 @@ class TestSandboxList:
             assert sandboxes[0].status == "running"
             call_kwargs = mock_stub.List.call_args[1]
             assert call_kwargs["metadata"] == expected_metadata
+
+    @pytest.mark.asyncio
+    async def test_list_rejects_bare_string_tags(self, mock_api_key: str) -> None:
+        """Test list() rejects bare string tags before creating a request."""
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            await Sandbox.list(tags="prod")  # type: ignore[arg-type]
 
     @pytest.mark.asyncio
     async def test_list_with_status_filter(self, mock_api_key: str) -> None:

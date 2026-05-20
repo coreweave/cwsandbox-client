@@ -80,6 +80,29 @@ class TestSandboxDefaults:
 
         assert result == ["default-1", "default-2", "additional-1", "additional-2"]
 
+    def test_constructor_normalizes_list_tags(self) -> None:
+        """Test SandboxDefaults normalizes tag sequences to an immutable tuple."""
+        defaults = SandboxDefaults(tags=["tag-1", "tag-2"])  # type: ignore[arg-type]
+
+        assert defaults.tags == ("tag-1", "tag-2")
+
+    def test_constructor_rejects_bare_string_tags(self) -> None:
+        """Test SandboxDefaults rejects bare string tags."""
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            SandboxDefaults(tags="prod")  # type: ignore[arg-type]
+
+    def test_constructor_rejects_non_string_tag(self) -> None:
+        """Test SandboxDefaults rejects non-string tag values."""
+        with pytest.raises(TypeError, match="tags must contain only strings"):
+            SandboxDefaults(tags=("prod", 123))  # type: ignore[arg-type]
+
+    def test_merge_tags_rejects_bare_string(self) -> None:
+        """Test merge_tags rejects bare string tags."""
+        defaults = SandboxDefaults()
+
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            defaults.merge_tags("prod")
+
     def test_with_overrides_creates_new(self) -> None:
         """Test with_overrides creates a new instance."""
         defaults = SandboxDefaults(container_image="python:3.11")
@@ -102,6 +125,13 @@ class TestSandboxDefaults:
         assert new_defaults.container_image == "python:3.11"
         assert new_defaults.base_url == "http://example.com"
         assert new_defaults.request_timeout_seconds == 120.0
+
+    def test_with_overrides_rejects_bare_string_tags(self) -> None:
+        """Test with_overrides rejects bare string tags."""
+        defaults = SandboxDefaults()
+
+        with pytest.raises(TypeError, match="tags must be a sequence of strings"):
+            defaults.with_overrides(tags="prod")
 
     def test_merge_environment_variables_empty_base(self) -> None:
         """Test merge_environment_variables with no default environment variables."""
