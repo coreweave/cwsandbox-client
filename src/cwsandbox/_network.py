@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import grpc
 import grpc.aio
 
+from cwsandbox._defaults import DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES
 from cwsandbox._error_info import ParsedError, parse_error_info
 from cwsandbox.exceptions import CWSandboxAuthenticationError, CWSandboxError
 
@@ -62,6 +63,13 @@ def parse_grpc_target(base_url: str) -> tuple[str, bool]:
     return target, is_secure
 
 
+def _default_channel_options() -> tuple[tuple[str, int], ...]:
+    return (
+        ("grpc.max_send_message_length", DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES),
+        ("grpc.max_receive_message_length", DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES),
+    )
+
+
 def create_channel(
     target: str,
     is_secure: bool,
@@ -75,11 +83,12 @@ def create_channel(
     Returns:
         An async gRPC channel
     """
+    options = _default_channel_options()
     if is_secure:
         credentials = grpc.ssl_channel_credentials()
-        return grpc.aio.secure_channel(target, credentials)
+        return grpc.aio.secure_channel(target, credentials, options=options)
     else:
-        return grpc.aio.insecure_channel(target)
+        return grpc.aio.insecure_channel(target, options=options)
 
 
 def translate_grpc_error(

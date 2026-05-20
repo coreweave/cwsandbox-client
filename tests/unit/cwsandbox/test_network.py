@@ -15,6 +15,7 @@ from google.protobuf.duration_pb2 import Duration
 from google.rpc import error_details_pb2, status_pb2
 
 from cwsandbox._network import (
+    _default_channel_options,
     create_channel,
     paginate_async,
     parse_grpc_target,
@@ -137,6 +138,7 @@ class TestCreateChannel:
         mock_secure_channel.assert_called_once_with(
             "atc.example.com:443",
             mock_creds,
+            options=_default_channel_options(),
         )
         assert result is mock_channel
 
@@ -148,7 +150,10 @@ class TestCreateChannel:
 
         result = create_channel("localhost:50051", is_secure=False)
 
-        mock_insecure_channel.assert_called_once_with("localhost:50051")
+        mock_insecure_channel.assert_called_once_with(
+            "localhost:50051",
+            options=_default_channel_options(),
+        )
         assert result is mock_channel
 
 

@@ -136,6 +136,18 @@ def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
         assert content == test_content
 
 
+def test_sandbox_large_file_operations(sandbox_defaults: SandboxDefaults) -> None:
+    """Test file operations above grpcio's historical 4 MiB default."""
+    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+        payload = bytes(i % 251 for i in range(5 * 1024 * 1024))
+        filepath = f"/tmp/test_large_file_{uuid.uuid4().hex}.bin"
+
+        sandbox.write_file(filepath, payload).result()
+        content = sandbox.read_file(filepath).result()
+
+        assert content == payload
+
+
 def test_sandbox_with_defaults(
     configured_runner_ids: tuple[str, ...] | None,
 ) -> None:
