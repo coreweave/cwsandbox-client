@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.23.2 (2026-05-20)
+
+### Bug Fixes
+
+- Reject bare string sandbox tags ([#126](https://github.com/coreweave/cwsandbox-client/pull/126),
+  [`90a1a9d`](https://github.com/coreweave/cwsandbox-client/commit/90a1a9d0683cb7143f52b59f5168a86a7c3d74d0))
+
+
 ## v0.23.1 (2026-05-20)
 
 ### Bug Fixes
