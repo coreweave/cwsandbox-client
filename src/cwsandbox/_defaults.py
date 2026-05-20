@@ -254,7 +254,7 @@ class SandboxDefaults:
         Tags from both sources are included. Order is: defaults first,
         then additional tags appended.
         """
-        base = list(_normalize_tags(self.tags))
+        base = list(self.tags)
         if additional is not None:
             base.extend(_normalize_tags(additional))
         return base
