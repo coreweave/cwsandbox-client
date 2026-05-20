@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.23.1 (2026-05-20)
+
+### Bug Fixes
+
+- Raise gRPC message limit
+  ([`152bc7d`](https://github.com/coreweave/cwsandbox-client/commit/152bc7dd62bb911fca97985b5bf542437d97eb61))
+
+
 ## v0.23.0 (2026-05-08)
 
 ### Documentation
