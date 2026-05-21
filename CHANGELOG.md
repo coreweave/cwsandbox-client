@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.23.3 (2026-05-21)
+
+### Bug Fixes
+
+- Add file operation exec fallback
+  ([`108f860`](https://github.com/coreweave/cwsandbox-client/commit/108f860ea01b0eb2d3cbb2120ecaeea8b65c84aa))
+
+
 ## v0.23.2 (2026-05-20)
 
 ### Bug Fixes
