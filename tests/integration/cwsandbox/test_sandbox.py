@@ -10,13 +10,14 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 
 import time
 import uuid
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
 from cwsandbox._sandbox import SandboxStatus
-from cwsandbox.exceptions import SandboxError
+from cwsandbox.exceptions import SandboxError, SandboxResourceExhaustedError
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
 
 
@@ -144,6 +145,36 @@ def test_sandbox_large_file_operations(sandbox_defaults: SandboxDefaults) -> Non
 
         sandbox.write_file(filepath, payload).result()
         content = sandbox.read_file(filepath).result()
+
+        assert content == payload
+
+
+def test_sandbox_large_file_exec_fallback(sandbox_defaults: SandboxDefaults) -> None:
+    """Round-trip a large binary payload through the exec-streaming fallback.
+
+    Forces both write and read down the fallback path so the test exercises
+    end-to-end streaming transfer of realistic file bytes, not just the
+    fallback's request shape.
+    """
+
+    async def force_read_message_size_error(
+        self: Sandbox,
+        filepath: str,
+        timeout: float,
+    ) -> bytes:
+        raise SandboxResourceExhaustedError(
+            "Read file resource exhausted: CLIENT: Received message larger than max"
+        )
+
+    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+        payload = bytes(i % 256 for i in range(20 * 1024 * 1024))
+        filepath = f"/tmp/test_fallback_file_{uuid.uuid4().hex}.bin"
+
+        with patch("cwsandbox._sandbox.DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES", 1):
+            sandbox.write_file(filepath, payload).result()
+
+        with patch.object(Sandbox, "_read_file_unary_async", force_read_message_size_error):
+            content = sandbox.read_file(filepath).result()
 
         assert content == payload
 

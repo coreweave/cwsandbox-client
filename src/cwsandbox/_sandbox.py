@@ -28,6 +28,7 @@ from cwsandbox._auth import resolve_auth_metadata
 from cwsandbox._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+    DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
@@ -47,6 +48,9 @@ from cwsandbox._defaults import (
 from cwsandbox._error_info import (
     CWSANDBOX_COMMAND_TIMEOUT,
     CWSANDBOX_ERROR_DOMAIN,
+    CWSANDBOX_FILE_IO_FAILED,
+    CWSANDBOX_FILE_IS_DIRECTORY,
+    CWSANDBOX_FILE_NOT_FOUND,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     UNAVAILABLE_REASONS,
@@ -3046,6 +3050,20 @@ class Sandbox:
             except asyncio.QueueFull:
                 pass
 
+    async def _prepare_streaming_call(
+        self,
+    ) -> streaming_pb2_grpc.GatewayStreamingServiceStub:
+        """Shared StreamExec preamble: ensure running, return a stub."""
+        await self._ensure_started_async()
+        if self._is_done or self._is_stopping:
+            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+        if self._sandbox_id is None:
+            raise SandboxNotRunningError("No sandbox is running")
+        await self._wait_until_running_async()
+        await self._ensure_client()
+        channel = await self._get_or_create_streaming_channel()
+        return streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+
     async def _exec_streaming_tty_async(
         self,
         command: Sequence[str],
@@ -3071,18 +3089,7 @@ class Sandbox:
             raise ValueError("Command cannot be empty")
 
         try:
-            await self._ensure_started_async()
-            if self._is_done or self._is_stopping:
-                raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
-            if self._sandbox_id is None:
-                raise SandboxNotRunningError("No sandbox is running")
-
-            await self._wait_until_running_async()
-
-            await self._ensure_client()
-            channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
-
+            stub = await self._prepare_streaming_call()
             auth_metadata = self._auth_metadata
 
             logger.debug(
@@ -3313,19 +3320,7 @@ class Sandbox:
         if not command:
             raise ValueError("Command cannot be empty")
 
-        await self._ensure_started_async()
-        if self._is_done or self._is_stopping:
-            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
-        if self._sandbox_id is None:
-            raise SandboxNotRunningError("No sandbox is running")
-
-        # Wait for sandbox to be RUNNING before sending exec request
-        await self._wait_until_running_async()
-
-        await self._ensure_client()
-        channel = await self._get_or_create_streaming_channel()
-        stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
-
+        stub = await self._prepare_streaming_call()
         auth_metadata = self._auth_metadata
 
         # Wrap command with cwd if provided
@@ -3751,26 +3746,152 @@ class Sandbox:
             resize_queue=resize_queue,
         )
 
-    async def _read_file_async(
+    async def _exec_streaming_binary_async(
         self,
-        filepath: str,
-        timeout: float,
-    ) -> bytes:
-        """Internal async: Read a file from the sandbox filesystem."""
-        await self._ensure_started_async()
-        if self._is_done or self._is_stopping:
-            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
-        if self._sandbox_id is None:
-            raise SandboxNotRunningError("No sandbox is running")
+        command: Sequence[str],
+        *,
+        stdin: bytes | None = None,
+        timeout_seconds: float | None = None,
+        operation: str,
+        filepath: str | None = None,
+    ) -> tuple[int, bytes, bytes]:
+        """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
-        # Wait for sandbox to be running before file operations
-        await self._wait_until_running_async()
+        See also ``_exec_streaming_async`` — the queue-driven public variant;
+        keep handshake/timeout/error-translation in sync between the two.
+        """
+        timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
 
-        await self._ensure_client()
+        if not command:
+            raise ValueError("Command cannot be empty")
+
+        stub = await self._prepare_streaming_call()
+
+        # Cap stderr buffering to defend against runaway error output driving the
+        # client to OOM. Stdout is uncapped because the read fallback needs the
+        # full file body.
+        stderr_cap_bytes = 16384
+        stdout_buffer = bytearray()
+        stderr_buffer: list[bytes] = []
+        stderr_total_bytes = 0
+        stderr_truncated = False
+        exit_code: int | None = None
+        ready_event = asyncio.Event()
+        shutdown_event = asyncio.Event()
+        request_error: Exception | None = None
+
+        async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+            yield streaming_pb2.ExecStreamRequest(
+                init=streaming_pb2.ExecStreamInit(
+                    sandbox_id=self._sandbox_id,
+                    command=list(command),
+                )
+            )
+
+            if stdin is None:
+                return
+
+            nonlocal request_error
+            ready_timeout = min(5.0, timeout) if timeout is not None else 5.0
+            try:
+                await asyncio.wait_for(ready_event.wait(), timeout=ready_timeout)
+            except TimeoutError:
+                request_error = SandboxTimeoutError(
+                    "stdin ready signal not received within timeout"
+                )
+                shutdown_event.set()
+                raise request_error from None
+
+            if shutdown_event.is_set():
+                return
+
+            for i in range(0, len(stdin), STDIN_CHUNK_SIZE):
+                if shutdown_event.is_set():
+                    return
+                chunk = stdin[i : i + STDIN_CHUNK_SIZE]
+                yield streaming_pb2.ExecStreamRequest(
+                    stdin=streaming_pb2.ExecStreamData(data=chunk)
+                )
+
+            yield streaming_pb2.ExecStreamRequest(close=streaming_pb2.ExecStreamClose())
+
+        call_timeout = (
+            timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
+        )
+        call: grpc.aio.StreamStreamCall[
+            streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+        ] = stub.StreamExec(
+            request_iterator=request_generator(),
+            timeout=call_timeout,
+            metadata=self._auth_metadata,
+        )
+
+        try:
+            async for response in call:
+                if response.HasField("ready"):
+                    ready_event.set()
+                elif response.HasField("output"):
+                    data = response.output.data
+                    stream_type = response.output.stream_type
+                    if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                        if not stderr_truncated:
+                            remaining = stderr_cap_bytes - stderr_total_bytes
+                            if remaining >= len(data):
+                                stderr_buffer.append(data)
+                                stderr_total_bytes += len(data)
+                            else:
+                                if remaining > 0:
+                                    stderr_buffer.append(bytes(data[:remaining]))
+                                    stderr_total_bytes += remaining
+                                stderr_buffer.append(b"... [stderr truncated]")
+                                stderr_truncated = True
+                    else:
+                        stdout_buffer.extend(data)
+                elif response.HasField("exit"):
+                    ready_event.set()
+                    exit_code = response.exit.exit_code
+                    break
+                elif response.HasField("error"):
+                    ready_event.set()
+                    raise SandboxExecutionError(
+                        f"Exec stream error: {response.error.message}",
+                        reason=response.error.code or None,
+                    )
+        except grpc.RpcError as e:
+            # Surface the specific stdin-ready timeout message instead of a
+            # generic CANCELLED translation when grpcio masks request_error
+            # by cancelling the receiver side.
+            if request_error is not None:
+                raise request_error from e
+            raise _translate_rpc_error(
+                e,
+                sandbox_id=self._sandbox_id,
+                operation=operation,
+                filepath=filepath,
+            ) from e
+        finally:
+            ready_event.set()
+            shutdown_event.set()
+            with contextlib.suppress(Exception):
+                call.cancel()
+
+        if request_error is not None:
+            raise request_error
+
+        if exit_code is None:
+            raise SandboxFileError(
+                f"{operation} ended without exit status from sandbox",
+                filepath=filepath,
+            )
+
+        return (
+            exit_code,
+            bytes(stdout_buffer),
+            b"".join(stderr_buffer),
+        )
+
+    async def _read_file_unary_async(self, filepath: str, timeout: float) -> bytes:
         assert self._stub is not None
-
-        logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
-
         request = gateway_pb2.RetrieveFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
@@ -3798,6 +3919,87 @@ class Sandbox:
 
         return bytes(response.file_contents)
 
+    async def _read_file_via_exec_streaming(self, filepath: str, timeout: float) -> bytes:
+        script = (
+            "path=$1\n"
+            'if [ ! -e "$path" ]; then\n'
+            '  printf "%s\\n" "File not found: $path" >&2\n'
+            "  exit 2\n"
+            "fi\n"
+            'if [ -d "$path" ]; then\n'
+            '  printf "%s\\n" "Path is a directory: $path" >&2\n'
+            "  exit 3\n"
+            "fi\n"
+            'cat < "$path"\n'
+        )
+        returncode, stdout, stderr = await self._exec_streaming_binary_async(
+            ["/bin/sh", "-c", script, "cwsandbox-read-file", filepath],
+            timeout_seconds=timeout,
+            operation="Read file",
+            filepath=filepath,
+        )
+        if returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            if not detail:
+                detail = f"fallback command exited with status {returncode}"
+            # Map fallback script exit codes onto the same AIP-193 reasons the
+            # unary path returns, so callers can switch on ``reason`` without
+            # caring which path produced the error.
+            if returncode == 2:
+                raise SandboxFileError(
+                    f"File operation failed ({CWSANDBOX_FILE_NOT_FOUND}): {detail}",
+                    filepath=filepath,
+                    reason=CWSANDBOX_FILE_NOT_FOUND,
+                )
+            if returncode == 3:
+                raise SandboxFileError(
+                    f"File operation failed ({CWSANDBOX_FILE_IS_DIRECTORY}): {detail}",
+                    filepath=filepath,
+                    reason=CWSANDBOX_FILE_IS_DIRECTORY,
+                )
+            raise SandboxFileError(
+                f"Failed to read file '{filepath}' via exec-stream fallback: {detail}",
+                filepath=filepath,
+                reason=CWSANDBOX_FILE_IO_FAILED,
+            )
+        return stdout
+
+    async def _read_file_async(
+        self,
+        filepath: str,
+        timeout: float,
+    ) -> bytes:
+        """Internal async: Read a file from the sandbox filesystem."""
+        await self._ensure_started_async()
+        if self._is_done or self._is_stopping:
+            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+        if self._sandbox_id is None:
+            raise SandboxNotRunningError("No sandbox is running")
+
+        # Wait for sandbox to be running before file operations
+        await self._wait_until_running_async()
+
+        await self._ensure_client()
+        assert self._stub is not None
+
+        logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
+
+        try:
+            return await self._read_file_unary_async(filepath, timeout)
+        except SandboxResourceExhaustedError:
+            # Read fallback fires on ANY RESOURCE_EXHAUSTED (not just message-
+            # size-shaped) because the client cannot peek at remote file size
+            # before the unary attempt. This may mask backend resource-pressure
+            # classification, but it avoids relying on grpcio's brittle error
+            # text. The write fallback below is selective because the client
+            # knows the local payload size.
+            logger.debug(
+                "Falling back to exec-streaming read for sandbox %s: %s",
+                self._sandbox_id,
+                filepath,
+            )
+            return await self._read_file_via_exec_streaming(filepath, timeout)
+
     def read_file(
         self,
         filepath: str,
@@ -3821,6 +4023,90 @@ class Sandbox:
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(self._read_file_async(filepath, timeout))
         return OperationRef(future)
+
+    async def _write_file_unary_async(
+        self,
+        filepath: str,
+        contents: bytes,
+        timeout: float,
+    ) -> None:
+        assert self._stub is not None
+        request = gateway_pb2.AddFileSandboxRequest(
+            sandbox_id=self._sandbox_id,
+            filepath=filepath,
+            file_contents=contents,
+            max_timeout_seconds=int(timeout),
+        )
+
+        try:
+            response = await self._stub.AddFile(
+                request, timeout=timeout, metadata=self._auth_metadata
+            )
+        except grpc.RpcError as e:
+            raise _translate_rpc_error(
+                e,
+                sandbox_id=self._sandbox_id,
+                operation="Write file",
+                filepath=filepath,
+            ) from e
+
+        if not response.success:
+            logger.warning("Failed to write file %s to sandbox %s", filepath, self._sandbox_id)
+            raise SandboxFileError(
+                f"Failed to write file '{filepath}'",
+                filepath=filepath,
+            )
+
+    async def _write_file_via_exec_streaming(
+        self,
+        filepath: str,
+        contents: bytes,
+        timeout: float,
+    ) -> None:
+        script = (
+            "path=$1\n"
+            "expected=$2\n"
+            'if ! cat > "$path"; then\n'
+            '  printf "%s\\n" "Failed to write input stream to $path" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            'actual=$(wc -c < "$path") || exit 1\n'
+            "set -- $actual\n"
+            "actual=$1\n"
+            'if [ "$actual" != "$expected" ]; then\n'
+            '  printf "%s\\n" "Expected $expected bytes but wrote $actual bytes; '
+            'target may be partial or truncated" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+        )
+        try:
+            returncode, _, stderr = await self._exec_streaming_binary_async(
+                ["/bin/sh", "-c", script, "cwsandbox-write-file", filepath, str(len(contents))],
+                stdin=contents,
+                timeout_seconds=timeout,
+                operation="Write file",
+                filepath=filepath,
+            )
+        except Exception as e:
+            # The exec-stream write does direct-cat-to-target (no temp file +
+            # rename), so any interruption — gRPC timeout, transport error,
+            # mid-stream cancel — may leave a partially written file. Surface
+            # that to callers so they can decide whether to retry vs delete.
+            raise SandboxFileError(
+                f"Failed to write file '{filepath}' via exec-stream fallback. "
+                f"The target may be partial or truncated. Upstream error: {e!r}",
+                filepath=filepath,
+            ) from e
+        if returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            if not detail:
+                detail = f"fallback command exited with status {returncode}"
+            raise SandboxFileError(
+                "Failed to write file "
+                f"'{filepath}' via exec-stream fallback: {detail}. "
+                "The target may be partial or truncated.",
+                filepath=filepath,
+            )
 
     async def _write_file_async(
         self,
@@ -3848,31 +4134,33 @@ class Sandbox:
             len(contents),
         )
 
-        request = gateway_pb2.AddFileSandboxRequest(
-            sandbox_id=self._sandbox_id,
-            filepath=filepath,
-            file_contents=contents,
-            max_timeout_seconds=int(timeout),
-        )
+        if len(contents) > DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES:
+            logger.debug(
+                "Using exec-streaming write for sandbox %s: %s (%d bytes)",
+                self._sandbox_id,
+                filepath,
+                len(contents),
+            )
+            await self._write_file_via_exec_streaming(filepath, contents, timeout)
+            return
 
         try:
-            response = await self._stub.AddFile(
-                request, timeout=timeout, metadata=self._auth_metadata
+            await self._write_file_unary_async(filepath, contents, timeout)
+        except SandboxResourceExhaustedError as e:
+            # SandboxResourceExhaustedError covers both message-size limits
+            # and real backend resource pressure; we can't dispatch on type
+            # alone. grpcio's wording is the only signal that distinguishes
+            # them today.  If grpcio rewords, the fallback silently stops
+            # firing (no data corruption — just a missed retry).
+            text = str(e).lower()
+            if "message" not in text or "larger than max" not in text:
+                raise
+            logger.debug(
+                "Falling back to exec-streaming write for sandbox %s: %s",
+                self._sandbox_id,
+                filepath,
             )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Write file",
-                filepath=filepath,
-            ) from e
-
-        if not response.success:
-            logger.warning("Failed to write file %s to sandbox %s", filepath, self._sandbox_id)
-            raise SandboxFileError(
-                f"Failed to write file '{filepath}'",
-                filepath=filepath,
-            )
+            await self._write_file_via_exec_streaming(filepath, contents, timeout)
 
     def write_file(
         self,

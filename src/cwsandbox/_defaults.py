@@ -35,6 +35,10 @@ DEFAULT_DISCOVERY_TIMEOUT_SECONDS: float = 30.0
 # Match the backend's default gRPC message-size limit for unary RPCs.
 DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES: int = 100 * 1024 * 1024
 
+# Reserve 1 MiB below the channel limit for protobuf framing on file
+# payloads.  Generous; measured framing on AddFile is far smaller.
+DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES: int = DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES - 1024 * 1024
+
 # Wall-clock budget per retry burst (one trip to a stable status) on poll
 # RPCs.  The budget resets on any successful response, so a long-lived
 # sandbox that hits a transient error, recovers, then hits another much

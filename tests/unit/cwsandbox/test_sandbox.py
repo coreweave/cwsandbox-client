@@ -16,11 +16,19 @@ import grpc.aio
 import pytest
 
 from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
-from cwsandbox._sandbox import SandboxStatus, _Running, _Starting, _Stopping, _Terminal
+from cwsandbox._sandbox import (
+    SandboxStatus,
+    _Running,
+    _Starting,
+    _Stopping,
+    _Terminal,
+)
 from cwsandbox.exceptions import (
     SandboxError,
+    SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxResourceExhaustedError,
 )
 
 
@@ -1244,6 +1252,258 @@ class TestSandboxFileOpErrorTranslation:
         assert exc_info.value.filepath == "/caller-requested-path"
         assert exc_info.value.reason == "CWSANDBOX_FILE_PERMISSION_DENIED"
         assert exc_info.value.metadata == {"filepath": "/backend-normalized-path"}
+
+
+class TestSandboxFileOperationFallback:
+    """Tests for large file operation exec-streaming fallback."""
+
+    def _setup_running_sandbox(self) -> Sandbox:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-file-fallback"
+        sandbox._state = _Running(sandbox_id="sb-file-fallback")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        sandbox._auth_metadata = ()
+        return sandbox
+
+    def test_write_file_below_threshold_uses_unary(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        mock_write_response = MagicMock()
+        mock_write_response.success = True
+        sandbox._stub.AddFile = AsyncMock(return_value=mock_write_response)
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            sandbox.write_file("/tmp/test.bin", b"data").result()
+
+        sandbox._stub.AddFile.assert_awaited_once()
+        fallback.assert_not_awaited()
+
+    def test_write_file_above_threshold_uses_exec_fallback_directly(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.AddFile = AsyncMock()
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES", 1),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            sandbox.write_file("/tmp/test.bin", b"abc").result()
+
+        sandbox._stub.AddFile.assert_not_called()
+        fallback.assert_awaited_once()
+
+    def test_write_file_message_size_failure_falls_back(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.AddFile = AsyncMock(
+            side_effect=MockRpcError(
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                "trying to send message larger than max (5242941 vs. 4194304)",
+            )
+        )
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            sandbox.write_file("/tmp/test.bin", b"data").result()
+
+        sandbox._stub.AddFile.assert_awaited_once()
+        fallback.assert_awaited_once()
+
+    def test_write_file_resource_pressure_does_not_fallback(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.AddFile = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.RESOURCE_EXHAUSTED, "runner quota exceeded")
+        )
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+            pytest.raises(SandboxResourceExhaustedError),
+        ):
+            sandbox.write_file("/tmp/test.bin", b"data").result()
+
+        fallback.assert_not_awaited()
+
+    def test_read_file_successful_unary_skips_fallback(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        mock_read_response = MagicMock()
+        mock_read_response.success = True
+        mock_read_response.file_contents = b"file data"
+        sandbox._stub.RetrieveFile = AsyncMock(return_value=mock_read_response)
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_read_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            data = sandbox.read_file("/tmp/test.bin").result()
+
+        assert data == b"file data"
+        sandbox._stub.RetrieveFile.assert_awaited_once()
+        fallback.assert_not_awaited()
+
+    def test_read_file_resource_exhausted_falls_back_without_message_detail(self) -> None:
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.RetrieveFile = AsyncMock(
+            side_effect=MockRpcError(
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                "runner quota exceeded",
+            )
+        )
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox,
+                "_read_file_via_exec_streaming",
+                new_callable=AsyncMock,
+                return_value=b"\x00\xffdata",
+            ) as fallback,
+        ):
+            data = sandbox.read_file("/tmp/test.bin").result()
+
+        assert data == b"\x00\xffdata"
+        sandbox._stub.RetrieveFile.assert_awaited_once()
+        fallback.assert_awaited_once()
+
+    def test_binary_stream_exec_preserves_stdout_bytes(self) -> None:
+        from cwsandbox._proto import streaming_pb2
+
+        sandbox = self._setup_running_sandbox()
+        payload = b"\x00\xffbinary\n"
+        output = streaming_pb2.ExecStreamResponse(
+            output=streaming_pb2.ExecStreamOutput(
+                stream_type=streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT,
+                data=payload,
+            )
+        )
+        exit_response = streaming_pb2.ExecStreamResponse(
+            exit=streaming_pb2.ExecStreamExit(exit_code=0)
+        )
+        mock_call = MockStreamCall(responses=[output, exit_response])
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+        sandbox._streaming_channel = mock_channel
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch(
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            returncode, stdout, stderr = sandbox._loop_manager.run_sync(
+                sandbox._exec_streaming_binary_async(
+                    ["cat", "/tmp/test"],
+                    timeout_seconds=5.0,
+                    operation="Read file",
+                )
+            )
+
+        assert returncode == 0
+        assert stdout == payload
+        assert stderr == b""
+
+    def test_binary_stream_exec_sends_raw_stdin_once(self) -> None:
+        import asyncio
+
+        from cwsandbox._proto import streaming_pb2
+
+        sandbox = self._setup_running_sandbox()
+        payload = b"\x00\xffraw-input"
+        stdin_chunks: list[bytes] = []
+        init_commands: list[list[str]] = []
+        close_event = asyncio.Event()
+
+        def on_write(request: Any) -> None:
+            if request.HasField("init"):
+                init_commands.append(list(request.init.command))
+            elif request.HasField("stdin"):
+                stdin_chunks.append(request.stdin.data)
+            elif request.HasField("close"):
+                close_event.set()
+
+        async def response_generator() -> AsyncIterator[Any]:
+            yield streaming_pb2.ExecStreamResponse(ready=streaming_pb2.StreamingExecReady())
+            await asyncio.wait_for(close_event.wait(), timeout=5.0)
+            yield streaming_pb2.ExecStreamResponse(exit=streaming_pb2.ExecStreamExit(exit_code=0))
+
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=response_generator,
+            on_write=on_write,
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+        sandbox._streaming_channel = mock_channel
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch(
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            returncode, stdout, stderr = sandbox._loop_manager.run_sync(
+                sandbox._exec_streaming_binary_async(
+                    ["/bin/sh", "-c", "cat >/tmp/test"],
+                    stdin=payload,
+                    timeout_seconds=5.0,
+                    operation="Write file",
+                )
+            )
+
+        assert returncode == 0
+        assert stdout == b""
+        assert stderr == b""
+        assert b"".join(stdin_chunks) == payload
+        assert len(mock_stub.StreamExec.call_args_list) == 1
+        assert init_commands == [["/bin/sh", "-c", "cat >/tmp/test"]]
+        assert "base64" not in " ".join(init_commands[0])
+
+    def test_read_fallback_nonzero_maps_to_file_error(self) -> None:
+        sandbox = self._setup_running_sandbox()
+
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(2, b"", b"File not found: /tmp/missing\n"),
+        ):
+            with pytest.raises(SandboxFileError) as exc_info:
+                sandbox._loop_manager.run_sync(
+                    sandbox._read_file_via_exec_streaming("/tmp/missing", 5.0)
+                )
+
+        assert exc_info.value.filepath == "/tmp/missing"
+        assert "File not found" in str(exc_info.value)
+
+    def test_write_fallback_nonzero_mentions_partial_target(self) -> None:
+        sandbox = self._setup_running_sandbox()
+
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(1, b"", b"short write\n"),
+        ):
+            with pytest.raises(SandboxFileError) as exc_info:
+                sandbox._loop_manager.run_sync(
+                    sandbox._write_file_via_exec_streaming("/tmp/out.bin", b"data", 5.0)
+                )
+
+        assert exc_info.value.filepath == "/tmp/out.bin"
+        assert "partial or truncated" in str(exc_info.value)
 
 
 class TestSandboxWaitUntilComplete:
