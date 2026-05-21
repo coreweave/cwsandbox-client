@@ -644,6 +644,39 @@ class Session:
         self._register_sandbox(sandbox)
         sandbox._session = self
 
+    def release(self, sandbox: Sandbox) -> Sandbox:
+        """Release a sandbox from this session without stopping it.
+
+        This is the inverse of :meth:`adopt`: the sandbox is no longer tracked
+        for automatic cleanup, so ``Session.close()`` and process-exit cleanup
+        will not stop the remote sandbox. The caller remains responsible for
+        stopping or deleting the sandbox later.
+
+        Args:
+            sandbox: A Sandbox instance to stop managing.
+
+        Returns:
+            The released sandbox, for chaining.
+
+        Examples:
+            ```python
+            with Session(defaults) as session:
+                sb = session.sandbox()
+                sb.start().result()
+                session.release(sb)
+
+            # The released sandbox keeps running and must be stopped explicitly.
+            try:
+                sb.exec(["echo", "still running"]).result()
+            finally:
+                sb.stop(missing_ok=True).result()
+            ```
+        """
+        self._deregister_sandbox(sandbox)
+        if sandbox._session is self:
+            sandbox._session = None
+        return sandbox
+
     def function(
         self,
         *,

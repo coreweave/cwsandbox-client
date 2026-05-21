@@ -941,6 +941,57 @@ class TestSessionAdopt:
             session.adopt(sandbox)
 
 
+class TestSessionRelease:
+    """Tests for Session.release method."""
+
+    def test_release_unregisters_sandbox(self) -> None:
+        """Test release() removes sandbox from session cleanup tracking."""
+        session = Session()
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        released = session.release(sandbox)
+
+        assert released is sandbox
+        assert session.sandbox_count == 0
+        assert sandbox._session is None
+
+    @pytest.mark.asyncio
+    async def test_close_does_not_stop_released_sandbox(self) -> None:
+        """Test session.close() does not stop released sandboxes."""
+        session = Session()
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        with patch.object(sandbox, "_stop_async", new_callable=AsyncMock) as mock_stop:
+            session.release(sandbox)
+            await session._close_async()
+
+        mock_stop.assert_not_called()
+
+    def test_release_is_idempotent_for_untracked_sandbox(self) -> None:
+        """Test release() is safe for sandboxes not tracked by the session."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        released = session.release(sandbox)
+
+        assert released is sandbox
+        assert session.sandbox_count == 0
+        assert sandbox._session is None
+
+    def test_release_does_not_clear_other_session_owner(self) -> None:
+        """Test release() does not detach sandboxes owned by another session."""
+        session = Session()
+        other_session = Session()
+        sandbox = other_session.sandbox(command="sleep", args=["infinity"])
+
+        released = session.release(sandbox)
+
+        assert released is sandbox
+        assert session.sandbox_count == 0
+        assert other_session.sandbox_count == 1
+        assert sandbox._session is other_session
+
+
 class TestSessionReportTo:
     """Tests for Session report_to parameter."""
 
