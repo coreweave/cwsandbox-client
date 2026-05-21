@@ -768,6 +768,8 @@ class TerminalSession(OperationRef["TerminalResult"]):
     Examples:
         SDK-level interactive session:
         ```python
+        import sys
+
         session = sandbox.shell(width=80, height=24)
         for chunk in session.output:
             sys.stdout.buffer.write(chunk)
@@ -777,9 +779,12 @@ class TerminalSession(OperationRef["TerminalResult"]):
 
         Async usage:
         ```python
+        import sys
+
         session = sandbox.shell()
         async for chunk in session.output:
             sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
         result = await session
         ```
     """
