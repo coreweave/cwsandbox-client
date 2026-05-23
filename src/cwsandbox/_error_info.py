@@ -2,14 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""AIP-193 ErrorInfo parser for gRPC trailing metadata.
+"""AIP-193 structured-error parser for gRPC trailing metadata.
 
 Parses ``google.rpc.Status`` structured error details out of the
 ``grpc-status-details-bin`` trailing metadata entry produced by
 servers that follow Google's AIP-193 error model, and returns the
 subset of fields the SDK cares about (``ErrorInfo.reason``,
 ``ErrorInfo.domain``, ``ErrorInfo.metadata``, and
-``RetryInfo.retry_delay`` when present).
+``RetryInfo.retry_delay`` when present, and ``BadRequest`` field
+violations).
 
 The parser is defensive: any failure to decode or extract details
 returns ``None`` rather than raising, so callers can safely fall
@@ -26,6 +27,8 @@ from typing import Any
 import grpc
 from google.protobuf import message as _message
 from google.rpc import error_details_pb2, status_pb2
+
+from cwsandbox.exceptions import FieldViolation
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 
@@ -161,12 +164,15 @@ class ParsedError:
             should shallow-copy via ``dict(parsed.metadata)``.
         retry_delay: The ``RetryInfo.retry_delay`` as a ``timedelta``, or ``None``
             if no ``RetryInfo`` detail was present or the value was out of range.
+        field_violations: ``BadRequest.field_violations`` entries emitted by the
+            server. Empty tuple when no field violations were present.
     """
 
     reason: str | None = None
     domain: str = ""
     metadata: Mapping[str, str] = field(default_factory=dict)
     retry_delay: timedelta | None = None
+    field_violations: tuple[FieldViolation, ...] = ()
 
 
 def parse_error_info(err: grpc.RpcError) -> ParsedError | None:
@@ -174,9 +180,9 @@ def parse_error_info(err: grpc.RpcError) -> ParsedError | None:
 
     Walks ``err.trailing_metadata()`` for every ``grpc-status-details-bin``
     entry (the key may repeat in gRPC metadata). The first entry that decodes
-    to a ``google.rpc.Status`` containing at least one ``ErrorInfo`` or
-    ``RetryInfo`` detail wins; a malformed leading entry does not suppress a
-    later valid one.
+    to a ``google.rpc.Status`` containing at least one ``ErrorInfo``,
+    ``RetryInfo``, or ``BadRequest`` detail wins; a malformed leading entry does
+    not suppress a later valid one.
 
     Returns ``None`` when no entry yields usable structured details. Never
     raises - bad protobuf payloads, out-of-range RetryInfo durations, or any
@@ -232,6 +238,7 @@ def _extract_parsed_error(status: status_pb2.Status) -> ParsedError | None:
     domain = ""
     metadata: Mapping[str, str] = {}
     retry_delay: timedelta | None = None
+    field_violations: list[FieldViolation] = []
 
     for detail in status.details:
         # Treat an empty proto3-default `reason` as "not present" so a later
@@ -258,16 +265,25 @@ def _extract_parsed_error(status: status_pb2.Status) -> ParsedError | None:
             if not retry.HasField("retry_delay"):
                 continue
             retry_delay = _retry_delay_from_duration(retry.retry_delay)
-        if reason is not None and retry_delay is not None:
-            break
+        elif detail.Is(error_details_pb2.BadRequest.DESCRIPTOR):
+            bad_request = error_details_pb2.BadRequest()
+            try:
+                detail.Unpack(bad_request)
+            except _message.DecodeError:
+                continue
+            for violation in bad_request.field_violations:
+                parsed_violation = _field_violation_from_proto(violation)
+                if _has_field_violation_data(parsed_violation):
+                    field_violations.append(parsed_violation)
 
-    if reason is None and retry_delay is None:
+    if reason is None and retry_delay is None and not field_violations:
         return None
     return ParsedError(
         reason=reason,
         domain=domain,
         metadata=metadata,
         retry_delay=retry_delay,
+        field_violations=tuple(field_violations),
     )
 
 
@@ -277,6 +293,63 @@ def _retry_delay_from_duration(duration: Any) -> timedelta | None:
     except (OverflowError, ValueError, TypeError, AttributeError):
         return None
     return result if isinstance(result, timedelta) else None
+
+
+def _field_violation_from_proto(
+    violation: error_details_pb2.BadRequest.FieldViolation,
+) -> FieldViolation:
+    return FieldViolation(
+        field=violation.field,
+        description=_field_violation_description_from_proto(violation),
+    )
+
+
+def _has_field_violation_data(violation: FieldViolation) -> bool:
+    return bool(violation.field or violation.description)
+
+
+def _field_violation_description_from_proto(
+    violation: error_details_pb2.BadRequest.FieldViolation,
+) -> str:
+    description = violation.description
+    if isinstance(description, str) and description:
+        return description
+    if violation.HasField("localized_message"):
+        message = violation.localized_message.message
+        if isinstance(message, str) and message:
+            return message
+    reason = violation.reason
+    return reason if isinstance(reason, str) else ""
+
+
+def format_field_violations(
+    field_violations: Iterable[FieldViolation],
+) -> str:
+    """Return a compact user-facing string for field violations."""
+    messages: list[str] = []
+    for violation in field_violations:
+        if violation.field and violation.description:
+            messages.append(f"{violation.field}: {violation.description}")
+        elif violation.field:
+            messages.append(violation.field)
+        elif violation.description:
+            messages.append(violation.description)
+    return "; ".join(messages)
+
+
+def rpc_error_details(err: grpc.RpcError, parsed: ParsedError | None) -> str:
+    """Return gRPC details plus any parsed field violations."""
+    details = err.details()
+    violation_details = (
+        format_field_violations(parsed.field_violations) if parsed is not None else ""
+    )
+    if details and violation_details:
+        return f"{details}; field violations: {violation_details}"
+    if details:
+        return details
+    if violation_details:
+        return f"field violations: {violation_details}"
+    return str(err)
 
 
 def is_not_found(

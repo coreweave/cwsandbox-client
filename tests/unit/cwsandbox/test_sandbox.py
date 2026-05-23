@@ -26,11 +26,13 @@ from cwsandbox._sandbox import (
     _Terminal,
 )
 from cwsandbox.exceptions import (
+    FieldViolation,
     SandboxError,
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxResourceExhaustedError,
+    SandboxValidationError,
 )
 
 
@@ -5178,12 +5180,13 @@ class _MockRpcErrorWithDetails(grpc.RpcError):
         domain: str = "cwsandbox.com",
         metadata: dict[str, str] | None = None,
         retry_seconds: int = 0,
+        field_violations: list[tuple[str, str]] | None = None,
     ) -> None:
         super().__init__()
         self._code = code
         self._details = details
         self._trailing: list[tuple[str, bytes]] = []
-        if reason is not None or retry_seconds:
+        if reason is not None or retry_seconds or field_violations is not None:
             from google.protobuf import any_pb2
             from google.protobuf.duration_pb2 import Duration
             from google.rpc import error_details_pb2, status_pb2
@@ -5201,6 +5204,18 @@ class _MockRpcErrorWithDetails(grpc.RpcError):
                 packed_retry = any_pb2.Any()
                 packed_retry.Pack(retry)
                 status.details.append(packed_retry)
+            if field_violations is not None:
+                bad_request = error_details_pb2.BadRequest()
+                for field, description in field_violations:
+                    bad_request.field_violations.append(
+                        error_details_pb2.BadRequest.FieldViolation(
+                            field=field,
+                            description=description,
+                        )
+                    )
+                packed_bad_request = any_pb2.Any()
+                packed_bad_request.Pack(bad_request)
+                status.details.append(packed_bad_request)
             self._trailing = [("grpc-status-details-bin", status.SerializeToString())]
 
     def code(self) -> grpc.StatusCode:
@@ -5366,6 +5381,26 @@ class TestTranslateRpcErrorReasonMapping:
         assert isinstance(result, SandboxError)
         assert result.reason is None
         assert result.metadata == {}
+
+    def test_invalid_argument_bad_request_field_violations_are_rendered(self) -> None:
+        from cwsandbox._sandbox import _translate_rpc_error
+
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "",
+            field_violations=[("tags[0]", "invalid tag")],
+        )
+        result = _translate_rpc_error(error, operation="Start sandbox")
+
+        assert isinstance(result, SandboxValidationError)
+        assert isinstance(result, SandboxError)
+        assert "Start sandbox failed: field violations: tags[0]: invalid tag" in str(result)
+        assert result.field_violations == (
+            FieldViolation(
+                field="tags[0]",
+                description="invalid tag",
+            ),
+        )
 
     def test_file_reason_without_filepath_or_metadata(self) -> None:
         from cwsandbox._sandbox import _translate_rpc_error

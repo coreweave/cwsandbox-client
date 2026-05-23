@@ -11,6 +11,10 @@ from cwsandbox.exceptions import (
     AsyncFunctionError,
     CWSandboxAuthenticationError,
     CWSandboxError,
+    CWSandboxValidationError,
+    DiscoveryError,
+    DiscoveryValidationError,
+    FieldViolation,
     FunctionError,
     SandboxError,
     SandboxExecutionError,
@@ -24,6 +28,7 @@ from cwsandbox.exceptions import (
     SandboxTerminatedError,
     SandboxTimeoutError,
     SandboxUnavailableError,
+    SandboxValidationError,
     SnapshotBackendThrottledError,
     SnapshotBucketMismatchError,
     SnapshotNotFoundError,
@@ -42,7 +47,9 @@ class TestExceptionHierarchy:
         """Test CWSandboxError is the base for all exceptions."""
         assert issubclass(SandboxError, CWSandboxError)
         assert issubclass(FunctionError, CWSandboxError)
+        assert issubclass(DiscoveryError, CWSandboxError)
         assert issubclass(CWSandboxAuthenticationError, CWSandboxError)
+        assert issubclass(CWSandboxValidationError, CWSandboxError)
 
     def test_sandbox_error_is_base_for_sandbox_exceptions(self) -> None:
         """Test SandboxError is the base for sandbox-related exceptions."""
@@ -53,6 +60,12 @@ class TestExceptionHierarchy:
         assert issubclass(SandboxFailedError, SandboxError)
         assert issubclass(SandboxExecutionError, SandboxError)
         assert issubclass(SandboxFileError, SandboxError)
+        assert issubclass(SandboxValidationError, SandboxError)
+        assert issubclass(SandboxValidationError, CWSandboxValidationError)
+
+    def test_discovery_validation_error_is_discovery_error(self) -> None:
+        assert issubclass(DiscoveryValidationError, DiscoveryError)
+        assert issubclass(DiscoveryValidationError, CWSandboxValidationError)
 
     def test_function_error_is_base_for_function_exceptions(self) -> None:
         """Test FunctionError is the base for function-related exceptions."""
@@ -239,6 +252,14 @@ class TestStructuredErrorAttributes:
         assert exc.reason == "CWSANDBOX_FILE_NOT_FOUND"
         assert exc.metadata == {"filepath": "/x"}
         assert exc.retry_delay == timedelta(seconds=3)
+
+    def test_validation_error_carries_field_violations(self) -> None:
+        violation = FieldViolation(
+            field="tags[0]",
+            description="invalid tag",
+        )
+        exc = CWSandboxValidationError("invalid", field_violations=[violation])
+        assert exc.field_violations == (violation,)
 
     def test_metadata_is_copied(self) -> None:
         original = {"filepath": "/x"}
