@@ -79,6 +79,22 @@ STREAMING_OUTPUT_QUEUE_SIZE: int = 4096
 # data or extremely long lines in follow mode).
 MAX_LINE_BUFFER_BYTES: int = 1024 * 1024  # 1 MB
 
+# Max number of resume attempts the log stream will make after a transient
+# transport-level disconnect.  The first attempt is a fresh init; each
+# subsequent attempt echoes the last-received session_id and cumulative
+# offset.  Servers that do not advertise resume support (older builds, or
+# servers that reply with an in-band SESSION_NOT_FOUND on the resume init)
+# fall back to a fresh init, so this bound is a safety cap on retries
+# regardless of server behavior.
+STREAMING_RESUME_MAX_ATTEMPTS: int = 3
+
+# Initial backoff between resume attempts.  Doubled on each subsequent
+# attempt up to STREAMING_RESUME_MAX_BACKOFF_SECONDS.  Kept small because
+# the server-side orphan window is short and burning it on sleeps defeats
+# the purpose.
+STREAMING_RESUME_BACKOFF_SECONDS: float = 0.5
+STREAMING_RESUME_MAX_BACKOFF_SECONDS: float = 4.0
+
 
 def _resolve_selector(
     override: Iterable[str] | None,

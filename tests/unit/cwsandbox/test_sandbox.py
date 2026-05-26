@@ -6106,3 +6106,79 @@ class TestStoppingDel:
 
         with pytest.warns(ResourceWarning, match="was not stopped"):
             sandbox.__del__()
+
+
+class TestStreamingResumeHelpers:
+    """Tests for the streaming-resume helper classification."""
+
+    def test_is_resumable_transport_error_unavailable(self) -> None:
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "gateway gone")
+        assert _is_resumable_transport_error(err) is True
+
+    def test_is_resumable_transport_error_internal(self) -> None:
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.INTERNAL, "internal blip")
+        assert _is_resumable_transport_error(err) is True
+
+    def test_is_resumable_transport_error_deadline_excluded(self) -> None:
+        """DEADLINE_EXCEEDED reflects a caller-requested timeout, not transport loss."""
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "")
+        assert _is_resumable_transport_error(err) is False
+
+    def test_is_resumable_transport_error_permission_denied_excluded(self) -> None:
+        """Application-level fatal codes must not retry."""
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.PERMISSION_DENIED, "")
+        assert _is_resumable_transport_error(err) is False
+
+    def test_is_resumable_transport_error_non_rpc_excluded(self) -> None:
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        assert _is_resumable_transport_error(RuntimeError("nope")) is False
+
+
+class TestStreamingResumeWireProtocol:
+    """Tests for the resume-aware LogStreamInit wire shape."""
+
+    def test_log_stream_init_carries_resume_fields(self) -> None:
+        """LogStreamInit accepts resume_session_id and resume_offset."""
+        from cwsandbox._proto import streaming_pb2
+
+        init = streaming_pb2.LogStreamInit(
+            sandbox_id="sb-1",
+            follow=True,
+            resume_session_id="sess-abc",
+            resume_offset=12345,
+        )
+        assert init.resume_session_id == "sess-abc"
+        assert init.resume_offset == 12345
+
+    def test_log_stream_data_exposes_session_id_and_offset(self) -> None:
+        """LogStreamData carries session_id and cumulative offset on each frame."""
+        from cwsandbox._proto import streaming_pb2
+
+        data = streaming_pb2.LogStreamData(
+            data=b"hello\n",
+            session_id="sess-abc",
+            offset=42,
+        )
+        assert data.session_id == "sess-abc"
+        assert data.offset == 42
+
+    def test_log_stream_data_defaults_indicate_no_resume_support(self) -> None:
+        """A server that does not speak resume returns empty session_id and offset=0.
+
+        The client uses those defaults to decide whether to attempt resume, so
+        old servers naturally land in the "no resume" branch.
+        """
+        from cwsandbox._proto import streaming_pb2
+
+        data = streaming_pb2.LogStreamData(data=b"x")
+        assert data.session_id == ""
+        assert data.offset == 0
