@@ -342,8 +342,11 @@ def _translate_rpc_error(
             effective_filepath = (
                 filepath if filepath is not None else parsed_metadata.get("filepath")
             )
+            filepath_context = (
+                f" for {effective_filepath!r}" if effective_filepath is not None else ""
+            )
             return SandboxFileError(
-                f"File operation failed ({reason}): {details}",
+                f"File operation failed{filepath_context} ({reason}): {details}",
                 filepath=effective_filepath,
                 reason=reason,
                 metadata=metadata,
