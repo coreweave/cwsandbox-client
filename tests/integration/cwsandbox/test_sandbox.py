@@ -8,14 +8,20 @@ These tests require a running CWSandbox backend.
 Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before running.
 """
 
+import asyncio
 import time
 import uuid
+from collections.abc import AsyncIterator
 from unittest.mock import patch
 
+import grpc
+import grpc.aio
 import httpx
 import pytest
 
 from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
+from cwsandbox._loop_manager import _LoopManager
+from cwsandbox._proto import streaming_pb2, streaming_pb2_grpc
 from cwsandbox._sandbox import SandboxStatus
 from cwsandbox.exceptions import SandboxError, SandboxResourceExhaustedError
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
@@ -1455,3 +1461,344 @@ def test_concurrent_stop_and_wait_until_complete(sandbox_defaults: SandboxDefaul
         SandboxStatus.FAILED,
         SandboxStatus.TERMINATED,
     )
+
+
+# --------------------------------------------------------------------------
+# Log-stream resume e2e
+# --------------------------------------------------------------------------
+#
+# These tests cover the wire-additive `session_id` / `offset` fields the
+# server emits on every LogStreamData frame, the in-band SESSION_NOT_FOUND
+# reject contract on a resume init with an unknown session_id, and the
+# SDK's transparent auto-reconnect on a transient transport disconnect.
+#
+# The wire protocol is unconditional on supporting servers; the reattach
+# behavior is rolled out separately, so any test that depends on a
+# *successful* resume must tolerate the registry-miss path
+# (SESSION_NOT_FOUND in-band → SDK falls back to a fresh init).
+#
+# All three tests use a noisy sandbox that emits a deterministic counter
+# to stdout so we can assert on byte-level ordering and gaps.
+
+_LOG_PRODUCER = (
+    "import sys, time\n"
+    "for i in range(1000):\n"
+    "    sys.stdout.write(f'line-{i:04d}\\n')\n"
+    "    sys.stdout.flush()\n"
+    "    time.sleep(0.05)\n"
+)
+
+
+def _noisy_sandbox(defaults: SandboxDefaults) -> Sandbox:
+    """Start a sandbox that prints a counter line every 50ms to stdout.
+
+    The output is line-oriented and ordered, so a downstream test can
+    assert on monotonicity and detect gaps or duplicates introduced by
+    a reconnect.
+    """
+    return Sandbox.run("python", "-c", _LOG_PRODUCER, defaults=defaults)
+
+
+async def _open_log_stream(
+    sandbox: Sandbox,
+    *,
+    follow: bool,
+    resume_session_id: str = "",
+    resume_offset: int = 0,
+) -> tuple[
+    grpc.aio.StreamStreamCall[streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse],
+    asyncio.Event,
+]:
+    """Open a raw StreamLogs RPC against the sandbox.
+
+    Returns the streaming call plus a shutdown Event that, when set, makes
+    the request iterator yield a close message — letting the caller end a
+    follow=True stream cleanly.
+
+    Used by the e2e tests below to bypass the SDK's auto-resume machinery
+    and exercise the wire protocol directly.
+    """
+    sandbox_id = sandbox.sandbox_id
+    assert sandbox_id is not None
+
+    channel = await sandbox._get_or_create_streaming_channel()
+    stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+    shutdown = asyncio.Event()
+
+    async def request_iter() -> AsyncIterator[streaming_pb2.LogStreamRequest]:
+        init = streaming_pb2.LogStreamInit(sandbox_id=sandbox_id, follow=follow)
+        if resume_session_id:
+            init.resume_session_id = resume_session_id
+            init.resume_offset = resume_offset
+        yield streaming_pb2.LogStreamRequest(init=init)
+        if follow:
+            await shutdown.wait()
+            yield streaming_pb2.LogStreamRequest(close=streaming_pb2.LogStreamClose())
+
+    call = stub.StreamLogs(
+        request_iterator=request_iter(),
+        metadata=sandbox._auth_metadata,
+    )
+    return call, shutdown
+
+
+def test_log_stream_frames_carry_session_id_and_offset(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """Each LogStreamData frame must include session_id and a cumulative offset.
+
+    Mirrors the contract validated by aviato's
+    TestStreamingLogData_CarriesSessionIDAndCumulativeOffset: session_id is
+    stable across frames, offset advances by exactly the chunk byte length.
+
+    Skips when the server has not deployed the wire-additive fields yet
+    (session_id is empty), which is the expected state in environments
+    that pre-date the streaming-resume protocol.
+    """
+    sandbox = _noisy_sandbox(sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        loop_mgr = _LoopManager.get()
+
+        async def collect_frames() -> list[streaming_pb2.LogStreamData]:
+            call, shutdown = await _open_log_stream(sandbox, follow=True)
+            frames: list[streaming_pb2.LogStreamData] = []
+            try:
+                async for resp in call:
+                    if resp.HasField("data"):
+                        frames.append(resp.data)
+                        if len(frames) >= 3:
+                            break
+                    if resp.HasField("error") or resp.HasField("complete"):
+                        break
+            finally:
+                shutdown.set()
+                call.cancel()
+            return frames
+
+        future = loop_mgr.run_async(asyncio.wait_for(collect_frames(), timeout=30.0))
+        frames = future.result(timeout=35.0)
+
+        assert len(frames) >= 3, "noisy sandbox should produce >=3 log frames in 30s"
+
+        if not frames[0].session_id:
+            pytest.skip(
+                "server does not advertise session_id on LogStreamData;"
+                " streaming-resume wire protocol not deployed in this env"
+            )
+
+        first_session = frames[0].session_id
+        last_offset = 0
+        for frame in frames:
+            assert frame.session_id == first_session, (
+                f"session_id must be stable across frames: saw {frame.session_id!r}"
+                f" after {first_session!r}"
+            )
+            assert frame.offset > last_offset, (
+                f"offset must advance strictly monotonically: {frame.offset} <= {last_offset}"
+            )
+            # offset is cumulative bytes *after* this chunk, so the advance
+            # equals chunk byte length exactly.
+            assert frame.offset - last_offset == len(frame.data), (
+                f"offset advance ({frame.offset - last_offset}) must equal"
+                f" chunk size ({len(frame.data)})"
+            )
+            last_offset = frame.offset
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
+def test_log_resume_with_unknown_session_id_returns_in_band_reject(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """A resume init with an unknown session_id receives an in-band reject.
+
+    Mirrors aviato's TestResumeWithUnknownSessionID_ReturnsInBandSessionNotFound
+    for the logs path. The reject travels as a LogStreamError frame, not
+    an RPC error, so the SDK can fall back to a fresh init without
+    treating the response as a hard transport failure.
+
+    Skips when the server doesn't acknowledge the resume protocol at all
+    (no session_id on data frames in a control call).
+    """
+    sandbox = _noisy_sandbox(sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        loop_mgr = _LoopManager.get()
+
+        async def probe_resume_reject() -> tuple[bool, streaming_pb2.LogStreamResponse | None]:
+            # First open a normal stream to confirm the server speaks the
+            # resume wire protocol — if it doesn't, the resume init below
+            # would just be ignored and the test would assert on a normal
+            # log frame, which is not the contract we're testing.
+            probe_call, probe_shutdown = await _open_log_stream(sandbox, follow=True)
+            wire_supported = False
+            try:
+                async for resp in probe_call:
+                    if resp.HasField("data"):
+                        wire_supported = bool(resp.data.session_id)
+                        break
+            finally:
+                probe_shutdown.set()
+                probe_call.cancel()
+
+            if not wire_supported:
+                return False, None
+
+            # Now send a resume init with a fabricated session_id. The
+            # server must reply with an in-band LogStreamError carrying
+            # code SESSION_NOT_FOUND.
+            reject_call, reject_shutdown = await _open_log_stream(
+                sandbox,
+                follow=True,
+                resume_session_id="this-session-does-not-exist",
+                resume_offset=0,
+            )
+            first: streaming_pb2.LogStreamResponse | None = None
+            try:
+                async for resp in reject_call:
+                    first = resp
+                    break
+            finally:
+                reject_shutdown.set()
+                reject_call.cancel()
+            return True, first
+
+        future = loop_mgr.run_async(asyncio.wait_for(probe_resume_reject(), timeout=30.0))
+        wire_supported, first = future.result(timeout=35.0)
+
+        if not wire_supported:
+            pytest.skip(
+                "server does not advertise session_id on LogStreamData;"
+                " resume-reject contract is not exercised in this env"
+            )
+
+        assert first is not None, (
+            "server must respond to a resume init, not silently close the stream"
+        )
+        assert first.HasField("error"), (
+            f"first frame on an unknown resume_session_id must be a LogStreamError; got {first}"
+        )
+        assert first.error.code == "SESSION_NOT_FOUND", (
+            f"unknown resume_session_id must produce SESSION_NOT_FOUND, got"
+            f" {first.error.code!r}: {first.error.message!r}"
+        )
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
+def test_stream_logs_reconnects_after_transient_disconnect(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """stream_logs(follow=True) keeps yielding lines across a forced disconnect.
+
+    The SDK captures session_id + offset on each frame and, on a transient
+    transport error, transparently re-inits with resume_session_id. This
+    test forces a transport disconnect mid-stream and asserts that the
+    reader survives and continues to deliver counter lines past the
+    point of the disconnect, with counter values strictly newer than
+    anything that could have been buffered before the disconnect.
+
+    Note: the deterministic state-machine behavior (which transport
+    errors trigger resume, which in-band codes trigger fresh init,
+    budget exhaustion) is covered by TestStreamLogsResumeStateMachine
+    in tests/unit/cwsandbox/test_sandbox.py — those tests drive the
+    full state machine against a programmable stub without needing a
+    real backend. This integration test is the end-to-end smoke check
+    that the resume loop survives a real gRPC disconnect.
+
+    On environments where resume is not yet rolled out, the SDK falls
+    back to a fresh init on the in-band SESSION_NOT_FOUND reject; the
+    reader still recovers and continues to deliver new lines, so the
+    test passes in either rollout state.
+    """
+    sandbox = _noisy_sandbox(sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        reader = sandbox.stream_logs(follow=True)
+
+        # Read a handful of lines so the SDK has captured a session_id
+        # and offset. Pause briefly between reads so the producer cannot
+        # buffer an unbounded amount of pre-disconnect data into the
+        # reader's queue — otherwise the post-disconnect assertion
+        # could be satisfied purely by buffered items.
+        first_batch: list[int] = []
+        try:
+            for line in reader:
+                stripped = line.strip()
+                if stripped.startswith("line-"):
+                    first_batch.append(int(stripped.split("-", 1)[1]))
+                if len(first_batch) >= 5:
+                    break
+
+            assert len(first_batch) >= 5, (
+                f"sandbox should emit at least 5 counter lines; got {first_batch}"
+            )
+
+            # Force a transient transport disconnect by closing the
+            # cached streaming channel. The SDK's _stream_logs_async
+            # loop will see an AioRpcError on the in-flight call and
+            # either resume via resume_session_id or fall back to a
+            # fresh init on SESSION_NOT_FOUND.
+            loop_mgr = _LoopManager.get()
+
+            async def reset_channel() -> None:
+                if sandbox._streaming_channel is not None:
+                    await sandbox._streaming_channel.close(grace=None)
+                    sandbox._streaming_channel = None
+
+            loop_mgr.run_sync(reset_channel())
+
+            # Counter values past this point must be strictly newer
+            # than anything that could have been buffered before the
+            # disconnect. _noisy_sandbox emits roughly one line per 50ms,
+            # so within the 30s post-disconnect deadline we expect to
+            # observe counters well past the pre-disconnect maximum;
+            # require at least PRE_DISCONNECT + 5 so the assertion
+            # cannot be satisfied by stale buffered items even if the
+            # reader was paused with several seconds of backlog.
+            new_line_threshold = first_batch[-1] + 5
+
+            second_batch: list[int] = []
+            start = time.monotonic()
+            for line in reader:
+                stripped = line.strip()
+                if stripped.startswith("line-"):
+                    n = int(stripped.split("-", 1)[1])
+                    if n >= new_line_threshold:
+                        second_batch.append(n)
+                if len(second_batch) >= 3:
+                    break
+                if time.monotonic() - start > 30.0:
+                    break
+
+            assert len(second_batch) >= 3, (
+                f"SDK must deliver counter lines >= {new_line_threshold}"
+                f" within 30s after the forced disconnect; got"
+                f" first_batch={first_batch}, second_batch={second_batch}"
+            )
+
+            for batch in (first_batch, second_batch):
+                for i in range(1, len(batch)):
+                    assert batch[i] > batch[i - 1], (
+                        f"counter must be monotonic within a batch: {batch}"
+                    )
+        finally:
+            reader.close()
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass

@@ -14,7 +14,7 @@ import shlex
 import threading
 import time
 import warnings
-from collections.abc import AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -40,6 +40,9 @@ from cwsandbox._defaults import (
     STDIN_CHUNK_SIZE,
     STREAMING_OUTPUT_QUEUE_SIZE,
     STREAMING_RESPONSE_QUEUE_SIZE,
+    STREAMING_RESUME_BACKOFF_SECONDS,
+    STREAMING_RESUME_MAX_ATTEMPTS,
+    STREAMING_RESUME_MAX_BACKOFF_SECONDS,
     SandboxDefaults,
     _normalize_tags,
     _resolve_selector,
@@ -353,6 +356,86 @@ _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
 )
+
+
+# In-band error codes the server may emit on a streaming response.  These
+# are application-level (the gRPC call itself succeeds); the codes describe
+# server-side outcomes for the streaming session.  Mirrors the documented
+# error contract in streaming_pb2.pyi (LogStreamError.code).
+#
+# Per the wire contract every LogStreamError is terminal — the server will
+# not send further frames on the same call.  The client's recovery action
+# is dictated by the code:
+#
+#   SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_UNAVAILABLE / RUNNER_DRAINING
+#       reconnect with a FRESH init (no resume_session_id / resume_offset)
+#       to pick up the live tail from the current head.
+#   INVALID_RESUME_OFFSET
+#       terminal, no retry — the echoed offset is corrupt and reconnecting
+#       with the same state would just reproduce the failure.
+#   SANDBOX_NOT_FOUND / PERMISSION_DENIED / other unknown codes
+#       terminal, no retry — surface to the caller as a SandboxError.
+_STREAMING_SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+_STREAMING_REPLAY_GAP = "REPLAY_GAP"
+_STREAMING_INVALID_RESUME_OFFSET = "INVALID_RESUME_OFFSET"
+_STREAMING_RUNNER_UNAVAILABLE = "RUNNER_UNAVAILABLE"
+_STREAMING_RUNNER_DRAINING = "RUNNER_DRAINING"
+
+# Codes that the wire contract says are transient — the client should drop
+# its resume state and reconnect with a fresh init.  Membership in this set
+# is the only thing that controls fresh-reinit behavior; the dispatcher
+# below treats every other documented code as terminal.
+_STREAMING_FRESH_REINIT_CODES: frozenset[str] = frozenset(
+    {
+        _STREAMING_SESSION_NOT_FOUND,
+        _STREAMING_REPLAY_GAP,
+        _STREAMING_RUNNER_UNAVAILABLE,
+        _STREAMING_RUNNER_DRAINING,
+    }
+)
+
+# gRPC status codes that indicate a transient transport-level failure where
+# a resume attempt makes sense.  DEADLINE_EXCEEDED is intentionally excluded
+# — it reflects a real client timeout that the caller asked for, not a
+# server-side blip.  CANCELLED is excluded because it is overwhelmingly a
+# client- or server-initiated signal (sandbox.stop(), call.cancel() during
+# shutdown, intentional teardown) — retrying it just burns the resume
+# budget on a session that is being torn down on purpose.  NOT_FOUND /
+# PERMISSION_DENIED / INVALID_ARGUMENT are terminal and must not be
+# retried.
+_STREAMING_RESUMABLE_STATUS_CODES: frozenset[grpc.StatusCode] = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.INTERNAL,
+        grpc.StatusCode.UNKNOWN,
+    }
+)
+
+
+def _is_resumable_transport_error(exc: BaseException) -> bool:
+    """Return True if a streaming gRPC error is worth attempting to resume.
+
+    Only the transport-level codes that typically map to a gateway pod
+    restart or a transient network blip qualify.  Anything else — including
+    DEADLINE_EXCEEDED (caller-requested timeout), NOT_FOUND, PERMISSION_DENIED,
+    INVALID_ARGUMENT — propagates as-is.
+
+    Note: this classifier intentionally diverges from ``_translate_rpc_error``,
+    the canonical translator that consults AIP-193 ``ErrorInfo`` reasons
+    (e.g. ``CWSANDBOX_*``) when deciding the typed-exception class.  The
+    streaming retry loop runs on the hot path during transient gateway
+    churn, so it dispatches on the raw ``grpc.StatusCode`` only and skips
+    the metadata parse.  The current set of streaming errors the backend
+    emits has no AIP-193 reason payload, so the simpler check is correct
+    today.  If the backend ever attaches a ``CWSANDBOX_*`` reason to a
+    streaming error (e.g. a hypothetical ``CWSANDBOX_RUNNER_TERMINATED``
+    on ``INTERNAL``), this classifier should be updated to consult
+    ``_translate_rpc_error`` first and dispatch on the resulting typed
+    exception — matching the pattern in ``_classify_poll_error``.
+    """
+    if not isinstance(exc, grpc.aio.AioRpcError):
+        return False
+    return exc.code() in _STREAMING_RESUMABLE_STATUS_CODES
 
 
 def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
@@ -2892,7 +2975,27 @@ class Sandbox:
         Uses gRPC bidirectional streaming to receive log data as it arrives.
         Buffers partial lines and pushes complete lines to output_queue.
         Signals end-of-stream with None sentinel when log stream completes.
+
+        Resume handling: when the server includes a session_id and cumulative
+        byte offset on each log frame, we remember the last-received values
+        and, on a transient transport failure, re-init with resume_session_id
+        and resume_offset so the stream picks up where it left off.  Servers
+        that do not advertise a session_id (or reply with an in-band
+        SESSION_NOT_FOUND on the resume init) fall back to a fresh init —
+        the live tail restarts from the current head with no replay of
+        older bytes.  ``tail_lines`` and ``since_time`` are only applied to
+        the very first attempt; fresh-fallback re-inits send no replay
+        filters so the user does not see the original window re-emitted on
+        every transient disconnect.
         """
+        # Track whether the inner block exited normally.  Only on a clean
+        # exit do we emit the EOF sentinel.  On the failure path the
+        # outer ``except`` below emits the exception, and StreamReader
+        # stops iteration on Exception, so the sentinel would be
+        # redundant — and emitting it first (via an unconditional
+        # ``finally``) would race the exception to the queue and cause
+        # the consumer to see a clean EOS instead of the actual failure.
+        inner_exit_clean = False
         try:
             await self._ensure_started_async()
             if self._sandbox_id is None:
@@ -2907,144 +3010,362 @@ class Sandbox:
                 await self._wait_until_running_async()
 
             await self._ensure_client()
-            channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
-
             auth_metadata = self._auth_metadata
 
             logger.debug("Streaming logs from sandbox %s (follow=%s)", self._sandbox_id, follow)
 
-            shutdown_event = asyncio.Event()
-
-            async def request_generator() -> AsyncIterator[streaming_pb2.LogStreamRequest]:
-                init = streaming_pb2.LogStreamInit(
-                    sandbox_id=self._sandbox_id,
-                    follow=follow,
-                )
-                if tail_lines is not None:
-                    init.tail_lines = tail_lines
-                if since_time is not None:
-                    ts = timestamp_pb2.Timestamp()
-                    ts.FromDatetime(since_time)
-                    init.since_time.CopyFrom(ts)
-                if timestamps:
-                    init.timestamps = True
-                yield streaming_pb2.LogStreamRequest(init=init)
-                # For follow mode, keep generator alive until shutdown
-                if follow:
-                    await shutdown_event.wait()
-                    yield streaming_pb2.LogStreamRequest(close=streaming_pb2.LogStreamClose())
-
-            # For follow=False, apply a client-side deadline so a stalled
-            # server doesn't block the client indefinitely.  follow=True
-            # streams are intentionally unbounded.
-            grpc_timeout = timeout_seconds if not follow else None
-
-            call: grpc.aio.StreamStreamCall[
-                streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
-            ] = stub.StreamLogs(
-                request_iterator=request_generator(),
-                metadata=auth_metadata,
-                **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
-            )
-
-            # Bounded queue propagates backpressure to gRPC reads — when the
-            # downstream output_queue is full the processing loop blocks, which
-            # in turn blocks collect_responses() on response_queue.put(), which
-            # stops reading from gRPC.  Without this bound, follow-mode streams
-            # can accumulate unlimited protobuf messages in memory.
-            response_queue: asyncio.Queue[streaming_pb2.LogStreamResponse | Exception | None] = (
-                asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
-            )
-
-            async def collect_responses() -> None:
-                """Collect responses from gRPC streaming call into queue."""
-                try:
-                    async for response in call:
-                        await response_queue.put(response)
-                        if response.HasField("error") or response.HasField("complete"):
-                            return
-                except grpc.aio.AioRpcError as e:
-                    await response_queue.put(e)
-                except Exception as e:
-                    await response_queue.put(e)
-                finally:
-                    await response_queue.put(None)
-
-            collect_task = asyncio.create_task(collect_responses())
-
+            # Resume state.  ``session_id`` is the opaque token the server
+            # echoes on every data frame; ``last_offset`` is the cumulative
+            # byte count after the most recently *delivered* chunk.  Bytes
+            # that were in flight at disconnect (sent by the server but not
+            # consumed by us) are NOT in last_offset, so the server replays
+            # them on resume — that is the at-least-once delivery contract.
+            session_id = ""
+            last_offset = 0
+            # Line-buffer state spans attempts so a partial line received
+            # before a disconnect is concatenated with the bytes replayed on
+            # resume.  The server's at-least-once replay may duplicate a
+            # final partial line, which is acceptable — the alternative
+            # (dropping the buffer on disconnect) would drop user output.
             line_parts: list[str] = []
             line_parts_bytes = 0
+
+            # Narrow for closure capture: the None-check above already
+            # raised, but mypy cannot propagate that narrowing into the
+            # request_generator closure below.
+            sandbox_id = self._sandbox_id
+            assert sandbox_id is not None
+
+            attempt = 0
+            done = False
+            # Retain the most recent transport error so it can chain into
+            # the synthesized SandboxUnavailableError if the retry budget
+            # is exhausted.  Without this, an SRE debugging a resume-
+            # failure run sees only the generic "could not be resumed"
+            # message with no underlying gRPC status code.
+            last_transport_error: grpc.aio.AioRpcError | None = None
             try:
-                while True:
-                    item = await response_queue.get()
-                    if item is None:
-                        break
-                    if isinstance(item, grpc.aio.AioRpcError):
-                        translated = _translate_rpc_error(
-                            item, sandbox_id=self._sandbox_id, operation="Stream logs"
+                while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
+                    is_first_attempt = attempt == 0
+                    is_resume = bool(session_id) and attempt > 0
+                    if is_resume:
+                        logger.debug(
+                            "Resuming log stream for sandbox %s (attempt %d, offset %d)",
+                            self._sandbox_id,
+                            attempt,
+                            last_offset,
                         )
-                        await output_queue.put(translated)
-                        return
-                    if isinstance(item, Exception):
-                        await output_queue.put(item)
-                        return
 
-                    response = item
-                    if response.HasField("data"):
-                        text = response.data.data.decode("utf-8", errors="replace")
+                    # Reacquire the streaming channel and stub on every
+                    # attempt.  ``_get_or_create_streaming_channel`` returns
+                    # the cached channel when it is still healthy, so this
+                    # is free in the common case.  After an external
+                    # teardown (the integration test forcibly closes the
+                    # cached channel; ``stop()`` invalidates it during
+                    # shutdown), this is what gives the retry loop a live
+                    # stub to run the next ``StreamLogs`` against.
+                    channel = await self._get_or_create_streaming_channel()
+                    stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
 
-                        # Buffer partial lines: split on newlines and push complete lines
-                        # When timestamps=True, the backend embeds timestamps in the
-                        # raw log bytes so no client-side prefix is needed.
-                        line_parts.append(text)
-                        line_parts_bytes += len(text)
+                    shutdown_event = asyncio.Event()
 
-                        # Guard against unbounded accumulation from newline-free
-                        # output (e.g. binary data).  Flush as a partial line once
-                        # the buffer exceeds MAX_LINE_BUFFER_BYTES.
-                        if "\n" not in text and line_parts_bytes < MAX_LINE_BUFFER_BYTES:
-                            continue
-
-                        combined = "".join(line_parts)
-                        line_parts.clear()
-                        line_parts_bytes = 0
-                        parts = combined.split("\n")
-                        for part in parts[:-1]:
-                            await output_queue.put(part + "\n")
-                        if parts[-1]:
-                            line_parts.append(parts[-1])
-                            line_parts_bytes = len(parts[-1])
-
-                    elif response.HasField("error"):
-                        await output_queue.put(
-                            SandboxError(
-                                f"Log stream error: {response.error.message}",
-                                reason=response.error.code or None,
+                    def make_request_generator(
+                        resume_id: str,
+                        resume_off: int,
+                        first_attempt: bool,
+                        shutdown: asyncio.Event,
+                    ) -> Callable[[], AsyncIterator[streaming_pb2.LogStreamRequest]]:
+                        async def request_generator() -> AsyncIterator[
+                            streaming_pb2.LogStreamRequest
+                        ]:
+                            init = streaming_pb2.LogStreamInit(
+                                sandbox_id=sandbox_id,
+                                follow=follow,
                             )
+                            if resume_id:
+                                # Per the wire contract: when resume_session_id
+                                # is set, all fields except sandbox_id are
+                                # ignored.  Keep the others off the wire to
+                                # make that explicit and avoid log noise
+                                # from servers that validate the rule.
+                                init.resume_session_id = resume_id
+                                init.resume_offset = resume_off
+                            elif first_attempt:
+                                # tail_lines / since_time describe the
+                                # *original* replay window the caller asked
+                                # for.  Re-emitting them on every fresh-
+                                # fallback re-init would replay the same
+                                # window after each transient disconnect —
+                                # for ``stream_logs(follow=True,
+                                # tail_lines=100)`` the user would see the
+                                # last 100 lines re-emitted whenever
+                                # SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_*
+                                # forced a fresh init.  ``timestamps`` is
+                                # a formatting flag, not a replay window,
+                                # so it stays across attempts.
+                                if tail_lines is not None:
+                                    init.tail_lines = tail_lines
+                                if since_time is not None:
+                                    ts = timestamp_pb2.Timestamp()
+                                    ts.FromDatetime(since_time)
+                                    init.since_time.CopyFrom(ts)
+                            if timestamps:
+                                init.timestamps = True
+                            yield streaming_pb2.LogStreamRequest(init=init)
+                            if follow:
+                                await shutdown.wait()
+                                yield streaming_pb2.LogStreamRequest(
+                                    close=streaming_pb2.LogStreamClose()
+                                )
+
+                        return request_generator
+
+                    # For follow=False, apply a client-side deadline so a
+                    # stalled server doesn't block the client indefinitely.
+                    # follow=True streams are intentionally unbounded.
+                    grpc_timeout = timeout_seconds if not follow else None
+
+                    call: grpc.aio.StreamStreamCall[
+                        streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
+                    ] = stub.StreamLogs(
+                        request_iterator=make_request_generator(
+                            session_id, last_offset, is_first_attempt, shutdown_event
+                        )(),
+                        metadata=auth_metadata,
+                        **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
+                    )
+
+                    response_queue: asyncio.Queue[
+                        streaming_pb2.LogStreamResponse | Exception | None
+                    ] = asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
+
+                    async def collect_responses(
+                        active_call: grpc.aio.StreamStreamCall[
+                            streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
+                        ],
+                        queue: asyncio.Queue[streaming_pb2.LogStreamResponse | Exception | None],
+                    ) -> None:
+                        try:
+                            async for response in active_call:
+                                await queue.put(response)
+                                if response.HasField("error") or response.HasField("complete"):
+                                    return
+                        except grpc.aio.AioRpcError as exc_inner:
+                            await queue.put(exc_inner)
+                        except Exception as exc_inner:
+                            await queue.put(exc_inner)
+                        finally:
+                            await queue.put(None)
+
+                    collect_task = asyncio.create_task(collect_responses(call, response_queue))
+
+                    # Outcome of this attempt: "done" (terminal), "resume"
+                    # (transient — try again), or "fresh" (server told us
+                    # the session is gone, drop resume state and re-init).
+                    attempt_outcome: str = "done"
+                    pending_error: Exception | None = None
+
+                    try:
+                        while True:
+                            item = await response_queue.get()
+                            if item is None:
+                                # Stream ended without a terminal frame and
+                                # without a transport error — treat as done.
+                                break
+                            if isinstance(item, grpc.aio.AioRpcError):
+                                if follow and _is_resumable_transport_error(item):
+                                    # The outer `while attempt < MAX_ATTEMPTS`
+                                    # is the only budget — let it decide
+                                    # whether another retry is possible.
+                                    # Marking the outcome "resume" here keeps
+                                    # the exhaustion path (the synthesized
+                                    # SandboxUnavailableError below) the
+                                    # single place that translates "budget
+                                    # spent" to a user-visible error.
+                                    #
+                                    # We do NOT gate on session_id being
+                                    # populated: if the first transport
+                                    # error happens before any frame
+                                    # arrives, session_id is still "", and
+                                    # the next request_generator will fall
+                                    # into the empty-resume_id branch — a
+                                    # bounded fresh-init retry, which is
+                                    # exactly the right behavior for a
+                                    # flaky gateway connection at the
+                                    # opening edge of the tail.
+                                    logger.debug(
+                                        "Log stream transport error %s; will attempt resume",
+                                        item.code(),
+                                    )
+                                    last_transport_error = item
+                                    attempt_outcome = "resume"
+                                else:
+                                    translated = _translate_rpc_error(
+                                        item,
+                                        sandbox_id=self._sandbox_id,
+                                        operation="Stream logs",
+                                    )
+                                    # Chain the gRPC error so callers can
+                                    # inspect the underlying status code via
+                                    # __cause__ — matches the convention
+                                    # used at other _translate_rpc_error
+                                    # call sites in this module.
+                                    translated.__cause__ = item
+                                    pending_error = translated
+                                break
+                            if isinstance(item, Exception):
+                                pending_error = item
+                                break
+
+                            response = item
+                            if response.HasField("data"):
+                                data_msg = response.data
+                                # Capture resume metadata.  These fields are
+                                # only populated by servers that speak the
+                                # resume protocol; on older builds they are
+                                # the proto defaults ("" and 0), which means
+                                # we never attempt resume — exactly right.
+                                incoming_session_id = data_msg.session_id
+                                if incoming_session_id:
+                                    session_id = incoming_session_id
+                                if data_msg.offset:
+                                    last_offset = data_msg.offset
+
+                                text = data_msg.data.decode("utf-8", errors="replace")
+                                line_parts.append(text)
+                                line_parts_bytes += len(text)
+
+                                if "\n" not in text and line_parts_bytes < MAX_LINE_BUFFER_BYTES:
+                                    continue
+
+                                combined = "".join(line_parts)
+                                line_parts.clear()
+                                line_parts_bytes = 0
+                                parts = combined.split("\n")
+                                for part in parts[:-1]:
+                                    await output_queue.put(part + "\n")
+                                if parts[-1]:
+                                    line_parts.append(parts[-1])
+                                    line_parts_bytes = len(parts[-1])
+
+                            elif response.HasField("error"):
+                                code = response.error.code or None
+                                # The wire contract documents every
+                                # LogStreamError as terminal — the server
+                                # will not send further frames on this call.
+                                # REPLAY_GAP also warrants an operator-
+                                # visible warning, because data below the
+                                # server's replay window was permanently
+                                # missed.
+                                if code == _STREAMING_REPLAY_GAP:
+                                    logger.warning(
+                                        "Log stream replay gap for sandbox %s"
+                                        " (offset %d below server replay window);"
+                                        " reconnecting with fresh init",
+                                        self._sandbox_id,
+                                        last_offset,
+                                    )
+                                if follow and code in _STREAMING_FRESH_REINIT_CODES:
+                                    # The server told us to reconnect from
+                                    # scratch.  Drop resume state and clear
+                                    # the cross-attempt line buffer — on a
+                                    # fresh init we are NOT going to receive
+                                    # the bytes that preceded any partial
+                                    # line, so preserving it would splice
+                                    # unrelated future bytes into a stale
+                                    # fragment.
+                                    logger.debug(
+                                        "Log stream %s; falling back to fresh init",
+                                        code,
+                                    )
+                                    session_id = ""
+                                    last_offset = 0
+                                    line_parts.clear()
+                                    line_parts_bytes = 0
+                                    attempt_outcome = "fresh"
+                                    break
+                                # Every other code — including
+                                # INVALID_RESUME_OFFSET (echoed offset is
+                                # corrupt; retrying with the same state
+                                # would loop), SANDBOX_NOT_FOUND, and
+                                # PERMISSION_DENIED — is terminal, no
+                                # retry.  Surface as a SandboxError.
+                                pending_error = SandboxError(
+                                    f"Log stream error: {response.error.message}",
+                                    reason=code,
+                                )
+                                break
+
+                            elif response.HasField("complete"):
+                                # Server signaled clean completion.  Exit
+                                # the inner loop with attempt_outcome
+                                # still "done"; the outer loop will set
+                                # done=True and the `finally` below cancels
+                                # the call and collector.  Any frames the
+                                # server pushed after `complete` would be
+                                # a protocol violation and are discarded.
+                                break
+
+                        # Determine terminal-vs-retry outcome.
+                        if attempt_outcome == "done":
+                            done = True
+                            if pending_error is not None:
+                                await output_queue.put(pending_error)
+                                return
+                    except asyncio.CancelledError:
+                        raise
+                    finally:
+                        shutdown_event.set()
+                        with contextlib.suppress(Exception):
+                            call.cancel()
+                        collect_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await collect_task
+
+                    if not done:
+                        # Bounded exponential backoff before resume/fresh
+                        # init.  Capped so the orphan window on the server
+                        # (30s) doesn't expire while the client sleeps.
+                        backoff = min(
+                            STREAMING_RESUME_BACKOFF_SECONDS * (2**attempt),
+                            STREAMING_RESUME_MAX_BACKOFF_SECONDS,
                         )
-                        return
+                        await asyncio.sleep(backoff)
 
-                    elif response.HasField("complete"):
-                        break
+                    attempt += 1
 
-                # Flush any remaining partial line
+                if not done and attempt >= STREAMING_RESUME_MAX_ATTEMPTS:
+                    # Exhausted the retry budget after the final transport
+                    # error.  pending_error is set only on paths that
+                    # chose not to resume; the resume-chosen path leaves
+                    # pending_error=None, so synthesize a stable user-
+                    # facing error but chain the underlying gRPC error
+                    # so SREs can see the real status code post-mortem.
+                    synthesized = SandboxUnavailableError(
+                        "Log stream disconnected and could not be resumed",
+                    )
+                    if last_transport_error is not None:
+                        synthesized.__cause__ = last_transport_error
+                    await output_queue.put(synthesized)
+                    return
+
+                # Flush any remaining partial line on clean completion.
                 if line_parts:
                     await output_queue.put("".join(line_parts))
-            except asyncio.CancelledError:
-                raise
+                inner_exit_clean = True
             finally:
-                shutdown_event.set()
-                collect_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await collect_task
-                await output_queue.put(None)
+                # See ``inner_exit_clean`` declaration above for rationale.
+                if inner_exit_clean:
+                    await output_queue.put(None)
         except Exception as exc:
-            # Early failures (before the inner try/finally) must propagate to
-            # the consumer so it doesn't hang waiting on a sentinel that never
-            # arrives.  StreamReader stops iteration on Exception, so no
-            # trailing None sentinel is needed.  Use put_nowait to avoid
-            # blocking if the consumer has stopped draining.
+            # A failure escaped the retry loop (early-setup failure, an
+            # asyncio cancellation propagating mid-loop, a per-attempt
+            # setup error that is not an AioRpcError, etc.).  Surface it
+            # to the consumer.  StreamReader stops iteration on Exception,
+            # so no trailing None sentinel is needed — and the inner
+            # ``finally`` deliberately did not emit one for this path.
+            # ``put_nowait`` avoids blocking if the consumer stopped
+            # draining.
             try:
                 output_queue.put_nowait(exc)
             except asyncio.QueueFull:
@@ -3091,10 +3412,15 @@ class Sandbox:
         try:
             stub = await self._prepare_streaming_call()
             auth_metadata = self._auth_metadata
+            # Narrow for closure capture: _prepare_streaming_call() raised if
+            # _sandbox_id was None, but mypy cannot propagate that narrowing
+            # into the request_generator closure below.
+            sandbox_id = self._sandbox_id
+            assert sandbox_id is not None
 
             logger.debug(
                 "Opening TTY session in sandbox %s: %s",
-                self._sandbox_id,
+                sandbox_id,
                 shlex.join(command),
             )
 
@@ -3107,7 +3433,7 @@ class Sandbox:
             async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
                 """Generate request messages for the TTY bidirectional stream."""
                 init_msg = streaming_pb2.ExecStreamInit(
-                    sandbox_id=self._sandbox_id,
+                    sandbox_id=sandbox_id,
                     command=list(command),
                     tty=True,
                 )
@@ -3322,13 +3648,18 @@ class Sandbox:
 
         stub = await self._prepare_streaming_call()
         auth_metadata = self._auth_metadata
+        # Narrow for closure capture: _prepare_streaming_call() raised if
+        # _sandbox_id was None, but mypy cannot propagate that narrowing
+        # into the request_generator closure below.
+        sandbox_id = self._sandbox_id
+        assert sandbox_id is not None
 
         # Wrap command with cwd if provided
         rpc_command = _wrap_command_with_cwd(command, cwd) if cwd else list(command)
 
         logger.debug(
             "Executing command (streaming) in sandbox %s: %s",
-            self._sandbox_id,
+            sandbox_id,
             shlex.join(command),
         )
 
@@ -3355,7 +3686,7 @@ class Sandbox:
             # Yield init message first
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
-                    sandbox_id=self._sandbox_id,
+                    sandbox_id=sandbox_id,
                     command=rpc_command,
                 )
             )
@@ -3766,6 +4097,11 @@ class Sandbox:
             raise ValueError("Command cannot be empty")
 
         stub = await self._prepare_streaming_call()
+        # Narrow for closure capture: _prepare_streaming_call() raised if
+        # _sandbox_id was None, but mypy cannot propagate that narrowing
+        # into the request_generator closure below.
+        sandbox_id = self._sandbox_id
+        assert sandbox_id is not None
 
         # Cap stderr buffering to defend against runaway error output driving the
         # client to OOM. Stdout is uncapped because the read fallback needs the
@@ -3783,7 +4119,7 @@ class Sandbox:
         async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
             yield streaming_pb2.ExecStreamRequest(
                 init=streaming_pb2.ExecStreamInit(
-                    sandbox_id=self._sandbox_id,
+                    sandbox_id=sandbox_id,
                     command=list(command),
                 )
             )
