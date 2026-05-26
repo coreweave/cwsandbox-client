@@ -419,6 +419,19 @@ def _is_resumable_transport_error(exc: BaseException) -> bool:
     restart or a transient network blip qualify.  Anything else — including
     DEADLINE_EXCEEDED (caller-requested timeout), NOT_FOUND, PERMISSION_DENIED,
     INVALID_ARGUMENT — propagates as-is.
+
+    Note: this classifier intentionally diverges from ``_translate_rpc_error``,
+    the canonical translator that consults AIP-193 ``ErrorInfo`` reasons
+    (e.g. ``CWSANDBOX_*``) when deciding the typed-exception class.  The
+    streaming retry loop runs on the hot path during transient gateway
+    churn, so it dispatches on the raw ``grpc.StatusCode`` only and skips
+    the metadata parse.  The current set of streaming errors the backend
+    emits has no AIP-193 reason payload, so the simpler check is correct
+    today.  If the backend ever attaches a ``CWSANDBOX_*`` reason to a
+    streaming error (e.g. a hypothetical ``CWSANDBOX_RUNNER_TERMINATED``
+    on ``INTERNAL``), this classifier should be updated to consult
+    ``_translate_rpc_error`` first and dispatch on the resulting typed
+    exception — matching the pattern in ``_classify_poll_error``.
     """
     if not isinstance(exc, grpc.aio.AioRpcError):
         return False
@@ -2970,8 +2983,19 @@ class Sandbox:
         that do not advertise a session_id (or reply with an in-band
         SESSION_NOT_FOUND on the resume init) fall back to a fresh init —
         the live tail restarts from the current head with no replay of
-        older bytes.
+        older bytes.  ``tail_lines`` and ``since_time`` are only applied to
+        the very first attempt; fresh-fallback re-inits send no replay
+        filters so the user does not see the original window re-emitted on
+        every transient disconnect.
         """
+        # Track whether the inner block exited normally.  Only on a clean
+        # exit do we emit the EOF sentinel.  On the failure path the
+        # outer ``except`` below emits the exception, and StreamReader
+        # stops iteration on Exception, so the sentinel would be
+        # redundant — and emitting it first (via an unconditional
+        # ``finally``) would race the exception to the queue and cause
+        # the consumer to see a clean EOS instead of the actual failure.
+        inner_exit_clean = False
         try:
             await self._ensure_started_async()
             if self._sandbox_id is None:
@@ -2986,9 +3010,6 @@ class Sandbox:
                 await self._wait_until_running_async()
 
             await self._ensure_client()
-            channel = await self._get_or_create_streaming_channel()
-            stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
-
             auth_metadata = self._auth_metadata
 
             logger.debug("Streaming logs from sandbox %s (follow=%s)", self._sandbox_id, follow)
@@ -3025,6 +3046,7 @@ class Sandbox:
             last_transport_error: grpc.aio.AioRpcError | None = None
             try:
                 while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
+                    is_first_attempt = attempt == 0
                     is_resume = bool(session_id) and attempt > 0
                     if is_resume:
                         logger.debug(
@@ -3034,11 +3056,23 @@ class Sandbox:
                             last_offset,
                         )
 
+                    # Reacquire the streaming channel and stub on every
+                    # attempt.  ``_get_or_create_streaming_channel`` returns
+                    # the cached channel when it is still healthy, so this
+                    # is free in the common case.  After an external
+                    # teardown (the integration test forcibly closes the
+                    # cached channel; ``stop()`` invalidates it during
+                    # shutdown), this is what gives the retry loop a live
+                    # stub to run the next ``StreamLogs`` against.
+                    channel = await self._get_or_create_streaming_channel()
+                    stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+
                     shutdown_event = asyncio.Event()
 
                     def make_request_generator(
                         resume_id: str,
                         resume_off: int,
+                        first_attempt: bool,
                         shutdown: asyncio.Event,
                     ) -> Callable[[], AsyncIterator[streaming_pb2.LogStreamRequest]]:
                         async def request_generator() -> AsyncIterator[
@@ -3049,22 +3083,34 @@ class Sandbox:
                                 follow=follow,
                             )
                             if resume_id:
-                                # Per the wire contract: when resume_session_id is
-                                # set, all fields except sandbox_id are ignored.
-                                # Keep the others off the wire to make that
-                                # explicit and avoid log noise from servers that
-                                # validate the rule.
+                                # Per the wire contract: when resume_session_id
+                                # is set, all fields except sandbox_id are
+                                # ignored.  Keep the others off the wire to
+                                # make that explicit and avoid log noise
+                                # from servers that validate the rule.
                                 init.resume_session_id = resume_id
                                 init.resume_offset = resume_off
-                            else:
+                            elif first_attempt:
+                                # tail_lines / since_time describe the
+                                # *original* replay window the caller asked
+                                # for.  Re-emitting them on every fresh-
+                                # fallback re-init would replay the same
+                                # window after each transient disconnect —
+                                # for ``stream_logs(follow=True,
+                                # tail_lines=100)`` the user would see the
+                                # last 100 lines re-emitted whenever
+                                # SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_*
+                                # forced a fresh init.  ``timestamps`` is
+                                # a formatting flag, not a replay window,
+                                # so it stays across attempts.
                                 if tail_lines is not None:
                                     init.tail_lines = tail_lines
                                 if since_time is not None:
                                     ts = timestamp_pb2.Timestamp()
                                     ts.FromDatetime(since_time)
                                     init.since_time.CopyFrom(ts)
-                                if timestamps:
-                                    init.timestamps = True
+                            if timestamps:
+                                init.timestamps = True
                             yield streaming_pb2.LogStreamRequest(init=init)
                             if follow:
                                 await shutdown.wait()
@@ -3083,7 +3129,7 @@ class Sandbox:
                         streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
                     ] = stub.StreamLogs(
                         request_iterator=make_request_generator(
-                            session_id, last_offset, shutdown_event
+                            session_id, last_offset, is_first_attempt, shutdown_event
                         )(),
                         metadata=auth_metadata,
                         **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
@@ -3127,15 +3173,26 @@ class Sandbox:
                                 # without a transport error — treat as done.
                                 break
                             if isinstance(item, grpc.aio.AioRpcError):
-                                if follow and session_id and _is_resumable_transport_error(item):
+                                if follow and _is_resumable_transport_error(item):
                                     # The outer `while attempt < MAX_ATTEMPTS`
                                     # is the only budget — let it decide
-                                    # whether another resume is possible.
+                                    # whether another retry is possible.
                                     # Marking the outcome "resume" here keeps
                                     # the exhaustion path (the synthesized
                                     # SandboxUnavailableError below) the
                                     # single place that translates "budget
                                     # spent" to a user-visible error.
+                                    #
+                                    # We do NOT gate on session_id being
+                                    # populated: if the first transport
+                                    # error happens before any frame
+                                    # arrives, session_id is still "", and
+                                    # the next request_generator will fall
+                                    # into the empty-resume_id branch — a
+                                    # bounded fresh-init retry, which is
+                                    # exactly the right behavior for a
+                                    # flaky gateway connection at the
+                                    # opening edge of the tail.
                                     logger.debug(
                                         "Log stream transport error %s; will attempt resume",
                                         item.code(),
@@ -3295,14 +3352,20 @@ class Sandbox:
                 # Flush any remaining partial line on clean completion.
                 if line_parts:
                     await output_queue.put("".join(line_parts))
+                inner_exit_clean = True
             finally:
-                await output_queue.put(None)
+                # See ``inner_exit_clean`` declaration above for rationale.
+                if inner_exit_clean:
+                    await output_queue.put(None)
         except Exception as exc:
-            # Early failures (before the inner try/finally) must propagate to
-            # the consumer so it doesn't hang waiting on a sentinel that never
-            # arrives.  StreamReader stops iteration on Exception, so no
-            # trailing None sentinel is needed.  Use put_nowait to avoid
-            # blocking if the consumer has stopped draining.
+            # A failure escaped the retry loop (early-setup failure, an
+            # asyncio cancellation propagating mid-loop, a per-attempt
+            # setup error that is not an AioRpcError, etc.).  Surface it
+            # to the consumer.  StreamReader stops iteration on Exception,
+            # so no trailing None sentinel is needed — and the inner
+            # ``finally`` deliberately did not emit one for this path.
+            # ``put_nowait`` avoids blocking if the consumer stopped
+            # draining.
             try:
                 output_queue.put_nowait(exc)
             except asyncio.QueueFull:

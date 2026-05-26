@@ -8,6 +8,7 @@ import asyncio
 import concurrent.futures
 import math
 from collections.abc import AsyncIterator, Callable, Sequence
+from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6285,21 +6286,46 @@ async def _drive_stream_logs(
     programmed: _ProgrammedStreamLogs,
     *,
     follow: bool = True,
+    tail_lines: int | None = None,
+    since_time: Any = None,
+    timestamps: bool = False,
+    channel_factory: Any = None,
 ) -> tuple[list[Any], list[float]]:
     """Drive _stream_logs_async to completion and collect (queue items, sleep durations).
 
     Patches asyncio.sleep so backoff does not slow the test.  Returns the
     full sequence pushed to output_queue (lines, exceptions, and the final
     None sentinel) plus the sleep arguments observed.
+
+    Args:
+        sandbox: Minimally initialized Sandbox.
+        programmed: Sequence of programmed StreamLogs responses per attempt.
+        follow: Forwarded to ``_stream_logs_async``.
+        tail_lines: Forwarded to ``_stream_logs_async``.  Lets tests
+            assert that ``tail_lines`` is emitted only on the first
+            attempt's init.
+        since_time: Forwarded to ``_stream_logs_async``.
+        timestamps: Forwarded to ``_stream_logs_async``.
+        channel_factory: Optional callable returning the mock channel.
+            When provided, each call to ``_get_or_create_streaming_channel``
+            invokes it — lets tests assert that a fresh stub is acquired
+            on every retry attempt.
     """
     sleeps: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    mock_channel = MagicMock()
-    mock_channel.close = AsyncMock()
-    mock_channel.channel_ready = AsyncMock()
+    if channel_factory is None:
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_channel.channel_ready = AsyncMock()
+
+        async def default_factory() -> Any:
+            return mock_channel
+
+        channel_factory = default_factory
+
     mock_stub = MagicMock()
     mock_stub.StreamLogs = MagicMock(side_effect=programmed)
 
@@ -6311,7 +6337,7 @@ async def _drive_stream_logs(
         patch.object(
             sandbox,
             "_get_or_create_streaming_channel",
-            new=AsyncMock(return_value=mock_channel),
+            side_effect=channel_factory,
         ),
         patch(
             "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
@@ -6319,7 +6345,13 @@ async def _drive_stream_logs(
         ),
         patch("cwsandbox._sandbox.asyncio.sleep", side_effect=fake_sleep),
     ):
-        await sandbox._stream_logs_async(output_queue, follow=follow)
+        await sandbox._stream_logs_async(
+            output_queue,
+            follow=follow,
+            tail_lines=tail_lines,
+            since_time=since_time,
+            timestamps=timestamps,
+        )
 
     items: list[Any] = []
     while not output_queue.empty():
@@ -6572,23 +6604,202 @@ class TestStreamLogsInitWireShape:
         assert resume_init.resume_offset == 99
 
     @pytest.mark.asyncio
-    async def test_fresh_init_omits_resume_fields(self) -> None:
-        """When the server returns no session_id, the SDK must not attempt
-        resume — the next init (if any) carries empty resume fields."""
+    async def test_fresh_init_omits_resume_fields_when_server_has_no_session(
+        self,
+    ) -> None:
+        """When the server returns no session_id, a retry after a transport
+        error must NOT carry resume fields — the SDK should reconnect with
+        a fresh init.  This covers a flaky gateway connection at the
+        opening edge of the tail, before any frame arrives."""
         sandbox = _build_sandbox_for_log_stream()
         programmed = _ProgrammedStreamLogs(
             [
                 [
-                    # session_id="" — server does not speak resume.
+                    # session_id="" — server does not speak resume,
+                    # or no frame arrived before the disconnect.
                     _data_frame(b"x\n"),
-                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, ""),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "edge flap"),
                 ],
+                [_data_frame(b"y\n"), _complete_frame()],
             ]
         )
-        # Without session_id, the SDK should not retry; the call_count
-        # stays at 1 and the AioRpcError propagates as the translated
-        # SandboxError to the queue.
         await _drive_stream_logs(sandbox, programmed)
 
-        assert programmed.call_count == 1
+        # The SDK retries via fresh init when no session_id has been
+        # captured — second attempt must have empty resume fields.
+        assert programmed.call_count == 2
         assert programmed.init_messages[0].resume_session_id == ""
+        assert programmed.init_messages[1].resume_session_id == ""
+        assert programmed.init_messages[1].resume_offset == 0
+
+
+class TestStreamLogsReplayFiltersFirstAttemptOnly:
+    """The ``tail_lines`` / ``since_time`` filters describe the *original*
+    replay window the caller asked for.  Re-emitting them on every
+    fresh-fallback re-init would replay the same window after each
+    transient disconnect, which the in-code docstring explicitly says
+    should not happen.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tail_lines_only_on_first_attempt(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("SESSION_NOT_FOUND", "expired"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, tail_lines=100)
+
+        # First init: tail_lines was honored.
+        assert programmed.init_messages[0].tail_lines == 100
+        # Fresh-fallback init: tail_lines must NOT be re-emitted, or the
+        # caller would see the last-100-lines window replayed on every
+        # transient disconnect.
+        assert programmed.init_messages[1].tail_lines == 0
+        assert programmed.init_messages[1].resume_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_since_time_only_on_first_attempt(self) -> None:
+        from datetime import datetime
+
+        sandbox = _build_sandbox_for_log_stream()
+        anchor = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("RUNNER_DRAINING", "logs moved"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, since_time=anchor)
+
+        # First init: since_time was set.
+        assert programmed.init_messages[0].HasField("since_time")
+        # Fresh-fallback init: since_time must not be re-emitted; the
+        # default (no field set) means the server tails from current head.
+        assert not programmed.init_messages[1].HasField("since_time")
+
+    @pytest.mark.asyncio
+    async def test_timestamps_flag_persists_across_attempts(self) -> None:
+        """``timestamps`` is a formatting flag, not a replay window, so it
+        stays across attempts."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("SESSION_NOT_FOUND", "expired"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, timestamps=True)
+
+        assert programmed.init_messages[0].timestamps is True
+        assert programmed.init_messages[1].timestamps is True
+
+
+class TestStreamLogsRetryFirstFrameTransportError:
+    """A transient transport error before the first frame arrives must be
+    retried.  Previously the retry was gated on ``session_id`` being set,
+    which meant a flaky gateway connection at the opening edge of the
+    tail produced an immediate user-visible failure.
+    """
+
+    @pytest.mark.asyncio
+    async def test_first_attempt_transport_error_triggers_fresh_retry(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                # Disconnect before any frame arrives → session_id stays "".
+                [MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "edge flap")],
+                [_data_frame(b"ok\n"), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "ok\n" in items
+        assert programmed.call_count == 2
+        # The retry init must be a fresh one (no resume fields), since
+        # nothing was ever delivered on the first attempt.
+        assert programmed.init_messages[1].resume_session_id == ""
+        assert programmed.init_messages[1].resume_offset == 0
+
+
+class TestStreamLogsExceptionOrderingAtEnd:
+    """An exception raised inside the retry block must arrive at the
+    consumer BEFORE the EOF sentinel — otherwise StreamReader stops
+    iteration on the None and the consumer sees a clean end-of-stream
+    while the actual failure is silently swallowed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exception_in_setup_arrives_before_sentinel(self) -> None:
+        """A failure in per-attempt setup (e.g., ``_ensure_started_async``)
+        must surface to the queue ahead of any EOF sentinel."""
+        sandbox = _build_sandbox_for_log_stream()
+
+        async def boom() -> None:
+            raise RuntimeError("setup failed")
+
+        output_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        with patch.object(sandbox, "_ensure_started_async", side_effect=boom):
+            await sandbox._stream_logs_async(output_queue, follow=True)
+
+        # Drain the queue.  The first item must be the exception, not
+        # None — otherwise StreamReader would stop iteration on the
+        # sentinel and the consumer would never see the failure.
+        items: list[Any] = []
+        while not output_queue.empty():
+            items.append(output_queue.get_nowait())
+
+        assert len(items) >= 1
+        assert isinstance(items[0], RuntimeError)
+        assert "setup failed" in str(items[0])
+        # No EOF sentinel should follow the exception on the failure path.
+        assert None not in items
+
+
+class TestStreamLogsStubReacquiredPerAttempt:
+    """The streaming channel/stub is acquired at the top of every retry
+    attempt.  If an external teardown invalidates the cached channel
+    between attempts (the integration test forcibly closes it, and
+    ``stop()`` invalidates it during shutdown), the retry must run
+    against a fresh stub, not a dangling one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_called_per_attempt(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"first\n", session_id="sess-1", offset=6),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_data_frame(b"second\n", session_id="sess-1", offset=13), _complete_frame()],
+            ]
+        )
+        acquisition_count = 0
+
+        async def counting_factory() -> Any:
+            nonlocal acquisition_count
+            acquisition_count += 1
+            channel = MagicMock()
+            channel.close = AsyncMock()
+            channel.channel_ready = AsyncMock()
+            return channel
+
+        await _drive_stream_logs(sandbox, programmed, channel_factory=counting_factory)
+
+        # One acquisition per attempt — proves the retry loop reacquires
+        # the channel rather than reusing a possibly-dead cached one.
+        assert acquisition_count == programmed.call_count == 2
