@@ -6182,3 +6182,413 @@ class TestStreamingResumeWireProtocol:
         data = streaming_pb2.LogStreamData(data=b"x")
         assert data.session_id == ""
         assert data.offset == 0
+
+
+def _data_frame(data: bytes, session_id: str = "", offset: int = 0) -> Any:
+    """Build a real LogStreamResponse(data=...) message for tests."""
+    from cwsandbox._proto import streaming_pb2
+
+    return streaming_pb2.LogStreamResponse(
+        data=streaming_pb2.LogStreamData(data=data, session_id=session_id, offset=offset)
+    )
+
+
+def _error_frame(code: str, message: str = "") -> Any:
+    """Build a real LogStreamResponse(error=...) message for tests."""
+    from cwsandbox._proto import streaming_pb2
+
+    return streaming_pb2.LogStreamResponse(
+        error=streaming_pb2.LogStreamError(code=code, message=message or code)
+    )
+
+
+def _complete_frame() -> Any:
+    """Build a real LogStreamResponse(complete=...) message for tests."""
+    from cwsandbox._proto import streaming_pb2
+
+    return streaming_pb2.LogStreamResponse(complete=streaming_pb2.LogStreamComplete())
+
+
+class _ProgrammedStreamLogs:
+    """Programmable stub for stub.StreamLogs across multiple resume attempts.
+
+    Each attempt is driven by one entry in ``attempts``: either a list of
+    response objects to yield in order, or an exception to raise mid-stream.
+    Captures the LogStreamInit sent at the start of each attempt so tests
+    can assert on the resume_session_id / resume_offset / tail_lines shape
+    of the request, which is the only SDK behavior worth testing on the
+    wire — the proto round-trip itself is covered by protobuf.
+    """
+
+    def __init__(self, attempts: list[Any]) -> None:
+        self._attempts = list(attempts)
+        self.init_messages: list[Any] = []
+        self.call_count = 0
+
+    def __call__(
+        self,
+        request_iterator: Any = None,
+        timeout: float | None = None,
+        metadata: Any = None,
+    ) -> "_ProgrammedStreamCall":
+        index = self.call_count
+        self.call_count += 1
+        attempt = self._attempts[index] if index < len(self._attempts) else []
+        call = _ProgrammedStreamCall(attempt, self.init_messages)
+        call.set_request_iterator(request_iterator)
+        return call
+
+
+class _ProgrammedStreamCall(MockStreamCall):
+    """MockStreamCall variant that records the init message for each attempt.
+
+    Yields the programmed responses, then raises StopAsyncIteration if the
+    attempt was a list, or raises the configured exception if it was one.
+    Records the LogStreamInit message into ``init_messages`` as soon as the
+    request iterator is consumed enough to produce it.
+    """
+
+    def __init__(self, attempt: Any, init_messages: list[Any]) -> None:
+        if isinstance(attempt, BaseException):
+            super().__init__(error_on_read=attempt)
+        else:
+            super().__init__(responses=list(attempt))
+        self._init_messages = init_messages
+        self._init_recorded = False
+
+    async def consume_requests(self) -> None:
+        """Capture the init message from the request iterator without blocking on close."""
+        if self._request_iterator is None:
+            return
+        try:
+            first = await self._request_iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        self._writes.append(first)
+        if not self._init_recorded and first.HasField("init"):
+            self._init_messages.append(first.init)
+            self._init_recorded = True
+
+
+def _build_sandbox_for_log_stream() -> Sandbox:
+    """Construct a minimally initialized Sandbox that _stream_logs_async can drive."""
+    sandbox = Sandbox(command="sleep", args=["infinity"])
+    sandbox._sandbox_id = "sb-test"
+    sandbox._state = _Running(sandbox_id="sb-test")
+    sandbox._channel = MagicMock()
+    sandbox._stub = MagicMock()
+    return sandbox
+
+
+async def _drive_stream_logs(
+    sandbox: Sandbox,
+    programmed: _ProgrammedStreamLogs,
+    *,
+    follow: bool = True,
+) -> tuple[list[Any], list[float]]:
+    """Drive _stream_logs_async to completion and collect (queue items, sleep durations).
+
+    Patches asyncio.sleep so backoff does not slow the test.  Returns the
+    full sequence pushed to output_queue (lines, exceptions, and the final
+    None sentinel) plus the sleep arguments observed.
+    """
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    mock_channel = MagicMock()
+    mock_channel.close = AsyncMock()
+    mock_channel.channel_ready = AsyncMock()
+    mock_stub = MagicMock()
+    mock_stub.StreamLogs = MagicMock(side_effect=programmed)
+
+    output_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    with (
+        patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+        patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        patch.object(
+            sandbox,
+            "_get_or_create_streaming_channel",
+            new=AsyncMock(return_value=mock_channel),
+        ),
+        patch(
+            "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
+            return_value=mock_stub,
+        ),
+        patch("cwsandbox._sandbox.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await sandbox._stream_logs_async(output_queue, follow=follow)
+
+    items: list[Any] = []
+    while not output_queue.empty():
+        items.append(output_queue.get_nowait())
+    return items, sleeps
+
+
+class TestStreamLogsResumeStateMachine:
+    """Drive _stream_logs_async through every documented resume transition.
+
+    These tests use real protobuf messages and a programmable stub for
+    StreamLogs so we exercise the actual state machine, not a paraphrase
+    of it.  asyncio.sleep is patched so the backoff schedule can be
+    asserted on without burning wall-clock time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resume_after_transport_error(self) -> None:
+        """A transport UNAVAILABLE on a stream that already captured a session_id
+        triggers a resume init carrying resume_session_id and resume_offset."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_data_frame(b"first\n", session_id="sess-1", offset=6)],
+                # First attempt yielded a frame, then the call raises UNAVAILABLE.
+                # We model the post-frame failure by giving the first attempt
+                # exactly one frame and ending; the SDK treats end-of-iterator
+                # without a terminal frame as "done", so we instead raise on
+                # the SECOND get from the queue.  Simpler: put the error
+                # itself on the response list — the collector forwards it.
+            ]
+        )
+        # Replace the first attempt with a sequence that emits a frame then errors.
+        programmed._attempts = [
+            [
+                _data_frame(b"first\n", session_id="sess-1", offset=6),
+                MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "gateway flap"),
+            ],
+            [_data_frame(b"second\n", session_id="sess-1", offset=13), _complete_frame()],
+        ]
+        items, sleeps = await _drive_stream_logs(sandbox, programmed)
+
+        assert "first\n" in items
+        assert "second\n" in items
+        assert programmed.call_count == 2
+        # Second init must echo the captured session_id and offset.
+        assert programmed.init_messages[0].resume_session_id == ""
+        assert programmed.init_messages[1].resume_session_id == "sess-1"
+        assert programmed.init_messages[1].resume_offset == 6
+        # One backoff sleep before the resume attempt.
+        assert sleeps == [0.5]
+
+    @pytest.mark.asyncio
+    async def test_session_not_found_falls_back_to_fresh_init(self) -> None:
+        """SESSION_NOT_FOUND on resume drops resume state and reconnects fresh."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"early\n", session_id="sess-1", offset=6),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("SESSION_NOT_FOUND", "expired")],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "early\n" in items
+        assert "head\n" in items
+        # Third attempt must NOT carry resume fields.
+        assert programmed.init_messages[2].resume_session_id == ""
+        assert programmed.init_messages[2].resume_offset == 0
+
+    @pytest.mark.asyncio
+    async def test_replay_gap_triggers_fresh_init_per_wire_contract(self) -> None:
+        """REPLAY_GAP is terminal; the client must reconnect fresh from head."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"a\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("REPLAY_GAP", "below replay window")],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "a\n" in items
+        assert "head\n" in items
+        # After REPLAY_GAP, the next init must be fresh.
+        assert programmed.init_messages[2].resume_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_runner_unavailable_triggers_fresh_init(self) -> None:
+        """RUNNER_UNAVAILABLE / RUNNER_DRAINING are transient; reconnect fresh."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("RUNNER_UNAVAILABLE", "logs moved")],
+                [_data_frame(b"y\n", session_id="sess-2", offset=2), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "x\n" in items
+        assert "y\n" in items
+        assert programmed.init_messages[2].resume_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_invalid_resume_offset_is_terminal_no_retry(self) -> None:
+        """INVALID_RESUME_OFFSET is terminal per the wire contract."""
+        from cwsandbox.exceptions import SandboxError
+
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("INVALID_RESUME_OFFSET", "corrupt offset")],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        # Exactly two attempts: initial + one resume, then terminal error.
+        assert programmed.call_count == 2
+        errors = [item for item in items if isinstance(item, SandboxError)]
+        assert len(errors) == 1
+        assert "INVALID_RESUME_OFFSET" in str(errors[0]) or errors[0].reason == (
+            "INVALID_RESUME_OFFSET"
+        )
+
+    @pytest.mark.asyncio
+    async def test_exhaustion_synthesizes_unavailable_with_cause(self) -> None:
+        """When the retry budget is exhausted, the synthesized error chains
+        the underlying gRPC AioRpcError so SREs can see the real status."""
+        from cwsandbox.exceptions import SandboxUnavailableError
+
+        sandbox = _build_sandbox_for_log_stream()
+        rpc_error = MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "persistent flap")
+        # Three attempts that all fail mid-stream: initial yields a frame
+        # (so session_id is captured), then errors; second and third
+        # attempts also error.  attempt+1 < MAX_ATTEMPTS gates the third
+        # call, so we should see exactly MAX_ATTEMPTS calls.
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_data_frame(b"x\n", session_id="sess-1", offset=2), rpc_error],
+                [_data_frame(b"y\n", session_id="sess-1", offset=4), rpc_error],
+                [rpc_error],
+            ]
+        )
+        items, sleeps = await _drive_stream_logs(sandbox, programmed)
+
+        unavailable = [item for item in items if isinstance(item, SandboxUnavailableError)]
+        assert len(unavailable) == 1
+        # Underlying gRPC error must be reachable via __cause__ for debugging.
+        assert isinstance(unavailable[0].__cause__, grpc.aio.AioRpcError)
+        assert unavailable[0].__cause__.code() == grpc.StatusCode.UNAVAILABLE
+        # Backoff doubles per attempt.  The 4s cap is not engaged with
+        # MAX_ATTEMPTS=3 but the schedule must respect it as an upper
+        # bound — the cap exists so the client never sleeps past the
+        # server's 30s orphan window.
+        assert sleeps == [0.5, 1.0, 2.0]
+        assert max(sleeps) <= 4.0
+        assert sum(sleeps) < 30.0
+
+    @pytest.mark.asyncio
+    async def test_fresh_init_clears_partial_line_buffer(self) -> None:
+        """A SESSION_NOT_FOUND fresh fallback must not splice the previous
+        partial line into unrelated bytes from the new head."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    # Partial line: no trailing newline.  Without the fix,
+                    # this buffer would be preserved across the fresh init.
+                    _data_frame(b"hello wor", session_id="sess-1", offset=9),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("SESSION_NOT_FOUND", "expired")],
+                [
+                    _data_frame(b"baz qux\n", session_id="sess-2", offset=8),
+                    _complete_frame(),
+                ],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        # The fresh-init output must be exactly "baz qux\n", not
+        # "hello worbaz qux\n".  The trailing "hello wor" is dropped
+        # because the server is not replaying it on the fresh init.
+        assert "baz qux\n" in items
+        assert all("hello wor" not in item for item in items if isinstance(item, str))
+
+
+class TestStreamLogsResumeTransportClassification:
+    """Tests for which gRPC status codes are eligible for resume retry."""
+
+    def test_cancelled_is_not_resumable(self) -> None:
+        """CANCELLED is a teardown signal — sandbox.stop() / call.cancel() —
+        and must not burn the retry budget on a session being torn down."""
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.CANCELLED, "stop in progress")
+        assert _is_resumable_transport_error(err) is False
+
+    def test_unknown_is_resumable(self) -> None:
+        """UNKNOWN can surface from gateway-side panics; treat as transient."""
+        from cwsandbox._sandbox import _is_resumable_transport_error
+
+        err = MockAioRpcError(grpc.StatusCode.UNKNOWN, "gateway crashed")
+        assert _is_resumable_transport_error(err) is True
+
+
+class TestStreamLogsInitWireShape:
+    """Verify the SDK actually populates resume fields on the wire when resuming.
+
+    These supersede the prior protoc round-trip tests, which were
+    tautological — protobuf already guarantees field round-tripping.  What
+    matters for the SDK is that, on a resume attempt, the client sends
+    LogStreamInit with the captured resume_session_id and resume_offset
+    rather than the tail_lines / since_time / timestamps from the original
+    call.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resume_init_carries_captured_session_id_and_offset(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-xyz", offset=99),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, ""),
+                ],
+                [_complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed)
+
+        resume_init = programmed.init_messages[1]
+        assert resume_init.resume_session_id == "sess-xyz"
+        assert resume_init.resume_offset == 99
+
+    @pytest.mark.asyncio
+    async def test_fresh_init_omits_resume_fields(self) -> None:
+        """When the server returns no session_id, the SDK must not attempt
+        resume — the next init (if any) carries empty resume fields."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    # session_id="" — server does not speak resume.
+                    _data_frame(b"x\n"),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, ""),
+                ],
+            ]
+        )
+        # Without session_id, the SDK should not retry; the call_count
+        # stays at 1 and the AioRpcError propagates as the translated
+        # SandboxError to the queue.
+        await _drive_stream_logs(sandbox, programmed)
+
+        assert programmed.call_count == 1
+        assert programmed.init_messages[0].resume_session_id == ""

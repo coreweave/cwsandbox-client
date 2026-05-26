@@ -361,20 +361,51 @@ _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
 # In-band error codes the server may emit on a streaming response.  These
 # are application-level (the gRPC call itself succeeds); the codes describe
 # server-side outcomes for the streaming session.  Mirrors the documented
-# error contract in the upstream sandbox streaming docs.
+# error contract in streaming_pb2.pyi (LogStreamError.code).
+#
+# Per the wire contract every LogStreamError is terminal — the server will
+# not send further frames on the same call.  The client's recovery action
+# is dictated by the code:
+#
+#   SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_UNAVAILABLE / RUNNER_DRAINING
+#       reconnect with a FRESH init (no resume_session_id / resume_offset)
+#       to pick up the live tail from the current head.
+#   INVALID_RESUME_OFFSET
+#       terminal, no retry — the echoed offset is corrupt and reconnecting
+#       with the same state would just reproduce the failure.
+#   SANDBOX_NOT_FOUND / PERMISSION_DENIED / other unknown codes
+#       terminal, no retry — surface to the caller as a SandboxError.
 _STREAMING_SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
 _STREAMING_REPLAY_GAP = "REPLAY_GAP"
 _STREAMING_INVALID_RESUME_OFFSET = "INVALID_RESUME_OFFSET"
+_STREAMING_RUNNER_UNAVAILABLE = "RUNNER_UNAVAILABLE"
+_STREAMING_RUNNER_DRAINING = "RUNNER_DRAINING"
+
+# Codes that the wire contract says are transient — the client should drop
+# its resume state and reconnect with a fresh init.  Membership in this set
+# is the only thing that controls fresh-reinit behavior; the dispatcher
+# below treats every other documented code as terminal.
+_STREAMING_FRESH_REINIT_CODES: frozenset[str] = frozenset(
+    {
+        _STREAMING_SESSION_NOT_FOUND,
+        _STREAMING_REPLAY_GAP,
+        _STREAMING_RUNNER_UNAVAILABLE,
+        _STREAMING_RUNNER_DRAINING,
+    }
+)
 
 # gRPC status codes that indicate a transient transport-level failure where
 # a resume attempt makes sense.  DEADLINE_EXCEEDED is intentionally excluded
 # — it reflects a real client timeout that the caller asked for, not a
-# server-side blip.  NOT_FOUND / PERMISSION_DENIED / INVALID_ARGUMENT are
-# terminal and must not be retried.
+# server-side blip.  CANCELLED is excluded because it is overwhelmingly a
+# client- or server-initiated signal (sandbox.stop(), call.cancel() during
+# shutdown, intentional teardown) — retrying it just burns the resume
+# budget on a session that is being torn down on purpose.  NOT_FOUND /
+# PERMISSION_DENIED / INVALID_ARGUMENT are terminal and must not be
+# retried.
 _STREAMING_RESUMABLE_STATUS_CODES: frozenset[grpc.StatusCode] = frozenset(
     {
         grpc.StatusCode.UNAVAILABLE,
-        grpc.StatusCode.CANCELLED,
         grpc.StatusCode.INTERNAL,
         grpc.StatusCode.UNKNOWN,
     }
@@ -2986,6 +3017,12 @@ class Sandbox:
 
             attempt = 0
             done = False
+            # Retain the most recent transport error so it can chain into
+            # the synthesized SandboxUnavailableError if the retry budget
+            # is exhausted.  Without this, an SRE debugging a resume-
+            # failure run sees only the generic "could not be resumed"
+            # message with no underlying gRPC status code.
+            last_transport_error: grpc.aio.AioRpcError | None = None
             try:
                 while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
                     is_resume = bool(session_id) and attempt > 0
@@ -3090,23 +3127,34 @@ class Sandbox:
                                 # without a transport error — treat as done.
                                 break
                             if isinstance(item, grpc.aio.AioRpcError):
-                                if (
-                                    follow
-                                    and session_id
-                                    and _is_resumable_transport_error(item)
-                                    and attempt + 1 < STREAMING_RESUME_MAX_ATTEMPTS
-                                ):
+                                if follow and session_id and _is_resumable_transport_error(item):
+                                    # The outer `while attempt < MAX_ATTEMPTS`
+                                    # is the only budget — let it decide
+                                    # whether another resume is possible.
+                                    # Marking the outcome "resume" here keeps
+                                    # the exhaustion path (the synthesized
+                                    # SandboxUnavailableError below) the
+                                    # single place that translates "budget
+                                    # spent" to a user-visible error.
                                     logger.debug(
                                         "Log stream transport error %s; will attempt resume",
                                         item.code(),
                                     )
+                                    last_transport_error = item
                                     attempt_outcome = "resume"
                                 else:
-                                    pending_error = _translate_rpc_error(
+                                    translated = _translate_rpc_error(
                                         item,
                                         sandbox_id=self._sandbox_id,
                                         operation="Stream logs",
                                     )
+                                    # Chain the gRPC error so callers can
+                                    # inspect the underlying status code via
+                                    # __cause__ — matches the convention
+                                    # used at other _translate_rpc_error
+                                    # call sites in this module.
+                                    translated.__cause__ = item
+                                    pending_error = translated
                                 break
                             if isinstance(item, Exception):
                                 pending_error = item
@@ -3145,42 +3193,46 @@ class Sandbox:
 
                             elif response.HasField("error"):
                                 code = response.error.code or None
+                                # The wire contract documents every
+                                # LogStreamError as terminal — the server
+                                # will not send further frames on this call.
+                                # REPLAY_GAP also warrants an operator-
+                                # visible warning, because data below the
+                                # server's replay window was permanently
+                                # missed.
                                 if code == _STREAMING_REPLAY_GAP:
-                                    # Non-fatal per the wire contract:
-                                    # bytes below the server's replay window
-                                    # were missed, but the live tail
-                                    # continues.  Surface a warning so
-                                    # operators see the gap in logs.
                                     logger.warning(
                                         "Log stream replay gap for sandbox %s"
-                                        " (offset %d below server replay window)",
+                                        " (offset %d below server replay window);"
+                                        " reconnecting with fresh init",
                                         self._sandbox_id,
                                         last_offset,
                                     )
-                                    continue
-                                if (
-                                    follow
-                                    and code
-                                    in (
-                                        _STREAMING_SESSION_NOT_FOUND,
-                                        _STREAMING_INVALID_RESUME_OFFSET,
-                                    )
-                                    and session_id
-                                    and attempt + 1 < STREAMING_RESUME_MAX_ATTEMPTS
-                                ):
-                                    # The server told us the resume token is
-                                    # unusable.  Drop it and reconnect from
-                                    # scratch — the live tail resumes from
-                                    # the current head with no replay of
-                                    # older bytes.
+                                if follow and code in _STREAMING_FRESH_REINIT_CODES:
+                                    # The server told us to reconnect from
+                                    # scratch.  Drop resume state and clear
+                                    # the cross-attempt line buffer — on a
+                                    # fresh init we are NOT going to receive
+                                    # the bytes that preceded any partial
+                                    # line, so preserving it would splice
+                                    # unrelated future bytes into a stale
+                                    # fragment.
                                     logger.debug(
                                         "Log stream %s; falling back to fresh init",
                                         code,
                                     )
                                     session_id = ""
                                     last_offset = 0
+                                    line_parts.clear()
+                                    line_parts_bytes = 0
                                     attempt_outcome = "fresh"
                                     break
+                                # Every other code — including
+                                # INVALID_RESUME_OFFSET (echoed offset is
+                                # corrupt; retrying with the same state
+                                # would loop), SANDBOX_NOT_FOUND, and
+                                # PERMISSION_DENIED — is terminal, no
+                                # retry.  Surface as a SandboxError.
                                 pending_error = SandboxError(
                                     f"Log stream error: {response.error.message}",
                                     reason=code,
@@ -3188,11 +3240,13 @@ class Sandbox:
                                 break
 
                             elif response.HasField("complete"):
-                                # Drain any responses already buffered by
-                                # the collector before declaring done; the
-                                # server may have sent a final data frame
-                                # in the same flush.  Falls through to
-                                # outer loop which breaks on done=True.
+                                # Server signaled clean completion.  Exit
+                                # the inner loop with attempt_outcome
+                                # still "done"; the outer loop will set
+                                # done=True and the `finally` below cancels
+                                # the call and collector.  Any frames the
+                                # server pushed after `complete` would be
+                                # a protocol violation and are discarded.
                                 break
 
                         # Determine terminal-vs-retry outcome.
@@ -3225,15 +3279,17 @@ class Sandbox:
 
                 if not done and attempt >= STREAMING_RESUME_MAX_ATTEMPTS:
                     # Exhausted the retry budget after the final transport
-                    # error.  Pending_error is set on the path that brought
-                    # us here only when we chose not to resume; the
-                    # resume-chosen path leaves pending_error=None, so
-                    # synthesize a generic error to surface to the caller.
-                    await output_queue.put(
-                        SandboxUnavailableError(
-                            "Log stream disconnected and could not be resumed",
-                        )
+                    # error.  pending_error is set only on paths that
+                    # chose not to resume; the resume-chosen path leaves
+                    # pending_error=None, so synthesize a stable user-
+                    # facing error but chain the underlying gRPC error
+                    # so SREs can see the real status code post-mortem.
+                    synthesized = SandboxUnavailableError(
+                        "Log stream disconnected and could not be resumed",
                     )
+                    if last_transport_error is not None:
+                        synthesized.__cause__ = last_transport_error
+                    await output_queue.put(synthesized)
                     return
 
                 # Flush any remaining partial line on clean completion.
