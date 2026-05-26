@@ -1,6 +1,166 @@
 # CHANGELOG
 
 
+## v0.24.0 (2026-05-26)
+
+### Bug Fixes
+
+- **logs**: Address inline review feedback on log-stream resume
+  ([`20aa890`](https://github.com/coreweave/cwsandbox-client/commit/20aa8906964e3cd661ccf599dcbedcad2e322642))
+
+Addresses the 5 inline review comments on PR #130 commit f05cf05.
+
+1. tail_lines / since_time were re-emitted on every fresh-fallback re-init. A caller running
+  `stream_logs(follow=True, tail_lines=100)` would see the last-100 window replayed on every
+  SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_* fallback, contradicting the in-code docstring that says
+  fresh fallback "restarts from the current head with no replay of older bytes." Introduces an
+  `is_first_attempt` flag threaded into the request_generator. tail_lines / since_time go on the
+  first attempt only; timestamps (formatting flag, not replay window) persists across attempts.
+
+2. The first transport error was never retried because the resume gate required `session_id` to be
+  populated, which only happens after the first frame arrives. A flaky gateway connection at the
+  opening edge of the tail therefore surfaced fatally. Drops the `session_id` guard; the outer
+  `attempt < MAX_ATTEMPTS` is the only budget. When `session_id` is empty, the next attempt's
+  request_generator falls into the empty-resume_id branch — a bounded fresh-init retry, which is the
+  right behavior at the opening edge.
+
+3. Exceptions raised inside the retry block were silently swallowed: the outer `finally`
+  unconditionally enqueued the EOF sentinel before the outer `except` enqueued the exception.
+  StreamReader stops iteration on the first None, so the exception was never surfaced to the
+  consumer. Tracks `inner_exit_clean` and emits the sentinel only on the success path; on the
+  failure path the outer `except` is the only thing that touches the queue.
+
+4. `stub` was acquired once outside the retry loop and reused on every retry attempt. gRPC aio
+  handles subchannel reconnect transparently in the common case, but if anything tears the channel
+  down between attempts (the integration test forcibly closes it; `stop()` invalidates it during
+  shutdown), the retry path silently calls `StreamLogs` on a dead stub. Moves the `channel`/`stub`
+  acquisition inside the attempt loop; `_get_or_create_streaming_channel` returns the cached channel
+  when it is still healthy, so this is free in the common case.
+
+5. `_is_resumable_transport_error` dispatches on raw `grpc.StatusCode` only and skips the AIP-193
+  reason metadata path that `_translate_rpc_error` consults. Not a live bug today (the backend does
+  not attach `CWSANDBOX_*` reasons to streaming errors), but a forward-compat hazard worth
+  documenting. Adds an inline note explaining the intentional divergence and what would need to
+  change if the backend evolves to attach AIP-193 reasons to streaming errors.
+
+Tests:
+
+- TestStreamLogsReplayFiltersFirstAttemptOnly: asserts that `tail_lines` and `since_time` are only
+  on the first attempt's init, that `timestamps` persists across attempts. -
+  TestStreamLogsRetryFirstFrameTransportError: asserts that a transport error before the first frame
+  triggers a fresh-init retry with empty resume fields. - TestStreamLogsExceptionOrderingAtEnd:
+  asserts that an exception in per-attempt setup arrives at the queue without a preceding EOF
+  sentinel. - TestStreamLogsStubReacquiredPerAttempt: asserts that
+  `_get_or_create_streaming_channel` is called once per attempt via a counting channel factory.
+
+Test plan: - mise run check (lint, format, mypy, 1134 unit tests, +6 new) — clean - mise run
+  test:e2e against staging — 113 passed, 2 skipped (env-gated)
+
+- **logs**: Align stream_logs resume with documented wire contract
+  ([`f05cf05`](https://github.com/coreweave/cwsandbox-client/commit/f05cf05894c33cb6abe3e27d934dcac63169e9c9))
+
+Address review feedback on PR #130. Brings the in-band error dispatcher in line with the wire
+  contract documented in streaming_pb2.pyi (LogStreamError.code), preserves the gRPC cause on resume
+  exhaustion, fixes a partial-line corruption bug on fresh-init fallback, and adds deterministic
+  unit coverage for the resume state machine.
+
+Wire-contract handling (src/cwsandbox/_sandbox.py):
+
+- REPLAY_GAP: previously `continue`d the inner loop, which silently terminated the stream because
+  the collector had already enqueued its end-of-iteration sentinel. Now triggers a fresh re-init
+  from the current head, matching the .pyi prescription. - RUNNER_UNAVAILABLE / RUNNER_DRAINING:
+  previously fell through to fatal SandboxError. Now route through the fresh re-init path, since the
+  wire contract documents both as transient ("logs moved"). - INVALID_RESUME_OFFSET: previously fell
+  back to fresh init. Now surfaces as a terminal SandboxError without retry — retrying with the same
+  state would loop on a corrupt echoed offset. - SESSION_NOT_FOUND: unchanged (already routed to
+  fresh init). - Consolidates fresh-reinit codes into a single _STREAMING_FRESH_REINIT_CODES set, so
+  future wire-contract additions land in one place. - Drops the `attempt+1 < MAX_ATTEMPTS` gate from
+  the resume / fresh branches: the outer `while attempt < MAX_ATTEMPTS` is now the only budget, so
+  the synthesized SandboxUnavailableError on exhaustion is the single place that translates "budget
+  spent" to a user-visible error.
+
+Other fixes:
+
+- Partial-line buffer was preserved across the fresh-init fallback, which could splice unrelated
+  bytes into a stale partial line (e.g. "hello wor" + later "baz qux\n" emitted as "hello worbaz
+  qux\n"). The buffer is now cleared on every fresh fallback path. - Resume-exhaustion previously
+  synthesized SandboxUnavailableError with no __cause__. Now chains the underlying AioRpcError so
+  the gRPC status code is reachable post-mortem, matching the `raise X from rpc_error` convention
+  used elsewhere in the module. Also chains __cause__ on the translated-error path so behavior is
+  uniform across resume and non-resume failure routes. - Removes grpc.StatusCode.CANCELLED from the
+  resumable transport status set. CANCELLED is overwhelmingly a teardown signal (sandbox.stop(),
+  call.cancel() in shutdown) and retrying it just burns the resume budget on a session that is being
+  torn down on purpose. - Replaces a stale comment on the `complete` branch that described a drain
+  step the code did not implement.
+
+Tests (tests/unit/cwsandbox/test_sandbox.py, +410 lines):
+
+- New TestStreamLogsResumeStateMachine drives _stream_logs_async end- to-end against a programmable
+  stub that yields real protobuf messages and patches asyncio.sleep so backoff is instant. Covers:
+  resume after transport error, fresh after SESSION_NOT_FOUND, REPLAY_GAP and RUNNER_UNAVAILABLE →
+  fresh, INVALID_RESUME_OFFSET → terminal, exhaustion → SandboxUnavailableError with cause chain,
+  and the partial-line buffer clear on fresh fallback. - New
+  TestStreamLogsResumeTransportClassification covers the CANCELLED exclusion and UNKNOWN inclusion.
+  - New TestStreamLogsInitWireShape asserts the SDK actually populates resume_session_id /
+  resume_offset on the wire when resuming, and omits them on a fresh init. Supersedes the prior
+  protoc round-trip tests, which were tautological — protobuf already guarantees field
+  round-tripping; what matters is that the SDK populates the right fields at the right time.
+
+Integration test (tests/integration/cwsandbox/test_sandbox.py):
+
+- Hardens test_stream_logs_reconnects_after_transient_disconnect so the post-disconnect assertion
+  cannot be satisfied purely from buffered items in the reader's queue. Requires counter values
+  strictly greater than first_batch[-1] + 5 — within the 30s post-disconnect deadline the live tail
+  will always advance past this threshold, but a reader paused with several seconds of backlog
+  cannot. Defers deterministic state-machine assertions to the unit tests above.
+
+Test plan: - mise run check (lint, format, mypy, 1128 unit tests) — clean - mise run test:e2e
+  against staging — 113 passed, 2 skipped (env-gated)
+
+### Chores
+
+- Update CODEOWNERS to Applied Aviato
+  ([`ef17a1a`](https://github.com/coreweave/cwsandbox-client/commit/ef17a1a4d412dc362f5d56317c07cd172f334d92))
+
+- **proto**: Regenerate streaming stubs with resume fields
+  ([`3ff826b`](https://github.com/coreweave/cwsandbox-client/commit/3ff826b0876d1ac2c3e8e33450a1cc8e0782f472))
+
+Pulls in the new wire fields on the streaming protocol: - LogStreamData.session_id,
+  LogStreamData.offset (cumulative byte count) - LogStreamInit.resume_session_id,
+  LogStreamInit.resume_offset - ExecStreamInit.resume_session_id - StreamingExecReady.session_id
+
+Generated at protobuf 5.26.1 to keep the no-runtime-version-check policy documented in
+  scripts/update-protos.sh.
+
+### Documentation
+
+- Flush stdout in async TerminalSession example
+  ([`fa7f9ae`](https://github.com/coreweave/cwsandbox-client/commit/fa7f9aee9b299a3a37196b2b68be559fef094518))
+
+### Features
+
+- **logs**: Auto-resume stream_logs across transient disconnects
+  ([`d307da3`](https://github.com/coreweave/cwsandbox-client/commit/d307da31401a7195699bf767f65a4c5f6cb578d1))
+
+stream_logs(follow=True) now captures session_id and the cumulative byte offset from each
+  LogStreamData frame and, on a transient transport error (UNAVAILABLE / CANCELLED / INTERNAL /
+  UNKNOWN), reconnects with resume_session_id + resume_offset so the live tail continues without the
+  caller seeing the disconnect.
+
+Server replies of SESSION_NOT_FOUND or INVALID_RESUME_OFFSET drop the resume state and fall back to
+  a fresh init; REPLAY_GAP is treated as a non-fatal warning. Servers that don't speak the resume
+  wire protocol emit session_id="" and the resume branch is never entered, so behavior is unchanged
+  against older backends.
+
+Three new e2e tests cover the wire shape (session_id + cumulative offset), the in-band
+  SESSION_NOT_FOUND reject contract for unknown resume tokens, and end-to-end recovery across a
+  forced disconnect. Eight unit tests cover the transport-error classifier and the wire field
+  accessors.
+
+Also fixes three latent _sandbox_id closure-narrowing issues that the stricter regenerated proto
+  stubs surfaced.
+
+
 ## v0.23.3 (2026-05-21)
 
 ### Bug Fixes
