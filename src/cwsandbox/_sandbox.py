@@ -93,6 +93,7 @@ from cwsandbox.exceptions import (
     SandboxError,
     SandboxExecutionError,
     SandboxFailedError,
+    SandboxFailedPreconditionError,
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
@@ -319,6 +320,13 @@ def _translate_rpc_error(
     if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
         return SandboxResourceExhaustedError(
             f"{operation} resource exhausted: {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if code == grpc.StatusCode.FAILED_PRECONDITION:
+        return SandboxFailedPreconditionError(
+            f"{operation} precondition failed: {details}",
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
@@ -4493,6 +4501,20 @@ class Sandbox:
                 raise
             logger.debug(
                 "Falling back to exec-streaming write for sandbox %s: %s",
+                self._sandbox_id,
+                filepath,
+            )
+            await self._write_file_via_exec_streaming(filepath, contents, timeout)
+        except SandboxFailedPreconditionError:
+            # Gateway returns FAILED_PRECONDITION with reason
+            # CWSANDBOX_FILE_TOO_LARGE when the unary payload exceeds the
+            # server's max-file-operation-bytes cap. That cap can be
+            # smaller than the gRPC envelope, so the RESOURCE_EXHAUSTED
+            # branch above does not catch it. exec-streaming chunks via
+            # stdin and bypasses the unary cap.
+            logger.debug(
+                "Falling back to exec-streaming write for sandbox %s: %s "
+                "(server precondition failed)",
                 self._sandbox_id,
                 filepath,
             )

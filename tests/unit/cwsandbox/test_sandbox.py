@@ -1337,6 +1337,30 @@ class TestSandboxFileOperationFallback:
 
         fallback.assert_not_awaited()
 
+    def test_write_file_failed_precondition_falls_back(self) -> None:
+        """Gateway returns FAILED_PRECONDITION when payload exceeds the
+        configured max-file-operation-bytes cap. The exec-streaming
+        fallback bypasses that cap, so write_file should still succeed.
+        """
+        sandbox = self._setup_running_sandbox()
+        sandbox._stub.AddFile = AsyncMock(
+            side_effect=MockRpcError(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "file payload exceeds configured max-file-operation-bytes",
+            )
+        )
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            sandbox.write_file("/tmp/test.bin", b"data").result()
+
+        sandbox._stub.AddFile.assert_awaited_once()
+        fallback.assert_awaited_once()
+
     def test_read_file_successful_unary_skips_fallback(self) -> None:
         sandbox = self._setup_running_sandbox()
         mock_read_response = MagicMock()
@@ -4119,6 +4143,21 @@ class TestTranslateRpcError:
         assert isinstance(result, SandboxResourceExhaustedError)
         assert isinstance(result, SandboxError)
         assert "exhausted" in str(result).lower()
+
+    def test_failed_precondition_returns_failed_precondition_error(self) -> None:
+        """FAILED_PRECONDITION returns explicit SandboxFailedPreconditionError."""
+        from cwsandbox._sandbox import _translate_rpc_error
+        from cwsandbox.exceptions import SandboxError, SandboxFailedPreconditionError
+
+        error = MockRpcError(
+            grpc.StatusCode.FAILED_PRECONDITION,
+            "file payload exceeds configured max-file-operation-bytes",
+        )
+        result = _translate_rpc_error(error, operation="Write file")
+
+        assert isinstance(result, SandboxFailedPreconditionError)
+        assert isinstance(result, SandboxError)
+        assert "precondition" in str(result).lower()
 
     def test_permission_denied_returns_auth_error(self) -> None:
         """Test PERMISSION_DENIED status code returns CWSandboxAuthenticationError."""

@@ -176,6 +176,22 @@ class SandboxResourceExhaustedError(SandboxError):
     """
 
 
+class SandboxFailedPreconditionError(SandboxError):
+    """Raised when the server rejects a request due to a precondition.
+
+    Emitted for gRPC ``FAILED_PRECONDITION``. The request was well-formed
+    but cannot be satisfied in the current state - for example, an
+    ``AddFile`` payload that exceeds the gateway's configured
+    ``max-file-operation-bytes`` cap (AIP-193 reason
+    ``CWSANDBOX_FILE_TOO_LARGE``, with the actual cap in
+    ``metadata["max_size_bytes"]``).
+
+    Not retryable as-is - the caller needs to change the request shape
+    (e.g. smaller payload, different state) or wait for the precondition
+    to be met.
+    """
+
+
 class SandboxTerminalStateUnavailableError(SandboxError):
     """Raised when the backend does not report a terminal state after stop.
 
