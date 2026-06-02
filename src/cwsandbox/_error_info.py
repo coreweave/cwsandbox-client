@@ -44,6 +44,7 @@ CWSANDBOX_FILE_NOT_FOUND = "CWSANDBOX_FILE_NOT_FOUND"
 CWSANDBOX_FILE_IS_DIRECTORY = "CWSANDBOX_FILE_IS_DIRECTORY"
 CWSANDBOX_FILE_IO_FAILED = "CWSANDBOX_FILE_IO_FAILED"
 CWSANDBOX_FILE_PERMISSION_DENIED = "CWSANDBOX_FILE_PERMISSION_DENIED"
+CWSANDBOX_FILE_TOO_LARGE = "CWSANDBOX_FILE_TOO_LARGE"
 
 FILE_ERROR_REASONS: frozenset[str] = frozenset(
     {
@@ -51,6 +52,7 @@ FILE_ERROR_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_FILE_IS_DIRECTORY,
         CWSANDBOX_FILE_IO_FAILED,
         CWSANDBOX_FILE_PERMISSION_DENIED,
+        CWSANDBOX_FILE_TOO_LARGE,
     }
 )
 
@@ -61,6 +63,15 @@ CWSANDBOX_PROFILE_NOT_FOUND = "CWSANDBOX_PROFILE_NOT_FOUND"
 
 # Timeout reasons
 CWSANDBOX_COMMAND_TIMEOUT = "CWSANDBOX_COMMAND_TIMEOUT"
+
+# Streaming-exec terminal error code. NOT an AIP-193 ErrorInfo reason: it is a
+# free-form string carried in ``ExecStreamError.code`` on the exec/file stream
+# (not in gRPC trailing metadata), so it does not flow through the ErrorInfo
+# parser. The server emits it when an output stream is ended early because it
+# was not being read fast enough to keep up with the command's output — an
+# explicit failure instead of silently dropping output. The SDK maps it to
+# ``SandboxStreamBackpressureError``.
+STREAM_BACKPRESSURE = "STREAM_BACKPRESSURE"
 
 # Unavailable reasons
 CWSANDBOX_RUNNER_UNAVAILABLE = "CWSANDBOX_RUNNER_UNAVAILABLE"

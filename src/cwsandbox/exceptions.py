@@ -118,6 +118,37 @@ class SandboxExecutionError(SandboxError):
         self.exception_message = exception_message
 
 
+class SandboxStreamBackpressureError(SandboxExecutionError):
+    """Raised when an output stream ended early because it was not being read
+    fast enough to keep up with the command's output.
+
+    When a command produces output faster than your code reads it, the stream
+    is ended with this explicit error rather than silently dropping output and
+    still reporting success. Some output has therefore likely been lost.
+
+    Subclasses ``SandboxExecutionError`` so existing ``except
+    SandboxExecutionError`` handlers still catch it; catch this type
+    specifically to handle a too-slow reader distinctly from a command failure.
+    Carries ``reason == "STREAM_BACKPRESSURE"``.
+
+    How to avoid it:
+
+    - Read the stream as output arrives — iterate the reader / drain stdout in
+      a tight loop and move slow work (disk writes, network calls) off the read
+      loop. The common cause is doing per-chunk work inline; drain into a fast
+      local sink (e.g. a file) first and process afterward. See
+      ``examples/large_file_streaming.py``.
+    - For very large files, use ``read_file_streaming`` /
+      ``write_file_streaming`` (chunked) instead of reading everything at once.
+    - If the *destination* itself cannot keep up no matter how tight the loop
+      (a rate-limited API, a slow disk, a human watching a terminal), no amount
+      of loop-tightening helps — split the work into smaller transfers, or move
+      very large payloads out of the streaming path entirely.
+    - This is not a transient error — retrying the same consumer pattern will
+      hit it again. Fix the read pace (or chunk the work) first, then retry.
+    """
+
+
 class SandboxFileError(SandboxError):
     """Raised when a file operation fails in the sandbox.
 

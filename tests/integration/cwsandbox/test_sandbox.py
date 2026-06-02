@@ -176,7 +176,7 @@ def test_sandbox_large_file_exec_fallback(sandbox_defaults: SandboxDefaults) -> 
         payload = bytes(i % 256 for i in range(20 * 1024 * 1024))
         filepath = f"/tmp/test_fallback_file_{uuid.uuid4().hex}.bin"
 
-        with patch("cwsandbox._sandbox.DEFAULT_FILE_UNARY_SAFE_LIMIT_BYTES", 1):
+        with patch("cwsandbox._sandbox.DEFAULT_FILE_OPERATION_CAP_BYTES", 1):
             sandbox.write_file(filepath, payload).result()
 
         with patch.object(Sandbox, "_read_file_unary_async", force_read_message_size_error):
