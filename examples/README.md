@@ -74,6 +74,21 @@ Demonstrates:
 - Separate stdout/stderr handling
 - Process lifecycle (returncode, poll, wait, result)
 
+### Large File Streaming (`large_file_streaming.py`)
+
+Stream large files without tripping backpressure:
+
+```bash
+python examples/large_file_streaming.py
+```
+
+Demonstrates:
+- The fast-drain read loop (`read_file_streaming` → local file) that keeps up
+  with the producer
+- The slow-inline-work anti-pattern that causes backpressure, and why
+- Catching `SandboxStreamBackpressureError` and recovering (it is not
+  retryable as-is — fix the read pace or chunk the work first)
+
 ### Stdin Streaming (`stdin_streaming.py`)
 
 Send input to interactive commands:
