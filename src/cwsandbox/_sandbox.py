@@ -5102,12 +5102,11 @@ class Sandbox:
             background task on garbage collection, but explicit close
             releases resources sooner.
 
-            The internal buffer between the network and your loop is bounded by
-            CHUNK COUNT, not bytes: it holds at most ``STREAMING_OUTPUT_QUEUE_SIZE``
-            chunks, each up to the server's frame size. It provides backpressure
-            and smooths bursts but is not a hard memory ceiling, so resident
-            memory still scales with how far behind your loop falls — keep the
-            read loop tight (see ``examples/large_file_streaming.py``).
+            A bounded amount of output is buffered ahead of your loop to smooth
+            out bursts and apply backpressure, but it is not a hard memory
+            ceiling: resident memory still grows with how far behind your loop
+            falls. Keep the read loop tight and move slow per-chunk work off it
+            (see ``examples/large_file_streaming.py``).
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         output_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue(

@@ -56,9 +56,9 @@ def slow_inline_read_antipattern(sb: Sandbox) -> int:
     """Anti-pattern: slow work *inside* the read loop.
 
     Sleeping (or doing a network round-trip, or a synchronous DB insert) per
-    chunk lets the producer outrun the consumer; the stream's buffer fills and
-    the server ends it with SandboxStreamBackpressureError. Shown here only so
-    you can recognize and avoid it — do NOT do this for large payloads.
+    chunk lets the command's output outpace your reads; the stream is then
+    ended early with SandboxStreamBackpressureError. Shown here only so you can
+    recognize and avoid it — do NOT do this for large payloads.
     """
     total = 0
     with contextlib.closing(sb.read_file_streaming(REMOTE_PATH)) as reader:
@@ -104,7 +104,7 @@ def main() -> None:
             print("=== Handling SandboxStreamBackpressureError ===")
             try:
                 slow_inline_read_antipattern(sb)
-                print("(consumer kept up this time — buffers absorbed the burst)")
+                print("(consumer kept up this time — no backpressure)")
             except SandboxStreamBackpressureError as e:
                 # Not retryable as-is: retrying the same slow loop hits it again.
                 # React by switching to the fast-drain pattern (or chunking).
