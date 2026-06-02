@@ -4441,10 +4441,9 @@ class Sandbox:
         if expected is None or expected == 0 or delivered >= expected:
             return
         raise SandboxFileError(
-            f"{operation} of '{filepath}' returned {delivered} bytes but the file "
-            f"is {expected} bytes; the output stream was truncated. Use "
-            f"read_file_streaming and drain it promptly, or split the file into "
-            f"smaller reads.",
+            f"{operation} of '{filepath}' was truncated: got {delivered} of "
+            f"{expected} bytes. Use read_file_streaming and drain it promptly, "
+            f"or read the file in smaller parts.",
             filepath=filepath,
             reason=CWSANDBOX_FILE_TOO_LARGE,
             metadata={
@@ -4702,8 +4701,7 @@ class Sandbox:
             )
             return
         logger.info(
-            "%s for '%s' exceeded the unary file cap (%d bytes); routing through "
-            "streaming exec. Prefer %s() for large payloads.",
+            "%s for '%s' (%d bytes) is being streamed; prefer %s() for large files.",
             operation,
             filepath,
             size,
