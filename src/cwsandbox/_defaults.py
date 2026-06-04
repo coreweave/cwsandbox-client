@@ -40,6 +40,15 @@ DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES: int = 100 * 1024 * 1024
 # constant is the proactive client check applied before any RPC fires.
 DEFAULT_FILE_OPERATION_CAP_BYTES: int = 32 * 1024 * 1024
 
+# Hard ceiling on the per-file unary cap, regardless of what the server reports.
+# A unary file payload still has to fit within the channel's max message length
+# after protobuf framing; reserve 1 MiB below the channel limit for that framing
+# (generous — measured framing on AddFile is far smaller). If a cluster reports
+# a cap at or above the channel limit, clamping here keeps a sub-cap payload
+# from being routed to the unary path and rejected for frame size; the streaming
+# fallback handles anything above the clamp.
+MAX_FILE_UNARY_BYTES: int = DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES - 1024 * 1024
+
 # Above this size, read_file/write_file refuse to auto-route through the
 # streaming-exec bridge and require callers to use write_file_streaming /
 # read_file_streaming explicitly.
@@ -71,12 +80,22 @@ DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
 # Buffer to add to client-side timeout for exec and stop requests
 DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS: float = 5.0
 
-# Timeout for the post-read truncation integrity check's `stat` exec. `stat` is
+# Timeout ceiling for the truncation integrity check's `stat` exec. `stat` is
 # an O(1) metadata lookup, so this is deliberately short and independent of the
 # (potentially multi-minute) read timeout: a slow/wedged channel must not let
-# the integrity check double the request's wall-clock budget after a successful
-# read. Capped at the caller's remaining timeout so it never exceeds it.
+# the integrity check inflate the request's wall-clock budget. The check stats
+# the file *before* the read and uses the caller's *remaining* budget at that
+# point, capped at this ceiling, so the combined stat + read never exceeds the
+# caller's overall timeout.
 STAT_INTEGRITY_TIMEOUT_SECONDS: float = 10.0
+
+# Only run the streaming-read truncation integrity check (the pre-read `stat`)
+# when the file is at least this large. Silent channel truncation only manifests
+# on large payloads (issue #1172 is a >256 MiB phenomenon); below this threshold
+# the extra `stat` round-trip per read cannot catch anything, so it is skipped.
+# A small file read via the streaming path (e.g. because a low cluster cap
+# forced the fallback) therefore pays no integrity-check overhead.
+TRUNCATION_CHECK_MIN_BYTES: int = MAX_AUTO_FALLBACK_BYTES // 2
 
 # Default temp directory used within Sandboxes
 DEFAULT_TEMP_DIR: str = "/tmp"

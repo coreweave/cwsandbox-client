@@ -129,7 +129,14 @@ class SandboxStreamBackpressureError(SandboxExecutionError):
     Subclasses ``SandboxExecutionError`` so existing ``except
     SandboxExecutionError`` handlers still catch it; catch this type
     specifically to handle a too-slow reader distinctly from a command failure.
-    Carries ``reason == "STREAM_BACKPRESSURE"``.
+
+    Attributes:
+        stream_code: The terminal ``ExecStreamError.code`` that triggered this
+            exception (``"STREAM_BACKPRESSURE"``). This is a streaming-channel
+            code, NOT an AIP-193 ErrorInfo ``reason`` — the two namespaces are
+            kept distinct, so ``.reason`` is ``None`` here and callers should
+            branch on the exception class (or ``stream_code``) rather than
+            ``.reason``.
 
     How to avoid it:
 
@@ -147,6 +154,31 @@ class SandboxStreamBackpressureError(SandboxExecutionError):
     - This is not a transient error — retrying the same consumer pattern will
       hit it again. Fix the read pace (or chunk the work) first, then retry.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stream_code: str | None = None,
+        exec_result: ProcessResult | None = None,
+        exception_type: str | None = None,
+        exception_message: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        # `reason` is intentionally not accepted/forwarded: STREAM_BACKPRESSURE
+        # is an ExecStreamError stream code, not an AIP-193 ErrorInfo reason, so
+        # it does not belong in the `.reason` namespace. It is exposed via
+        # `.stream_code` instead.
+        super().__init__(
+            message,
+            exec_result=exec_result,
+            exception_type=exception_type,
+            exception_message=exception_message,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+        self.stream_code = stream_code
 
 
 class SandboxFileError(SandboxError):

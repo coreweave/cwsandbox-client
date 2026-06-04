@@ -18,6 +18,7 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxStreamBackpressureError,
     SandboxTerminatedError,
     SandboxTimeoutError,
 )
@@ -89,6 +90,35 @@ class TestSandboxExecutionError:
         assert exc.exec_result.stdout_bytes == b"output"
         assert exc.exec_result.stderr_bytes == b"error message"
         assert exc.exec_result.returncode == 1
+
+
+class TestSandboxStreamBackpressureError:
+    """Tests for SandboxStreamBackpressureError's stream_code attribute."""
+
+    def test_is_execution_error_subclass(self) -> None:
+        exc = SandboxStreamBackpressureError("too slow", stream_code="STREAM_BACKPRESSURE")
+        # Existing `except SandboxExecutionError` handlers still catch it.
+        assert isinstance(exc, SandboxExecutionError)
+
+    def test_stream_code_kept_out_of_reason_namespace(self) -> None:
+        """The streaming-channel code rides on .stream_code, NOT .reason (which
+        is the AIP-193 ErrorInfo namespace)."""
+        exc = SandboxStreamBackpressureError("too slow", stream_code="STREAM_BACKPRESSURE")
+        assert exc.stream_code == "STREAM_BACKPRESSURE"
+        # .reason stays None — the namespaces are deliberately distinct.
+        assert exc.reason is None
+
+    def test_does_not_accept_reason_kwarg(self) -> None:
+        """STREAM_BACKPRESSURE must not be smuggled in via reason=."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            SandboxStreamBackpressureError("x", reason="STREAM_BACKPRESSURE")  # type: ignore[call-arg]
+
+    def test_defaults(self) -> None:
+        exc = SandboxStreamBackpressureError("too slow")
+        assert exc.stream_code is None
+        assert exc.reason is None
 
 
 class TestStructuredErrorAttributes:

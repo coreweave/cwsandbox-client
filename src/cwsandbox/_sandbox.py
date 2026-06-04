@@ -21,6 +21,7 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Iterator,
     Mapping,
     Sequence,
 )
@@ -46,6 +47,7 @@ from cwsandbox._defaults import (
     DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_AUTO_FALLBACK_BYTES,
+    MAX_FILE_UNARY_BYTES,
     MAX_LINE_BUFFER_BYTES,
     STAT_INTEGRITY_TIMEOUT_SECONDS,
     STDIN_CHUNK_SIZE,
@@ -56,6 +58,7 @@ from cwsandbox._defaults import (
     STREAMING_RESUME_MAX_ATTEMPTS,
     STREAMING_RESUME_MAX_BACKOFF_SECONDS,
     STREAMING_WRITE_CHUNK_SIZE,
+    TRUNCATION_CHECK_MIN_BYTES,
     SandboxDefaults,
     _normalize_tags,
     _resolve_selector,
@@ -68,6 +71,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FILE_IS_DIRECTORY,
     CWSANDBOX_FILE_NOT_FOUND,
     CWSANDBOX_FILE_TOO_LARGE,
+    CWSANDBOX_FILE_TRUNCATED,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     STREAM_BACKPRESSURE,
@@ -206,6 +210,53 @@ def _coerce_bytes_chunk(chunk: Any) -> bytes:
         f"streaming source must yield bytes-like objects (bytes, bytearray, "
         f"or memoryview); got {type(chunk).__name__}"
     )
+
+
+# Sentinel marking normal exhaustion of a synchronous source iterator across the
+# executor boundary. ``StopIteration`` cannot propagate out of a Future, so the
+# executor task returns this instead.
+_SYNC_ITER_DONE = object()
+
+
+def _next_coerced_chunk(iterator: Iterator[bytes]) -> bytes | object:
+    """Pull and coerce the next chunk from a sync iterator (runs in an executor).
+
+    Returns the coerced ``bytes`` chunk, or ``_SYNC_ITER_DONE`` on normal
+    exhaustion. A non-bytes-like chunk raises ``TypeError`` (the documented
+    write_file_streaming contract) right here in the worker thread; the Future
+    carries it back so the caller re-raises it unchanged.
+    """
+    try:
+        chunk = next(iterator)
+    except StopIteration:
+        return _SYNC_ITER_DONE
+    return _coerce_bytes_chunk(chunk)
+
+
+async def _iter_sync_source_in_executor(source: Iterable[bytes]) -> AsyncIterator[bytes]:
+    """Yield from a *synchronous* iterable without blocking the event loop.
+
+    A caller-supplied sync iterable (a file handle, an NFS/FUSE read, a network
+    generator) can block on ``next()``; driving it inline on the shared
+    background loop would stall every other operation — heartbeats, other
+    sandboxes' RPCs. Each ``next()`` is instead run in the default executor, so
+    the blocking call parks an executor thread rather than the event loop.
+
+    No prefetch buffer is needed: the generator advances the iterator exactly
+    one step per item the consumer pulls, so a slow downstream naturally paces a
+    fast source and nothing runs ahead. The downstream exec stdin path applies
+    its own bounded-queue backpressure. A non-bytes-like chunk raises
+    ``TypeError`` from the executor, propagating out unchanged (the documented
+    write_file_streaming contract).
+    """
+    loop = asyncio.get_running_loop()
+    iterator = iter(source)
+    while True:
+        item = await loop.run_in_executor(None, _next_coerced_chunk, iterator)
+        if item is _SYNC_ITER_DONE:
+            return
+        assert isinstance(item, bytes)
+        yield item
 
 
 def _wrap_command_with_cwd(command: Sequence[str], cwd: str) -> list[str]:
@@ -435,7 +486,9 @@ def _exec_stream_error(message: str, code: str | None) -> SandboxExecutionError:
     was not being read fast enough to keep up with the command's output, so
     some output was lost. Surface it as ``SandboxStreamBackpressureError`` (a
     subclass of ``SandboxExecutionError``) with guidance the caller can act on,
-    rather than an opaque exec failure. Every other code stays a plain
+    rather than an opaque exec failure. The code is carried on
+    ``.stream_code`` (a streaming-channel code), not ``.reason`` (the AIP-193
+    ErrorInfo namespace). Every other code stays a plain
     ``SandboxExecutionError`` carrying the raw ``reason``.
     """
     if code == STREAM_BACKPRESSURE:
@@ -449,7 +502,7 @@ def _exec_stream_error(message: str, code: str | None) -> SandboxExecutionError:
             "slow disk) and cannot keep up no matter how tight the loop, split "
             "the work into smaller transfers. Retrying the same pattern will "
             "hit this again.",
-            reason=code,
+            stream_code=code,
         )
     return SandboxExecutionError(
         f"Exec stream error: {message}",
@@ -4329,7 +4382,9 @@ class Sandbox:
 
         return bytes(response.file_contents)
 
-    async def _read_file_via_exec_streaming(self, filepath: str, timeout: float) -> bytes:
+    async def _read_file_via_exec_streaming(
+        self, filepath: str, timeout: float, *, expected_size: int | None = None
+    ) -> bytes:
         script = (
             "path=$1\n"
             'if [ ! -e "$path" ]; then\n'
@@ -4372,12 +4427,15 @@ class Sandbox:
                 filepath=filepath,
                 reason=CWSANDBOX_FILE_IO_FAILED,
             )
-        # Post-hoc integrity check (shared with read_file_streaming): detect a
-        # silently-truncated read and surface it as a typed
-        # CWSANDBOX_FILE_TOO_LARGE rather than returning a partial file as if
-        # complete (issue #1172).
-        await self._verify_no_truncation(
-            filepath, delivered=len(stdout), operation="read_file", timeout=timeout
+        # Integrity check (shared with read_file_streaming): detect a silently
+        # truncated read and surface it as a typed CWSANDBOX_FILE_TRUNCATED
+        # rather than returning a partial file as if complete (issue #1172).
+        # The expected size is the server-reported pre-read size from the
+        # FILE_TOO_LARGE metadata that triggered this fallback — no extra stat
+        # round-trip is needed, and because it was captured *before* the read it
+        # cannot false-positive on a file that grows during the read.
+        self._verify_no_truncation(
+            filepath, delivered=len(stdout), expected=expected_size, operation="read_file"
         )
         return stdout
 
@@ -4386,9 +4444,9 @@ class Sandbox:
 
         Returns ``None`` if the size could not be determined (stat unavailable,
         unexpected output, transient transport error). Used by
-        ``read_file_streaming`` to detect silent truncation; a ``None`` result
-        means the integrity check is skipped rather than raising — a stat
-        failure on its own is not a streaming-read failure.
+        ``read_file_streaming`` to capture a pre-read size baseline for the
+        truncation check; a ``None`` result means the check is skipped rather
+        than raising — a stat failure on its own is not a streaming-read failure.
         """
         try:
             returncode, stdout, _stderr = await self._exec_streaming_binary_async(
@@ -4408,36 +4466,60 @@ class Sandbox:
             return None
         return value if value >= 0 else None
 
-    async def _verify_no_truncation(
-        self, filepath: str, *, delivered: int, operation: str, timeout: float
-    ) -> None:
-        """Raise CWSANDBOX_FILE_TOO_LARGE if a streamed read was truncated.
+    @staticmethod
+    def _remaining_budget(deadline: float | None) -> float | None:
+        """Seconds left until ``deadline`` (a ``time.monotonic()`` value).
 
-        Shared post-hoc integrity check for read_file (exec-stream fallback)
-        and read_file_streaming: stat the file's size on the sandbox and compare
-        to bytes delivered. On a backend where the streaming channel silently
-        truncates (e.g. the lossless gate is off), the read command exits 0
-        having produced the whole file while the client received only a prefix;
-        without this the caller would consume a partial read as if complete
-        (issue #1172).
+        Returns ``None`` when no deadline was set (untimed operation) and a
+        floor of 0.0 once the deadline has passed, so a downstream RPC sees a
+        non-negative timeout rather than a negative one.
+        """
+        if deadline is None:
+            return None
+        return max(0.0, deadline - time.monotonic())
+
+    def _stat_budget(self, deadline: float | None) -> float:
+        """Timeout for the pre-read ``stat``: the remaining budget, capped short.
+
+        ``stat`` is an O(1) metadata lookup, so it is capped at
+        ``STAT_INTEGRITY_TIMEOUT_SECONDS`` and never allowed to exceed the
+        operation's remaining wall-clock budget — the stat and the read it
+        precedes share one deadline and together stay within the caller's
+        timeout.
+        """
+        remaining = self._remaining_budget(deadline)
+        if remaining is None:
+            return STAT_INTEGRITY_TIMEOUT_SECONDS
+        return min(STAT_INTEGRITY_TIMEOUT_SECONDS, remaining)
+
+    def _verify_no_truncation(
+        self, filepath: str, *, delivered: int, expected: int | None, operation: str
+    ) -> None:
+        """Raise CWSANDBOX_FILE_TRUNCATED if a streamed read came back short.
+
+        Pure comparison shared by read_file (exec-stream fallback) and
+        read_file_streaming. ``expected`` is the file's size captured *before*
+        the read — the server-reported size for the read_file fallback, or a
+        pre-read ``stat`` for read_file_streaming. On a backend where the
+        streaming channel silently truncates (e.g. the lossless gate is off),
+        the read command exits 0 having produced the whole file while the client
+        received only a prefix; without this the caller would consume a partial
+        read as if complete (issue #1172).
 
         Only a SHORT read (``delivered < expected``) is flagged. Specifically:
-        - ``expected is None`` (stat unavailable — e.g. a distroless/scratch
-          image with no ``stat`` binary): skip. The integrity check is a
-          best-effort backstop, not a guarantee; ``read_file_streaming``'s
-          docstring scopes this.
+        - ``expected is None`` (size unknown — server omitted it, or ``stat`` is
+          unavailable on a distroless/scratch image): skip. The check is a
+          best-effort backstop, not a guarantee; the public docstrings scope
+          this.
         - ``expected == 0`` (pseudo-files such as ``/proc/*`` and ``/sys/*``
           report size 0 while ``cat`` legitimately yields content): skip, to
           avoid a false-positive on a fully-delivered read.
-        - ``delivered >= expected`` (incl. a concurrent append growing the file
-          between the read and the stat): not a truncation, so no raise.
+        - ``delivered >= expected``: not short, so no raise. Because ``expected``
+          is the *pre-read* size, a file appended to during the read grows the
+          delivered byte count above the baseline rather than below it — a
+          benign concurrent append never trips the check (the false-positive
+          that an after-the-fact stat would produce).
         """
-        # `stat` is an O(1) metadata lookup, so cap it well below the read's own
-        # (possibly multi-minute) timeout: a slow/wedged channel must not let
-        # the post-read integrity check double the request's wall-clock budget.
-        # Never exceed the caller's remaining timeout.
-        stat_timeout = min(STAT_INTEGRITY_TIMEOUT_SECONDS, timeout)
-        expected = await self._stat_file_size_async(filepath, stat_timeout)
         if expected is None or expected == 0 or delivered >= expected:
             return
         raise SandboxFileError(
@@ -4445,7 +4527,7 @@ class Sandbox:
             f"{expected} bytes. Use read_file_streaming and drain it promptly, "
             f"or read the file in smaller parts.",
             filepath=filepath,
-            reason=CWSANDBOX_FILE_TOO_LARGE,
+            reason=CWSANDBOX_FILE_TRUNCATED,
             metadata={
                 "filepath": filepath,
                 "operation": operation,
@@ -4490,13 +4572,18 @@ class Sandbox:
             self._notify_streaming_fallback_once(
                 "Read file", filepath, size, suggest_method="read_file_streaming"
             )
-            return await self._read_file_via_exec_streaming(filepath, timeout)
+            # ``size`` is the server-reported pre-read size: feed it to the
+            # truncation check directly, so the fallback needs no extra stat
+            # round-trip and cannot false-positive on a growing file.
+            return await self._read_file_via_exec_streaming(filepath, timeout, expected_size=size)
         except SandboxResourceExhaustedError:
             # Backend resource pressure is indistinguishable from message-size
             # rejects on this code path without inspecting error text; remote
             # file size is unknown to the client until first attempt fails, so
             # fall back broadly. Writes are conservative because the client
-            # knows the local payload size.
+            # knows the local payload size. The remote size is unknown here, so
+            # the truncation check is skipped (no reliable pre-read baseline);
+            # see read_file's docstring for the resulting caveat.
             logger.debug(
                 "Falling back to exec-streaming read for sandbox %s: %s",
                 self._sandbox_id,
@@ -4522,15 +4609,24 @@ class Sandbox:
         Behavior:
             Files up to ~32 MiB are read in a single unary call. Larger files
             (up to ~256 MiB) transparently fall back to a streaming read — the
-            first such fallback per Sandbox logs once at INFO. Files above
-            ~256 MiB are refused; use ``read_file_streaming`` for those. The
-            whole result is held in memory regardless of path, so for very
-            large files prefer ``read_file_streaming`` to consume incrementally.
+            first such fallback per Sandbox logs once at INFO. When the server
+            reports the file's size, files above ~256 MiB are refused with
+            ``CWSANDBOX_FILE_TOO_LARGE``; use ``read_file_streaming`` for those.
+
+            The whole result is held in memory regardless of path. The client
+            cannot always know the remote size in advance (e.g. when the backend
+            signals the oversized read via resource exhaustion rather than a
+            sized ``CWSANDBOX_FILE_TOO_LARGE``), so a very large file can still
+            be buffered in full rather than refused — prefer
+            ``read_file_streaming`` for anything large to consume it
+            incrementally and bound memory.
 
         Raises:
             SandboxFileError: with ``reason == CWSANDBOX_FILE_TOO_LARGE`` when
-                the file exceeds the server cap, or when a streamed read comes
-                back short (truncation detected via a post-read size check).
+                the file exceeds the server cap and the server reported its
+                size; or with ``reason == CWSANDBOX_FILE_TRUNCATED`` when a
+                streamed read comes back short of the file's size (truncation
+                detected against the pre-read size).
             SandboxStreamBackpressureError: when a large read falls back to
                 streaming and the output is produced faster than the client
                 reads it (a subclass of SandboxExecutionError).
@@ -4645,15 +4741,25 @@ class Sandbox:
         """Per-call cap to apply before dispatching a unary file op.
 
         Uses the server-reported cap when one has been observed; otherwise
-        falls back to ``DEFAULT_FILE_OPERATION_CAP_BYTES``.
+        falls back to ``DEFAULT_FILE_OPERATION_CAP_BYTES``. The result is clamped
+        to ``MAX_FILE_UNARY_BYTES`` (a frame-safe ceiling below the channel's max
+        message length): even if a cluster reports a cap at or above the channel
+        limit, a payload at the reported cap could not survive protobuf framing
+        on the unary path, so anything above the clamp is routed to streaming
+        instead of being sent unary and rejected for frame size.
         """
         observed = self._observed_file_op_cap_bytes
         if observed is not None and observed > 0:
-            return observed
-        return DEFAULT_FILE_OPERATION_CAP_BYTES
+            return min(observed, MAX_FILE_UNARY_BYTES)
+        return min(DEFAULT_FILE_OPERATION_CAP_BYTES, MAX_FILE_UNARY_BYTES)
 
     def _record_observed_cap(self, exc: SandboxFileError) -> None:
-        """Cache the server's max_size_bytes when present on a FILE_TOO_LARGE."""
+        """Cache the server's max_size_bytes when present on a FILE_TOO_LARGE.
+
+        The raw server value is stored as observed; the frame-safe clamp is
+        applied at the point of use in ``_file_op_cap`` rather than here, so the
+        cached value stays a faithful record of what the server reported.
+        """
         meta = exc.metadata or {}
         raw = meta.get("max_size_bytes")
         if not raw:
@@ -4854,8 +4960,12 @@ class Sandbox:
                 async for chunk in source:
                     yield _coerce_bytes_chunk(chunk)
                 return
-            for chunk in source:
-                yield _coerce_bytes_chunk(chunk)
+            # Synchronous iterable: pull each chunk off the event loop so a
+            # blocking source (file handle, NFS/FUSE read, network generator)
+            # parks an executor thread instead of stalling the shared loop and
+            # every other operation on it.
+            async for chunk in _iter_sync_source_in_executor(source):
+                yield chunk
 
         script = (
             "path=$1\n"
@@ -4936,9 +5046,10 @@ class Sandbox:
             mid-stream cancel or transport error may leave a partial file.
             The streaming transfer also does not survive a sandbox restart.
 
-            Passing a synchronous file handle (e.g. ``open(...)``) as the
-            source can block the SDK's event loop on disk I/O. For large
-            uploads, prefer a pre-chunked generator or an async source.
+            A synchronous source (e.g. a file handle from ``open(...)``) is
+            pulled on a worker thread, so a blocking ``read`` does not stall the
+            SDK's event loop. An async source is awaited directly. Either is
+            fine; pick whichever is more natural for your data.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(
@@ -4953,6 +5064,10 @@ class Sandbox:
         timeout: float,
     ) -> None:
         try:
+            # Absolute wall-clock deadline for the whole operation (stat + read),
+            # so the pre-read stat consumes from the same budget as the read and
+            # the two together never exceed the caller's timeout.
+            deadline = time.monotonic() + timeout if timeout is not None else None
             await self._ensure_started_async()
             if self._is_done or self._is_stopping:
                 raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
@@ -4965,6 +5080,14 @@ class Sandbox:
             # Subsequent awaits invalidate mypy's narrowing of self._sandbox_id.
             assert self._sandbox_id is not None
             sandbox_id = self._sandbox_id
+
+            # Capture the file's size BEFORE the read so the post-read truncation
+            # check has a stable baseline: a file appended to during the read
+            # only grows the delivered count, so a benign concurrent append can
+            # never look like a short read (issue #1172 false-positive fix). The
+            # stat draws from the operation's remaining budget, capped short
+            # because it is an O(1) metadata lookup.
+            expected_size = await self._stat_file_size_async(filepath, self._stat_budget(deadline))
 
             stderr_buf = bytearray()
             stderr_cap = STREAMING_READ_STDERR_CAP_BYTES
@@ -4981,8 +5104,13 @@ class Sandbox:
                 # Close stdin immediately so cat reads the file and exits.
                 yield streaming_pb2.ExecStreamRequest(close=streaming_pb2.ExecStreamClose())
 
+            # The read gets the budget remaining after the pre-read stat, so the
+            # two phases together honor the caller's overall timeout.
+            read_budget = self._remaining_budget(deadline)
             call_timeout = (
-                timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
+                read_budget + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                if read_budget is not None
+                else None
             )
             call: grpc.aio.StreamStreamCall[
                 streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
@@ -5026,14 +5154,23 @@ class Sandbox:
                     filepath=filepath,
                     reason=CWSANDBOX_FILE_IO_FAILED,
                 )
-            # Post-hoc integrity check (shared with the read_file fallback):
-            # a short-stream-with-exit-0 means the channel silently dropped
-            # output; surface as a typed FILE_TOO_LARGE (issue #1172).
-            await self._verify_no_truncation(
+            # Integrity check (shared with the read_file fallback): a
+            # short-stream-with-exit-0 means the channel silently dropped output;
+            # surface as a typed CWSANDBOX_FILE_TRUNCATED (issue #1172). Gated by
+            # size band: silent truncation only manifests on large payloads, so
+            # below TRUNCATION_CHECK_MIN_BYTES the check cannot catch anything and
+            # is skipped (passing expected=None). ``expected_size`` was captured
+            # before the read, so a concurrent append cannot false-positive.
+            check_expected = (
+                expected_size
+                if expected_size is not None and expected_size >= TRUNCATION_CHECK_MIN_BYTES
+                else None
+            )
+            self._verify_no_truncation(
                 filepath,
                 delivered=total_bytes,
+                expected=check_expected,
                 operation="read_file_streaming",
-                timeout=timeout,
             )
             await output_queue.put(None)
         except Exception as exc:
@@ -5062,11 +5199,15 @@ class Sandbox:
         or any time you want to consume the file incrementally (write to
         disk, hash on the fly, parse line by line).
 
-        After the stream finishes, the SDK verifies that the bytes delivered
-        match the file's size on the sandbox. If they don't, the iterator
-        raises ``SandboxFileError`` with reason ``CWSANDBOX_FILE_TOO_LARGE``
-        so callers can detect truncation rather than silently consuming a
-        partial file.
+        For large files, the SDK captures the file's size *before* reading and,
+        once the stream finishes, verifies that at least that many bytes were
+        delivered. If fewer arrived, the iterator raises ``SandboxFileError``
+        with reason ``CWSANDBOX_FILE_TRUNCATED`` so callers can detect a silent
+        short read rather than consuming a partial file. (Using the pre-read
+        size means a file appended to during the read is never mistaken for a
+        truncation.) The check is skipped for small files, where silent
+        truncation does not occur, and is best-effort when the size cannot be
+        determined.
 
         If your loop reads chunks slower than the file streams (e.g. you do
         slow work between iterations), the read may be ended early with

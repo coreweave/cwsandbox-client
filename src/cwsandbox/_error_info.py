@@ -44,7 +44,18 @@ CWSANDBOX_FILE_NOT_FOUND = "CWSANDBOX_FILE_NOT_FOUND"
 CWSANDBOX_FILE_IS_DIRECTORY = "CWSANDBOX_FILE_IS_DIRECTORY"
 CWSANDBOX_FILE_IO_FAILED = "CWSANDBOX_FILE_IO_FAILED"
 CWSANDBOX_FILE_PERMISSION_DENIED = "CWSANDBOX_FILE_PERMISSION_DENIED"
+# A size-policy refusal: the payload exceeds the server/client size cap and no
+# data was lost. The fix is to switch to the streaming APIs. Distinct from
+# CWSANDBOX_FILE_TRUNCATED, which signals data loss on a read that already used
+# streaming.
 CWSANDBOX_FILE_TOO_LARGE = "CWSANDBOX_FILE_TOO_LARGE"
+# A post-hoc short read: a streamed read delivered fewer bytes than the file
+# held, so data WAS lost. Surfaced by the SDK's own integrity check (not the
+# backend), and switching to streaming is a no-op because the read already
+# streamed. Kept separate from CWSANDBOX_FILE_TOO_LARGE so callers can tell a
+# "too big, use streaming" refusal apart from a "your streamed read was
+# truncated" failure without sniffing metadata.
+CWSANDBOX_FILE_TRUNCATED = "CWSANDBOX_FILE_TRUNCATED"
 
 FILE_ERROR_REASONS: frozenset[str] = frozenset(
     {
@@ -53,6 +64,7 @@ FILE_ERROR_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_FILE_IO_FAILED,
         CWSANDBOX_FILE_PERMISSION_DENIED,
         CWSANDBOX_FILE_TOO_LARGE,
+        CWSANDBOX_FILE_TRUNCATED,
     }
 )
 
@@ -70,7 +82,9 @@ CWSANDBOX_COMMAND_TIMEOUT = "CWSANDBOX_COMMAND_TIMEOUT"
 # parser. The server emits it when an output stream is ended early because it
 # was not being read fast enough to keep up with the command's output — an
 # explicit failure instead of silently dropping output. The SDK maps it to
-# ``SandboxStreamBackpressureError``.
+# ``SandboxStreamBackpressureError`` and exposes it on that exception's
+# ``.stream_code`` attribute, keeping it out of the AIP-193 ``.reason``
+# namespace.
 STREAM_BACKPRESSURE = "STREAM_BACKPRESSURE"
 
 # Unavailable reasons

@@ -1491,88 +1491,87 @@ class TestSandboxFileOperationFallback:
         assert "File not found" in str(exc_info.value)
 
     def test_read_fallback_truncation_detected_via_size_check(self) -> None:
-        """rc=0 but fewer bytes than the file's size -> typed FILE_TOO_LARGE.
+        """rc=0 but fewer bytes than the server-reported size -> FILE_TRUNCATED.
 
         Guards the read_file auto-fallback the same way read_file_streaming is
         guarded: on a backend that silently truncates the streaming channel,
         `cat` exits 0 having produced the whole file but the client receives
-        only a prefix. Without the post-hoc stat check, read_file() would
-        return a truncated file as if complete (issue #1172).
+        only a prefix. The fallback feeds the server-reported pre-read size
+        (``expected_size``) into the check; without it read_file() would return
+        a truncated file as if complete (issue #1172).
         """
         sandbox = self._setup_running_sandbox()
 
-        with (
-            patch.object(
-                sandbox,
-                "_exec_streaming_binary_async",
-                new_callable=AsyncMock,
-                return_value=(0, b"only-a-prefix", b""),  # rc=0, short read
-            ),
-            patch.object(
-                sandbox,
-                "_stat_file_size_async",
-                new_callable=AsyncMock,
-                return_value=1_000_000,  # the file is actually much larger
-            ),
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(0, b"only-a-prefix", b""),  # rc=0, short read
         ):
             with pytest.raises(SandboxFileError) as exc_info:
                 sandbox._loop_manager.run_sync(
-                    sandbox._read_file_via_exec_streaming("/tmp/big.bin", 5.0)
+                    sandbox._read_file_via_exec_streaming(
+                        "/tmp/big.bin", 5.0, expected_size=1_000_000
+                    )
                 )
 
         err = exc_info.value
-        assert err.reason == "CWSANDBOX_FILE_TOO_LARGE"
+        assert err.reason == "CWSANDBOX_FILE_TRUNCATED"
         assert err.filepath == "/tmp/big.bin"
         assert err.metadata.get("bytes_delivered") == str(len(b"only-a-prefix"))
         assert err.metadata.get("size_bytes") == "1000000"
         assert "truncated" in str(err)
 
     def test_read_fallback_size_match_returns_bytes(self) -> None:
-        """rc=0 and bytes == stat size -> success (no false-positive truncation)."""
+        """rc=0 and bytes == expected size -> success (no false-positive)."""
         sandbox = self._setup_running_sandbox()
         payload = b"complete-file-contents"
 
-        with (
-            patch.object(
-                sandbox,
-                "_exec_streaming_binary_async",
-                new_callable=AsyncMock,
-                return_value=(0, payload, b""),
-            ),
-            patch.object(
-                sandbox,
-                "_stat_file_size_async",
-                new_callable=AsyncMock,
-                return_value=len(payload),
-            ),
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(0, payload, b""),
         ):
             out = sandbox._loop_manager.run_sync(
-                sandbox._read_file_via_exec_streaming("/tmp/ok.bin", 5.0)
+                sandbox._read_file_via_exec_streaming(
+                    "/tmp/ok.bin", 5.0, expected_size=len(payload)
+                )
             )
         assert out == payload
 
+    def test_read_fallback_growing_file_no_false_positive(self) -> None:
+        """A file appended to during the read delivers MORE than the pre-read
+        size; ``delivered >= expected`` must not be mistaken for truncation."""
+        sandbox = self._setup_running_sandbox()
+        # Pre-read size was 10 bytes; the read delivered 25 (file grew).
+        grew_payload = b"a" * 25
+
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(0, grew_payload, b""),
+        ):
+            out = sandbox._loop_manager.run_sync(
+                sandbox._read_file_via_exec_streaming("/var/log/app.log", 5.0, expected_size=10)
+            )
+        assert out == grew_payload
+
     def test_read_fallback_unknown_size_skips_check(self) -> None:
-        """If stat can't determine the size (None), don't raise — a stat failure
-        is not itself a truncation."""
+        """If the size is unknown (expected_size None), don't raise — there is
+        no reliable pre-read baseline to compare against."""
         sandbox = self._setup_running_sandbox()
         payload = b"some-bytes"
 
-        with (
-            patch.object(
-                sandbox,
-                "_exec_streaming_binary_async",
-                new_callable=AsyncMock,
-                return_value=(0, payload, b""),
-            ),
-            patch.object(
-                sandbox,
-                "_stat_file_size_async",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(0, payload, b""),
         ):
             out = sandbox._loop_manager.run_sync(
-                sandbox._read_file_via_exec_streaming("/tmp/whatever.bin", 5.0)
+                sandbox._read_file_via_exec_streaming("/tmp/whatever.bin", 5.0, expected_size=None)
             )
         assert out == payload
 
@@ -1794,7 +1793,7 @@ class TestSandboxFileTooLarge:
         ) -> tuple[int, bytes, bytes]:
             raise SandboxStreamBackpressureError(
                 "output stream ended early; not read fast enough",
-                reason="STREAM_BACKPRESSURE",
+                stream_code="STREAM_BACKPRESSURE",
             )
 
         with (
@@ -1810,7 +1809,10 @@ class TestSandboxFileTooLarge:
 
         # Must NOT be remasked as the generic file error.
         assert not isinstance(exc_info.value, SandboxFileError)
-        assert exc_info.value.reason == "STREAM_BACKPRESSURE"
+        # The code rides on .stream_code (a streaming-channel code), not .reason
+        # (the AIP-193 ErrorInfo namespace).
+        assert exc_info.value.stream_code == "STREAM_BACKPRESSURE"
+        assert exc_info.value.reason is None
 
     def test_write_streaming_bad_chunk_type_raises_typeerror_not_filewrap(self) -> None:
         """A non-bytes-like chunk is a caller programming error: it must raise
@@ -2011,6 +2013,103 @@ class TestSandboxFileTooLarge:
                     sandbox._stub.AddFile.assert_not_called()
                     fallback.assert_awaited_once()
 
+    def test_observed_cap_clamped_to_frame_safe_ceiling(self) -> None:
+        """A server-reported cap at/above the channel frame limit is clamped.
+
+        Without the clamp, an over-large reported cap would route a sub-cap
+        payload to the unary path where it cannot survive protobuf framing and
+        is rejected for frame size. ``_file_op_cap`` clamps to
+        ``MAX_FILE_UNARY_BYTES`` so anything above the clamp streams instead.
+        """
+        from cwsandbox._defaults import (
+            DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES,
+            MAX_FILE_UNARY_BYTES,
+        )
+
+        sandbox = self._setup_running_sandbox()
+        # Cluster reports a cap AT the channel limit (no headroom for framing).
+        sandbox._observed_file_op_cap_bytes = DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES
+
+        # The effective cap used to gate unary dispatch is clamped below it.
+        assert sandbox._file_op_cap() == MAX_FILE_UNARY_BYTES
+
+        # A payload above the clamp but below the reported cap must stream, not
+        # go unary (which would hit a frame-size reject).
+        sandbox._stub.AddFile = AsyncMock()
+        payload = b"\x00" * (MAX_FILE_UNARY_BYTES + 1024)
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_write_file_via_exec_streaming", new_callable=AsyncMock
+            ) as fallback,
+        ):
+            sandbox.write_file("/clamped.bin", payload).result()
+
+        sandbox._stub.AddFile.assert_not_called()
+        fallback.assert_awaited_once()
+
+    def test_write_streaming_sync_iterable_runs_off_event_loop(self) -> None:
+        """A blocking *synchronous* source is pulled on a worker thread, so it
+        does not stall the shared event loop.
+
+        Regression for the review finding that consuming a sync iterable with
+        next() directly on the background loop stalls every other operation. The
+        source blocks on a threading.Event; if next() ran on the loop the loop
+        would be wedged and a concurrently-scheduled coroutine could not make
+        progress. We assert that concurrent coroutine DID progress while the
+        source was blocked, then release it.
+        """
+        import threading
+
+        from cwsandbox._loop_manager import _LoopManager
+
+        sandbox = self._setup_running_sandbox()
+        gate = threading.Event()
+        progressed = threading.Event()
+        seen_chunks: list[bytes] = []
+
+        def blocking_source() -> Any:
+            yield b"first"
+            # Block the producer until the loop has proven it can still run
+            # other work. A loop-blocking next() would deadlock here.
+            gate.wait(timeout=5.0)
+            yield b"second"
+
+        async def fake_exec_streaming_binary(
+            command: Sequence[str],
+            *,
+            stdin: object,
+            timeout_seconds: float | None = None,
+            operation: str,
+            filepath: str | None = None,
+        ) -> tuple[int, bytes, bytes]:
+            async for chunk in stdin:  # type: ignore[union-attr]
+                seen_chunks.append(bytes(chunk))
+            return (0, b"", b"")
+
+        async def concurrent_work() -> None:
+            # If the loop were wedged on a blocking next(), this would never run.
+            progressed.set()
+
+        loop_mgr = _LoopManager.get()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox,
+                "_exec_streaming_binary_async",
+                side_effect=fake_exec_streaming_binary,
+            ),
+        ):
+            ref = sandbox.write_file_streaming("/blocking.bin", blocking_source())
+            # Schedule independent work; it must complete even though the source
+            # is parked mid-iteration on the worker thread.
+            loop_mgr.run_sync(concurrent_work())
+            assert progressed.is_set(), "event loop was blocked by the sync source"
+            gate.set()  # release the producer
+            ref.result()
+
+        assert seen_chunks == [b"first", b"second"]
+
 
 class TestSandboxReadFileStreaming:
     """Unit tests for read_file_streaming, exercising the streaming producer."""
@@ -2062,6 +2161,14 @@ class TestSandboxReadFileStreaming:
         return [
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            # The streaming read stats the file size BEFORE the read to capture a
+            # pre-read truncation baseline. That stat is itself a StreamExec, so
+            # without stubbing it here it would consume the single mocked call's
+            # responses out from under the read. Default to None (size unknown ->
+            # integrity check skipped); truncation tests override this.
+            patch.object(
+                sandbox, "_stat_file_size_async", new_callable=AsyncMock, return_value=None
+            ),
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
@@ -2155,7 +2262,9 @@ class TestSandboxReadFileStreaming:
         err = exc_info.value
         # Typed, and still caught by existing SandboxExecutionError handlers.
         assert isinstance(err, SandboxExecutionError)
-        assert err.reason == "STREAM_BACKPRESSURE"
+        # The code rides on .stream_code, kept out of the AIP-193 .reason namespace.
+        assert err.stream_code == "STREAM_BACKPRESSURE"
+        assert err.reason is None
         # User-facing, actionable message — names what to do, not internals.
         text = str(err)
         assert "read" in text.lower()
@@ -2180,28 +2289,33 @@ class TestSandboxReadFileStreaming:
                 list(reader)
 
     def test_truncation_detected_via_size_check(self) -> None:
-        """A short stream + exit 0 vs a larger stat size -> typed FILE_TOO_LARGE.
+        """A short stream + exit 0 vs a larger pre-read stat -> FILE_TRUNCATED.
 
         Guards the read_file_streaming integrity check (the streaming method's
         headline truncation-safety property): without it a backend that silently
         drops output would return a partial file as if complete (issue #1172).
+        The expected size must be at/above TRUNCATION_CHECK_MIN_BYTES, since the
+        check is gated to the large-file band where silent truncation occurs.
         """
+        from cwsandbox._defaults import TRUNCATION_CHECK_MIN_BYTES
         from cwsandbox.exceptions import SandboxFileError
 
         sandbox = self._setup_running_sandbox()
         responses = [self._output(b"only-a-prefix"), self._exit(0)]
         _, mock_channel, mock_stub = self._drive(sandbox, responses)
 
+        # File stats (pre-read) as larger than the band threshold and much
+        # larger than what the stream delivered.
+        expected_size = TRUNCATION_CHECK_MIN_BYTES + 1_000_000
         with contextlib.ExitStack() as stack:
             for p in self._patches(sandbox, mock_channel, mock_stub):
                 stack.enter_context(p)
-            # File is much larger than what the stream delivered.
             stack.enter_context(
                 patch.object(
                     sandbox,
                     "_stat_file_size_async",
                     new_callable=AsyncMock,
-                    return_value=1_000_000,
+                    return_value=expected_size,
                 )
             )
             reader = sandbox.read_file_streaming("/big.bin")
@@ -2209,9 +2323,9 @@ class TestSandboxReadFileStreaming:
                 list(reader)
 
         err = exc_info.value
-        assert err.reason == "CWSANDBOX_FILE_TOO_LARGE"
+        assert err.reason == "CWSANDBOX_FILE_TRUNCATED"
         assert err.metadata.get("bytes_delivered") == str(len(b"only-a-prefix"))
-        assert err.metadata.get("size_bytes") == "1000000"
+        assert err.metadata.get("size_bytes") == str(expected_size)
         assert err.metadata.get("operation") == "read_file_streaming"
         assert "truncated" in str(err)
 
@@ -2306,6 +2420,95 @@ class TestSandboxReadFileStreaming:
         assert isinstance(seen_exc, SandboxExecutionError), (
             "terminal error must be delivered to the consumer, not dropped"
         )
+
+    def test_small_file_skips_stat_round_trip(self) -> None:
+        """Below TRUNCATION_CHECK_MIN_BYTES the integrity check cannot catch a
+        silent truncation, so its pre-read stat is wasted. The stat still runs
+        once (it is what produces the size that gates the check), but a SMALL
+        stat result short-circuits the comparison without raising.
+
+        Regression for the review note that the check should not pay off where
+        it can't help: a small streamed read returns cleanly even when the
+        delivered bytes are below the stat size, because the band gate skips it.
+        """
+        sandbox = self._setup_running_sandbox()
+        # Deliver a short read; stat a size that is "larger" but still well below
+        # the band threshold, so the gate skips the comparison (no false raise).
+        responses = [self._output(b"short"), self._exit(0)]
+        _, mock_channel, mock_stub = self._drive(sandbox, responses)
+
+        with contextlib.ExitStack() as stack:
+            for p in self._patches(sandbox, mock_channel, mock_stub):
+                stack.enter_context(p)
+            stack.enter_context(
+                patch.object(
+                    sandbox,
+                    "_stat_file_size_async",
+                    new_callable=AsyncMock,
+                    return_value=1_000_000,  # below TRUNCATION_CHECK_MIN_BYTES
+                )
+            )
+            reader = sandbox.read_file_streaming("/small.bin")
+            chunks = list(reader)  # must NOT raise despite delivered < stat size
+
+        assert b"".join(chunks) == b"short"
+
+    def test_stat_uses_remaining_budget_not_full_timeout(self) -> None:
+        """The pre-read stat draws from the operation's remaining budget, capped
+        at STAT_INTEGRITY_TIMEOUT_SECONDS — never the full caller timeout.
+
+        Regression for the review finding that the stat used the original
+        caller budget, letting stat + read exceed the caller's deadline.
+        """
+        from cwsandbox._defaults import STAT_INTEGRITY_TIMEOUT_SECONDS
+
+        sandbox = self._setup_running_sandbox()
+        captured: dict[str, float] = {}
+
+        async def fake_stat(filepath: str, timeout: float) -> int | None:
+            captured["timeout"] = timeout
+            return None
+
+        responses = [self._output(b"x"), self._exit(0)]
+        _, mock_channel, mock_stub = self._drive(sandbox, responses)
+
+        with contextlib.ExitStack() as stack:
+            for p in self._patches(sandbox, mock_channel, mock_stub):
+                stack.enter_context(p)
+            stack.enter_context(
+                patch.object(sandbox, "_stat_file_size_async", side_effect=fake_stat)
+            )
+            # A large caller timeout; the stat must still be capped at the
+            # short integrity ceiling, not handed the whole budget.
+            reader = sandbox.read_file_streaming("/f.bin", timeout_seconds=600.0)
+            list(reader)
+
+        assert captured["timeout"] <= STAT_INTEGRITY_TIMEOUT_SECONDS
+
+    def test_remaining_budget_helpers(self) -> None:
+        """_remaining_budget / _stat_budget arithmetic, independent of I/O."""
+        import time
+
+        from cwsandbox._defaults import STAT_INTEGRITY_TIMEOUT_SECONDS
+
+        sandbox = self._setup_running_sandbox()
+
+        # No deadline -> untimed.
+        assert sandbox._remaining_budget(None) is None
+        assert sandbox._stat_budget(None) == STAT_INTEGRITY_TIMEOUT_SECONDS
+
+        # A deadline far in the future -> stat capped at the ceiling.
+        far = time.monotonic() + 600.0
+        assert sandbox._stat_budget(far) == STAT_INTEGRITY_TIMEOUT_SECONDS
+
+        # A deadline already passed -> floored at 0, never negative.
+        past = time.monotonic() - 5.0
+        assert sandbox._remaining_budget(past) == 0.0
+        assert sandbox._stat_budget(past) == 0.0
+
+        # A near deadline -> stat budget is the (small) remaining time.
+        near = time.monotonic() + 2.0
+        assert 0.0 < sandbox._stat_budget(near) <= 2.0
 
 
 class TestSandboxWaitUntilComplete:
