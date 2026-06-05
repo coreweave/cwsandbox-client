@@ -75,6 +75,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     STREAM_BACKPRESSURE,
+    STREAM_TRUNCATED,
     UNAVAILABLE_REASONS,
     is_not_found,
     parse_error_info,
@@ -118,6 +119,7 @@ from cwsandbox.exceptions import (
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxStreamBackpressureError,
+    SandboxStreamTruncatedError,
     SandboxTerminalStateUnavailableError,
     SandboxTerminatedError,
     SandboxTimeoutError,
@@ -486,10 +488,15 @@ def _exec_stream_error(message: str, code: str | None) -> SandboxExecutionError:
     was not being read fast enough to keep up with the command's output, so
     some output was lost. Surface it as ``SandboxStreamBackpressureError`` (a
     subclass of ``SandboxExecutionError``) with guidance the caller can act on,
-    rather than an opaque exec failure. The code is carried on
-    ``.stream_code`` (a streaming-channel code), not ``.reason`` (the AIP-193
-    ErrorInfo namespace). Every other code stays a plain
-    ``SandboxExecutionError`` carrying the raw ``reason``.
+    rather than an opaque exec failure.
+
+    ``STREAM_TRUNCATED`` means the command ran to completion but some of its
+    output was lost in transit. Surface it as ``SandboxStreamTruncatedError``
+    with guidance (use a file for large output; re-run only if idempotent).
+
+    For both, the code is carried on ``.stream_code`` (a streaming-channel
+    code), not ``.reason`` (the AIP-193 ErrorInfo namespace). Every other code
+    stays a plain ``SandboxExecutionError`` carrying the raw ``reason``.
     """
     if code == STREAM_BACKPRESSURE:
         return SandboxStreamBackpressureError(
@@ -502,6 +509,15 @@ def _exec_stream_error(message: str, code: str | None) -> SandboxExecutionError:
             "slow disk) and cannot keep up no matter how tight the loop, split "
             "the work into smaller transfers. Retrying the same pattern will "
             "hit this again.",
+            stream_code=code,
+        )
+    if code == STREAM_TRUNCATED:
+        return SandboxStreamTruncatedError(
+            "The command completed but some of its output was lost in transit, "
+            "so the output you received is incomplete. For large output, write "
+            "it to a file and retrieve the file (read_file_streaming) instead "
+            "of streaming over stdout. Re-running may truncate again and may "
+            "have side effects, so re-run only if the command is idempotent.",
             stream_code=code,
         )
     return SandboxExecutionError(

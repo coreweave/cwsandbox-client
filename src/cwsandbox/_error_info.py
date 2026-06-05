@@ -87,6 +87,13 @@ CWSANDBOX_COMMAND_TIMEOUT = "CWSANDBOX_COMMAND_TIMEOUT"
 # namespace.
 STREAM_BACKPRESSURE = "STREAM_BACKPRESSURE"
 
+# Terminal ExecStreamError code emitted when a command's output was truncated in
+# transit even though the command exited normally — the transport dropped a tail
+# of the output. The SDK maps it to ``SandboxStreamTruncatedError`` and exposes
+# it on that exception's ``.stream_code`` attribute, keeping it out of the
+# AIP-193 ``.reason`` namespace.
+STREAM_TRUNCATED = "STREAM_TRUNCATED"
+
 # Unavailable reasons
 CWSANDBOX_RUNNER_UNAVAILABLE = "CWSANDBOX_RUNNER_UNAVAILABLE"
 CWSANDBOX_BACKEND_UNAVAILABLE = "CWSANDBOX_BACKEND_UNAVAILABLE"
