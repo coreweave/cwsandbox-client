@@ -13,6 +13,13 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class OutputPolicy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    OUTPUT_POLICY_UNSPECIFIED: _ClassVar[OutputPolicy]
+    OUTPUT_POLICY_BUFFERED: _ClassVar[OutputPolicy]
+    OUTPUT_POLICY_STREAM: _ClassVar[OutputPolicy]
+    OUTPUT_POLICY_DISCARD: _ClassVar[OutputPolicy]
+
 class SandboxStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     SANDBOX_STATUS_UNSPECIFIED: _ClassVar[SandboxStatus]
@@ -24,6 +31,20 @@ class SandboxStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SANDBOX_STATUS_PENDING: _ClassVar[SandboxStatus]
     SANDBOX_STATUS_PAUSED: _ClassVar[SandboxStatus]
     SANDBOX_STATUS_TERMINATING: _ClassVar[SandboxStatus]
+
+class FileSystemSnapshotStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FILE_SYSTEM_SNAPSHOT_STATUS_UNSPECIFIED: _ClassVar[FileSystemSnapshotStatus]
+    FILE_SYSTEM_SNAPSHOT_STATUS_CREATING: _ClassVar[FileSystemSnapshotStatus]
+    FILE_SYSTEM_SNAPSHOT_STATUS_READY: _ClassVar[FileSystemSnapshotStatus]
+    FILE_SYSTEM_SNAPSHOT_STATUS_FAILED: _ClassVar[FileSystemSnapshotStatus]
+    FILE_SYSTEM_SNAPSHOT_STATUS_DELETING: _ClassVar[FileSystemSnapshotStatus]
+
+class FileSystemSnapshotTrigger(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FILE_SYSTEM_SNAPSHOT_TRIGGER_UNSPECIFIED: _ClassVar[FileSystemSnapshotTrigger]
+    FILE_SYSTEM_SNAPSHOT_TRIGGER_STOP: _ClassVar[FileSystemSnapshotTrigger]
+    FILE_SYSTEM_SNAPSHOT_TRIGGER_MANUAL: _ClassVar[FileSystemSnapshotTrigger]
 
 class ActionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -52,6 +73,16 @@ class ObjectStoragePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     OBJECT_STORAGE_PERMISSION_UNSPECIFIED: _ClassVar[ObjectStoragePermission]
     OBJECT_STORAGE_PERMISSION_READ: _ClassVar[ObjectStoragePermission]
     OBJECT_STORAGE_PERMISSION_READ_WRITE: _ClassVar[ObjectStoragePermission]
+
+class FileSystemSnapshotBucketMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_UNSPECIFIED: _ClassVar[FileSystemSnapshotBucketMode]
+    FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_CW_MANAGED: _ClassVar[FileSystemSnapshotBucketMode]
+    FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN: _ClassVar[FileSystemSnapshotBucketMode]
+OUTPUT_POLICY_UNSPECIFIED: OutputPolicy
+OUTPUT_POLICY_BUFFERED: OutputPolicy
+OUTPUT_POLICY_STREAM: OutputPolicy
+OUTPUT_POLICY_DISCARD: OutputPolicy
 SANDBOX_STATUS_UNSPECIFIED: SandboxStatus
 SANDBOX_STATUS_CREATING: SandboxStatus
 SANDBOX_STATUS_RUNNING: SandboxStatus
@@ -61,6 +92,14 @@ SANDBOX_STATUS_TERMINATED: SandboxStatus
 SANDBOX_STATUS_PENDING: SandboxStatus
 SANDBOX_STATUS_PAUSED: SandboxStatus
 SANDBOX_STATUS_TERMINATING: SandboxStatus
+FILE_SYSTEM_SNAPSHOT_STATUS_UNSPECIFIED: FileSystemSnapshotStatus
+FILE_SYSTEM_SNAPSHOT_STATUS_CREATING: FileSystemSnapshotStatus
+FILE_SYSTEM_SNAPSHOT_STATUS_READY: FileSystemSnapshotStatus
+FILE_SYSTEM_SNAPSHOT_STATUS_FAILED: FileSystemSnapshotStatus
+FILE_SYSTEM_SNAPSHOT_STATUS_DELETING: FileSystemSnapshotStatus
+FILE_SYSTEM_SNAPSHOT_TRIGGER_UNSPECIFIED: FileSystemSnapshotTrigger
+FILE_SYSTEM_SNAPSHOT_TRIGGER_STOP: FileSystemSnapshotTrigger
+FILE_SYSTEM_SNAPSHOT_TRIGGER_MANUAL: FileSystemSnapshotTrigger
 ACTION_TYPE_UNSPECIFIED: ActionType
 ACTION_TYPE_EXEC: ActionType
 ACTION_TYPE_ADD_FILE: ActionType
@@ -80,6 +119,9 @@ EGRESS_TYPE_ALLOWLIST: EgressType
 OBJECT_STORAGE_PERMISSION_UNSPECIFIED: ObjectStoragePermission
 OBJECT_STORAGE_PERMISSION_READ: ObjectStoragePermission
 OBJECT_STORAGE_PERMISSION_READ_WRITE: ObjectStoragePermission
+FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_UNSPECIFIED: FileSystemSnapshotBucketMode
+FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_CW_MANAGED: FileSystemSnapshotBucketMode
+FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN: FileSystemSnapshotBucketMode
 
 class MountedFile(_message.Message):
     __slots__ = ("mount_path", "file_content")
@@ -161,6 +203,22 @@ class S3Mount(_message.Message):
     mount_path: str
     def __init__(self, bucket: _Optional[str] = ..., directory: _Optional[str] = ..., mount_path: _Optional[str] = ...) -> None: ...
 
+class FileSystemSnapshotSource(_message.Message):
+    __slots__ = ("file_system_snapshot_id",)
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    file_system_snapshot_id: str
+    def __init__(self, file_system_snapshot_id: _Optional[str] = ...) -> None: ...
+
+class SandboxFileSystemMount(_message.Message):
+    __slots__ = ("mount_path", "size", "file_system_snapshot")
+    MOUNT_PATH_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    FILE_SYSTEM_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    mount_path: str
+    size: str
+    file_system_snapshot: FileSystemSnapshotSource
+    def __init__(self, mount_path: _Optional[str] = ..., size: _Optional[str] = ..., file_system_snapshot: _Optional[_Union[FileSystemSnapshotSource, _Mapping]] = ...) -> None: ...
+
 class ExecPayload(_message.Message):
     __slots__ = ("command", "args")
     COMMAND_FIELD_NUMBER: _ClassVar[int]
@@ -170,14 +228,22 @@ class ExecPayload(_message.Message):
     def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ExecResponse(_message.Message):
-    __slots__ = ("stdout", "stderr", "exit_code")
+    __slots__ = ("stdout", "stderr", "exit_code", "stdout_truncated", "stderr_truncated", "stdout_bytes_produced", "stderr_bytes_produced")
     STDOUT_FIELD_NUMBER: _ClassVar[int]
     STDERR_FIELD_NUMBER: _ClassVar[int]
     EXIT_CODE_FIELD_NUMBER: _ClassVar[int]
+    STDOUT_TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    STDERR_TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    STDOUT_BYTES_PRODUCED_FIELD_NUMBER: _ClassVar[int]
+    STDERR_BYTES_PRODUCED_FIELD_NUMBER: _ClassVar[int]
     stdout: bytes
     stderr: bytes
     exit_code: int
-    def __init__(self, stdout: _Optional[bytes] = ..., stderr: _Optional[bytes] = ..., exit_code: _Optional[int] = ...) -> None: ...
+    stdout_truncated: bool
+    stderr_truncated: bool
+    stdout_bytes_produced: int
+    stderr_bytes_produced: int
+    def __init__(self, stdout: _Optional[bytes] = ..., stderr: _Optional[bytes] = ..., exit_code: _Optional[int] = ..., stdout_truncated: bool = ..., stderr_truncated: bool = ..., stdout_bytes_produced: _Optional[int] = ..., stderr_bytes_produced: _Optional[int] = ...) -> None: ...
 
 class ResourceUsage(_message.Message):
     __slots__ = ("cpu_millicores_used", "memory_mb_used", "gpu_count_used")
@@ -198,7 +264,7 @@ class ObjectStorageAccess(_message.Message):
     def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
 
 class StartSandboxRequest(_message.Message):
-    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "profile_ids", "runner_ids", "profile_names", "max_lifetime_seconds", "max_timeout_seconds", "runner_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
+    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "file_system", "profile_ids", "runner_ids", "profile_names", "max_lifetime_seconds", "max_timeout_seconds", "runner_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -223,6 +289,7 @@ class StartSandboxRequest(_message.Message):
     MOUNTED_FILES_FIELD_NUMBER: _ClassVar[int]
     S3_MOUNT_FIELD_NUMBER: _ClassVar[int]
     NETWORK_FIELD_NUMBER: _ClassVar[int]
+    FILE_SYSTEM_FIELD_NUMBER: _ClassVar[int]
     PROFILE_IDS_FIELD_NUMBER: _ClassVar[int]
     RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     PROFILE_NAMES_FIELD_NUMBER: _ClassVar[int]
@@ -244,6 +311,7 @@ class StartSandboxRequest(_message.Message):
     mounted_files: _containers.RepeatedCompositeFieldContainer[MountedFile]
     s3_mount: S3Mount
     network: NetworkOptions
+    file_system: SandboxFileSystemMount
     profile_ids: _containers.RepeatedScalarFieldContainer[str]
     runner_ids: _containers.RepeatedScalarFieldContainer[str]
     profile_names: _containers.RepeatedScalarFieldContainer[str]
@@ -255,7 +323,7 @@ class StartSandboxRequest(_message.Message):
     secret_stores: _containers.RepeatedCompositeFieldContainer[_secrets_pb2.SecretStoreReference]
     resource_limits: ResourceRequest
     resource_requests: ResourceRequest
-    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., runner_cluster_secrets: _Optional[_Iterable[_Union[RunnerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
+    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., file_system: _Optional[_Union[SandboxFileSystemMount, _Mapping]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., runner_cluster_secrets: _Optional[_Iterable[_Union[RunnerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StartSandboxResponse(_message.Message):
     __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "profile_id", "runner_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode", "requested_resource_limits", "requested_resource_requests")
@@ -286,18 +354,114 @@ class StartSandboxResponse(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., requested_resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., profile_id: _Optional[str] = ..., runner_id: _Optional[str] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., requested_resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., requested_resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
 
 class StopSandboxRequest(_message.Message):
-    __slots__ = ("sandbox_id", "graceful_shutdown_seconds", "snapshot_on_stop", "max_timeout_seconds")
+    __slots__ = ("sandbox_id", "graceful_shutdown_seconds", "file_system_snapshot_on_stop", "max_timeout_seconds", "idempotency_key", "wait_for_ready")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     GRACEFUL_SHUTDOWN_SECONDS_FIELD_NUMBER: _ClassVar[int]
-    SNAPSHOT_ON_STOP_FIELD_NUMBER: _ClassVar[int]
+    FILE_SYSTEM_SNAPSHOT_ON_STOP_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FOR_READY_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     graceful_shutdown_seconds: int
-    snapshot_on_stop: bool
+    file_system_snapshot_on_stop: bool
     max_timeout_seconds: int
-    def __init__(self, sandbox_id: _Optional[str] = ..., graceful_shutdown_seconds: _Optional[int] = ..., snapshot_on_stop: bool = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+    idempotency_key: str
+    wait_for_ready: bool
+    def __init__(self, sandbox_id: _Optional[str] = ..., graceful_shutdown_seconds: _Optional[int] = ..., file_system_snapshot_on_stop: bool = ..., max_timeout_seconds: _Optional[int] = ..., idempotency_key: _Optional[str] = ..., wait_for_ready: bool = ...) -> None: ...
 
 class StopSandboxResponse(_message.Message):
+    __slots__ = ("success", "error_message", "file_system_snapshot_id")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    error_message: str
+    file_system_snapshot_id: str
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ..., file_system_snapshot_id: _Optional[str] = ...) -> None: ...
+
+class CreateFileSystemSnapshotRequest(_message.Message):
+    __slots__ = ("sandbox_id", "idempotency_key", "wait_for_ready", "max_timeout_seconds")
+    SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FOR_READY_FIELD_NUMBER: _ClassVar[int]
+    MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    sandbox_id: str
+    idempotency_key: str
+    wait_for_ready: bool
+    max_timeout_seconds: int
+    def __init__(self, sandbox_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., wait_for_ready: bool = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+
+class CreateFileSystemSnapshotResponse(_message.Message):
+    __slots__ = ("success", "error_message", "file_system_snapshot_id")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    error_message: str
+    file_system_snapshot_id: str
+    def __init__(self, success: bool = ..., error_message: _Optional[str] = ..., file_system_snapshot_id: _Optional[str] = ...) -> None: ...
+
+class FileSystemSnapshot(_message.Message):
+    __slots__ = ("file_system_snapshot_id", "status", "status_reason", "size_bytes", "created_at", "updated_at", "completed_at", "source_sandbox_id", "trigger", "idempotency_key", "object_bucket")
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    STATUS_REASON_FIELD_NUMBER: _ClassVar[int]
+    SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
+    TRIGGER_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_BUCKET_FIELD_NUMBER: _ClassVar[int]
+    file_system_snapshot_id: str
+    status: FileSystemSnapshotStatus
+    status_reason: str
+    size_bytes: int
+    created_at: _timestamp_pb2.Timestamp
+    updated_at: _timestamp_pb2.Timestamp
+    completed_at: _timestamp_pb2.Timestamp
+    source_sandbox_id: str
+    trigger: FileSystemSnapshotTrigger
+    idempotency_key: str
+    object_bucket: str
+    def __init__(self, file_system_snapshot_id: _Optional[str] = ..., status: _Optional[_Union[FileSystemSnapshotStatus, str]] = ..., status_reason: _Optional[str] = ..., size_bytes: _Optional[int] = ..., created_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., source_sandbox_id: _Optional[str] = ..., trigger: _Optional[_Union[FileSystemSnapshotTrigger, str]] = ..., idempotency_key: _Optional[str] = ..., object_bucket: _Optional[str] = ...) -> None: ...
+
+class GetFileSystemSnapshotRequest(_message.Message):
+    __slots__ = ("file_system_snapshot_id", "max_timeout_seconds")
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    file_system_snapshot_id: str
+    max_timeout_seconds: int
+    def __init__(self, file_system_snapshot_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+
+class ListFileSystemSnapshotsRequest(_message.Message):
+    __slots__ = ("page_size", "page_token", "max_timeout_seconds")
+    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
+    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    page_size: int
+    page_token: str
+    max_timeout_seconds: int
+    def __init__(self, page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+
+class ListFileSystemSnapshotsResponse(_message.Message):
+    __slots__ = ("file_system_snapshots", "next_page_token")
+    FILE_SYSTEM_SNAPSHOTS_FIELD_NUMBER: _ClassVar[int]
+    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    file_system_snapshots: _containers.RepeatedCompositeFieldContainer[FileSystemSnapshot]
+    next_page_token: str
+    def __init__(self, file_system_snapshots: _Optional[_Iterable[_Union[FileSystemSnapshot, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
+
+class DeleteFileSystemSnapshotRequest(_message.Message):
+    __slots__ = ("file_system_snapshot_id", "max_timeout_seconds")
+    FILE_SYSTEM_SNAPSHOT_ID_FIELD_NUMBER: _ClassVar[int]
+    MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    file_system_snapshot_id: str
+    max_timeout_seconds: int
+    def __init__(self, file_system_snapshot_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+
+class DeleteFileSystemSnapshotResponse(_message.Message):
     __slots__ = ("success", "error_message")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -314,7 +478,7 @@ class GetSandboxRequest(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class GetSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode", "status_reason")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -326,6 +490,7 @@ class GetSandboxResponse(_message.Message):
     EXPOSED_PORTS_FIELD_NUMBER: _ClassVar[int]
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_REASON_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
@@ -337,7 +502,8 @@ class GetSandboxResponse(_message.Message):
     exposed_ports: _containers.RepeatedCompositeFieldContainer[Port]
     applied_ingress_mode: str
     applied_egress_mode: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ...) -> None: ...
+    status_reason: str
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., status_reason: _Optional[str] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
     __slots__ = ("tags", "status", "profile_ids", "runner_ids", "profile_names", "max_timeout_seconds", "include_stopped", "page_size", "page_token")
@@ -412,16 +578,20 @@ class DeleteSandboxResponse(_message.Message):
     def __init__(self, success: bool = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class ExecSandboxRequest(_message.Message):
-    __slots__ = ("sandbox_id", "command", "args", "max_timeout_seconds")
+    __slots__ = ("sandbox_id", "command", "args", "max_timeout_seconds", "output_handling", "buffered_max_kib")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     COMMAND_FIELD_NUMBER: _ClassVar[int]
     ARGS_FIELD_NUMBER: _ClassVar[int]
     MAX_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_HANDLING_FIELD_NUMBER: _ClassVar[int]
+    BUFFERED_MAX_KIB_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     command: _containers.RepeatedScalarFieldContainer[str]
     args: _containers.RepeatedScalarFieldContainer[str]
     max_timeout_seconds: int
-    def __init__(self, sandbox_id: _Optional[str] = ..., command: _Optional[_Iterable[str]] = ..., args: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
+    output_handling: OutputPolicy
+    buffered_max_kib: int
+    def __init__(self, sandbox_id: _Optional[str] = ..., command: _Optional[_Iterable[str]] = ..., args: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., output_handling: _Optional[_Union[OutputPolicy, str]] = ..., buffered_max_kib: _Optional[int] = ...) -> None: ...
 
 class ExecSandboxResponse(_message.Message):
     __slots__ = ("result",)
@@ -570,3 +740,27 @@ class DeleteObjectStorageWIFConfigRequest(_message.Message):
 class DeleteObjectStorageWIFConfigResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
+
+class FileSystemSnapshotBucketConfig(_message.Message):
+    __slots__ = ("bucket_name", "region", "mode", "effective_bucket_name")
+    BUCKET_NAME_FIELD_NUMBER: _ClassVar[int]
+    REGION_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    EFFECTIVE_BUCKET_NAME_FIELD_NUMBER: _ClassVar[int]
+    bucket_name: str
+    region: str
+    mode: FileSystemSnapshotBucketMode
+    effective_bucket_name: str
+    def __init__(self, bucket_name: _Optional[str] = ..., region: _Optional[str] = ..., mode: _Optional[_Union[FileSystemSnapshotBucketMode, str]] = ..., effective_bucket_name: _Optional[str] = ...) -> None: ...
+
+class GetFileSystemSnapshotBucketConfigRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class SetFileSystemSnapshotBucketConfigRequest(_message.Message):
+    __slots__ = ("bucket_name", "region")
+    BUCKET_NAME_FIELD_NUMBER: _ClassVar[int]
+    REGION_FIELD_NUMBER: _ClassVar[int]
+    bucket_name: str
+    region: str
+    def __init__(self, bucket_name: _Optional[str] = ..., region: _Optional[str] = ...) -> None: ...

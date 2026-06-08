@@ -9,6 +9,7 @@ import concurrent.futures
 import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -210,6 +211,176 @@ class ResourceOptions:
             object.__setattr__(self, "limits", None)
         if isinstance(self.gpu, dict) and len(self.gpu) == 0:
             object.__setattr__(self, "gpu", None)
+
+
+class FileSystemSnapshotStatus(StrEnum):
+    """Lifecycle status of a file-system snapshot (FSS).
+
+    Lifecycle: CREATING -> READY | FAILED. DELETING is reported while a
+    snapshot is being removed.
+
+    Attributes:
+        UNSPECIFIED: Status not reported by the backend.
+        CREATING: Snapshot archive is being captured.
+        READY: Snapshot is complete and available for restore.
+        FAILED: Snapshot capture failed (see ``status_reason``).
+        DELETING: Snapshot is being deleted.
+    """
+
+    UNSPECIFIED = "unspecified"
+    CREATING = "creating"
+    READY = "ready"
+    FAILED = "failed"
+    DELETING = "deleting"
+
+
+class FileSystemSnapshotTrigger(StrEnum):
+    """What triggered the creation of a file-system snapshot.
+
+    Attributes:
+        UNSPECIFIED: Trigger not reported by the backend.
+        STOP: Captured during ``stop(snapshot_on_stop=True)``.
+        MANUAL: Captured via ``snapshot()`` (CreateFileSystemSnapshot).
+    """
+
+    UNSPECIFIED = "unspecified"
+    STOP = "stop"
+    MANUAL = "manual"
+
+
+class FileSystemSnapshotBucketMode(StrEnum):
+    """Object-storage bucket ownership mode for FSS archives.
+
+    Attributes:
+        UNSPECIFIED: Mode not reported by the backend.
+        CW_MANAGED: Snapshots are archived to a CoreWeave-managed bucket.
+        BRING_YOUR_OWN: Snapshots are archived to a customer-owned bucket.
+    """
+
+    UNSPECIFIED = "unspecified"
+    CW_MANAGED = "cw_managed"
+    BRING_YOUR_OWN = "bring_your_own"
+
+
+@dataclass(frozen=True, kw_only=True)
+class FileSystemSnapshotOptions:
+    """Configuration for the sandbox file-system mount used by snapshots.
+
+    Passed to ``Sandbox.run(file_system_snapshot=...)`` (and
+    ``Session.sandbox`` / ``@session.function``). The mount at ``mount_path``
+    is the directory captured by ``snapshot()`` and
+    ``stop(snapshot_on_stop=True)``, and the directory restored into when
+    ``file_system_snapshot_id`` is set. Plain dicts with matching keys are accepted and
+    converted automatically.
+
+    Attributes:
+        mount_path: Absolute directory to mount (e.g. "/workspace"). This is
+            the directory captured and restored by FSS. Reserved system paths
+            (e.g. /proc, /sys, /dev, /etc) are rejected by the backend.
+        size: Mount size as a Kubernetes resource quantity (e.g. "10Gi").
+            None lets the backend choose a default.
+        file_system_snapshot_id: When set, restore this snapshot's contents into
+            ``mount_path`` at start (fork). When None, the mount starts empty.
+
+    Examples:
+        Fresh scratch mount::
+
+            FileSystemSnapshotOptions(mount_path="/workspace", size="10Gi")
+
+        Restore from an existing snapshot::
+
+            FileSystemSnapshotOptions(mount_path="/workspace", file_system_snapshot_id="fss-...")
+    """
+
+    mount_path: str
+    size: str | None = None
+    file_system_snapshot_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.mount_path:
+            raise ValueError("FileSystemSnapshotOptions.mount_path cannot be empty")
+        if not self.mount_path.startswith("/"):
+            raise ValueError(
+                f"FileSystemSnapshotOptions.mount_path must be an absolute path, "
+                f"got: {self.mount_path!r}"
+            )
+        if self.mount_path == "/":
+            raise ValueError("FileSystemSnapshotOptions.mount_path cannot be '/'")
+        # Normalize empty optional strings to None.
+        if self.size is not None and not self.size:
+            object.__setattr__(self, "size", None)
+        if self.file_system_snapshot_id is not None and not self.file_system_snapshot_id:
+            object.__setattr__(self, "file_system_snapshot_id", None)
+
+
+@dataclass(frozen=True, kw_only=True)
+class FileSystemSnapshot:
+    """An immutable, org-scoped file-system snapshot record.
+
+    Returned by ``Sandbox.snapshot()``, ``Sandbox.get_snapshot()``, and
+    ``Sandbox.list_snapshots()``. To restore, pass the
+    ``file_system_snapshot_id`` to a ``FileSystemSnapshotOptions`` on
+    ``Sandbox.run(file_system_snapshot=...)``.
+
+    Attributes:
+        file_system_snapshot_id: Unique snapshot identifier.
+        status: Current lifecycle status.
+        status_reason: Human-readable detail, typically set for FAILED snapshots.
+        size_bytes: Archive size in bytes (0 until READY).
+        source_sandbox_id: The sandbox the snapshot was captured from.
+        trigger: Whether the snapshot was taken on STOP or via a MANUAL request.
+        idempotency_key: Client-supplied idempotency key, if any.
+        object_bucket: The object-storage bucket the archive landed in.
+        created_at: When the snapshot record was created (UTC), or None.
+        updated_at: When the snapshot record was last updated (UTC), or None.
+        completed_at: When the snapshot reached a terminal status (UTC), or None.
+    """
+
+    file_system_snapshot_id: str
+    status: FileSystemSnapshotStatus
+    status_reason: str = ""
+    size_bytes: int = 0
+    source_sandbox_id: str = ""
+    trigger: FileSystemSnapshotTrigger = FileSystemSnapshotTrigger.UNSPECIFIED
+    idempotency_key: str = ""
+    object_bucket: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    def __repr__(self) -> str:
+        parts = [
+            f"file_system_snapshot_id={self.file_system_snapshot_id!r}",
+            f"status={self.status.value}",
+        ]
+        if self.size_bytes:
+            parts.append(f"size_bytes={self.size_bytes}")
+        if self.source_sandbox_id:
+            parts.append(f"source_sandbox_id={self.source_sandbox_id!r}")
+        if self.status_reason:
+            parts.append(f"status_reason={self.status_reason!r}")
+        return f"FileSystemSnapshot({', '.join(parts)})"
+
+
+@dataclass(frozen=True, kw_only=True)
+class FileSystemSnapshotBucketConfig:
+    """Per-organization object-storage bucket configuration for FSS archives.
+
+    Returned by ``Sandbox.get_snapshot_bucket_config()`` and
+    ``Sandbox.set_snapshot_bucket_config()``.
+
+    Attributes:
+        mode: Bucket ownership mode (CW-managed or bring-your-own).
+        bucket_name: The configured bucket name (empty when CW-managed).
+        region: The configured bucket region (empty when CW-managed).
+        effective_bucket_name: The bucket snapshots are actually archived to,
+            resolved server-side from ``mode`` and ``bucket_name``.
+    """
+
+    mode: FileSystemSnapshotBucketMode = FileSystemSnapshotBucketMode.UNSPECIFIED
+    bucket_name: str = ""
+    region: str = ""
+    effective_bucket_name: str = ""
 
 
 @dataclass

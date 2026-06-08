@@ -15,7 +15,12 @@ import uuid
 from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
 from cwsandbox._defaults import DEFAULT_TEMP_DIR
-from cwsandbox._types import NetworkOptions, OperationRef, ResourceOptions
+from cwsandbox._types import (
+    FileSystemSnapshotOptions,
+    NetworkOptions,
+    OperationRef,
+    ResourceOptions,
+)
 from cwsandbox.exceptions import AsyncFunctionError, SandboxExecutionError
 
 if TYPE_CHECKING:
@@ -83,6 +88,7 @@ class RemoteFunction(Generic[P, R]):
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
@@ -110,6 +116,9 @@ class RemoteFunction(Generic[P, R]):
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
+            file_system_snapshot: File-system snapshot (FSS) mount configuration.
+                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
+                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -150,6 +159,7 @@ class RemoteFunction(Generic[P, R]):
         self._s3_mount = s3_mount
         self._ports = ports
         self._network = network
+        self._file_system_snapshot = file_system_snapshot
         self._max_timeout_seconds = max_timeout_seconds
         self._environment_variables = environment_variables
         self._annotations = annotations
@@ -270,6 +280,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["ports"] = self._ports
         if self._network is not None:
             sandbox_kwargs["network"] = self._network
+        if self._file_system_snapshot is not None:
+            sandbox_kwargs["file_system_snapshot"] = self._file_system_snapshot
         if self._max_timeout_seconds is not None:
             sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
         if self._environment_variables is not None:
