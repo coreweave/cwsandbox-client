@@ -27,9 +27,9 @@ DEFAULT_ARGS: tuple[str, ...] = ("-c", 'trap "exit 0" TERM INT; sleep infinity &
 DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 # Default client-side ceiling for stop(snapshot_on_stop=True). Snapshot-on-stop
-# blocks on the runner archive (the gateway has no ack-then-archive seam), so the
-# stop RPC can run far longer than graceful shutdown. Matches the backend's
-# default stop max_timeout when FSS is requested.
+# blocks on the file-system archive, so the stop RPC can run far longer than
+# graceful shutdown. Matches the backend's default stop max_timeout when FSS is
+# requested.
 DEFAULT_FSS_STOP_TIMEOUT_SECONDS: float = 600.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0

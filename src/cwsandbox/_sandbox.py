@@ -319,6 +319,7 @@ async def _create_snapshot_via_stub(
     wait_for_ready: bool,
     auth_metadata: tuple[tuple[str, str], ...],
     timeout: float,
+    max_timeout_seconds: int | None = None,
 ) -> str:
     """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot ID."""
     request = gateway_pb2.CreateFileSystemSnapshotRequest(
@@ -327,6 +328,8 @@ async def _create_snapshot_via_stub(
     )
     if idempotency_key:
         request.idempotency_key = idempotency_key
+    if max_timeout_seconds is not None:
+        request.max_timeout_seconds = max_timeout_seconds
     try:
         response = await stub.CreateFileSystemSnapshot(
             request, timeout=timeout, metadata=auth_metadata
@@ -629,6 +632,18 @@ def _translate_rpc_error(
             return snapshot_exc
 
     if code == grpc.StatusCode.NOT_FOUND:
+        # An FSS operation carries a snapshot ID, not a sandbox ID. Map a bare
+        # NOT_FOUND (no AIP-193 FSS reason, e.g. an older backend or a proxy that
+        # dropped the metadata) to the documented SnapshotNotFoundError so callers
+        # catching it still work.
+        if file_system_snapshot_id is not None:
+            return SnapshotNotFoundError(
+                f"File-system snapshot '{file_system_snapshot_id}' not found",
+                file_system_snapshot_id=file_system_snapshot_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
         return SandboxNotFoundError(
             f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
             sandbox_id=sandbox_id,
@@ -2067,9 +2082,12 @@ class Sandbox:
         channel = create_channel(target, is_secure)
         stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
-            request = gateway_pb2.ListFileSystemSnapshotsRequest()
 
             async def _attempt() -> builtins.list[Any]:
+                # Build the request inside the attempt: paginate_async mutates
+                # page_token in place, so a retry must start from a fresh
+                # request (page 1) rather than resuming from the last token.
+                request = gateway_pb2.ListFileSystemSnapshotsRequest()
                 try:
                     return await paginate_async(
                         stub.ListFileSystemSnapshots,
@@ -2162,15 +2180,23 @@ class Sandbox:
             request = gateway_pb2.DeleteFileSystemSnapshotRequest(
                 file_system_snapshot_id=file_system_snapshot_id
             )
+            attempts = {"n": 0}
 
             async def _attempt() -> None:
+                attempts["n"] += 1
                 try:
                     response = await stub.DeleteFileSystemSnapshot(
                         request, timeout=timeout, metadata=auth_metadata
                     )
                 except grpc.RpcError as e:
                     parsed = parse_error_info(e)
-                    if missing_ok and is_not_found(e, parsed, CWSANDBOX_FSS_NOT_FOUND):
+                    # NOT_FOUND is success when missing_ok, or on a retry: an
+                    # earlier attempt likely committed the delete before its
+                    # response was lost to a transient failure. For DELETE the
+                    # postcondition (snapshot gone) is satisfied either way.
+                    if is_not_found(e, parsed, CWSANDBOX_FSS_NOT_FOUND) and (
+                        missing_ok or attempts["n"] > 1
+                    ):
                         return
                     raise _translate_rpc_error(
                         e,
@@ -3947,6 +3973,10 @@ class Sandbox:
     ) -> str:
         """Internal async: create a mid-life snapshot and return its ID."""
         await self._ensure_started_async()
+        # Snapshotting requires a running sandbox (the backend archives the live
+        # mount), so wait for RUNNING like exec/read_file/write_file do; calling
+        # on a just-started sandbox would otherwise race startup.
+        await self._wait_until_running_async()
         await self._ensure_client()
         assert self._stub is not None
         assert self._sandbox_id is not None
@@ -3960,6 +3990,10 @@ class Sandbox:
             if wait_for_ready
             else self._request_timeout_seconds
         )
+        # When blocking on the archive, also bound the server-side wait (mirror
+        # snapshot-on-stop) so the backend's own default request ceiling cannot
+        # cut a large snapshot short before the client's FSS deadline.
+        create_max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) if wait_for_ready else None
         # Generate an idempotency key when the caller didn't supply one so a
         # retried create (after a transient failure that may have already
         # committed server-side) dedups instead of creating a second snapshot.
@@ -3972,6 +4006,7 @@ class Sandbox:
                 wait_for_ready=wait_for_ready,
                 auth_metadata=self._auth_metadata,
                 timeout=create_timeout,
+                max_timeout_seconds=create_max_timeout,
             ),
             budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
             operation="Create file-system snapshot",

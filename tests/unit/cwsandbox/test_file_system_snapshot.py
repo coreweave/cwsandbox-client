@@ -436,8 +436,15 @@ class TestSnapshotMethod:
         create_resp.file_system_snapshot_id = "fss-1"
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
         sandbox._stub.GetFileSystemSnapshot = AsyncMock()
-        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_wait_until_running_async", new_callable=AsyncMock
+            ) as wait_running,
+        ):
             snapshot_id = sandbox.snapshot(idempotency_key="k").result()
+        # snapshot() waits for RUNNING before archiving the mount.
+        wait_running.assert_awaited()
         # snapshot() returns just the ID; it does NOT fetch the full record.
         assert snapshot_id == "fss-1"
         sandbox._stub.GetFileSystemSnapshot.assert_not_called()
@@ -445,6 +452,8 @@ class TestSnapshotMethod:
         assert create_req.sandbox_id == "sb-1"
         assert create_req.wait_for_ready is True
         assert create_req.idempotency_key == "k"
+        # wait_for_ready blocks on the archive, so the server-side ceiling is set.
+        assert create_req.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
 
     def test_snapshot_failure_raises(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -454,7 +463,10 @@ class TestSnapshotMethod:
         create_resp.success = False
         create_resp.error_message = "nope"
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
-        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
             with pytest.raises(SandboxSnapshotError, match="nope"):
                 sandbox.snapshot().result()
 
@@ -522,6 +534,57 @@ class TestManagementClassmethods:
             both = Sandbox.list_snapshots(source_sandbox_id="sb-1", status="ready").result()
             assert {s.file_system_snapshot_id for s in both} == {"a"}
 
+    def test_list_snapshots_retry_restarts_pagination(self) -> None:
+        """A mid-pagination transient retry restarts from page 1, no dropped pages.
+
+        ``paginate_async`` mutates ``page_token`` in place, so the retried
+        attempt must build a fresh request (page 1) rather than resuming at the
+        last token; otherwise the already-collected first page is silently lost.
+        """
+        page1 = gateway_pb2.ListFileSystemSnapshotsResponse(
+            file_system_snapshots=[
+                gateway_pb2.FileSystemSnapshot(
+                    file_system_snapshot_id="a",
+                    status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                )
+            ],
+            next_page_token="tok1",
+        )
+        page2 = gateway_pb2.ListFileSystemSnapshotsResponse(
+            file_system_snapshots=[
+                gateway_pb2.FileSystemSnapshot(
+                    file_system_snapshot_id="b",
+                    status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                )
+            ],
+            next_page_token="",
+        )
+        failed_once = {"v": False}
+
+        async def fake_list(request, *, metadata, timeout):  # type: ignore[no-untyped-def]
+            if request.page_token == "":
+                return page1
+            # Reached page 2 (token "tok1"): fail transiently the first time.
+            if not failed_once["v"]:
+                failed_once["v"] = True
+                raise _bare_rpc_error(grpc.StatusCode.UNAVAILABLE)
+            return page2
+
+        mock_stub = MagicMock()
+        mock_stub.ListFileSystemSnapshots = fake_list
+        patches = self._patch_channel(mock_stub)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            listed = Sandbox.list_snapshots().result()
+        # Both pages present: the retry restarted pagination from page 1 rather
+        # than resuming at "tok1" and dropping page 1.
+        assert {s.file_system_snapshot_id for s in listed} == {"a", "b"}
+
     def test_delete_snapshot_success(self) -> None:
         mock_stub = MagicMock()
         resp = MagicMock()
@@ -551,6 +614,42 @@ class TestManagementClassmethods:
         with patches[0], patches[1], patches[2], patches[3]:
             with pytest.raises(SnapshotNotFoundError):
                 Sandbox.delete_snapshot("fss-3").result()
+
+    def test_get_snapshot_bare_not_found_maps_to_snapshot_not_found(self) -> None:
+        """A bare gRPC NOT_FOUND (no FSS reason) still raises SnapshotNotFoundError."""
+        mock_stub = MagicMock()
+        mock_stub.GetFileSystemSnapshot = AsyncMock(
+            side_effect=_bare_rpc_error(grpc.StatusCode.NOT_FOUND)
+        )
+        patches = self._patch_channel(mock_stub)
+        with patches[0], patches[1], patches[2], patches[3]:
+            with pytest.raises(SnapshotNotFoundError):
+                Sandbox.get_snapshot("fss-x").result()
+
+    def test_delete_snapshot_not_found_on_retry_is_success(self) -> None:
+        """A committed delete whose response was lost: retry hits NOT_FOUND -> success.
+
+        With missing_ok=False, a transient failure followed by NOT_FOUND on the
+        retry is treated as success, because the delete's postcondition (the
+        snapshot is gone) is satisfied.
+        """
+        mock_stub = MagicMock()
+        mock_stub.DeleteFileSystemSnapshot = AsyncMock(
+            side_effect=[
+                _bare_rpc_error(grpc.StatusCode.UNAVAILABLE),
+                _fss_rpc_error(CWSANDBOX_FSS_NOT_FOUND, code=grpc.StatusCode.NOT_FOUND),
+            ]
+        )
+        patches = self._patch_channel(mock_stub)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            assert Sandbox.delete_snapshot("fss-3").result() is None
+        assert mock_stub.DeleteFileSystemSnapshot.call_count == 2
 
 
 class TestBucketConfig:
@@ -622,6 +721,7 @@ class TestTransientRetry:
         )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
         ):
             snapshot_id = sandbox.snapshot().result()
@@ -648,6 +748,7 @@ class TestTransientRetry:
         )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep,
         ):
             with pytest.raises(SandboxError, match="requires a running sandbox"):
@@ -666,6 +767,7 @@ class TestTransientRetry:
         )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
         ):
             with pytest.raises(SnapshotNotSupportedError):
@@ -682,6 +784,7 @@ class TestTransientRetry:
         )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch("cwsandbox._sandbox.DEFAULT_FSS_RETRY_BUDGET_SECONDS", 0.0),
         ):
             with pytest.raises(SandboxUnavailableError):

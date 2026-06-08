@@ -85,7 +85,7 @@ Class methods:
 - `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
 - `Sandbox.list_snapshots(source_sandbox_id=None, status=None, ...)`: List FSS records for the org, return `OperationRef[list[FileSystemSnapshot]]` (auto-paginated). `source_sandbox_id` and `status` are applied client-side.
 - `Sandbox.delete_snapshot(file_system_snapshot_id, missing_ok=False)`: Delete an FSS by ID, return `OperationRef[None]`. Does not affect sandboxes already restored from it. Set `missing_ok=True` to suppress `SnapshotNotFoundError`.
-- `Sandbox.get_snapshot_bucket_config()` / `Sandbox.set_snapshot_bucket_config(bucket_name, region="")`: Get/set the org's FSS object-storage bucket (admin), return `OperationRef[FileSystemSnapshotBucketConfig]`. Pass `bucket_name=""` to revert to the CoreWeave-managed bucket.
+- `Sandbox.get_snapshot_bucket_config()` / `Sandbox.set_snapshot_bucket_config(*, bucket_name, region="")`: Get/set the org's FSS object-storage bucket (admin), return `OperationRef[FileSystemSnapshotBucketConfig]`. Pass `bucket_name=""` to revert to the CoreWeave-managed bucket.
 
 **`Session`** (`_session.py`): Manages multiple sandboxes with shared defaults. Supports both sync and async context managers for the hybrid API.
 

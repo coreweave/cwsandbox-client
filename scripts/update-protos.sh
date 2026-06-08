@@ -9,8 +9,8 @@
 #   scripts/update-protos.sh                          # download from buf.build
 #   scripts/update-protos.sh --local ../sandbox/gen/python  # copy from local path
 #
-# If the buf.build pins below lag the backend, regenerate from an aviato proto
-# checkout with `buf generate` (protobuf python plugin pinned to v26.1 / <=5.26
+# If the buf.build pins below lag the backend, regenerate from a local sandbox
+# proto checkout with `buf generate` (protobuf python plugin pinned to v26.1 / <=5.26
 # to pass validate_protobuf_version) and pass the output via --local.
 
 set -euo pipefail
