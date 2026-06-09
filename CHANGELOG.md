@@ -1,6 +1,185 @@
 # CHANGELOG
 
 
+## v0.25.0 (2026-06-09)
+
+### Bug Fixes
+
+- **files**: Address review feedback on large-file handling
+  ([`9396d21`](https://github.com/coreweave/cwsandbox-client/commit/9396d21a7801c7029d275fcd9c722d06a33c61b3))
+
+Resolves the review on PR #133. Eight findings from @djenriquez, by severity:
+
+Blockers:
+
+- Truncation false-positive (read_file auto-fallback). _verify_no_truncation statted the file
+  *after* the read, so a file appended to between cat's EOF and the stat made `expected` exceed what
+  was legitimately delivered and raised a spurious truncation error — on the default read_file()
+  32–256 MiB fallback, where in prod this check is the only truncation defense and the false
+  positive sits on the critical path (e.g. read_file('/var/log/app.log') on a live log). Now the
+  file's size is captured *before* the read: the read_file fallback feeds the server-reported
+  pre-read size straight in (no extra stat round-trip), and read_file_streaming stats once up front.
+  A concurrent append only grows the delivered count, so it can no longer look like a short read.
+  The inverted docstring justification is corrected.
+
+- stat timeout overshoot. The stat used the original caller budget, so a 600s read that spent 599s
+  streaming could spend up to 10s more on the stat and blow past the deadline (the comment/docstring
+  claimed otherwise). The streaming read now tracks an absolute monotonic deadline at op start; the
+  pre-read stat draws from the *remaining* budget capped at STAT_INTEGRITY_TIMEOUT_SECONDS, and the
+  read gets what's left.
+
+- Sync iterable on the event loop. _write_file_streaming_async consumed a sync iterable by calling
+  next() directly on the shared background loop, so a blocking source (file handle, NFS/FUSE read,
+  network generator) stalled every other operation on that loop. Each next() (and chunk coercion)
+  now runs in the default executor via a small async generator; the iterator advances one step per
+  consumed item, so no prefetch buffer or hand-off race is needed and the downstream exec stdin
+  queue still provides backpressure. The TypeError contract for bad chunks is preserved (raised in
+  the worker, re-raised unchanged).
+
+- Observed cap not clamped. _record_observed_cap cached the server cap with no upper bound and the
+  old frame-safe limit had been deleted, so a cluster reporting a cap near/above the 100 MiB gRPC
+  frame ceiling would route a sub-cap payload to the unary path and hit a frame-size reject.
+  Restored MAX_FILE_UNARY_BYTES (channel limit − 1 MiB framing headroom) and clamp the effective cap
+  to it in _file_op_cap; anything above streams instead.
+
+Reason split:
+
+- CWSANDBOX_FILE_TOO_LARGE covered two opposite conditions — a size-policy refusal (no data lost,
+  switch to streaming) and a post-hoc short read (data lost, already streaming, "use
+  read_file_streaming" is a no-op). Split the truncation case into its own CWSANDBOX_FILE_TRUNCATED
+  reason while it is still unreleased (free now, breaking later).
+
+Reviewer questions, resolved:
+
+- STREAM_BACKPRESSURE no longer rides on .reason (the AIP-193 namespace). It now has its own
+  .stream_code attribute on SandboxStreamBackpressureError; .reason is None there. The class remains
+  the discriminator and existing `except SandboxExecutionError` handlers are unaffected.
+
+- The streaming-read integrity check is gated by size band (TRUNCATION_CHECK_MIN_BYTES): silent
+  truncation is a large-payload phenomenon, so below the band the pre-read stat is skipped entirely.
+  The read_file fallback pays no stat at all (it reuses the server-reported size).
+
+Docs:
+
+- read_file's docstring no longer over-promises that all >256 MiB reads are refused: when the
+  backend signals via resource exhaustion rather than a sized CWSANDBOX_FILE_TOO_LARGE the client
+  can't know the remote size, so a very large file can still be buffered — callers are pointed at
+  read_file_streaming. (The uncapped-buffer OOM on that branch is pre-existing and tracked
+  separately.)
+
+ruff + mypy clean; full unit suite green (1171 tests, +9 new covering the pre-read baseline,
+  growing-file no-false-positive, frame-safe clamp, sync-iter executor offload, remaining-budget
+  stat timeout, band gating, and stream_code).
+
+### Chores
+
+- Add djenriquez and brandonrjacobs as codeowners
+  ([`ae523d5`](https://github.com/coreweave/cwsandbox-client/commit/ae523d5e571b36f272a25841885267f3a1bfff23))
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Add large-file streaming example
+  ([`3b01836`](https://github.com/coreweave/cwsandbox-client/commit/3b01836dcc561ac9568ea3dcf6ca781388b3f68c))
+
+Adds examples/large_file_streaming.py demonstrating how to stream large files without tripping
+  backpressure, and registers it in examples/README.md.
+
+The example shows: - the fast-drain read loop (read_file_streaming into a local file with only the
+  write inline) that keeps up with the producer; - the slow-inline-work anti-pattern that overruns
+  the buffer and raises SandboxStreamBackpressureError, clearly labeled as what NOT to do; -
+  catching that error and recovering with the fast-drain pattern (it is not retryable as-is — the
+  read pace must be fixed, or the work chunked, first).
+
+- Keep streaming guidance free of internal implementation detail
+  ([`23036ef`](https://github.com/coreweave/cwsandbox-client/commit/23036ef03c1141490b52f4c4862581b070d60463))
+
+Scrub the user-facing read_file_streaming docstring and the large-file streaming example of
+  implementation wording that doesn't belong in the public SDK surface: drop the internal queue-size
+  constant name and "server frame size" mechanics, and reword "the stream's buffer fills and the
+  server ends it" to describe the observable behavior (output produced faster than it's read; the
+  stream is ended early). The actionable guidance — keep the read loop tight, move slow work off it,
+  memory grows with how far behind you fall — is retained.
+
+No behavior change; docstring/comment wording only.
+
+### Features
+
+- Surface truncated exec output as a typed error
+  ([`8c910cf`](https://github.com/coreweave/cwsandbox-client/commit/8c910cfce14219ca4c08d9f4cb9ab9d3b04c26d1))
+
+When a command runs to completion but some of its output is lost in transit, the server now ends the
+  stream with a STREAM_TRUNCATED error instead of returning partial output alongside a success exit
+  code. Map it to a new typed SandboxStreamTruncatedError (a SandboxExecutionError subclass)
+  carrying the code on .stream_code, with guidance: for large output write to a file and retrieve it
+  rather than streaming over stdout, and re-run only if the command is idempotent. No automatic
+  retry — re-running streams over the same path and may truncate again, and may have side effects.
+
+Mirrors the existing SandboxStreamBackpressureError handling; unknown codes still surface as a
+  generic SandboxExecutionError.
+
+- Typed file-too-large handling and streaming file APIs
+  ([`6abd8ff`](https://github.com/coreweave/cwsandbox-client/commit/6abd8ffca1619903006d564646ce6bf2dda64763))
+
+Large file operations previously failed with a generic SandboxError when the payload exceeded the
+  backend's per-file size cap, with no typed signal and no working path for files in the 32-256 MiB
+  range. This adds typed errors, a transparent streaming fallback for mid-size files, and dedicated
+  streaming APIs for very large files — all without changing the behavior of small-file ops.
+
+Behavior by payload size (read_file / write_file):
+
+<= ~32 MiB unary call (unchanged) ~32-256 MiB transparently fall back to a streaming exec transfer;
+  the first fallback per Sandbox logs once at INFO naming the explicit streaming method as the
+  deterministic path > ~256 MiB refused with a typed SandboxFileError(CWSANDBOX_FILE_TOO_LARGE)
+  pointing at the streaming APIs
+
+New public surface:
+
+- CWSANDBOX_FILE_TOO_LARGE error reason, surfaced as SandboxFileError with .filepath, .reason, and
+  structured .metadata (size_bytes, max_size_bytes, operation). The metadata["operation"] value is
+  the public method name (read_file / write_file / read_file_streaming) — never an internal RPC name
+  — so callers can branch on it as a stable contract. - read_file_streaming(filepath) ->
+  StreamReader[bytes] for chunked consumption of large files without buffering the whole payload. -
+  write_file_streaming(filepath, source) accepting bytes, a sync Iterable[bytes], or an
+  AsyncIterable[bytes], piped through the streaming exec channel without materializing the payload.
+  Non-bytes-like chunks raise TypeError rather than being silently NUL-padded via bytes(int). -
+  SandboxStreamBackpressureError (a SandboxExecutionError subclass): raised when output is produced
+  faster than the consumer reads it and the stream is ended early. read_file, write_file, and the
+  explicit *_streaming methods all surface this same typed error for this condition; it is never
+  remasked into a generic SandboxFileError. carries reason == "STREAM_BACKPRESSURE".
+
+Integrity and safety:
+
+- After a streaming read, a shared post-read check (_verify_no_truncation) stats the file size and
+  raises CWSANDBOX_FILE_TOO_LARGE if fewer bytes were delivered than the file holds, so a backend
+  that silently truncates the channel cannot cause a partial read to be consumed as a complete file.
+  The check skips when the file stats as size 0 (procfs/sysfs pseudo-files legitimately report 0)
+  and only flags a short read (delivered < expected), so a concurrent append is not mistaken for
+  truncation. The stat uses a short dedicated timeout so it cannot double the request's wall-clock
+  budget on a slow channel. - read_file_streaming delivers a terminal error to the consumer with
+  guaranteed delivery even when its bounded output queue is full, so a slow reader that triggers
+  backpressure surfaces the error instead of hanging on an empty queue.
+
+read_file / write_file docstrings document the size bands and the exceptions they can now raise.
+  Backend coordination: the > cap refusal and the STREAM_BACKPRESSURE code depend on server-side
+  behavior (coreweave/aviato#1172); the SDK degrades safely when the server does not send them.
+
+### Refactoring
+
+- Trim verbose/internal wording from user-facing messages
+  ([`293ec57`](https://github.com/coreweave/cwsandbox-client/commit/293ec571ec6fb0c240eef82a2778cad4fa3db5d8))
+
+Two runtime strings users see were wordy and named internal mechanisms:
+
+- The mid-size fallback INFO log said "exceeded the unary file cap ... routing through streaming
+  exec"; reworded to "is being streamed; prefer X() for large files" — same guidance, no internal
+  mechanism names. - The truncation SandboxFileError message was tightened to "was truncated: got N
+  of M bytes. Use read_file_streaming ... or read the file in smaller parts."
+
+No behavior or API change; message text only. Full unit suite green.
+
+
 ## v0.24.0 (2026-05-26)
 
 ### Bug Fixes
