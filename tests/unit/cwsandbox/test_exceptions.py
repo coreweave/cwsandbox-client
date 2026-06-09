@@ -18,6 +18,8 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxStreamBackpressureError,
+    SandboxStreamTruncatedError,
     SandboxTerminatedError,
     SandboxTimeoutError,
 )
@@ -89,6 +91,97 @@ class TestSandboxExecutionError:
         assert exc.exec_result.stdout_bytes == b"output"
         assert exc.exec_result.stderr_bytes == b"error message"
         assert exc.exec_result.returncode == 1
+
+
+class TestSandboxStreamBackpressureError:
+    """Tests for SandboxStreamBackpressureError's stream_code attribute."""
+
+    def test_is_execution_error_subclass(self) -> None:
+        exc = SandboxStreamBackpressureError("too slow", stream_code="STREAM_BACKPRESSURE")
+        # Existing `except SandboxExecutionError` handlers still catch it.
+        assert isinstance(exc, SandboxExecutionError)
+
+    def test_stream_code_kept_out_of_reason_namespace(self) -> None:
+        """The streaming-channel code rides on .stream_code, NOT .reason (which
+        is the AIP-193 ErrorInfo namespace)."""
+        exc = SandboxStreamBackpressureError("too slow", stream_code="STREAM_BACKPRESSURE")
+        assert exc.stream_code == "STREAM_BACKPRESSURE"
+        # .reason stays None — the namespaces are deliberately distinct.
+        assert exc.reason is None
+
+    def test_does_not_accept_reason_kwarg(self) -> None:
+        """STREAM_BACKPRESSURE must not be smuggled in via reason=."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            SandboxStreamBackpressureError("x", reason="STREAM_BACKPRESSURE")  # type: ignore[call-arg]
+
+    def test_defaults(self) -> None:
+        exc = SandboxStreamBackpressureError("too slow")
+        assert exc.stream_code is None
+        assert exc.reason is None
+
+
+class TestSandboxStreamTruncatedError:
+    """Tests for SandboxStreamTruncatedError's stream_code attribute."""
+
+    def test_is_execution_error_subclass(self) -> None:
+        exc = SandboxStreamTruncatedError("truncated", stream_code="STREAM_TRUNCATED")
+        # Existing `except SandboxExecutionError` handlers still catch it.
+        assert isinstance(exc, SandboxExecutionError)
+
+    def test_stream_code_kept_out_of_reason_namespace(self) -> None:
+        """The streaming-channel code rides on .stream_code, NOT .reason (which
+        is the AIP-193 ErrorInfo namespace)."""
+        exc = SandboxStreamTruncatedError("truncated", stream_code="STREAM_TRUNCATED")
+        assert exc.stream_code == "STREAM_TRUNCATED"
+        # .reason stays None — the namespaces are deliberately distinct.
+        assert exc.reason is None
+
+    def test_does_not_accept_reason_kwarg(self) -> None:
+        """STREAM_TRUNCATED must not be smuggled in via reason=."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            SandboxStreamTruncatedError("x", reason="STREAM_TRUNCATED")  # type: ignore[call-arg]
+
+    def test_defaults(self) -> None:
+        exc = SandboxStreamTruncatedError("truncated")
+        assert exc.stream_code is None
+        assert exc.reason is None
+
+
+class TestExecStreamErrorDispatch:
+    """The in-band ExecStreamError code maps to the right typed exception."""
+
+    def test_backpressure_code_maps_to_backpressure_error(self) -> None:
+        from cwsandbox._error_info import STREAM_BACKPRESSURE
+        from cwsandbox._sandbox import _exec_stream_error
+
+        exc = _exec_stream_error("slow", STREAM_BACKPRESSURE)
+        assert isinstance(exc, SandboxStreamBackpressureError)
+        assert exc.stream_code == STREAM_BACKPRESSURE
+        assert exc.reason is None
+
+    def test_truncated_code_maps_to_truncated_error(self) -> None:
+        from cwsandbox._error_info import STREAM_TRUNCATED
+        from cwsandbox._sandbox import _exec_stream_error
+
+        exc = _exec_stream_error("lost a tail", STREAM_TRUNCATED)
+        assert isinstance(exc, SandboxStreamTruncatedError)
+        # Caught by existing SandboxExecutionError handlers.
+        assert isinstance(exc, SandboxExecutionError)
+        assert exc.stream_code == STREAM_TRUNCATED
+        # Streaming-channel code, not the AIP-193 reason namespace.
+        assert exc.reason is None
+
+    def test_unknown_code_stays_generic_execution_error(self) -> None:
+        from cwsandbox._sandbox import _exec_stream_error
+
+        exc = _exec_stream_error("boom", "SOMETHING_ELSE")
+        # Exact type — not one of the typed streaming subclasses.
+        assert type(exc) is SandboxExecutionError
+        assert exc.reason == "SOMETHING_ELSE"
 
 
 class TestStructuredErrorAttributes:

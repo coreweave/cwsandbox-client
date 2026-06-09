@@ -44,6 +44,18 @@ CWSANDBOX_FILE_NOT_FOUND = "CWSANDBOX_FILE_NOT_FOUND"
 CWSANDBOX_FILE_IS_DIRECTORY = "CWSANDBOX_FILE_IS_DIRECTORY"
 CWSANDBOX_FILE_IO_FAILED = "CWSANDBOX_FILE_IO_FAILED"
 CWSANDBOX_FILE_PERMISSION_DENIED = "CWSANDBOX_FILE_PERMISSION_DENIED"
+# A size-policy refusal: the payload exceeds the server/client size cap and no
+# data was lost. The fix is to switch to the streaming APIs. Distinct from
+# CWSANDBOX_FILE_TRUNCATED, which signals data loss on a read that already used
+# streaming.
+CWSANDBOX_FILE_TOO_LARGE = "CWSANDBOX_FILE_TOO_LARGE"
+# A post-hoc short read: a streamed read delivered fewer bytes than the file
+# held, so data WAS lost. Surfaced by the SDK's own integrity check (not the
+# backend), and switching to streaming is a no-op because the read already
+# streamed. Kept separate from CWSANDBOX_FILE_TOO_LARGE so callers can tell a
+# "too big, use streaming" refusal apart from a "your streamed read was
+# truncated" failure without sniffing metadata.
+CWSANDBOX_FILE_TRUNCATED = "CWSANDBOX_FILE_TRUNCATED"
 
 FILE_ERROR_REASONS: frozenset[str] = frozenset(
     {
@@ -51,6 +63,8 @@ FILE_ERROR_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_FILE_IS_DIRECTORY,
         CWSANDBOX_FILE_IO_FAILED,
         CWSANDBOX_FILE_PERMISSION_DENIED,
+        CWSANDBOX_FILE_TOO_LARGE,
+        CWSANDBOX_FILE_TRUNCATED,
     }
 )
 
@@ -61,6 +75,24 @@ CWSANDBOX_PROFILE_NOT_FOUND = "CWSANDBOX_PROFILE_NOT_FOUND"
 
 # Timeout reasons
 CWSANDBOX_COMMAND_TIMEOUT = "CWSANDBOX_COMMAND_TIMEOUT"
+
+# Streaming-exec terminal error code. NOT an AIP-193 ErrorInfo reason: it is a
+# free-form string carried in ``ExecStreamError.code`` on the exec/file stream
+# (not in gRPC trailing metadata), so it does not flow through the ErrorInfo
+# parser. The server emits it when an output stream is ended early because it
+# was not being read fast enough to keep up with the command's output — an
+# explicit failure instead of silently dropping output. The SDK maps it to
+# ``SandboxStreamBackpressureError`` and exposes it on that exception's
+# ``.stream_code`` attribute, keeping it out of the AIP-193 ``.reason``
+# namespace.
+STREAM_BACKPRESSURE = "STREAM_BACKPRESSURE"
+
+# Terminal ExecStreamError code emitted when a command's output was truncated in
+# transit even though the command exited normally — the transport dropped a tail
+# of the output. The SDK maps it to ``SandboxStreamTruncatedError`` and exposes
+# it on that exception's ``.stream_code`` attribute, keeping it out of the
+# AIP-193 ``.reason`` namespace.
+STREAM_TRUNCATED = "STREAM_TRUNCATED"
 
 # Unavailable reasons
 CWSANDBOX_RUNNER_UNAVAILABLE = "CWSANDBOX_RUNNER_UNAVAILABLE"
