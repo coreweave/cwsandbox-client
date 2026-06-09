@@ -9,7 +9,6 @@ import builtins
 import contextlib
 import logging
 import os
-import random
 import shlex
 import threading
 import time
@@ -19,7 +18,6 @@ import weakref
 from collections.abc import (
     AsyncIterable,
     AsyncIterator,
-    Awaitable,
     Callable,
     Generator,
     Iterable,
@@ -30,7 +28,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import grpc
 import grpc.aio
@@ -109,6 +107,7 @@ from cwsandbox._proto import (
     streaming_pb2_grpc,
 )
 from cwsandbox._resources import normalize_resources
+from cwsandbox._retry import is_retryable, retry_transient_async
 from cwsandbox._types import (
     ExecOutcome,
     FileSystemSnapshot,
@@ -691,16 +690,6 @@ def _translate_rpc_error(
     )
 
 
-_PollErrorClassification = Literal["retryable", "fatal"]
-
-
-# Maximum time to honor for a server-hinted retry_delay (AIP-193 RetryInfo).
-# Ensures one hinted sleep cannot consume the entire retry budget in a
-# single sleep - the remaining budget is also a ceiling, so a misconfigured
-# server emitting a large hint still only stalls the poll by at most
-# min(hint, budget, 10s).
-MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
-
 # Bounded retry budget for post-stop NOT_FOUND responses. The backend
 # persists terminal state for stopped sandboxes, so Get should return
 # COMPLETED or FAILED. NOT_FOUND here is expected only in a narrow race
@@ -709,13 +698,6 @@ MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
 # NOT_FOUND persists past this budget, SandboxTerminalStateUnavailableError
 # is raised so the caller sees the ambiguity explicitly.
 NOT_FOUND_AFTER_STOP_RETRY_BUDGET_SECONDS: float = 2.0
-
-
-_RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
-    SandboxUnavailableError,
-    SandboxRequestTimeoutError,
-    SandboxResourceExhaustedError,
-)
 
 
 # In-band error codes the server may emit on a streaming response.  These
@@ -837,115 +819,11 @@ def _is_resumable_transport_error(exc: BaseException) -> bool:
     streaming error (e.g. a hypothetical ``CWSANDBOX_RUNNER_TERMINATED``
     on ``INTERNAL``), this classifier should be updated to consult
     ``_translate_rpc_error`` first and dispatch on the resulting typed
-    exception — matching the pattern in ``_classify_poll_error``.
+    exception — matching the pattern in ``cwsandbox._retry.classify``.
     """
     if not isinstance(exc, grpc.aio.AioRpcError):
         return False
     return exc.code() in _STREAMING_RESUMABLE_STATUS_CODES
-
-
-def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
-    """Classify a translated poll exception as retryable or fatal.
-
-    NOT_FOUND is always fatal regardless of the reason or transport code
-    that produced it - callers that receive ``SandboxNotFoundError`` have an
-    authoritative "gone" signal and must not retry it at the poll level.
-    """
-    if isinstance(exc, SandboxNotFoundError):
-        return "fatal"
-    if isinstance(exc, _RETRYABLE_POLL_EXCEPTIONS):
-        return "retryable"
-    return "fatal"
-
-
-_T = TypeVar("_T")
-
-
-async def _retry_transient_rpc(
-    attempt: Callable[[], Awaitable[_T]],
-    *,
-    budget_seconds: float,
-    operation: str,
-    non_retryable: tuple[type[CWSandboxError], ...] = (),
-) -> _T:
-    """Run ``attempt`` with bounded retry on transient CWSandbox errors.
-
-    ``attempt`` performs exactly one RPC try and must raise a *translated*
-    ``CWSandboxError`` on failure (i.e. wrap the stub call and
-    ``_translate_rpc_error``). Only classes in ``_RETRYABLE_POLL_EXCEPTIONS``
-    are retried - transient unavailability, request-deadline, resource
-    exhaustion, and FSS backend-throttling (which subclasses
-    ``SandboxUnavailableError``). Every other error, including ``NOT_FOUND``
-    and ``FAILED_PRECONDITION``, is fatal and re-raised on the first attempt.
-
-    ``non_retryable`` lists exception classes to treat as fatal even when they
-    would otherwise be retryable. Use it when the per-attempt timeout *is* the
-    operation's ceiling, so a deadline is the ceiling being hit rather than a
-    transient blip - retrying would just re-spend the full (large) timeout and
-    overrun the ceiling (the loop bounds the inter-attempt gap, not attempt
-    duration).
-
-    ``budget_seconds`` caps wall-clock time spent *retrying*; it never delays
-    the first attempt. On exhaustion the last translated exception is re-raised
-    unchanged. AIP-193 ``RetryInfo`` hints are honored; otherwise the backoff
-    uses the same decorrelated jitter as the status-poll loop.
-    """
-    retry_deadline: float | None = None
-    last_exc: CWSandboxError | None = None
-    prev_sleep = DEFAULT_POLL_INTERVAL_SECONDS
-    attempts = 0
-
-    while True:
-        try:
-            return await attempt()
-        except CWSandboxError as exc:
-            last_exc = exc
-            if (
-                isinstance(exc, non_retryable)
-                or _classify_poll_error(exc) != "retryable"
-                or budget_seconds <= 0
-            ):
-                raise
-
-            # First retryable failure starts the budget timer.
-            if retry_deadline is None:
-                retry_deadline = time.monotonic() + budget_seconds
-
-            attempts += 1
-            now = time.monotonic()
-            if now >= retry_deadline:
-                logger.debug(
-                    "FSS retry budget exhausted for %s after %d attempt(s)",
-                    operation,
-                    attempts,
-                )
-                raise
-            remaining = retry_deadline - now
-            hinted_delay = exc.retry_delay.total_seconds() if exc.retry_delay else None
-            if hinted_delay is not None and hinted_delay > 0:
-                sleep_for = min(hinted_delay, remaining, MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
-            else:
-                base = DEFAULT_POLL_INTERVAL_SECONDS
-                cap = DEFAULT_MAX_POLL_INTERVAL_SECONDS
-                jitter_ceiling = max(
-                    base, min(cap, prev_sleep * DEFAULT_POLL_BACKOFF_FACTOR, remaining)
-                )
-                sleep_for = min(random.uniform(base, jitter_ceiling), remaining)
-            logger.debug(
-                "FSS retry for %s: sleep=%.2fs remaining=%.2fs attempt=%d",
-                operation,
-                sleep_for,
-                remaining,
-                attempts,
-            )
-        await asyncio.sleep(sleep_for)
-        prev_sleep = sleep_for
-        # A long hinted delay can exhaust the budget while we slept; re-raise
-        # rather than issuing an attempt guaranteed to overrun the ceiling.
-        assert retry_deadline is not None
-        if time.monotonic() >= retry_deadline:
-            assert last_exc is not None
-            raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -1740,17 +1618,30 @@ class Sandbox:
             if include_stopped:
                 request_kwargs["include_stopped"] = True
             request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
-            try:
-                sandbox_infos = await paginate_async(
-                    stub.List,
-                    request,
-                    "sandboxes",
-                    auth_metadata,
-                    timeout,
-                    operation="List sandboxes",
-                )
-            except grpc.RpcError as e:
-                raise _translate_rpc_error(e, operation="List sandboxes") from e
+
+            async def _attempt(_rpc_timeout: float | None) -> builtins.list[Any]:
+                # paginate_async mutates request.page_token in place; reset it so
+                # a retry after a mid-pagination transient restarts from page 0.
+                request.page_token = ""
+                try:
+                    return await paginate_async(
+                        stub.List,
+                        request,
+                        "sandboxes",
+                        auth_metadata,
+                        timeout,
+                        operation="List sandboxes",
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(e, operation="List sandboxes") from e
+
+            sandbox_infos = await retry_transient_async(
+                _attempt,
+                budget_seconds=effective_poll_retry_budget,
+                rpc_timeout_seconds=timeout,
+                label="list",
+                clamp_rpc_timeout_to_budget=False,
+            )
 
             return [
                 cls._from_sandbox_info(
@@ -2020,15 +1911,21 @@ class Sandbox:
         channel = create_channel(target, is_secure)
         stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
-            return await _retry_transient_rpc(
-                lambda: _get_snapshot_via_stub(
+
+            async def _attempt(rpc_timeout: float | None) -> FileSystemSnapshot:
+                return await _get_snapshot_via_stub(
                     stub,
                     file_system_snapshot_id,
                     auth_metadata=auth_metadata,
-                    timeout=timeout,
-                ),
+                    timeout=rpc_timeout if rpc_timeout is not None else timeout,
+                )
+
+            return await retry_transient_async(
+                _attempt,
                 budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-                operation="Get file-system snapshot",
+                rpc_timeout_seconds=timeout,
+                label="get_snapshot",
+                clamp_rpc_timeout_to_budget=False,
             )
         finally:
             await channel.close(grace=None)
@@ -2102,7 +1999,7 @@ class Sandbox:
         stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
 
-            async def _attempt() -> builtins.list[Any]:
+            async def _attempt(rpc_timeout: float | None) -> builtins.list[Any]:
                 # Build the request inside the attempt: paginate_async mutates
                 # page_token in place, so a retry must start from a fresh
                 # request (page 1) rather than resuming from the last token.
@@ -2113,16 +2010,18 @@ class Sandbox:
                         request,
                         "file_system_snapshots",
                         auth_metadata,
-                        timeout,
+                        rpc_timeout if rpc_timeout is not None else timeout,
                         operation="List file-system snapshots",
                     )
                 except grpc.RpcError as e:
                     raise _translate_rpc_error(e, operation="List file-system snapshots") from e
 
-            protos = await _retry_transient_rpc(
+            protos = await retry_transient_async(
                 _attempt,
                 budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-                operation="List file-system snapshots",
+                rpc_timeout_seconds=timeout,
+                label="list_snapshots",
+                clamp_rpc_timeout_to_budget=False,
             )
 
             snapshots = [_snapshot_from_proto(p) for p in protos]
@@ -2201,11 +2100,13 @@ class Sandbox:
             )
             attempts = {"n": 0}
 
-            async def _attempt() -> None:
+            async def _attempt(rpc_timeout: float | None) -> None:
                 attempts["n"] += 1
                 try:
                     response = await stub.DeleteFileSystemSnapshot(
-                        request, timeout=timeout, metadata=auth_metadata
+                        request,
+                        timeout=rpc_timeout if rpc_timeout is not None else timeout,
+                        metadata=auth_metadata,
                     )
                 except grpc.RpcError as e:
                     parsed = parse_error_info(e)
@@ -2229,10 +2130,12 @@ class Sandbox:
                         file_system_snapshot_id=file_system_snapshot_id,
                     )
 
-            await _retry_transient_rpc(
+            await retry_transient_async(
                 _attempt,
                 budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-                operation="Delete file-system snapshot",
+                rpc_timeout_seconds=timeout,
+                label="delete_snapshot",
+                clamp_rpc_timeout_to_budget=False,
             )
         finally:
             await channel.close(grace=None)
@@ -2287,10 +2190,12 @@ class Sandbox:
         try:
             request = gateway_pb2.GetFileSystemSnapshotBucketConfigRequest()
 
-            async def _attempt() -> FileSystemSnapshotBucketConfig:
+            async def _attempt(rpc_timeout: float | None) -> FileSystemSnapshotBucketConfig:
                 try:
                     proto = await stub.GetFileSystemSnapshotBucketConfig(
-                        request, timeout=timeout, metadata=auth_metadata
+                        request,
+                        timeout=rpc_timeout if rpc_timeout is not None else timeout,
+                        metadata=auth_metadata,
                     )
                 except grpc.RpcError as e:
                     raise _translate_rpc_error(
@@ -2298,10 +2203,12 @@ class Sandbox:
                     ) from e
                 return _bucket_config_from_proto(proto)
 
-            return await _retry_transient_rpc(
+            return await retry_transient_async(
                 _attempt,
                 budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-                operation="Get file-system snapshot bucket config",
+                rpc_timeout_seconds=timeout,
+                label="get_snapshot_bucket_config",
+                clamp_rpc_timeout_to_budget=False,
             )
         finally:
             await channel.close(grace=None)
@@ -2378,10 +2285,12 @@ class Sandbox:
                 region=region,
             )
 
-            async def _attempt() -> FileSystemSnapshotBucketConfig:
+            async def _attempt(rpc_timeout: float | None) -> FileSystemSnapshotBucketConfig:
                 try:
                     proto = await stub.SetFileSystemSnapshotBucketConfig(
-                        request, timeout=timeout, metadata=auth_metadata
+                        request,
+                        timeout=rpc_timeout if rpc_timeout is not None else timeout,
+                        metadata=auth_metadata,
                     )
                 except grpc.RpcError as e:
                     raise _translate_rpc_error(
@@ -2389,10 +2298,12 @@ class Sandbox:
                     ) from e
                 return _bucket_config_from_proto(proto)
 
-            return await _retry_transient_rpc(
+            return await retry_transient_async(
                 _attempt,
                 budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-                operation="Set file-system snapshot bucket config",
+                rpc_timeout_seconds=timeout,
+                label="set_snapshot_bucket_config",
+                clamp_rpc_timeout_to_budget=False,
             )
         finally:
             await channel.close(grace=None)
@@ -2716,18 +2627,32 @@ class Sandbox:
 
         await self._ensure_client()
         assert self._stub is not None
+        stub = self._stub
 
         request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
-        try:
-            response = await self._stub.Get(
-                request,
-                timeout=self._poll_rpc_timeout_seconds,
-                metadata=self._auth_metadata,
-            )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e, sandbox_id=self._sandbox_id, operation="Get status"
-            ) from e
+
+        async def _attempt(rpc_timeout: float | None) -> gateway_pb2.GetSandboxResponse:
+            try:
+                result: gateway_pb2.GetSandboxResponse = await stub.Get(
+                    request,
+                    timeout=(
+                        rpc_timeout if rpc_timeout is not None else self._poll_rpc_timeout_seconds
+                    ),
+                    metadata=self._auth_metadata,
+                )
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(
+                    e, sandbox_id=self._sandbox_id, operation="Get status"
+                ) from e
+            return result
+
+        response = await retry_transient_async(
+            _attempt,
+            budget_seconds=self._poll_retry_budget_seconds,
+            rpc_timeout_seconds=self._poll_rpc_timeout_seconds,
+            label="get_status",
+            sandbox_id=self._sandbox_id,
+        )
 
         self._state = self._apply_sandbox_info(response, source="query")
         self._status_updated_at = datetime.now(UTC)
@@ -3006,118 +2931,18 @@ class Sandbox:
             )
 
     async def _poll_with_retry(self) -> gateway_pb2.GetSandboxResponse:
-        """Poll ``_poll_until_stable`` with bounded retry on transient errors.
+        """Poll ``_poll_until_stable`` with bounded retry on transient errors."""
 
-        The retry budget (``poll_retry_budget_seconds``) caps wall-clock time
-        spent retrying after a transient failure; it does not cap normal
-        polling. See :attr:`SandboxDefaults.poll_retry_budget_seconds` for
-        the full contract.
+        async def _attempt(rpc_timeout: float | None) -> gateway_pb2.GetSandboxResponse:
+            return await self._poll_until_stable(rpc_timeout_override=rpc_timeout)
 
-        Raises:
-            SandboxNotFoundError: Fatal immediately; never retried.
-            CWSandboxError: Any non-retryable exception from
-                ``_poll_until_stable``. On budget exhaustion, the last
-                translated exception is re-raised unchanged rather than
-                wrapped.
-        """
-        # Retry state (deadline, prev sleep, attempts, last exception) is
-        # local to this coroutine, not on ``self``. The shared _running_task
-        # / _complete_task design lets multiple waiters await the same poll;
-        # state on ``self`` would race between concurrent invocations and
-        # leak budget across unrelated polls.
-        #
-        # Clamp the first RPC timeout to the retry budget so a single wedged
-        # Get cannot stall longer than the budget ceiling. Do not start the
-        # deadline timer yet: the budget is for retry bursts, and healthy
-        # polling across transient states (CREATING, PENDING) must not
-        # consume it. The timer starts on the first retryable failure below.
-        rpc_timeout_override: float | None = None
-        if self._poll_retry_budget_seconds > 0:
-            rpc_timeout_override = min(
-                self._poll_rpc_timeout_seconds,
-                self._poll_retry_budget_seconds,
-            )
-
-        retry_deadline: float | None = None
-        last_exc: CWSandboxError | None = None
-        prev_sleep = DEFAULT_POLL_INTERVAL_SECONDS
-        attempts = 0
-
-        while True:
-            try:
-                return await self._poll_until_stable(
-                    rpc_timeout_override=rpc_timeout_override,
-                )
-            except CWSandboxError as exc:
-                last_exc = exc
-                classification = _classify_poll_error(exc)
-                if classification != "retryable":
-                    raise
-                if self._poll_retry_budget_seconds <= 0:
-                    raise
-
-                # First retryable failure: start the deadline timer.
-                if retry_deadline is None:
-                    retry_deadline = time.monotonic() + self._poll_retry_budget_seconds
-
-                attempts += 1
-                now = time.monotonic()
-                if now >= retry_deadline:
-                    logger.debug(
-                        "poll retry budget exhausted for sandbox %s after %d attempt(s)",
-                        self._sandbox_id,
-                        attempts,
-                    )
-                    raise
-                remaining = retry_deadline - now
-                # AIP-193 RetryInfo hints are honored literally (the server
-                # may already be jittering); otherwise use AWS-style
-                # decorrelated jitter on the computed backoff to avoid
-                # fleet-scale thundering herd during regional outages.
-                hinted_delay = exc.retry_delay.total_seconds() if exc.retry_delay else None
-                if hinted_delay is not None and hinted_delay > 0:
-                    sleep_for = min(hinted_delay, remaining, MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
-                    source = "hinted"
-                else:
-                    base = DEFAULT_POLL_INTERVAL_SECONDS
-                    cap = DEFAULT_MAX_POLL_INTERVAL_SECONDS
-                    jitter_ceiling = max(
-                        base,
-                        min(cap, prev_sleep * DEFAULT_POLL_BACKOFF_FACTOR, remaining),
-                    )
-                    sleep_for = min(random.uniform(base, jitter_ceiling), remaining)
-                    source = "computed-jittered"
-                cause = exc.__cause__ if isinstance(exc.__cause__, grpc.RpcError) else None
-                code = cause.code() if cause is not None else None
-                logger.debug(
-                    "poll retry for sandbox %s: code=%s sleep=%.2fs source=%s remaining=%.2fs",
-                    self._sandbox_id,
-                    code,
-                    sleep_for,
-                    source,
-                    remaining,
-                )
-            await asyncio.sleep(sleep_for)
-            prev_sleep = sleep_for
-            # Re-check deadline after the sleep: a long hinted delay plus the
-            # elapsed retry loop can exhaust the budget while we slept. Re-raise
-            # the last translated exception rather than issuing an RPC that
-            # would overrun the overall budget. The deadline is always set by
-            # this point because the first retryable failure sets it above.
-            assert retry_deadline is not None
-            now = time.monotonic()
-            if now >= retry_deadline:
-                assert last_exc is not None
-                raise last_exc
-            # Clamp the next RPC timeout to whatever budget remains, so a
-            # wedged Get cannot run past the overall ceiling. Floor at 0.1s
-            # to avoid degenerate zero-timeout RPCs that would fail before
-            # the gRPC stack even dispatches them.
-            post_sleep_remaining = retry_deadline - now
-            rpc_timeout_override = min(
-                self._poll_rpc_timeout_seconds,
-                max(0.1, post_sleep_remaining),
-            )
+        return await retry_transient_async(
+            _attempt,
+            budget_seconds=self._poll_retry_budget_seconds,
+            rpc_timeout_seconds=self._poll_rpc_timeout_seconds,
+            label="poll",
+            sandbox_id=self._sandbox_id,
+        )
 
     async def _ensure_started_async(self) -> None:
         """Ensure sandbox has been started, starting it if needed."""
@@ -4092,18 +3917,28 @@ class Sandbox:
         # retried create (after a transient failure that may have already
         # committed server-side) dedups instead of creating a second snapshot.
         effective_idempotency_key = idempotency_key or uuid.uuid4().hex
-        return await _retry_transient_rpc(
-            lambda: _create_snapshot_via_stub(
+
+        def should_retry(exc: CWSandboxError) -> bool:
+            return is_retryable(exc) and not isinstance(exc, SandboxRequestTimeoutError)
+
+        async def _attempt(rpc_timeout: float | None) -> str:
+            return await _create_snapshot_via_stub(
                 stub,
                 sandbox_id,
                 idempotency_key=effective_idempotency_key,
                 wait_for_ready=wait_for_ready,
                 auth_metadata=self._auth_metadata,
-                timeout=create_timeout,
+                timeout=rpc_timeout if rpc_timeout is not None else create_timeout,
                 max_timeout_seconds=create_max_timeout,
-            ),
+            )
+
+        return await retry_transient_async(
+            _attempt,
             budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
-            operation="Create file-system snapshot",
+            rpc_timeout_seconds=create_timeout,
+            label="create_snapshot",
+            sandbox_id=sandbox_id,
+            clamp_rpc_timeout_to_budget=False,
             # The create timeout is the snapshot's ceiling (it blocks on the
             # archive), so a client DEADLINE_EXCEEDED is the ceiling being hit,
             # not a transient blip. Treat it as terminal — retrying would run a
@@ -4111,7 +3946,7 @@ class Sandbox:
             # transients (unavailability/resource-exhaustion/throttle) still
             # retry. The snapshot may still finish server-side; the caller can
             # poll get_snapshot().
-            non_retryable=(SandboxRequestTimeoutError,),
+            should_retry=should_retry,
         )
 
     def snapshot(
@@ -4986,7 +4821,13 @@ class Sandbox:
                         )
                     )
                 else:
-                    await response_queue.put(e)
+                    await response_queue.put(
+                        _translate_rpc_error(
+                            e,
+                            sandbox_id=self._sandbox_id,
+                            operation=f"Exec {shlex.join(command)}",
+                        )
+                    )
             except Exception as e:
                 await response_queue.put(e)
             finally:
@@ -5439,23 +5280,43 @@ class Sandbox:
 
     async def _read_file_unary_async(self, filepath: str, timeout: float) -> bytes:
         assert self._stub is not None
+        stub = self._stub
         request = gateway_pb2.RetrieveFileSandboxRequest(
             sandbox_id=self._sandbox_id,
             filepath=filepath,
             max_timeout_seconds=int(timeout),
         )
 
-        try:
-            response = await self._stub.RetrieveFile(
-                request, timeout=timeout, metadata=self._auth_metadata
-            )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Read file",
-                filepath=filepath,
-            ) from e
+        async def _attempt(rpc_timeout: float | None) -> gateway_pb2.RetrieveFileSandboxResponse:
+            try:
+                result: gateway_pb2.RetrieveFileSandboxResponse = await stub.RetrieveFile(
+                    request,
+                    timeout=rpc_timeout if rpc_timeout is not None else timeout,
+                    metadata=self._auth_metadata,
+                )
+            except grpc.RpcError as e:
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation="Read file",
+                    filepath=filepath,
+                ) from e
+            return result
+
+        # Retry transient UNAVAILABLE errors for idempotent reads, using full timeout per attempt.
+        # Do not retry RESOURCE_EXHAUSTED, as it indicates a need to fall back to exec-streaming.
+        def should_retry(exc: CWSandboxError) -> bool:
+            return is_retryable(exc) and not isinstance(exc, SandboxResourceExhaustedError)
+
+        response = await retry_transient_async(
+            _attempt,
+            budget_seconds=self._poll_retry_budget_seconds,
+            rpc_timeout_seconds=timeout,
+            label="read_file",
+            sandbox_id=self._sandbox_id,
+            clamp_rpc_timeout_to_budget=False,
+            should_retry=should_retry,
+        )
 
         if not response.success:
             logger.warning("Failed to read file %s from sandbox %s", filepath, self._sandbox_id)

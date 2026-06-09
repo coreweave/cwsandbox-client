@@ -7807,3 +7807,47 @@ class TestStreamLogsStubReacquiredPerAttempt:
         # One acquisition per attempt — proves the retry loop reacquires
         # the channel rather than reusing a possibly-dead cached one.
         assert acquisition_count == programmed.call_count == 2
+
+
+class TestSandboxExecErrorTranslation:
+    """exec() normalizes transport failures instead of leaking raw AioRpcError."""
+
+    def test_exec_unavailable_surfaces_sandbox_unavailable(self) -> None:
+        """A transient gRPC UNAVAILABLE mid-exec (e.g. a gateway rollout) surfaces
+        as SandboxUnavailableError, not a raw grpc.aio.AioRpcError.
+
+        exec is NOT auto-retried (a mid-flight command is not idempotent); this
+        only makes the failure catchable via the SDK exception hierarchy.
+        """
+        from grpc.aio import AioRpcError, Metadata
+
+        from cwsandbox.exceptions import SandboxUnavailableError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        err = AioRpcError(
+            grpc.StatusCode.UNAVAILABLE,
+            Metadata(),
+            Metadata(),
+            details="Stream removed (recvmsg: Connection reset by peer)",
+        )
+        mock_call = MockStreamCall(error_on_read=err)
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.streaming_pb2_grpc.GatewayStreamingServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["some-cmd"])
+            with pytest.raises(SandboxUnavailableError):
+                process.result()

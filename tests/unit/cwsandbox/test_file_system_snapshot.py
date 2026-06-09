@@ -44,6 +44,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_WAIT_TIMEOUT,
 )
 from cwsandbox._proto import gateway_pb2
+from cwsandbox._retry import is_retryable
 from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
@@ -275,7 +276,7 @@ class TestSnapshotErrorMapping:
         )
         assert isinstance(exc, SnapshotWaitTimeoutError)
         assert isinstance(exc, SandboxTimeoutError)
-        assert not isinstance(exc, sandbox_module._RETRYABLE_POLL_EXCEPTIONS)
+        assert not is_retryable(exc)
 
     @pytest.mark.parametrize(
         "reason", [CWSANDBOX_FSS_BACKEND_THROTTLED, CWSANDBOX_FSS_INFLIGHT_LIMIT]
@@ -291,7 +292,7 @@ class TestSnapshotErrorMapping:
         )
         assert isinstance(exc, SnapshotBackendThrottledError)
         assert isinstance(exc, SandboxUnavailableError)
-        assert isinstance(exc, sandbox_module._RETRYABLE_POLL_EXCEPTIONS)
+        assert is_retryable(exc)
 
     def test_unknown_reason_returns_none(self) -> None:
         assert (
