@@ -47,6 +47,7 @@ from cwsandbox._proto import gateway_pb2
 from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
+    SandboxRequestTimeoutError,
     SandboxSnapshotError,
     SandboxTimeoutError,
     SandboxUnavailableError,
@@ -940,6 +941,26 @@ class TestTransientRetry:
             with pytest.raises(SandboxUnavailableError):
                 sandbox.snapshot().result()
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
+
+    def test_snapshot_does_not_retry_deadline_exceeded(self) -> None:
+        """A client DEADLINE_EXCEEDED on a wait-for-ready create is the ceiling
+        being hit, not a transient blip: one attempt, no retry, so a wedged
+        backend cannot trigger a second full-length attempt (~2x overrun)."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            side_effect=_bare_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED)
+        )
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        ):
+            with pytest.raises(SandboxRequestTimeoutError):
+                sandbox.snapshot().result()
+        assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
+        sleep.assert_not_called()
 
     def test_get_snapshot_retries_transient_then_succeeds(self) -> None:
         """The management classmethods retry transient errors too."""

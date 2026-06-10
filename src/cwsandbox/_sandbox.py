@@ -866,6 +866,7 @@ async def _retry_transient_rpc(
     *,
     budget_seconds: float,
     operation: str,
+    non_retryable: tuple[type[CWSandboxError], ...] = (),
 ) -> _T:
     """Run ``attempt`` with bounded retry on transient CWSandbox errors.
 
@@ -876,6 +877,13 @@ async def _retry_transient_rpc(
     exhaustion, and FSS backend-throttling (which subclasses
     ``SandboxUnavailableError``). Every other error, including ``NOT_FOUND``
     and ``FAILED_PRECONDITION``, is fatal and re-raised on the first attempt.
+
+    ``non_retryable`` lists exception classes to treat as fatal even when they
+    would otherwise be retryable. Use it when the per-attempt timeout *is* the
+    operation's ceiling, so a deadline is the ceiling being hit rather than a
+    transient blip - retrying would just re-spend the full (large) timeout and
+    overrun the ceiling (the loop bounds the inter-attempt gap, not attempt
+    duration).
 
     ``budget_seconds`` caps wall-clock time spent *retrying*; it never delays
     the first attempt. On exhaustion the last translated exception is re-raised
@@ -892,7 +900,11 @@ async def _retry_transient_rpc(
             return await attempt()
         except CWSandboxError as exc:
             last_exc = exc
-            if _classify_poll_error(exc) != "retryable" or budget_seconds <= 0:
+            if (
+                isinstance(exc, non_retryable)
+                or _classify_poll_error(exc) != "retryable"
+                or budget_seconds <= 0
+            ):
                 raise
 
             # First retryable failure starts the budget timer.
@@ -4092,6 +4104,14 @@ class Sandbox:
             ),
             budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
             operation="Create file-system snapshot",
+            # The create timeout is the snapshot's ceiling (it blocks on the
+            # archive), so a client DEADLINE_EXCEEDED is the ceiling being hit,
+            # not a transient blip. Treat it as terminal — retrying would run a
+            # second full-length attempt and overrun the ceiling (~2x). Genuine
+            # transients (unavailability/resource-exhaustion/throttle) still
+            # retry. The snapshot may still finish server-side; the caller can
+            # poll get_snapshot().
+            non_retryable=(SandboxRequestTimeoutError,),
         )
 
     def snapshot(
