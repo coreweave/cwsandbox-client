@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +24,7 @@ from cwsandbox import (
     FileSystemSnapshotTrigger,
     Sandbox,
     SandboxDefaults,
+    SandboxStatus,
 )
 from cwsandbox._defaults import DEFAULT_FSS_STOP_TIMEOUT_SECONDS
 from cwsandbox._error_info import (
@@ -38,7 +40,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_WAIT_TIMEOUT,
 )
 from cwsandbox._proto import gateway_pb2
-from cwsandbox._sandbox import _Starting
+from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
     SandboxSnapshotError,
@@ -49,6 +51,7 @@ from cwsandbox.exceptions import (
     SnapshotNotFoundError,
     SnapshotNotReadyError,
     SnapshotNotSupportedError,
+    SnapshotOnStopConflictError,
     SnapshotQuotaExceededError,
     SnapshotSizeExceededError,
     SnapshotWaitTimeoutError,
@@ -410,6 +413,96 @@ class TestStopWiring:
         # wait_for_ready is only set when snapshotting.
         assert request.HasField("wait_for_ready") is False
         assert sandbox.file_system_snapshot_id is None
+
+
+class TestSnapshotOnStopConflict:
+    """stop(snapshot_on_stop=True) must not silently coalesce into a stop that
+    will not archive the mount. It raises SnapshotOnStopConflictError instead.
+    """
+
+    def test_raises_when_already_terminating(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        # TERMINATING (e.g. an external stop / TTL the poller observed): no
+        # snapshot RPC will be sent for this drain.
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        with pytest.raises(SnapshotOnStopConflictError, match="already terminating"):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+    def test_raises_when_already_stopped_without_snapshot(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+        sandbox._file_system_snapshot_id = None
+        with pytest.raises(SnapshotOnStopConflictError, match="already stopped"):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+    def test_idempotent_when_snapshot_already_captured(self) -> None:
+        # A prior snapshot-on-stop already produced an ID; a repeat request is
+        # convergent (the snapshot the caller asked for exists), so it returns
+        # rather than raising.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+        sandbox._file_system_snapshot_id = "fss-prior"
+        sandbox.stop(snapshot_on_stop=True).result()
+        assert sandbox.file_system_snapshot_id == "fss-prior"
+
+    def test_does_not_raise_when_cancelled_before_start(self) -> None:
+        # Never started: no mount to archive, so this is the normal no-op path,
+        # not a conflict.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._state = _NotStarted(cancelled=True)
+        sandbox._reject_unsatisfiable_snapshot_on_stop()  # does not raise
+
+    def test_helper_raises_on_in_flight_plain_stop(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        # Simulate a plain stop already in flight (no snapshot).
+        sandbox._stop_task = MagicMock()
+        sandbox._stop_task.done.return_value = False
+        sandbox._stop_snapshot_requested = False
+        with pytest.raises(SnapshotOnStopConflictError, match="plain stop is already in progress"):
+            sandbox._reject_unsatisfiable_snapshot_on_stop()
+
+    def test_helper_allows_join_of_in_flight_snapshot_stop(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        # The in-flight stop is itself a snapshot-on-stop: joining is safe.
+        sandbox._stop_task = MagicMock()
+        sandbox._stop_task.done.return_value = False
+        sandbox._stop_snapshot_requested = True
+        sandbox._reject_unsatisfiable_snapshot_on_stop()  # does not raise
+
+    async def test_in_flight_plain_stop_is_left_untouched_on_conflict(self) -> None:
+        # End-to-end through _stop_async: the conflict is raised before the
+        # join, so the in-flight plain stop is neither cancelled nor awaited.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        async def _never() -> None:
+            await asyncio.sleep(3600)
+
+        sandbox._stop_task = asyncio.create_task(_never())
+        sandbox._stop_snapshot_requested = False
+        try:
+            with pytest.raises(SnapshotOnStopConflictError):
+                await sandbox._stop_async(snapshot_on_stop=True)
+            assert not sandbox._stop_task.done()  # the plain stop kept running
+        finally:
+            sandbox._stop_task.cancel()
+
+    def test_plain_stop_still_coalesces_when_terminating(self) -> None:
+        # Regression: a plain stop joining a TERMINATING sandbox must NOT raise
+        # (it observes the drain to terminal). Only snapshot requests conflict.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Stopping(sandbox_id="sb-1")
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop().result()  # no SnapshotOnStopConflictError
 
 
 # ---------------------------------------------------------------------------

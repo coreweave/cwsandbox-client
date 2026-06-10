@@ -149,6 +149,7 @@ from cwsandbox.exceptions import (
     SnapshotNotFoundError,
     SnapshotNotReadyError,
     SnapshotNotSupportedError,
+    SnapshotOnStopConflictError,
     SnapshotQuotaExceededError,
     SnapshotSizeExceededError,
     SnapshotWaitTimeoutError,
@@ -1289,6 +1290,10 @@ class Sandbox:
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stop_owned: bool = False
+        # Whether the in-flight shared stop task (when _stop_task is set) was
+        # created for a snapshot-on-stop. Read under _stop_lock to decide
+        # whether a later snapshot-on-stop caller can safely join it.
+        self._stop_snapshot_requested: bool = False
         # Set when a caller invokes stop(missing_ok=True) on a sandbox that
         # is already draining (observe-only path). Widens the NOT_FOUND
         # retry gate in _do_poll_complete so the observe-only waiter treats
@@ -3842,6 +3847,45 @@ class Sandbox:
         if self._stop_task is task:
             self._stop_task = None
 
+    def _reject_unsatisfiable_snapshot_on_stop(self) -> None:
+        """Raise if a ``snapshot_on_stop=True`` request cannot be honored.
+
+        Must be called while holding ``_stop_lock``. ``stop()`` coalesces
+        callers onto one shared stop task, so a snapshot-on-stop is honorable
+        only when this caller will own a fresh stop (creating the task) or when
+        it joins a stop that is itself a snapshot-on-stop. Every other state
+        means the sandbox is, or is about to be, torn down without archiving
+        the mount — joining would silently drop the snapshot. A sandbox that
+        was never started has no mount to archive, so it is left to the normal
+        no-op path rather than raising here.
+        """
+        # Already terminal: a snapshot captured by a prior snapshot-on-stop
+        # makes this idempotently satisfiable; otherwise the sandbox is gone
+        # with no archive.
+        if self._is_done:
+            if self._file_system_snapshot_id is not None:
+                return
+            if self._is_cancelled:
+                return
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: sandbox has already stopped."
+            )
+        # A stop this caller would join is already in flight. Joining is safe
+        # only when that stop is itself capturing a snapshot.
+        if self._stop_task is not None and not self._stop_task.done():
+            if self._stop_snapshot_requested:
+                return
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: a plain stop is already in progress for this sandbox."
+            )
+        # Draining (TERMINATING) with no stop task we own: the backend is
+        # already tearing the sandbox down (external stop, TTL, or a
+        # poller-observed termination), so no snapshot RPC will be sent.
+        if self._is_stopping:
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: sandbox is already terminating."
+            )
+
     async def _stop_async(
         self,
         *,
@@ -3856,6 +3900,13 @@ class Sandbox:
         First caller creates the task; later callers join it.
         """
         async with self._stop_lock:
+            # A snapshot-on-stop request cannot be honored by joining (or
+            # observing) a stop that will not archive the mount. Detect that
+            # here and raise rather than silently coalescing into a no-snapshot
+            # stop, which would destroy the sandbox with no archive and still
+            # return success. Plain stops keep coalescing in every case.
+            if snapshot_on_stop:
+                self._reject_unsatisfiable_snapshot_on_stop()
             if self._is_done:
                 logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
                 return
@@ -3864,6 +3915,7 @@ class Sandbox:
                 self._state = _NotStarted(cancelled=True)
                 return
             if self._stop_task is None:
+                self._stop_snapshot_requested = snapshot_on_stop
                 self._stop_task = asyncio.create_task(
                     self._do_stop(
                         snapshot_on_stop=snapshot_on_stop,
@@ -3911,7 +3963,12 @@ class Sandbox:
         just when the stop RPC succeeds.
 
         Multiple callers share the same underlying stop task: the first caller
-        creates it, subsequent callers join it.
+        creates it, subsequent callers join it. A ``snapshot_on_stop=True``
+        request that would join (or observe) a stop that is not capturing a
+        snapshot — because the sandbox is already stopping, already stopped, or
+        a plain ``stop()`` is already in flight — raises
+        ``SnapshotOnStopConflictError`` instead of silently completing without
+        an archive. Plain stops always coalesce.
 
         The sandbox is deregistered from its session regardless of whether
         the stop was successful, since the sandbox is no longer usable.
@@ -3922,7 +3979,8 @@ class Sandbox:
                 is available via the ``file_system_snapshot_id`` property after
                 the returned OperationRef resolves. Requires the sandbox to have
                 been started with a ``file_system_snapshot`` mount and the org to
-                be enabled for FSS.
+                be enabled for FSS. Raises ``SnapshotOnStopConflictError`` if a
+                stop is already in progress that will not capture a snapshot.
             graceful_shutdown_seconds: Time to wait for graceful shutdown.
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.

@@ -405,6 +405,22 @@ class SnapshotBackendThrottledError(SandboxUnavailableError):
     """
 
 
+class SnapshotOnStopConflictError(SandboxSnapshotError):
+    """Raised when ``stop(snapshot_on_stop=True)`` cannot capture a snapshot.
+
+    Unlike the other snapshot errors this is raised client-side, not mapped
+    from a backend reason. ``stop()`` coalesces concurrent callers onto a
+    single shared stop, so a snapshot-on-stop request that arrives once the
+    sandbox is already stopping, already stopped, or already has a plain
+    ``stop()`` in flight cannot be honored: that stop will tear the sandbox
+    down without archiving the mount. Rather than silently coalescing the
+    request into a stop that produces no snapshot (destroying the sandbox with
+    no archive and no error), the client raises this. Mirrors the backend's
+    ``FailedPrecondition`` for a snapshot-on-stop that arrives after the
+    sandbox has begun terminating.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 
