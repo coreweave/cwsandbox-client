@@ -26,11 +26,25 @@ DEFAULT_COMMAND: str = "/bin/sh"
 DEFAULT_ARGS: tuple[str, ...] = ("-c", 'trap "exit 0" TERM INT; sleep infinity & wait')
 DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
-# Default client-side ceiling for stop(snapshot_on_stop=True). Snapshot-on-stop
-# blocks on the file-system archive, so the stop RPC can run far longer than
-# graceful shutdown. Matches the backend's default stop max_timeout when FSS is
-# requested.
+# Archive budget for stop(snapshot_on_stop=True): the time the backend spends
+# capturing the file-system snapshot before tearing down the pod. Sent as the
+# StopSandboxRequest.max_timeout_seconds field and matches the backend's default
+# when FSS is requested (the backend does not cap this). This bounds only the
+# archive phase — the post-archive pod-delete grace is a separate, additive
+# budget (graceful_shutdown_seconds), so the client deadline is the sum of both
+# (see _do_stop and the two constants below), not this value alone.
 DEFAULT_FSS_STOP_TIMEOUT_SECONDS: float = 600.0
+# Post-archive pod-delete grace the backend substitutes when a snapshot-on-stop
+# is sent with graceful_shutdown_seconds=0. Mirrors the backend's
+# defaultGraceSecondsAfterFSSnapshot so the client deadline budgets the grace
+# the server will actually apply (sending 0 does NOT mean "no grace").
+DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 30.0
+# Extra slack added to the snapshot-on-stop client deadline on top of the two
+# server phase budgets (archive + grace). Covers the backend's gateway
+# request-context slack (~30s it waits beyond the archive budget) plus ~5s of
+# network round-trip, keeping the client deadline ~5s past the backend's
+# worst-case wall-clock so a healthy stop is never cut off client-side.
+DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS: float = 35.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0
 DEFAULT_POLL_BACKOFF_FACTOR: float = 1.5

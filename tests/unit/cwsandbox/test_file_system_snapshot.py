@@ -26,7 +26,11 @@ from cwsandbox import (
     SandboxDefaults,
     SandboxStatus,
 )
-from cwsandbox._defaults import DEFAULT_FSS_STOP_TIMEOUT_SECONDS
+from cwsandbox._defaults import (
+    DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
+    DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS,
+    DEFAULT_FSS_STOP_TIMEOUT_SECONDS,
+)
 from cwsandbox._error_info import (
     CWSANDBOX_FSS_BACKEND_THROTTLED,
     CWSANDBOX_FSS_BUCKET_MISMATCH,
@@ -413,6 +417,59 @@ class TestStopWiring:
         # wait_for_ready is only set when snapshotting.
         assert request.HasField("wait_for_ready") is False
         assert sandbox.file_system_snapshot_id is None
+
+    def test_snapshot_on_stop_deadline_covers_archive_plus_grace(self) -> None:
+        # The backend archives (max_timeout_seconds) THEN deletes the pod
+        # (graceful_shutdown_seconds). The client deadline must cover both, not
+        # just the archive — the proto archive budget stays the FSS default.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = MagicMock()
+        mock_response.success = True
+        mock_response.file_system_snapshot_id = "fss-new"
+        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=30).result()
+
+        request = stub.Stop.call_args[0][0]
+        assert request.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+        assert request.graceful_shutdown_seconds == 30
+        timeout = stub.Stop.call_args.kwargs["timeout"]
+        assert timeout == (
+            int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) + 30 + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
+        )
+
+    def test_snapshot_on_stop_deadline_budgets_backend_grace_default_when_zero(self) -> None:
+        # Sending graceful_shutdown_seconds=0 makes the backend substitute its
+        # own grace default, so the client deadline budgets that default — not 0.
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = MagicMock()
+        mock_response.success = True
+        mock_response.file_system_snapshot_id = "fss-new"
+        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=0).result()
+
+        assert stub.Stop.call_args[0][0].graceful_shutdown_seconds == 0
+        timeout = stub.Stop.call_args.kwargs["timeout"]
+        assert timeout == (
+            int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+            + int(DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS)
+            + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
+        )
 
 
 class TestSnapshotOnStopConflict:

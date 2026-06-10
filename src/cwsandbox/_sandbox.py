@@ -42,6 +42,8 @@ from cwsandbox._defaults import (
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_FILE_OPERATION_CAP_BYTES,
     DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+    DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
+    DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS,
     DEFAULT_FSS_STOP_TIMEOUT_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
@@ -3748,15 +3750,31 @@ class Sandbox:
                 await self._ensure_client()
                 assert self._stub is not None
 
-                # Snapshot-on-stop blocks on the runner archive, so the ceiling
-                # must be generous; use the FSS default. A plain stop stays
-                # bounded by graceful shutdown.
+                # The backend runs a snapshot-on-stop in two sequential phases:
+                # it archives the mount (bounded by max_timeout_seconds, the FSS
+                # default) and THEN deletes the pod (bounded by
+                # graceful_shutdown_seconds). max_timeout_seconds bounds only the
+                # archive; the client deadline must cover BOTH phases, so it is
+                # the sum (see client_deadline below) — not max_timeout alone.
+                # A plain stop has no archive phase and stays bounded by graceful
+                # shutdown.
                 if snapshot_on_stop:
                     max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+                    # The backend substitutes its own grace default when 0 is
+                    # sent, so budget that rather than zero.
+                    effective_grace = (
+                        int(graceful_shutdown_seconds)
+                        if int(graceful_shutdown_seconds) > 0
+                        else int(DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS)
+                    )
+                    client_deadline = (
+                        max_timeout + effective_grace + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
+                    )
                 else:
                     max_timeout = int(graceful_shutdown_seconds) + int(
                         DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
                     )
+                    client_deadline = max_timeout + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
                 # The renamed proto field is file_system_snapshot_on_stop;
                 # wait_for_ready/idempotency_key are only valid alongside it,
                 # so only send them when a snapshot is requested.
@@ -3775,7 +3793,7 @@ class Sandbox:
                 try:
                     response = await self._stub.Stop(
                         request,
-                        timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+                        timeout=client_deadline,
                         metadata=self._auth_metadata,
                     )
                 except grpc.RpcError as e:
@@ -3981,7 +3999,13 @@ class Sandbox:
                 been started with a ``file_system_snapshot`` mount and the org to
                 be enabled for FSS. Raises ``SnapshotOnStopConflictError`` if a
                 stop is already in progress that will not capture a snapshot.
-            graceful_shutdown_seconds: Time to wait for graceful shutdown.
+            graceful_shutdown_seconds: Time to wait for graceful shutdown. With
+                ``snapshot_on_stop=True`` this is the post-archive pod-delete
+                grace, applied *after* the snapshot completes, so the client
+                deadline covers the archive budget plus this grace. Passing 0
+                does not mean "no grace": the backend substitutes its own
+                default (~30s), and the client deadline budgets that. The
+                backend caps this at 300s for snapshot-on-stop.
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
             wait_for_ready: When ``snapshot_on_stop`` is True, block until the
