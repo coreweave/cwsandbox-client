@@ -17,6 +17,7 @@ import atexit
 import logging
 import signal
 import sys
+import threading
 from collections.abc import Callable
 from types import FrameType
 
@@ -30,6 +31,7 @@ _cleanup_in_progress: bool = False
 _original_sigint: _SignalHandler = None
 _original_sigterm: _SignalHandler = None
 _handlers_installed: bool = False
+_atexit_registered: bool = False
 
 
 def _cleanup() -> None:
@@ -94,13 +96,18 @@ def _install_handlers() -> None:
 
     The original signal handlers are preserved and chained after cleanup.
     """
-    global _original_sigint, _original_sigterm, _handlers_installed
+    global _original_sigint, _original_sigterm, _handlers_installed, _atexit_registered
+
+    if not _atexit_registered:
+        atexit.register(_cleanup)
+        _atexit_registered = True
 
     if _handlers_installed:
         return
 
-    # Register atexit handler
-    atexit.register(_cleanup)
+    if threading.current_thread() is not threading.main_thread():
+        logger.debug("Skipping signal handlers outside the main thread")
+        return
 
     # Install signal handlers, preserving originals for chaining
     _original_sigint = signal.signal(signal.SIGINT, _signal_handler)
@@ -116,11 +123,12 @@ def _reset_for_testing() -> None:
     This function is intended for use in tests only. It resets the
     module-level state to allow handlers to be reinstalled.
     """
-    global _cleanup_in_progress, _handlers_installed
+    global _cleanup_in_progress, _handlers_installed, _atexit_registered
     global _original_sigint, _original_sigterm
 
     _cleanup_in_progress = False
     _handlers_installed = False
+    _atexit_registered = False
 
     # Restore original handlers if they were saved
     if _original_sigint is not None:
