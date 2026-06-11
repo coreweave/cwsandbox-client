@@ -1231,6 +1231,8 @@ class TestSandboxFileOpErrorTranslation:
 
         assert exc_info.value.filepath == "/caller-requested-path"
         assert exc_info.value.reason == "CWSANDBOX_FILE_NOT_FOUND"
+        assert "/caller-requested-path" in str(exc_info.value)
+        assert "CWSANDBOX_FILE_NOT_FOUND" in str(exc_info.value)
         # Backend metadata still round-trips so callers can inspect it.
         assert exc_info.value.metadata == {"filepath": "/backend-normalized-path"}
 
