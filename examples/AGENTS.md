@@ -22,6 +22,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 | `function_decorator.py` | Sync | `def main()` | Remote function execution with `@session.function()` |
 | `resource_configuration.py` | Sync | `def main()` | ResourceOptions, flat dict, nested dict, GPU, response properties |
 | `error_handling.py` | Sync | `def main()` | Exception hierarchy: SandboxExecutionError, TimeoutError, NotFoundError |
+| `file_system_snapshots.py` | Sync | `def main()` | FSS snapshot/restore/fork with `file_system_snapshot`, `snapshot()`, snapshot management |
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
 | `delete_sandboxes.py` | Sync | `def main()` | Deletion patterns with `Sandbox.delete()` |
 | `interactive_streaming_sandbox.py` | Sync | `def main()` | Log streaming with `stream_logs()` and CLI interaction |

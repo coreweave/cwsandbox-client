@@ -317,6 +317,110 @@ class SandboxTerminalStateUnavailableError(SandboxError):
     """
 
 
+class SandboxSnapshotError(SandboxError):
+    """Base exception for file-system snapshot (FSS) operation failures.
+
+    Raised by ``snapshot()``, snapshot restore on ``run()``,
+    ``stop(snapshot_on_stop=True)``, and the snapshot management methods.
+    Also used directly for terminal internal failures (restore/create
+    failed, bucket unavailable, auth/transport failures).
+
+    Attributes:
+        file_system_snapshot_id: The file-system snapshot ID involved, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        file_system_snapshot_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.file_system_snapshot_id = file_system_snapshot_id
+
+
+class SnapshotNotFoundError(SandboxSnapshotError):
+    """Raised when a snapshot ID is unknown, deleted, or owned by another org.
+
+    Emitted for ``CWSANDBOX_FSS_NOT_FOUND``.
+    """
+
+
+class SnapshotNotReadyError(SandboxSnapshotError):
+    """Raised when a snapshot is not in the READY state for the operation.
+
+    Emitted for ``CWSANDBOX_FSS_NOT_READY`` (e.g. restoring from a snapshot
+    that is still CREATING or has FAILED).
+    """
+
+
+class SnapshotNotSupportedError(SandboxSnapshotError):
+    """Raised when file-system snapshots are not enabled for the organization.
+
+    Emitted for ``CWSANDBOX_FSS_NOT_SUPPORTED``. FSS is gated by a per-org
+    allowlist on the backend; an org not on the list cannot create, restore,
+    or manage snapshots.
+    """
+
+
+class SnapshotSizeExceededError(SandboxSnapshotError):
+    """Raised when the requested mount size exceeds the configured maximum.
+
+    Emitted for ``CWSANDBOX_FSS_SIZE_EXCEEDED``.
+    """
+
+
+class SnapshotQuotaExceededError(SandboxSnapshotError):
+    """Raised when the organization's snapshot quota is exhausted.
+
+    Emitted for ``CWSANDBOX_FSS_QUOTA_EXCEEDED``.
+    """
+
+
+class SnapshotBucketMismatchError(SandboxSnapshotError):
+    """Raised when a snapshot's bucket differs from the org's current bucket.
+
+    Emitted for ``CWSANDBOX_FSS_BUCKET_MISMATCH``. Reversible by reverting the
+    org's snapshot bucket configuration to the one the snapshot was written to.
+    """
+
+
+class SnapshotWaitTimeoutError(SandboxTimeoutError):
+    """Raised when ``wait_for_ready`` exceeded its budget before the snapshot was READY.
+
+    Emitted for ``CWSANDBOX_FSS_WAIT_TIMEOUT``. The snapshot may still complete
+    server-side; poll with ``Sandbox.get_snapshot()`` to check.
+    """
+
+
+class SnapshotBackendThrottledError(SandboxUnavailableError):
+    """Raised when the snapshot backend is transiently throttled or at capacity.
+
+    Emitted for ``CWSANDBOX_FSS_BACKEND_THROTTLED`` and
+    ``CWSANDBOX_FSS_INFLIGHT_LIMIT`` (gRPC ``UNAVAILABLE``). Inherits the
+    retryable contract of ``SandboxUnavailableError``; callers should back off.
+    """
+
+
+class SnapshotOnStopConflictError(SandboxSnapshotError):
+    """Raised when ``stop(snapshot_on_stop=True)`` cannot capture a snapshot.
+
+    Unlike the other snapshot errors this is raised client-side, not mapped
+    from a backend reason. ``stop()`` coalesces concurrent callers onto a
+    single shared stop, so a snapshot-on-stop request that arrives once the
+    sandbox is already stopping, already stopped, or already has a plain
+    ``stop()`` in flight cannot be honored: that stop will tear the sandbox
+    down without archiving the mount. Rather than silently coalescing the
+    request into a stop that produces no snapshot (destroying the sandbox with
+    no archive and no error), the client raises this. Mirrors the backend's
+    ``FailedPrecondition`` for a snapshot-on-stop that arrives after the
+    sandbox has begun terminating.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 

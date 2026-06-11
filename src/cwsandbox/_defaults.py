@@ -9,7 +9,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from cwsandbox._types import NetworkOptions, ResourceOptions, Secret
+from cwsandbox._types import (
+    FileSystemSnapshotOptions,
+    NetworkOptions,
+    ResourceOptions,
+    Secret,
+)
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
 # Shell-trapped keep-alive: installs an explicit SIGTERM handler so the PID 1
@@ -21,6 +26,25 @@ DEFAULT_COMMAND: str = "/bin/sh"
 DEFAULT_ARGS: tuple[str, ...] = ("-c", 'trap "exit 0" TERM INT; sleep infinity & wait')
 DEFAULT_BASE_URL: str = "https://api.cwsandbox.com"
 DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
+# Archive budget for stop(snapshot_on_stop=True): the time the backend spends
+# capturing the file-system snapshot before tearing down the pod. Sent as the
+# StopSandboxRequest.max_timeout_seconds field and matches the backend's default
+# when FSS is requested (the backend does not cap this). This bounds only the
+# archive phase — the post-archive pod-delete grace is a separate, additive
+# budget (graceful_shutdown_seconds), so the client deadline is the sum of both
+# (see _do_stop and the two constants below), not this value alone.
+DEFAULT_FSS_STOP_TIMEOUT_SECONDS: float = 600.0
+# Post-archive pod-delete grace the backend substitutes when a snapshot-on-stop
+# is sent with graceful_shutdown_seconds=0. Mirrors the backend's
+# defaultGraceSecondsAfterFSSnapshot so the client deadline budgets the grace
+# the server will actually apply (sending 0 does NOT mean "no grace").
+DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 30.0
+# Extra slack added to the snapshot-on-stop client deadline on top of the two
+# server phase budgets (archive + grace). Covers the backend's gateway
+# request-context slack (~30s it waits beyond the archive budget) plus ~5s of
+# network round-trip, keeping the client deadline ~5s past the backend's
+# worst-case wall-clock so a healthy stop is never cut off client-side.
+DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS: float = 35.0
 DEFAULT_POLL_INTERVAL_SECONDS: float = 0.2
 DEFAULT_MAX_POLL_INTERVAL_SECONDS: float = 2.0
 DEFAULT_POLL_BACKOFF_FACTOR: float = 1.5
@@ -68,6 +92,13 @@ STREAMING_READ_STDERR_CAP_BYTES: int = 16 * 1024
 # later gets a fresh budget each time.  Set to 0.0 to disable retries
 # entirely (the first transient error re-raises).
 DEFAULT_POLL_RETRY_BUDGET_SECONDS: float = 30.0
+
+# Wall-clock budget for retrying transient failures on file-system snapshot
+# (FSS) RPCs (create/get/list/delete/bucket config). Mirrors the poll budget:
+# it caps time spent retrying after a transient error (UNAVAILABLE /
+# DEADLINE_EXCEEDED / RESOURCE_EXHAUSTED / FSS backend-throttle) and does not
+# delay the happy path. Set to 0.0 to disable FSS retries entirely.
+DEFAULT_FSS_RETRY_BUDGET_SECONDS: float = 30.0
 
 # Per-call timeout for poll Get RPCs (seconds). Kept separate from
 # request_timeout_seconds so a wedged poll fails fast instead of blocking
@@ -263,6 +294,9 @@ class SandboxDefaults:
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Network configuration via ``NetworkOptions``.
+        file_system_snapshot: File-system snapshot (FSS) mount configuration via
+            ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
+            size); an explicit ``run()`` value replaces it wholesale.
         secrets: Secrets to inject as environment variables.
         environment_variables: Environment variables injected into the sandbox.
         annotations: Kubernetes pod annotations (key-value string pairs).
@@ -299,6 +333,7 @@ class SandboxDefaults:
     runner_ids: tuple[str, ...] | None = None
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
+    file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
@@ -380,6 +415,10 @@ class SandboxDefaults:
         net = kwargs.get("network")
         if net is not None and not isinstance(net, NetworkOptions):
             kwargs["network"] = NetworkOptions(**net)
+        # Coerce file_system_snapshot dict -> FileSystemSnapshotOptions (preserve None)
+        fss = kwargs.get("file_system_snapshot")
+        if fss is not None and not isinstance(fss, FileSystemSnapshotOptions):
+            kwargs["file_system_snapshot"] = FileSystemSnapshotOptions(**fss)
         # Coerce secrets list of dicts -> tuple of Secret (preserve None)
         secrets = kwargs.get("secrets")
         if secrets is not None:

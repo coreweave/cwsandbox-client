@@ -9,7 +9,13 @@ import math
 
 import pytest
 
-from cwsandbox import NetworkOptions, ResourceOptions, SandboxDefaults, Secret
+from cwsandbox import (
+    FileSystemSnapshotOptions,
+    NetworkOptions,
+    ResourceOptions,
+    SandboxDefaults,
+    Secret,
+)
 
 
 class TestSandboxDefaults:
@@ -217,6 +223,34 @@ class TestSandboxDefaults:
 
         assert defaults.network is network1  # original unchanged
         assert new_defaults.network is network2
+
+    def test_file_system_snapshot_defaults_none(self) -> None:
+        """Test file_system_snapshot defaults to None."""
+        assert SandboxDefaults().file_system_snapshot is None
+
+    def test_file_system_snapshot_can_be_set(self) -> None:
+        """Test file_system_snapshot can be set in SandboxDefaults."""
+        opts = FileSystemSnapshotOptions(mount_path="/workspace", size="10Gi")
+        defaults = SandboxDefaults(file_system_snapshot=opts)
+        assert defaults.file_system_snapshot is opts
+
+    def test_file_system_snapshot_from_dict_coercion(self) -> None:
+        """Test from_dict coerces a dict to FileSystemSnapshotOptions."""
+        defaults = SandboxDefaults.from_dict(
+            {"file_system_snapshot": {"mount_path": "/workspace", "size": "5Gi"}}
+        )
+        assert isinstance(defaults.file_system_snapshot, FileSystemSnapshotOptions)
+        assert defaults.file_system_snapshot.mount_path == "/workspace"
+        assert defaults.file_system_snapshot.size == "5Gi"
+
+    def test_with_overrides_file_system_snapshot(self) -> None:
+        """Test with_overrides can change file_system_snapshot."""
+        opts1 = FileSystemSnapshotOptions(mount_path="/a")
+        opts2 = FileSystemSnapshotOptions(mount_path="/b")
+        defaults = SandboxDefaults(file_system_snapshot=opts1)
+        new_defaults = defaults.with_overrides(file_system_snapshot=opts2)
+        assert defaults.file_system_snapshot is opts1  # original unchanged
+        assert new_defaults.file_system_snapshot is opts2
 
     def test_resources_accepts_resource_options(self) -> None:
         """Test resources field accepts ResourceOptions."""

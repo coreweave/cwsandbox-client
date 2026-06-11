@@ -32,6 +32,26 @@ class GatewayServiceStub(object):
                 request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxRequest.SerializeToString,
                 response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxResponse.FromString,
                 _registered_method=True)
+        self.CreateFileSystemSnapshot = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/CreateFileSystemSnapshot',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotResponse.FromString,
+                _registered_method=True)
+        self.GetFileSystemSnapshot = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/GetFileSystemSnapshot',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshot.FromString,
+                _registered_method=True)
+        self.ListFileSystemSnapshots = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/ListFileSystemSnapshots',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsResponse.FromString,
+                _registered_method=True)
+        self.DeleteFileSystemSnapshot = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/DeleteFileSystemSnapshot',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotResponse.FromString,
+                _registered_method=True)
         self.Get = channel.unary_unary(
                 '/coreweave.sandbox.v1beta2.GatewayService/Get',
                 request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetSandboxRequest.SerializeToString,
@@ -92,6 +112,16 @@ class GatewayServiceStub(object):
                 request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigRequest.SerializeToString,
                 response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigResponse.FromString,
                 _registered_method=True)
+        self.GetFileSystemSnapshotBucketConfig = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/GetFileSystemSnapshotBucketConfig',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotBucketConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.FromString,
+                _registered_method=True)
+        self.SetFileSystemSnapshotBucketConfig = channel.unary_unary(
+                '/coreweave.sandbox.v1beta2.GatewayService/SetFileSystemSnapshotBucketConfig',
+                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.SetFileSystemSnapshotBucketConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.FromString,
+                _registered_method=True)
 
 
 class GatewayServiceServicer(object):
@@ -111,6 +141,34 @@ class GatewayServiceServicer(object):
 
     def Stop(self, request, context):
         """Stop terminates a running sandbox.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateFileSystemSnapshot(self, request, context):
+        """CreateFileSystemSnapshot creates an FSS from a running sandbox without stopping it.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetFileSystemSnapshot(self, request, context):
+        """GetFileSystemSnapshot retrieves an org-scoped FSS by id.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListFileSystemSnapshots(self, request, context):
+        """ListFileSystemSnapshots lists org-scoped FSS rows.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteFileSystemSnapshot(self, request, context):
+        """DeleteFileSystemSnapshot hides an FSS row from future customer Get/List calls.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -207,6 +265,26 @@ class GatewayServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetFileSystemSnapshotBucketConfig(self, request, context):
+        """--- File System Snapshot Bucket Config Management ---
+
+        Returns the organization's FSS bucket configuration (org_id derived from the
+        authenticated caller). Open to any authenticated org member.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetFileSystemSnapshotBucketConfig(self, request, context):
+        """Creates or replaces the organization's FSS bucket configuration (idempotent
+        full-replace upsert; org_id derived from the caller). Requires the
+        sandbox_admin action: changing or clearing the bucket abandons access to
+        snapshots stored in the prior bucket.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GatewayServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -219,6 +297,26 @@ def add_GatewayServiceServicer_to_server(servicer, server):
                     servicer.Stop,
                     request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxRequest.FromString,
                     response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxResponse.SerializeToString,
+            ),
+            'CreateFileSystemSnapshot': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateFileSystemSnapshot,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotResponse.SerializeToString,
+            ),
+            'GetFileSystemSnapshot': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetFileSystemSnapshot,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshot.SerializeToString,
+            ),
+            'ListFileSystemSnapshots': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListFileSystemSnapshots,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsResponse.SerializeToString,
+            ),
+            'DeleteFileSystemSnapshot': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteFileSystemSnapshot,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotResponse.SerializeToString,
             ),
             'Get': grpc.unary_unary_rpc_method_handler(
                     servicer.Get,
@@ -280,6 +378,16 @@ def add_GatewayServiceServicer_to_server(servicer, server):
                     request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigRequest.FromString,
                     response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigResponse.SerializeToString,
             ),
+            'GetFileSystemSnapshotBucketConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetFileSystemSnapshotBucketConfig,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotBucketConfigRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.SerializeToString,
+            ),
+            'SetFileSystemSnapshotBucketConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetFileSystemSnapshotBucketConfig,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.SetFileSystemSnapshotBucketConfigRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'coreweave.sandbox.v1beta2.GatewayService', rpc_method_handlers)
@@ -340,6 +448,114 @@ class GatewayService(object):
             '/coreweave.sandbox.v1beta2.GatewayService/Stop',
             coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxRequest.SerializeToString,
             coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.StopSandboxResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateFileSystemSnapshot(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/CreateFileSystemSnapshot',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.CreateFileSystemSnapshotResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetFileSystemSnapshot(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/GetFileSystemSnapshot',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListFileSystemSnapshots(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/ListFileSystemSnapshots',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.ListFileSystemSnapshotsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteFileSystemSnapshot(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/DeleteFileSystemSnapshot',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteFileSystemSnapshotResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -664,6 +880,60 @@ class GatewayService(object):
             '/coreweave.sandbox.v1beta2.GatewayService/DeleteObjectStorageWIFConfig',
             coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigRequest.SerializeToString,
             coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.DeleteObjectStorageWIFConfigResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetFileSystemSnapshotBucketConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/GetFileSystemSnapshotBucketConfig',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.GetFileSystemSnapshotBucketConfigRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetFileSystemSnapshotBucketConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/coreweave.sandbox.v1beta2.GatewayService/SetFileSystemSnapshotBucketConfig',
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.SetFileSystemSnapshotBucketConfigRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1beta2_dot_gateway__pb2.FileSystemSnapshotBucketConfig.FromString,
             options,
             channel_credentials,
             insecure,

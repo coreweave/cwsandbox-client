@@ -18,10 +18,20 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxSnapshotError,
     SandboxStreamBackpressureError,
     SandboxStreamTruncatedError,
     SandboxTerminatedError,
     SandboxTimeoutError,
+    SandboxUnavailableError,
+    SnapshotBackendThrottledError,
+    SnapshotBucketMismatchError,
+    SnapshotNotFoundError,
+    SnapshotNotReadyError,
+    SnapshotNotSupportedError,
+    SnapshotQuotaExceededError,
+    SnapshotSizeExceededError,
+    SnapshotWaitTimeoutError,
 )
 
 
@@ -47,6 +57,32 @@ class TestExceptionHierarchy:
     def test_function_error_is_base_for_function_exceptions(self) -> None:
         """Test FunctionError is the base for function-related exceptions."""
         assert issubclass(AsyncFunctionError, FunctionError)
+
+    def test_snapshot_error_hierarchy(self) -> None:
+        """Test FSS exception hierarchy and parent classes."""
+        assert issubclass(SandboxSnapshotError, SandboxError)
+        for cls in (
+            SnapshotNotFoundError,
+            SnapshotNotReadyError,
+            SnapshotNotSupportedError,
+            SnapshotSizeExceededError,
+            SnapshotQuotaExceededError,
+            SnapshotBucketMismatchError,
+        ):
+            assert issubclass(cls, SandboxSnapshotError)
+        # Transient throttling is a retryable SandboxUnavailableError, NOT a
+        # SandboxSnapshotError; wait-timeout is a SandboxTimeoutError.
+        assert issubclass(SnapshotBackendThrottledError, SandboxUnavailableError)
+        assert not issubclass(SnapshotBackendThrottledError, SandboxSnapshotError)
+        assert issubclass(SnapshotWaitTimeoutError, SandboxTimeoutError)
+
+    def test_snapshot_error_carries_snapshot_id(self) -> None:
+        """Test SandboxSnapshotError exposes a file_system_snapshot_id attribute."""
+        exc = SnapshotNotFoundError("missing", file_system_snapshot_id="fss-9", reason="X")
+        assert exc.file_system_snapshot_id == "fss-9"
+        assert exc.reason == "X"
+        # Defaults to None when not provided.
+        assert SandboxSnapshotError("boom").file_system_snapshot_id is None
 
     def test_cwsandbox_error_is_exception(self) -> None:
         """Test CWSandboxError inherits from Exception."""

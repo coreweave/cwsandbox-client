@@ -15,6 +15,7 @@ from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
     ExecOutcome,
+    FileSystemSnapshotOptions,
     NetworkOptions,
     OperationRef,
     ResourceOptions,
@@ -330,6 +331,7 @@ class Session:
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
@@ -362,6 +364,9 @@ class Session:
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
+            file_system_snapshot: File-system snapshot (FSS) mount configuration.
+                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
+                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -421,6 +426,7 @@ class Session:
             s3_mount=s3_mount,
             ports=ports,
             network=network,
+            file_system_snapshot=file_system_snapshot,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             annotations=annotations,
@@ -657,6 +663,7 @@ class Session:
         s3_mount: dict[str, Any] | None = None,
         ports: Sequence[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
@@ -688,6 +695,9 @@ class Session:
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
+            file_system_snapshot: File-system snapshot (FSS) mount configuration.
+                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
+                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -744,6 +754,7 @@ class Session:
                 s3_mount=s3_mount,
                 ports=list(ports) if ports else None,
                 network=network,
+                file_system_snapshot=file_system_snapshot,
                 max_timeout_seconds=max_timeout_seconds,
                 environment_variables=environment_variables,
                 annotations=annotations,

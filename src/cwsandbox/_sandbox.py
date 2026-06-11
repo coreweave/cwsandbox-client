@@ -13,11 +13,13 @@ import random
 import shlex
 import threading
 import time
+import uuid
 import warnings
 import weakref
 from collections.abc import (
     AsyncIterable,
     AsyncIterator,
+    Awaitable,
     Callable,
     Generator,
     Iterable,
@@ -26,9 +28,9 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 import grpc
 import grpc.aio
@@ -39,6 +41,10 @@ from cwsandbox._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
     DEFAULT_FILE_OPERATION_CAP_BYTES,
+    DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+    DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
+    DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS,
+    DEFAULT_FSS_STOP_TIMEOUT_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
     DEFAULT_POLL_BACKOFF_FACTOR,
@@ -72,8 +78,17 @@ from cwsandbox._error_info import (
     CWSANDBOX_FILE_NOT_FOUND,
     CWSANDBOX_FILE_TOO_LARGE,
     CWSANDBOX_FILE_TRUNCATED,
+    CWSANDBOX_FSS_BUCKET_MISMATCH,
+    CWSANDBOX_FSS_NOT_FOUND,
+    CWSANDBOX_FSS_NOT_READY,
+    CWSANDBOX_FSS_NOT_SUPPORTED,
+    CWSANDBOX_FSS_QUOTA_EXCEEDED,
+    CWSANDBOX_FSS_SIZE_EXCEEDED,
+    CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
+    SNAPSHOT_INTERNAL_REASONS,
+    SNAPSHOT_TRANSIENT_REASONS,
     STREAM_BACKPRESSURE,
     STREAM_TRUNCATED,
     UNAVAILABLE_REASONS,
@@ -96,6 +111,12 @@ from cwsandbox._proto import (
 from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
     ExecOutcome,
+    FileSystemSnapshot,
+    FileSystemSnapshotBucketConfig,
+    FileSystemSnapshotBucketMode,
+    FileSystemSnapshotOptions,
+    FileSystemSnapshotStatus,
+    FileSystemSnapshotTrigger,
     NetworkOptions,
     OperationRef,
     Process,
@@ -118,12 +139,22 @@ from cwsandbox.exceptions import (
     SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
+    SandboxSnapshotError,
     SandboxStreamBackpressureError,
     SandboxStreamTruncatedError,
     SandboxTerminalStateUnavailableError,
     SandboxTerminatedError,
     SandboxTimeoutError,
     SandboxUnavailableError,
+    SnapshotBackendThrottledError,
+    SnapshotBucketMismatchError,
+    SnapshotNotFoundError,
+    SnapshotNotReadyError,
+    SnapshotNotSupportedError,
+    SnapshotOnStopConflictError,
+    SnapshotQuotaExceededError,
+    SnapshotSizeExceededError,
+    SnapshotWaitTimeoutError,
 )
 
 if TYPE_CHECKING:
@@ -178,6 +209,165 @@ class SandboxStatus(StrEnum):
         """Convert SandboxStatus to protobuf enum"""
         proto_name = f"SANDBOX_STATUS_{self.name}"
         return gateway_pb2.SandboxStatus.Value(proto_name)
+
+
+def _fss_status_from_proto(value: int) -> FileSystemSnapshotStatus:
+    """Convert a proto FileSystemSnapshotStatus enum to the SDK enum."""
+    try:
+        name = gateway_pb2.FileSystemSnapshotStatus.Name(value).replace(
+            "FILE_SYSTEM_SNAPSHOT_STATUS_", ""
+        )
+        return FileSystemSnapshotStatus[name]
+    except (ValueError, KeyError):
+        logger.warning("Unknown snapshot status %s, treating as UNSPECIFIED", value)
+        return FileSystemSnapshotStatus.UNSPECIFIED
+
+
+def _fss_trigger_from_proto(value: int) -> FileSystemSnapshotTrigger:
+    """Convert a proto FileSystemSnapshotTrigger enum to the SDK enum."""
+    try:
+        name = gateway_pb2.FileSystemSnapshotTrigger.Name(value).replace(
+            "FILE_SYSTEM_SNAPSHOT_TRIGGER_", ""
+        )
+        return FileSystemSnapshotTrigger[name]
+    except (ValueError, KeyError):
+        logger.warning("Unknown snapshot trigger %s, treating as UNSPECIFIED", value)
+        return FileSystemSnapshotTrigger.UNSPECIFIED
+
+
+def _fss_bucket_mode_from_proto(value: int) -> FileSystemSnapshotBucketMode:
+    """Convert a proto FileSystemSnapshotBucketMode enum to the SDK enum."""
+    try:
+        name = gateway_pb2.FileSystemSnapshotBucketMode.Name(value).replace(
+            "FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_", ""
+        )
+        return FileSystemSnapshotBucketMode[name]
+    except (ValueError, KeyError):
+        logger.warning("Unknown snapshot bucket mode %s, treating as UNSPECIFIED", value)
+        return FileSystemSnapshotBucketMode.UNSPECIFIED
+
+
+def _proto_timestamp_to_datetime(message: Any, field_name: str) -> datetime | None:
+    """Return a UTC datetime for a set proto Timestamp field, else None."""
+    if not message.HasField(field_name):
+        return None
+    result = getattr(message, field_name).ToDatetime(tzinfo=UTC)
+    return result if isinstance(result, datetime) else None
+
+
+def _snapshot_from_proto(proto: gateway_pb2.FileSystemSnapshot) -> FileSystemSnapshot:
+    """Convert a proto FileSystemSnapshot to the SDK dataclass."""
+    return FileSystemSnapshot(
+        file_system_snapshot_id=proto.file_system_snapshot_id,
+        status=_fss_status_from_proto(proto.status),
+        status_reason=proto.status_reason,
+        size_bytes=proto.size_bytes,
+        source_sandbox_id=proto.source_sandbox_id,
+        trigger=_fss_trigger_from_proto(proto.trigger),
+        idempotency_key=proto.idempotency_key,
+        object_bucket=proto.object_bucket,
+        created_at=_proto_timestamp_to_datetime(proto, "created_at"),
+        updated_at=_proto_timestamp_to_datetime(proto, "updated_at"),
+        completed_at=_proto_timestamp_to_datetime(proto, "completed_at"),
+    )
+
+
+def _bucket_config_from_proto(
+    proto: gateway_pb2.FileSystemSnapshotBucketConfig,
+) -> FileSystemSnapshotBucketConfig:
+    """Convert a proto FileSystemSnapshotBucketConfig to the SDK dataclass."""
+    return FileSystemSnapshotBucketConfig(
+        mode=_fss_bucket_mode_from_proto(proto.mode),
+        bucket_name=proto.bucket_name,
+        region=proto.region,
+        effective_bucket_name=proto.effective_bucket_name,
+    )
+
+
+def _coerce_file_system_snapshot(
+    value: FileSystemSnapshotOptions | Mapping[str, Any] | None,
+) -> FileSystemSnapshotOptions | None:
+    """Coerce the ``file_system_snapshot`` argument to FileSystemSnapshotOptions.
+
+    Accepts a FileSystemSnapshotOptions, a plain mapping with matching keys, or
+    None. Raises TypeError for anything else.
+    """
+    if value is None:
+        return None
+    if isinstance(value, FileSystemSnapshotOptions):
+        return value
+    if isinstance(value, Mapping):
+        return FileSystemSnapshotOptions(**value)
+    raise TypeError(
+        "file_system_snapshot must be FileSystemSnapshotOptions, dict, or None, "
+        f"got {type(value).__name__}"
+    )
+
+
+def _file_system_mount_kwargs(opts: FileSystemSnapshotOptions) -> dict[str, Any]:
+    """Build StartSandboxRequest.file_system (SandboxFileSystemMount) kwargs."""
+    mount: dict[str, Any] = {"mount_path": opts.mount_path}
+    if opts.size is not None:
+        mount["size"] = opts.size
+    if opts.file_system_snapshot_id is not None:
+        mount["file_system_snapshot"] = {"file_system_snapshot_id": opts.file_system_snapshot_id}
+    return mount
+
+
+async def _create_snapshot_via_stub(
+    stub: gateway_pb2_grpc.GatewayServiceStub,
+    sandbox_id: str,
+    *,
+    idempotency_key: str | None,
+    wait_for_ready: bool,
+    auth_metadata: tuple[tuple[str, str], ...],
+    timeout: float,
+    max_timeout_seconds: int | None = None,
+) -> str:
+    """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot ID."""
+    request = gateway_pb2.CreateFileSystemSnapshotRequest(
+        sandbox_id=sandbox_id,
+        wait_for_ready=wait_for_ready,
+    )
+    if idempotency_key:
+        request.idempotency_key = idempotency_key
+    if max_timeout_seconds is not None:
+        request.max_timeout_seconds = max_timeout_seconds
+    try:
+        response = await stub.CreateFileSystemSnapshot(
+            request, timeout=timeout, metadata=auth_metadata
+        )
+    except grpc.RpcError as e:
+        raise _translate_rpc_error(
+            e, sandbox_id=sandbox_id, operation="Create file-system snapshot"
+        ) from e
+    if not response.success:
+        raise SandboxSnapshotError(
+            f"Failed to create file-system snapshot: {response.error_message or 'unknown error'}"
+        )
+    return str(response.file_system_snapshot_id)
+
+
+async def _get_snapshot_via_stub(
+    stub: gateway_pb2_grpc.GatewayServiceStub,
+    file_system_snapshot_id: str,
+    *,
+    auth_metadata: tuple[tuple[str, str], ...],
+    timeout: float,
+) -> FileSystemSnapshot:
+    """Call GetFileSystemSnapshot on ``stub``; return the snapshot record."""
+    request = gateway_pb2.GetFileSystemSnapshotRequest(
+        file_system_snapshot_id=file_system_snapshot_id
+    )
+    try:
+        proto = await stub.GetFileSystemSnapshot(request, timeout=timeout, metadata=auth_metadata)
+    except grpc.RpcError as e:
+        raise _translate_rpc_error(
+            e,
+            operation="Get file-system snapshot",
+            file_system_snapshot_id=file_system_snapshot_id,
+        ) from e
+    return _snapshot_from_proto(proto)
 
 
 def _validate_cwd(cwd: str | None) -> None:
@@ -281,12 +471,71 @@ def _wrap_command_with_cwd(command: Sequence[str], cwd: str) -> list[str]:
     return ["/bin/sh", "-c", f"cd {escaped_cwd} && exec {escaped_command}"]
 
 
+def _translate_snapshot_reason(
+    reason: str,
+    *,
+    details: str,
+    operation: str,
+    file_system_snapshot_id: str | None,
+    metadata: Mapping[str, str] | None,
+    retry_delay: timedelta | None,
+) -> CWSandboxError | None:
+    """Map a trusted FSS ``CWSANDBOX_FSS_*`` reason to a typed exception.
+
+    Returns ``None`` when ``reason`` is not a known FSS reason, so the caller
+    can fall through to status-code mapping. The ``file_system_snapshot_id`` is attached
+    only to ``SandboxSnapshotError`` variants; the transient and wait-timeout
+    classes inherit non-snapshot parents and do not carry it.
+    """
+    snapshot_classes: dict[str, type[SandboxSnapshotError]] = {
+        CWSANDBOX_FSS_NOT_FOUND: SnapshotNotFoundError,
+        CWSANDBOX_FSS_NOT_READY: SnapshotNotReadyError,
+        CWSANDBOX_FSS_NOT_SUPPORTED: SnapshotNotSupportedError,
+        CWSANDBOX_FSS_SIZE_EXCEEDED: SnapshotSizeExceededError,
+        CWSANDBOX_FSS_QUOTA_EXCEEDED: SnapshotQuotaExceededError,
+        CWSANDBOX_FSS_BUCKET_MISMATCH: SnapshotBucketMismatchError,
+    }
+    cls = snapshot_classes.get(reason)
+    if cls is not None:
+        return cls(
+            f"{operation} failed ({reason}): {details}",
+            file_system_snapshot_id=file_system_snapshot_id,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if reason in SNAPSHOT_INTERNAL_REASONS:
+        return SandboxSnapshotError(
+            f"{operation} failed ({reason}): {details}",
+            file_system_snapshot_id=file_system_snapshot_id,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if reason == CWSANDBOX_FSS_WAIT_TIMEOUT:
+        return SnapshotWaitTimeoutError(
+            f"{operation} timed out waiting for snapshot ready ({reason}): {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if reason in SNAPSHOT_TRANSIENT_REASONS:
+        return SnapshotBackendThrottledError(
+            f"Snapshot backend throttled ({reason}): {details}",
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    return None
+
+
 def _translate_rpc_error(
     e: grpc.RpcError,
     *,
     sandbox_id: str | None = None,
     operation: str = "operation",
     filepath: str | None = None,
+    file_system_snapshot_id: str | None = None,
 ) -> CWSandboxError:
     """Translate gRPC RpcError to appropriate CWSandbox exception.
 
@@ -371,8 +620,33 @@ def _translate_rpc_error(
                 metadata=metadata,
                 retry_delay=retry_delay,
             )
+        # File-system snapshot (FSS) reasons. The transient ones subclass
+        # SandboxUnavailableError so the poll loop treats them as retryable;
+        # the rest are terminal SandboxSnapshotError variants.
+        snapshot_exc = _translate_snapshot_reason(
+            reason,
+            details=details,
+            operation=operation,
+            file_system_snapshot_id=file_system_snapshot_id,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+        if snapshot_exc is not None:
+            return snapshot_exc
 
     if code == grpc.StatusCode.NOT_FOUND:
+        # An FSS operation carries a snapshot ID, not a sandbox ID. Map a bare
+        # NOT_FOUND (no AIP-193 FSS reason, e.g. an older backend or a proxy that
+        # dropped the metadata) to the documented SnapshotNotFoundError so callers
+        # catching it still work.
+        if file_system_snapshot_id is not None:
+            return SnapshotNotFoundError(
+                f"File-system snapshot '{file_system_snapshot_id}' not found",
+                file_system_snapshot_id=file_system_snapshot_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
         return SandboxNotFoundError(
             f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
             sandbox_id=sandbox_id,
@@ -584,6 +858,96 @@ def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
     return "fatal"
 
 
+_T = TypeVar("_T")
+
+
+async def _retry_transient_rpc(
+    attempt: Callable[[], Awaitable[_T]],
+    *,
+    budget_seconds: float,
+    operation: str,
+    non_retryable: tuple[type[CWSandboxError], ...] = (),
+) -> _T:
+    """Run ``attempt`` with bounded retry on transient CWSandbox errors.
+
+    ``attempt`` performs exactly one RPC try and must raise a *translated*
+    ``CWSandboxError`` on failure (i.e. wrap the stub call and
+    ``_translate_rpc_error``). Only classes in ``_RETRYABLE_POLL_EXCEPTIONS``
+    are retried - transient unavailability, request-deadline, resource
+    exhaustion, and FSS backend-throttling (which subclasses
+    ``SandboxUnavailableError``). Every other error, including ``NOT_FOUND``
+    and ``FAILED_PRECONDITION``, is fatal and re-raised on the first attempt.
+
+    ``non_retryable`` lists exception classes to treat as fatal even when they
+    would otherwise be retryable. Use it when the per-attempt timeout *is* the
+    operation's ceiling, so a deadline is the ceiling being hit rather than a
+    transient blip - retrying would just re-spend the full (large) timeout and
+    overrun the ceiling (the loop bounds the inter-attempt gap, not attempt
+    duration).
+
+    ``budget_seconds`` caps wall-clock time spent *retrying*; it never delays
+    the first attempt. On exhaustion the last translated exception is re-raised
+    unchanged. AIP-193 ``RetryInfo`` hints are honored; otherwise the backoff
+    uses the same decorrelated jitter as the status-poll loop.
+    """
+    retry_deadline: float | None = None
+    last_exc: CWSandboxError | None = None
+    prev_sleep = DEFAULT_POLL_INTERVAL_SECONDS
+    attempts = 0
+
+    while True:
+        try:
+            return await attempt()
+        except CWSandboxError as exc:
+            last_exc = exc
+            if (
+                isinstance(exc, non_retryable)
+                or _classify_poll_error(exc) != "retryable"
+                or budget_seconds <= 0
+            ):
+                raise
+
+            # First retryable failure starts the budget timer.
+            if retry_deadline is None:
+                retry_deadline = time.monotonic() + budget_seconds
+
+            attempts += 1
+            now = time.monotonic()
+            if now >= retry_deadline:
+                logger.debug(
+                    "FSS retry budget exhausted for %s after %d attempt(s)",
+                    operation,
+                    attempts,
+                )
+                raise
+            remaining = retry_deadline - now
+            hinted_delay = exc.retry_delay.total_seconds() if exc.retry_delay else None
+            if hinted_delay is not None and hinted_delay > 0:
+                sleep_for = min(hinted_delay, remaining, MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
+            else:
+                base = DEFAULT_POLL_INTERVAL_SECONDS
+                cap = DEFAULT_MAX_POLL_INTERVAL_SECONDS
+                jitter_ceiling = max(
+                    base, min(cap, prev_sleep * DEFAULT_POLL_BACKOFF_FACTOR, remaining)
+                )
+                sleep_for = min(random.uniform(base, jitter_ceiling), remaining)
+            logger.debug(
+                "FSS retry for %s: sleep=%.2fs remaining=%.2fs attempt=%d",
+                operation,
+                sleep_for,
+                remaining,
+                attempts,
+            )
+        await asyncio.sleep(sleep_for)
+        prev_sleep = sleep_for
+        # A long hinted delay can exhaust the budget while we slept; re-raise
+        # rather than issuing an attempt guaranteed to overrun the ceiling.
+        assert retry_deadline is not None
+        if time.monotonic() >= retry_deadline:
+            assert last_exc is not None
+            raise last_exc
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle state types
 # ---------------------------------------------------------------------------
@@ -755,6 +1119,7 @@ class Sandbox:
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
@@ -794,6 +1159,12 @@ class Sandbox:
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
+            file_system_snapshot: File-system snapshot (FSS) mount configuration.
+                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
+                optional ``size``, and optional ``file_system_snapshot_id``. When
+                ``file_system_snapshot_id`` is set, the snapshot is restored into
+                ``mount_path`` at start (fork); otherwise the mount starts empty.
+                Requires the organization to be enabled for FSS.
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -875,6 +1246,15 @@ class Sandbox:
         effective_network = network if network is not None else self._defaults.network
         if effective_network is not None:
             self._start_kwargs["network"] = effective_network
+        # Use explicit file-system snapshot mount or fall back to defaults.
+        effective_fss = (
+            file_system_snapshot
+            if file_system_snapshot is not None
+            else self._defaults.file_system_snapshot
+        )
+        effective_fss = _coerce_file_system_snapshot(effective_fss)
+        if effective_fss is not None:
+            self._start_kwargs["file_system_snapshot"] = effective_fss
         if max_timeout_seconds is not None:
             self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
         merged_secrets = list(self._defaults.secrets or ()) + [
@@ -924,6 +1304,10 @@ class Sandbox:
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stop_owned: bool = False
+        # Whether the in-flight shared stop task (when _stop_task is set) was
+        # created for a snapshot-on-stop. Read under _stop_lock to decide
+        # whether a later snapshot-on-stop caller can safely join it.
+        self._stop_snapshot_requested: bool = False
         # Set when a caller invokes stop(missing_ok=True) on a sandbox that
         # is already draining (observe-only path). Widens the NOT_FOUND
         # retry gate in _do_poll_complete so the observe-only waiter treats
@@ -939,6 +1323,9 @@ class Sandbox:
         self._resource_limits: dict[str, str] | None = None
         self._resource_requests: dict[str, str] | None = None
         self._resource_gpu: dict[str, Any] | None = None
+        # Snapshot ID produced by stop(snapshot_on_stop=True), set when the
+        # Stop response reports it. None until then.
+        self._file_system_snapshot_id: str | None = None
 
         # Execution statistics for metrics (protected by _exec_stats_lock)
         self._exec_stats_lock = threading.Lock()
@@ -973,6 +1360,7 @@ class Sandbox:
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
@@ -1014,6 +1402,11 @@ class Sandbox:
             s3_mount: S3 bucket mount configuration
             ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
+            file_system_snapshot: File-system snapshot (FSS) mount configuration.
+                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
+                optional ``size``, and optional ``file_system_snapshot_id``. When
+                ``file_system_snapshot_id`` is set, the snapshot is restored into
+                ``mount_path`` at start (fork); otherwise the mount starts empty.
             max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
@@ -1073,6 +1466,7 @@ class Sandbox:
             s3_mount=s3_mount,
             ports=ports,
             network=network,
+            file_system_snapshot=file_system_snapshot,
             max_timeout_seconds=max_timeout_seconds,
             environment_variables=environment_variables,
             annotations=annotations,
@@ -1571,6 +1965,438 @@ class Sandbox:
         finally:
             await channel.close(grace=None)
 
+    @classmethod
+    def get_snapshot(
+        cls,
+        file_system_snapshot_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> OperationRef[FileSystemSnapshot]:
+        """Fetch a file-system snapshot (FSS) record by ID.
+
+        Snapshots are org-scoped: any snapshot owned by your organization is
+        visible, regardless of which sandbox created it.
+
+        Args:
+            file_system_snapshot_id: The snapshot ID to fetch.
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            timeout_seconds: Request timeout (default: 300s).
+
+        Returns:
+            OperationRef[FileSystemSnapshot]: Use .result() to block or await.
+            Raises SnapshotNotFoundError if the snapshot does not exist.
+
+        Examples:
+            ```python
+            snap = Sandbox.get_snapshot("fss-abc123").result()
+            print(snap.status, snap.size_bytes)
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._get_snapshot_async(
+                file_system_snapshot_id, base_url=base_url, timeout_seconds=timeout_seconds
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
+    async def _get_snapshot_async(
+        cls,
+        file_system_snapshot_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> FileSystemSnapshot:
+        """Internal async: fetch a snapshot record by ID."""
+        effective_base_url = (
+            base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
+        auth_metadata = resolve_auth_metadata()
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(target, is_secure)
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            return await _retry_transient_rpc(
+                lambda: _get_snapshot_via_stub(
+                    stub,
+                    file_system_snapshot_id,
+                    auth_metadata=auth_metadata,
+                    timeout=timeout,
+                ),
+                budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+                operation="Get file-system snapshot",
+            )
+        finally:
+            await channel.close(grace=None)
+
+    @classmethod
+    def list_snapshots(
+        cls,
+        *,
+        source_sandbox_id: str | None = None,
+        status: FileSystemSnapshotStatus | str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> OperationRef[builtins.list[FileSystemSnapshot]]:
+        """List file-system snapshots (FSS) for the organization.
+
+        Snapshots are org-scoped and the listing is auto-paginated. The
+        ``source_sandbox_id`` and ``status`` filters are applied client-side
+        (the backend list RPC does not filter), so all snapshots are fetched
+        before filtering.
+
+        Args:
+            source_sandbox_id: If set, only snapshots captured from this sandbox.
+            status: If set, only snapshots in this status (FileSystemSnapshotStatus
+                or its string value).
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            timeout_seconds: Request timeout (default: 300s).
+
+        Returns:
+            OperationRef[list[FileSystemSnapshot]]: Use .result() to block or await.
+
+        Examples:
+            ```python
+            # All ready snapshots from a given sandbox
+            snaps = Sandbox.list_snapshots(
+                source_sandbox_id=sb.sandbox_id,
+                status=FileSystemSnapshotStatus.READY,
+            ).result()
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._list_snapshots_async(
+                source_sandbox_id=source_sandbox_id,
+                status=status,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
+    async def _list_snapshots_async(
+        cls,
+        *,
+        source_sandbox_id: str | None = None,
+        status: FileSystemSnapshotStatus | str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> builtins.list[FileSystemSnapshot]:
+        """Internal async: list snapshots with optional client-side filters."""
+        effective_base_url = (
+            base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
+        status_filter = FileSystemSnapshotStatus(status) if status is not None else None
+
+        auth_metadata = resolve_auth_metadata()
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(target, is_secure)
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        try:
+
+            async def _attempt() -> builtins.list[Any]:
+                # Build the request inside the attempt: paginate_async mutates
+                # page_token in place, so a retry must start from a fresh
+                # request (page 1) rather than resuming from the last token.
+                request = gateway_pb2.ListFileSystemSnapshotsRequest()
+                try:
+                    return await paginate_async(
+                        stub.ListFileSystemSnapshots,
+                        request,
+                        "file_system_snapshots",
+                        auth_metadata,
+                        timeout,
+                        operation="List file-system snapshots",
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(e, operation="List file-system snapshots") from e
+
+            protos = await _retry_transient_rpc(
+                _attempt,
+                budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+                operation="List file-system snapshots",
+            )
+
+            snapshots = [_snapshot_from_proto(p) for p in protos]
+        finally:
+            await channel.close(grace=None)
+
+        if source_sandbox_id is not None:
+            snapshots = [s for s in snapshots if s.source_sandbox_id == source_sandbox_id]
+        if status_filter is not None:
+            snapshots = [s for s in snapshots if s.status == status_filter]
+        return snapshots
+
+    @classmethod
+    def delete_snapshot(
+        cls,
+        file_system_snapshot_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        missing_ok: bool = False,
+    ) -> OperationRef[None]:
+        """Delete a file-system snapshot (FSS) by ID.
+
+        Deleting a snapshot does not affect sandboxes already restored from it.
+
+        Args:
+            file_system_snapshot_id: The snapshot ID to delete.
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            timeout_seconds: Request timeout (default: 300s).
+            missing_ok: If True, suppress SnapshotNotFoundError when the snapshot
+                doesn't exist (already deleted).
+
+        Returns:
+            OperationRef[None]: Use .result() to block or await.
+            Raises SnapshotNotFoundError if not found (unless missing_ok=True).
+
+        Examples:
+            ```python
+            Sandbox.delete_snapshot("fss-abc123").result()
+            Sandbox.delete_snapshot("fss-abc123", missing_ok=True).result()
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._delete_snapshot_async(
+                file_system_snapshot_id,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                missing_ok=missing_ok,
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
+    async def _delete_snapshot_async(
+        cls,
+        file_system_snapshot_id: str,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        missing_ok: bool = False,
+    ) -> None:
+        """Internal async: delete a snapshot by ID."""
+        effective_base_url = (
+            base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
+        auth_metadata = resolve_auth_metadata()
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(target, is_secure)
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            request = gateway_pb2.DeleteFileSystemSnapshotRequest(
+                file_system_snapshot_id=file_system_snapshot_id
+            )
+            attempts = {"n": 0}
+
+            async def _attempt() -> None:
+                attempts["n"] += 1
+                try:
+                    response = await stub.DeleteFileSystemSnapshot(
+                        request, timeout=timeout, metadata=auth_metadata
+                    )
+                except grpc.RpcError as e:
+                    parsed = parse_error_info(e)
+                    # NOT_FOUND is success when missing_ok, or on a retry: an
+                    # earlier attempt likely committed the delete before its
+                    # response was lost to a transient failure. For DELETE the
+                    # postcondition (snapshot gone) is satisfied either way.
+                    if is_not_found(e, parsed, CWSANDBOX_FSS_NOT_FOUND) and (
+                        missing_ok or attempts["n"] > 1
+                    ):
+                        return
+                    raise _translate_rpc_error(
+                        e,
+                        operation="Delete file-system snapshot",
+                        file_system_snapshot_id=file_system_snapshot_id,
+                    ) from e
+                if not response.success:
+                    raise SandboxSnapshotError(
+                        f"Failed to delete file-system snapshot: "
+                        f"{response.error_message or 'unknown error'}",
+                        file_system_snapshot_id=file_system_snapshot_id,
+                    )
+
+            await _retry_transient_rpc(
+                _attempt,
+                budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+                operation="Delete file-system snapshot",
+            )
+        finally:
+            await channel.close(grace=None)
+
+    @classmethod
+    def get_snapshot_bucket_config(
+        cls,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> OperationRef[FileSystemSnapshotBucketConfig]:
+        """Fetch the organization's FSS object-storage bucket configuration.
+
+        Args:
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            timeout_seconds: Request timeout (default: 300s).
+
+        Returns:
+            OperationRef[FileSystemSnapshotBucketConfig]: Use .result() or await.
+
+        Examples:
+            ```python
+            cfg = Sandbox.get_snapshot_bucket_config().result()
+            print(cfg.mode, cfg.effective_bucket_name)
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._get_snapshot_bucket_config_async(
+                base_url=base_url, timeout_seconds=timeout_seconds
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
+    async def _get_snapshot_bucket_config_async(
+        cls,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> FileSystemSnapshotBucketConfig:
+        """Internal async: fetch the org's FSS bucket configuration."""
+        effective_base_url = (
+            base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
+        auth_metadata = resolve_auth_metadata()
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(target, is_secure)
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            request = gateway_pb2.GetFileSystemSnapshotBucketConfigRequest()
+
+            async def _attempt() -> FileSystemSnapshotBucketConfig:
+                try:
+                    proto = await stub.GetFileSystemSnapshotBucketConfig(
+                        request, timeout=timeout, metadata=auth_metadata
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(
+                        e, operation="Get file-system snapshot bucket config"
+                    ) from e
+                return _bucket_config_from_proto(proto)
+
+            return await _retry_transient_rpc(
+                _attempt,
+                budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+                operation="Get file-system snapshot bucket config",
+            )
+        finally:
+            await channel.close(grace=None)
+
+    @classmethod
+    def set_snapshot_bucket_config(
+        cls,
+        *,
+        bucket_name: str,
+        region: str = "",
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> OperationRef[FileSystemSnapshotBucketConfig]:
+        """Set the organization's FSS object-storage bucket configuration.
+
+        Provide a ``bucket_name`` to use a bring-your-own bucket; pass an empty
+        string to revert to the CoreWeave-managed bucket. This is an
+        admin-gated operation.
+
+        Args:
+            bucket_name: Bucket to archive snapshots to. Empty string reverts to
+                the CoreWeave-managed bucket.
+            region: Bucket region (required by some providers for BYO buckets).
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            timeout_seconds: Request timeout (default: 300s).
+
+        Returns:
+            OperationRef[FileSystemSnapshotBucketConfig]: The updated config.
+
+        Examples:
+            ```python
+            # Bring-your-own bucket
+            Sandbox.set_snapshot_bucket_config(
+                bucket_name="my-org-fss", region="us-east-1"
+            ).result()
+
+            # Revert to CoreWeave-managed
+            Sandbox.set_snapshot_bucket_config(bucket_name="").result()
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._set_snapshot_bucket_config_async(
+                bucket_name=bucket_name,
+                region=region,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
+    async def _set_snapshot_bucket_config_async(
+        cls,
+        *,
+        bucket_name: str,
+        region: str = "",
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> FileSystemSnapshotBucketConfig:
+        """Internal async: set the org's FSS bucket configuration."""
+        effective_base_url = (
+            base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
+        auth_metadata = resolve_auth_metadata()
+        target, is_secure = parse_grpc_target(effective_base_url)
+        channel = create_channel(target, is_secure)
+        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            request = gateway_pb2.SetFileSystemSnapshotBucketConfigRequest(
+                bucket_name=bucket_name,
+                region=region,
+            )
+
+            async def _attempt() -> FileSystemSnapshotBucketConfig:
+                try:
+                    proto = await stub.SetFileSystemSnapshotBucketConfig(
+                        request, timeout=timeout, metadata=auth_metadata
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(
+                        e, operation="Set file-system snapshot bucket config"
+                    ) from e
+                return _bucket_config_from_proto(proto)
+
+            return await _retry_transient_rpc(
+                _attempt,
+                budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+                operation="Set file-system snapshot bucket config",
+            )
+        finally:
+            await channel.close(grace=None)
+
     @property
     def sandbox_id(self) -> str | None:
         """The unique sandbox ID, or None if not yet started."""
@@ -1703,6 +2529,17 @@ class Sandbox:
     def resource_gpu(self) -> dict[str, Any] | None:
         """GPU config confirmed by the start response, or None for discovered sandboxes."""
         return self._resource_gpu
+
+    @property
+    def file_system_snapshot_id(self) -> str | None:
+        """ID of the snapshot produced by ``stop(snapshot_on_stop=True)``.
+
+        Populated once the stop OperationRef resolves and the backend reported a
+        snapshot ID. None when no snapshot-on-stop was requested (or it produced
+        none). Use ``snapshot()`` for mid-life snapshots, which return the record
+        directly.
+        """
+        return self._file_system_snapshot_id
 
     @property
     def exec_stats(self) -> dict[str, int]:
@@ -2387,6 +3224,11 @@ class Sandbox:
                     for store, mappings in grouped.items()
                 ]
 
+            # Convert FileSystemSnapshotOptions to the proto file_system mount.
+            fss_opts = request_kwargs.pop("file_system_snapshot", None)
+            if fss_opts is not None:
+                request_kwargs["file_system"] = _file_system_mount_kwargs(fss_opts)
+
             logger.debug("Starting sandbox with image %s", self._container_image)
 
             request = gateway_pb2.StartSandboxRequest(**request_kwargs)
@@ -2882,11 +3724,14 @@ class Sandbox:
         snapshot_on_stop: bool = False,
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
+        wait_for_ready: bool = True,
+        idempotency_key: str | None = None,
     ) -> None:
         """Body of the shared _stop_task: send Stop RPC, poll to terminal, cleanup.
 
-        Only the first caller's parameters (snapshot_on_stop, graceful_shutdown_seconds)
-        are used. Later stop() calls join the existing task.
+        Only the first caller's parameters (snapshot_on_stop,
+        graceful_shutdown_seconds, wait_for_ready, idempotency_key) are used.
+        Later stop() calls join the existing task.
         """
         sent_rpc = False
 
@@ -2917,21 +3762,50 @@ class Sandbox:
                 await self._ensure_client()
                 assert self._stub is not None
 
-                max_timeout = int(graceful_shutdown_seconds) + int(
-                    DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
-                )
+                # The backend runs a snapshot-on-stop in two sequential phases:
+                # it archives the mount (bounded by max_timeout_seconds, the FSS
+                # default) and THEN deletes the pod (bounded by
+                # graceful_shutdown_seconds). max_timeout_seconds bounds only the
+                # archive; the client deadline must cover BOTH phases, so it is
+                # the sum (see client_deadline below) — not max_timeout alone.
+                # A plain stop has no archive phase and stays bounded by graceful
+                # shutdown.
+                if snapshot_on_stop:
+                    max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+                    # The backend substitutes its own grace default when 0 is
+                    # sent, so budget that rather than zero.
+                    effective_grace = (
+                        int(graceful_shutdown_seconds)
+                        if int(graceful_shutdown_seconds) > 0
+                        else int(DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS)
+                    )
+                    client_deadline = (
+                        max_timeout + effective_grace + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
+                    )
+                else:
+                    max_timeout = int(graceful_shutdown_seconds) + int(
+                        DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+                    )
+                    client_deadline = max_timeout + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
+                # The renamed proto field is file_system_snapshot_on_stop;
+                # wait_for_ready/idempotency_key are only valid alongside it,
+                # so only send them when a snapshot is requested.
                 request = gateway_pb2.StopSandboxRequest(
                     sandbox_id=sandbox_id,
                     graceful_shutdown_seconds=int(graceful_shutdown_seconds),
-                    snapshot_on_stop=snapshot_on_stop,
+                    file_system_snapshot_on_stop=snapshot_on_stop,
                     max_timeout_seconds=max_timeout,
                 )
+                if snapshot_on_stop:
+                    request.wait_for_ready = wait_for_ready
+                    if idempotency_key:
+                        request.idempotency_key = idempotency_key
 
                 # Send Stop RPC first, then update state on success
                 try:
                     response = await self._stub.Stop(
                         request,
-                        timeout=max_timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
+                        timeout=client_deadline,
                         metadata=self._auth_metadata,
                     )
                 except grpc.RpcError as e:
@@ -2962,6 +3836,11 @@ class Sandbox:
                 if not response.success:
                     error_msg = response.error_message or "unknown error"
                     raise SandboxError(f"Failed to stop sandbox: {error_msg}")
+
+                # Capture the snapshot ID produced by snapshot-on-stop, if any.
+                # Only populated when file_system_snapshot_on_stop was accepted.
+                if response.file_system_snapshot_id:
+                    self._file_system_snapshot_id = response.file_system_snapshot_id
 
                 # RPC succeeded: transition to _Stopping
                 self._state = _Stopping(
@@ -2998,18 +3877,66 @@ class Sandbox:
         if self._stop_task is task:
             self._stop_task = None
 
+    def _reject_unsatisfiable_snapshot_on_stop(self) -> None:
+        """Raise if a ``snapshot_on_stop=True`` request cannot be honored.
+
+        Must be called while holding ``_stop_lock``. ``stop()`` coalesces
+        callers onto one shared stop task, so a snapshot-on-stop is honorable
+        only when this caller will own a fresh stop (creating the task) or when
+        it joins a stop that is itself a snapshot-on-stop. Every other state
+        means the sandbox is, or is about to be, torn down without archiving
+        the mount — joining would silently drop the snapshot. A sandbox that
+        was never started has no mount to archive, so it is left to the normal
+        no-op path rather than raising here.
+        """
+        # Already terminal: a snapshot captured by a prior snapshot-on-stop
+        # makes this idempotently satisfiable; otherwise the sandbox is gone
+        # with no archive.
+        if self._is_done:
+            if self._file_system_snapshot_id is not None:
+                return
+            if self._is_cancelled:
+                return
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: sandbox has already stopped."
+            )
+        # A stop this caller would join is already in flight. Joining is safe
+        # only when that stop is itself capturing a snapshot.
+        if self._stop_task is not None and not self._stop_task.done():
+            if self._stop_snapshot_requested:
+                return
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: a plain stop is already in progress for this sandbox."
+            )
+        # Draining (TERMINATING) with no stop task we own: the backend is
+        # already tearing the sandbox down (external stop, TTL, or a
+        # poller-observed termination), so no snapshot RPC will be sent.
+        if self._is_stopping:
+            raise SnapshotOnStopConflictError(
+                "Cannot snapshot on stop: sandbox is already terminating."
+            )
+
     async def _stop_async(
         self,
         *,
         snapshot_on_stop: bool = False,
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
+        wait_for_ready: bool = True,
+        idempotency_key: str | None = None,
     ) -> None:
         """Internal async: Stop the sandbox using shared _stop_task pattern.
 
         First caller creates the task; later callers join it.
         """
         async with self._stop_lock:
+            # A snapshot-on-stop request cannot be honored by joining (or
+            # observing) a stop that will not archive the mount. Detect that
+            # here and raise rather than silently coalescing into a no-snapshot
+            # stop, which would destroy the sandbox with no archive and still
+            # return success. Plain stops keep coalescing in every case.
+            if snapshot_on_stop:
+                self._reject_unsatisfiable_snapshot_on_stop()
             if self._is_done:
                 logger.debug("stop() called on already-stopped sandbox %s", self._sandbox_id)
                 return
@@ -3018,11 +3945,14 @@ class Sandbox:
                 self._state = _NotStarted(cancelled=True)
                 return
             if self._stop_task is None:
+                self._stop_snapshot_requested = snapshot_on_stop
                 self._stop_task = asyncio.create_task(
                     self._do_stop(
                         snapshot_on_stop=snapshot_on_stop,
                         graceful_shutdown_seconds=graceful_shutdown_seconds,
                         missing_ok=missing_ok,
+                        wait_for_ready=wait_for_ready,
+                        idempotency_key=idempotency_key,
                     )
                 )
                 self._stop_task.add_done_callback(self._on_stop_task_done)
@@ -3052,6 +3982,8 @@ class Sandbox:
         snapshot_on_stop: bool = False,
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
+        wait_for_ready: bool = True,
+        idempotency_key: str | None = None,
     ) -> OperationRef[None]:
         """Stop sandbox, return OperationRef immediately.
 
@@ -3061,16 +3993,39 @@ class Sandbox:
         just when the stop RPC succeeds.
 
         Multiple callers share the same underlying stop task: the first caller
-        creates it, subsequent callers join it.
+        creates it, subsequent callers join it. A ``snapshot_on_stop=True``
+        request that would join (or observe) a stop that is not capturing a
+        snapshot — because the sandbox is already stopping, already stopped, or
+        a plain ``stop()`` is already in flight — raises
+        ``SnapshotOnStopConflictError`` instead of silently completing without
+        an archive. Plain stops always coalesce.
 
         The sandbox is deregistered from its session regardless of whether
         the stop was successful, since the sandbox is no longer usable.
 
         Args:
-            snapshot_on_stop: If True, capture sandbox state before shutdown.
-            graceful_shutdown_seconds: Time to wait for graceful shutdown.
+            snapshot_on_stop: If True, capture a file-system snapshot (FSS) of
+                the configured mount before shutdown. The resulting snapshot ID
+                is available via the ``file_system_snapshot_id`` property after
+                the returned OperationRef resolves. Requires the sandbox to have
+                been started with a ``file_system_snapshot`` mount and the org to
+                be enabled for FSS. Raises ``SnapshotOnStopConflictError`` if a
+                stop is already in progress that will not capture a snapshot.
+            graceful_shutdown_seconds: Time to wait for graceful shutdown. With
+                ``snapshot_on_stop=True`` this is the post-archive pod-delete
+                grace, applied *after* the snapshot completes, so the client
+                deadline covers the archive budget plus this grace. Passing 0
+                does not mean "no grace": the backend substitutes its own
+                default (~30s), and the client deadline budgets that. The
+                backend caps this at 300s for snapshot-on-stop.
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
+            wait_for_ready: When ``snapshot_on_stop`` is True, block until the
+                snapshot reaches READY (or FAILED) before the stop completes.
+                Ignored when ``snapshot_on_stop`` is False.
+            idempotency_key: Optional client-supplied key to deduplicate the
+                snapshot-on-stop request on retries. Ignored when
+                ``snapshot_on_stop`` is False.
 
         Returns:
             OperationRef[None]: Use .result() to block until terminal.
@@ -3084,6 +4039,10 @@ class Sandbox:
             # Ignore if already deleted
             sb.stop(missing_ok=True).result()
 
+            # Snapshot the configured mount on stop, then read the ID
+            sb.stop(snapshot_on_stop=True).result()
+            file_system_snapshot_id = sb.file_system_snapshot_id
+
             # wait_until_complete() after stop() resolves when terminal
             sb.stop()
             sb.wait_until_complete().result()  # Polls through TERMINATING
@@ -3094,6 +4053,115 @@ class Sandbox:
                 snapshot_on_stop=snapshot_on_stop,
                 graceful_shutdown_seconds=graceful_shutdown_seconds,
                 missing_ok=missing_ok,
+                wait_for_ready=wait_for_ready,
+                idempotency_key=idempotency_key,
+            )
+        )
+        return OperationRef(future)
+
+    async def _snapshot_async(
+        self,
+        *,
+        wait_for_ready: bool,
+        idempotency_key: str | None,
+    ) -> str:
+        """Internal async: create a mid-life snapshot and return its ID."""
+        await self._ensure_started_async()
+        # Snapshotting requires a running sandbox (the backend archives the live
+        # mount), so wait for RUNNING like exec/read_file/write_file do; calling
+        # on a just-started sandbox would otherwise race startup.
+        await self._wait_until_running_async()
+        await self._ensure_client()
+        assert self._stub is not None
+        assert self._sandbox_id is not None
+        stub = self._stub
+        sandbox_id = self._sandbox_id
+
+        # wait_for_ready blocks on the runner archive, so the client deadline
+        # must be generous; otherwise the create RPC returns promptly.
+        create_timeout = (
+            DEFAULT_FSS_STOP_TIMEOUT_SECONDS + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+            if wait_for_ready
+            else self._request_timeout_seconds
+        )
+        # When blocking on the archive, also bound the server-side wait (mirror
+        # snapshot-on-stop) so the backend's own default request ceiling cannot
+        # cut a large snapshot short before the client's FSS deadline.
+        create_max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) if wait_for_ready else None
+        # Generate an idempotency key when the caller didn't supply one so a
+        # retried create (after a transient failure that may have already
+        # committed server-side) dedups instead of creating a second snapshot.
+        effective_idempotency_key = idempotency_key or uuid.uuid4().hex
+        return await _retry_transient_rpc(
+            lambda: _create_snapshot_via_stub(
+                stub,
+                sandbox_id,
+                idempotency_key=effective_idempotency_key,
+                wait_for_ready=wait_for_ready,
+                auth_metadata=self._auth_metadata,
+                timeout=create_timeout,
+                max_timeout_seconds=create_max_timeout,
+            ),
+            budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+            operation="Create file-system snapshot",
+            # The create timeout is the snapshot's ceiling (it blocks on the
+            # archive), so a client DEADLINE_EXCEEDED is the ceiling being hit,
+            # not a transient blip. Treat it as terminal — retrying would run a
+            # second full-length attempt and overrun the ceiling (~2x). Genuine
+            # transients (unavailability/resource-exhaustion/throttle) still
+            # retry. The snapshot may still finish server-side; the caller can
+            # poll get_snapshot().
+            non_retryable=(SandboxRequestTimeoutError,),
+        )
+
+    def snapshot(
+        self,
+        *,
+        wait_for_ready: bool = True,
+        idempotency_key: str | None = None,
+    ) -> OperationRef[str]:
+        """Capture a file-system snapshot (FSS) of the configured mount.
+
+        Snapshots the directory configured via ``file_system_snapshot`` on the
+        running sandbox, without stopping it. Starts the sandbox first if it has
+        not been started. Restore the snapshot into a new sandbox via
+        ``Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(...,
+        file_system_snapshot_id=<id>))``.
+
+        Requires the sandbox to have been started with a ``file_system_snapshot``
+        mount and the organization to be enabled for FSS.
+
+        Args:
+            wait_for_ready: Block until the snapshot reaches READY (or FAILED)
+                before returning. When False, returns once the snapshot is
+                created (likely still CREATING).
+            idempotency_key: Optional client-supplied key to deduplicate the
+                request on retries.
+
+        Returns:
+            OperationRef[str]: Use .result() to block (or await) for the new
+            snapshot's ID. Call ``Sandbox.get_snapshot(id)`` for the full record
+            (status, size, timestamps).
+
+        Raises:
+            SandboxSnapshotError: If the snapshot fails (see subclasses for
+                ``NOT_SUPPORTED`` when the org is not enabled, quota/size, etc.).
+
+        Examples:
+            ```python
+            with Sandbox.run(
+                file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace"),
+            ) as sb:
+                sb.exec(["sh", "-c", "echo hi > /workspace/note.txt"]).result()
+                snapshot_id = sb.snapshot().result()
+                # Inspect the full record if needed:
+                snap = Sandbox.get_snapshot(snapshot_id).result()
+            ```
+        """
+        future = self._loop_manager.run_async(
+            self._snapshot_async(
+                wait_for_ready=wait_for_ready,
+                idempotency_key=idempotency_key,
             )
         )
         return OperationRef(future)

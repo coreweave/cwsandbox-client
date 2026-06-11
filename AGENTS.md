@@ -54,7 +54,8 @@ Key methods:
 - `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
-- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False)`: Stop sandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the stop RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture sandbox state before shutdown. Set `missing_ok=True` to suppress `SandboxNotFoundError`.
+- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False, wait_for_ready=True, idempotency_key=None)`: Stop sandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the stop RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture a file-system snapshot (FSS) of the configured mount before shutdown — the resulting ID is then available via the `file_system_snapshot_id` property. Because `stop()` coalesces concurrent callers onto one shared stop task, a `snapshot_on_stop=True` request that would join (or observe) a stop not capturing a snapshot — sandbox already stopping/stopped, or a plain `stop()` already in flight — raises `SnapshotOnStopConflictError` rather than completing with no archive; plain stops always coalesce. `wait_for_ready`/`idempotency_key` apply only when `snapshot_on_stop=True` (the client uses a larger timeout when snapshotting, since the stop blocks on the archive). Set `missing_ok=True` to suppress `SandboxNotFoundError`.
+- `snapshot(wait_for_ready=True, idempotency_key=None)`: Capture a file-system snapshot (FSS) of the configured mount without stopping, return `OperationRef[str]` (the new snapshot's ID). Call `Sandbox.get_snapshot(id)` for the full record. Requires the sandbox to have been started with a `file_system_snapshot` mount and the org to be enabled for FSS. Auto-starts the sandbox first if needed. With `wait_for_ready=True` (default) blocks until the snapshot is READY/FAILED. To fork a sandbox, `snapshot()` then `Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(..., file_system_snapshot_id=<id>))`.
 - `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
 
 Properties:
@@ -62,6 +63,7 @@ Properties:
 - `status_updated_at`: When status was last fetched
 - `sandbox_id`, `runner_id`, `profile_id`, `runner_group_id`, `returncode`, `started_at`
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
+- `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
 
 Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
@@ -69,6 +71,7 @@ Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.f
 - `s3_mount` - S3 bucket mount configuration
 - `ports` - Port mappings for the sandbox
 - `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)
+- `file_system_snapshot` - File-system snapshot (FSS) mount configuration via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id` to restore/fork)
 - `secrets` - Secrets to inject from secret stores as environment variables, via `Secret` or dict
 - `max_timeout_seconds` - Maximum timeout for sandbox operations
 - `environment_variables` - Environment variables to inject (merges with defaults)
@@ -79,6 +82,10 @@ Class methods:
 - `Sandbox.list(tags=None, status=None, profile_ids=None, profile_names=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them. `profile_names` and `profile_ids` resolve independently; either or both may be supplied.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
+- `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
+- `Sandbox.list_snapshots(source_sandbox_id=None, status=None, ...)`: List FSS records for the org, return `OperationRef[list[FileSystemSnapshot]]` (auto-paginated). `source_sandbox_id` and `status` are applied client-side.
+- `Sandbox.delete_snapshot(file_system_snapshot_id, missing_ok=False)`: Delete an FSS by ID, return `OperationRef[None]`. Does not affect sandboxes already restored from it. Set `missing_ok=True` to suppress `SnapshotNotFoundError`.
+- `Sandbox.get_snapshot_bucket_config()` / `Sandbox.set_snapshot_bucket_config(*, bucket_name, region="")`: Get/set the org's FSS object-storage bucket (admin), return `OperationRef[FileSystemSnapshotBucketConfig]`. Pass `bucket_name=""` to revert to the CoreWeave-managed bucket.
 
 **`Session`** (`_session.py`): Manages multiple sandboxes with shared defaults. Supports both sync and async context managers for the hybrid API.
 
@@ -113,6 +120,7 @@ Fields (all optional with sensible defaults):
 - `profile_ids`, `profile_names`, `runner_ids` - Infrastructure filtering (optional tuples). `profile_names` is the preferred form; both fields resolve independently through the None/empty/defaults precedence
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Network configuration via `NetworkOptions`
+- `file_system_snapshot` - FSS mount configuration via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
 - `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
 - `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
@@ -248,6 +256,36 @@ sandbox = Sandbox.run(
 sandbox = Sandbox.run(
     resources={"cpu": "8", "memory": "2Gi"},
 )
+```
+
+**File System Snapshots (FSS)** (`_types.py`): A configured working directory can be snapshotted (on request or on stop) and restored into new sandboxes, letting you fork a sandbox's filesystem. FSS is gated per-organization on the backend; orgs that are not enabled get `SnapshotNotSupportedError`.
+
+- **`FileSystemSnapshotOptions`**: Frozen dataclass for the FSS mount. Fields: `mount_path` (absolute dir, required — this is the configured directory captured/restored), `size` (K8s quantity like `"10Gi"`, optional), `file_system_snapshot_id` (optional — set to restore that snapshot into `mount_path` at start). Accepts a plain dict. Passed as `file_system_snapshot=` to `run()`/`Session.sandbox()`/`@session.function()` and settable on `SandboxDefaults`.
+- **`FileSystemSnapshot`**: Frozen record returned by `get_snapshot()` and `list_snapshots()` (`snapshot()` returns only the ID). Fields: `file_system_snapshot_id`, `status` (`FileSystemSnapshotStatus`), `status_reason`, `size_bytes`, `source_sandbox_id`, `trigger` (`FileSystemSnapshotTrigger`), `idempotency_key`, `object_bucket`, `created_at`/`updated_at`/`completed_at`.
+- **`FileSystemSnapshotStatus`**: StrEnum — `UNSPECIFIED`, `CREATING`, `READY`, `FAILED`, `DELETING`.
+- **`FileSystemSnapshotTrigger`**: StrEnum — `UNSPECIFIED`, `STOP` (from `stop(snapshot_on_stop=True)`), `MANUAL` (from `snapshot()`).
+- **`FileSystemSnapshotBucketConfig`** / **`FileSystemSnapshotBucketMode`**: Org bucket config (`mode`, `bucket_name`, `region`, `effective_bucket_name`); mode is `UNSPECIFIED`/`CW_MANAGED`/`BRING_YOUR_OWN`.
+
+Usage:
+```python
+from cwsandbox import Sandbox, FileSystemSnapshotOptions
+
+# Start with a snapshot-capable mount and snapshot it (returns the ID)
+with Sandbox.run(
+    file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace", size="10Gi"),
+) as sb:
+    sb.exec(["sh", "-c", "echo seed > /workspace/data.txt"]).result()
+    snapshot_id = sb.snapshot().result()          # str (snapshot is READY)
+
+# Fork = restore the snapshot into a fresh sandbox
+with Sandbox.run(
+    file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace", file_system_snapshot_id=snapshot_id),
+) as restored:
+    ...
+
+# Snapshot on stop, then read the ID
+sb.stop(snapshot_on_stop=True).result()
+file_system_snapshot_id = sb.file_system_snapshot_id
 ```
 
 ### Authentication Flow
@@ -453,17 +491,26 @@ CWSandboxError
 ├── SandboxError
 │   ├── SandboxNotRunningError
 │   │   └── SandboxUnavailableError      # transient service unavailability (gRPC UNAVAILABLE / AIP-193 UNAVAILABLE_REASONS)
+│   │       └── SnapshotBackendThrottledError  # transient FSS throttle/inflight cap (CWSANDBOX_FSS_BACKEND_THROTTLED / _INFLIGHT_LIMIT); retryable
 │   │   # raw SandboxNotRunningError is also emitted for CANCELLED and local-stop paths
 │   ├── SandboxTimeoutError
 │   │   ├── SandboxRequestTimeoutError   # gRPC request deadline (DEADLINE_EXCEEDED)
-│   │   └── SandboxCommandTimeoutError   # user command exceeded its timeout (AIP-193 CWSANDBOX_COMMAND_TIMEOUT)
+│   │   ├── SandboxCommandTimeoutError   # user command exceeded its timeout (AIP-193 CWSANDBOX_COMMAND_TIMEOUT)
+│   │   └── SnapshotWaitTimeoutError     # wait_for_ready budget exceeded (CWSANDBOX_FSS_WAIT_TIMEOUT)
 │   ├── SandboxResourceExhaustedError    # backend resource pressure (gRPC RESOURCE_EXHAUSTED)
 │   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
 │   ├── SandboxTerminatedError
 │   ├── SandboxFailedError
 │   ├── SandboxNotFoundError             # .sandbox_id attribute
 │   ├── SandboxExecutionError            # .exec_result, .exception_type, .exception_message attributes
-│   └── SandboxFileError                 # .filepath attribute
+│   ├── SandboxFileError                 # .filepath attribute
+│   └── SandboxSnapshotError             # FSS failures; .file_system_snapshot_id attribute
+│       ├── SnapshotNotFoundError        # CWSANDBOX_FSS_NOT_FOUND
+│       ├── SnapshotNotReadyError        # CWSANDBOX_FSS_NOT_READY
+│       ├── SnapshotNotSupportedError    # CWSANDBOX_FSS_NOT_SUPPORTED (org not enabled for FSS)
+│       ├── SnapshotSizeExceededError    # CWSANDBOX_FSS_SIZE_EXCEEDED
+│       ├── SnapshotQuotaExceededError   # CWSANDBOX_FSS_QUOTA_EXCEEDED
+│       └── SnapshotBucketMismatchError  # CWSANDBOX_FSS_BUCKET_MISMATCH (reversible)
 ├── DiscoveryError
 │   ├── RunnerNotFoundError              # .runner_id attribute
 │   └── ProfileNotFoundError             # .profile_name, .runner_id attributes
@@ -478,6 +525,18 @@ in ``src/cwsandbox/_sandbox.py`` for the current membership. Retryable classes
 are subclasses of the existing umbrella exceptions, so callers catching the
 parent classes continue to work unchanged.
 
+**FSS RPC retries**: The file-system snapshot RPCs (`snapshot()`/create,
+`get_snapshot`, `list_snapshots`, `delete_snapshot`, bucket config) retry
+*transient* errors with a bounded wall-clock budget
+(`DEFAULT_FSS_RETRY_BUDGET_SECONDS`, default 30s; set to 0 to disable). They
+reuse the poll loop's `_classify_poll_error`, so only the same retryable classes
+are retried — transient unavailability, request-deadline, resource-exhaustion,
+and FSS backend-throttling. Everything else (NOT_FOUND, FAILED_PRECONDITION,
+quota/size, NOT_SUPPORTED) is fatal on the first attempt. Backoff is decorrelated
+jitter honoring AIP-193 `RetryInfo` hints, via the shared `_retry_transient_rpc`
+helper. `snapshot()` auto-generates an idempotency key when the caller omits one,
+so a retried create dedups instead of producing a duplicate snapshot.
+
 ## Examples
 
 The `examples/` directory contains runnable scripts demonstrating common patterns:
@@ -488,6 +547,7 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)
 - `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
 - `delete_sandboxes.py` - Deletion patterns with `Sandbox.delete()`
+- `file_system_snapshots.py` - Snapshot/restore/fork with `file_system_snapshot`, `snapshot()`, and snapshot management
 - `error_handling.py` - Exception hierarchy and error recovery patterns
 - `session_adopt_orphans.py`, `cleanup_by_tag.py`, `cleanup_old_sandboxes.py` - Orphan management and cleanup
 - `parallel_batch_job.py` - Parallel batch processing with progress tracking
