@@ -22,8 +22,16 @@ import grpc
 import grpc.aio
 
 from cwsandbox._defaults import DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES
-from cwsandbox._error_info import ParsedError, parse_error_info
-from cwsandbox.exceptions import CWSandboxAuthenticationError, CWSandboxError
+from cwsandbox._error_info import ParsedError, parse_error_info, rpc_error_details
+from cwsandbox.exceptions import (
+    CWSandboxAuthenticationError,
+    CWSandboxError,
+    CWSandboxValidationError,
+    DiscoveryError,
+    DiscoveryValidationError,
+    SandboxError,
+    SandboxValidationError,
+)
 
 
 def parse_grpc_target(base_url: str) -> tuple[str, bool]:
@@ -107,7 +115,8 @@ def translate_grpc_error(
     Any AIP-193 ``ErrorInfo`` / ``RetryInfo`` details present in the gRPC
     trailing metadata are parsed and attached to the returned exception
     (``reason``, ``metadata``, ``retry_delay``) regardless of which branch
-    picks the exception class.
+    picks the exception class. ``BadRequest`` field violations are attached
+    only to validation-specific exceptions.
 
     Args:
         e: The gRPC error to translate.
@@ -132,6 +141,17 @@ def translate_grpc_error(
     reason = parsed.reason if parsed is not None else None
     metadata = parsed.metadata if parsed is not None else None
     retry_delay = parsed.retry_delay if parsed is not None else None
+    field_violations = parsed.field_violations if parsed is not None else ()
+
+    if code == grpc.StatusCode.INVALID_ARGUMENT and field_violations:
+        validation_cls = _validation_error_cls(fallback_cls)
+        return validation_cls(
+            f"{operation} failed: {rpc_error_details(e, parsed)}",
+            field_violations=field_violations,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
 
     if code == grpc.StatusCode.UNAUTHENTICATED:
         return CWSandboxAuthenticationError(
@@ -167,6 +187,16 @@ def translate_grpc_error(
         metadata=metadata,
         retry_delay=retry_delay,
     )
+
+
+def _validation_error_cls(
+    fallback_cls: type[CWSandboxError],
+) -> type[CWSandboxValidationError]:
+    if issubclass(fallback_cls, SandboxError):
+        return SandboxValidationError
+    if issubclass(fallback_cls, DiscoveryError):
+        return DiscoveryValidationError
+    return CWSandboxValidationError
 
 
 async def paginate_async(

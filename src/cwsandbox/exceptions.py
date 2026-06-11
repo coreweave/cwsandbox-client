@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from datetime import timedelta
 
     from cwsandbox._types import ProcessResult
@@ -52,8 +53,40 @@ class CWSandboxAuthenticationError(CWSandboxError):
     """Raised when authentication fails."""
 
 
+@dataclass(frozen=True)
+class FieldViolation:
+    """Field-level validation failure returned by the backend."""
+
+    field: str = ""
+    description: str = ""
+
+
+class CWSandboxValidationError(CWSandboxError):
+    """Raised when the backend returns field-level validation failures.
+
+    Attributes:
+        field_violations: Field-level validation errors returned by the backend.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field_violations: Sequence[FieldViolation] | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.field_violations = tuple(field_violations) if field_violations else ()
+
+
 class SandboxError(CWSandboxError):
     """Base exception for sandbox operations."""
+
+
+class SandboxValidationError(SandboxError, CWSandboxValidationError):
+    """Raised when a sandbox request fails field-level validation."""
 
 
 class SandboxNotRunningError(SandboxError):
@@ -428,6 +461,10 @@ class DiscoveryError(CWSandboxError):
     unavailable). Authentication errors use
     ``CWSandboxAuthenticationError`` instead.
     """
+
+
+class DiscoveryValidationError(DiscoveryError, CWSandboxValidationError):
+    """Raised when a discovery request fails field-level validation."""
 
 
 class RunnerNotFoundError(DiscoveryError):

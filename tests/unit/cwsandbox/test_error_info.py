@@ -15,6 +15,7 @@ from google.protobuf.duration_pb2 import Duration
 from google.rpc import error_details_pb2, status_pb2
 
 from cwsandbox._error_info import ParsedError, parse_error_info
+from cwsandbox.exceptions import FieldViolation
 
 
 def _pack_status(
@@ -23,6 +24,7 @@ def _pack_status(
     metadata: dict[str, str] | None = None,
     retry_seconds: int | None = None,
     retry_nanos: int | None = None,
+    field_violations: list[tuple[str, str]] | None = None,
 ) -> bytes:
     """Build a serialized google.rpc.Status with the given details."""
     status = status_pb2.Status(code=2, message="test")
@@ -42,6 +44,18 @@ def _pack_status(
         packed = any_pb2.Any()
         packed.Pack(retry)
         status.details.append(packed)
+    if field_violations is not None:
+        bad_request = error_details_pb2.BadRequest()
+        for field, description in field_violations:
+            bad_request.field_violations.append(
+                error_details_pb2.BadRequest.FieldViolation(
+                    field=field,
+                    description=description,
+                )
+            )
+        packed = any_pb2.Any()
+        packed.Pack(bad_request)
+        status.details.append(packed)
     return status.SerializeToString()
 
 
@@ -51,6 +65,7 @@ def _make_error(
     metadata: dict[str, str] | None = None,
     retry_seconds: int | None = None,
     retry_nanos: int | None = None,
+    field_violations: list[tuple[str, str]] | None = None,
     trailing: object | None | type = ...,  # type: ignore[assignment]
     raise_on_trailing: Exception | None = None,
     no_trailing_method: bool = False,
@@ -71,6 +86,7 @@ def _make_error(
             metadata=metadata,
             retry_seconds=retry_seconds,
             retry_nanos=retry_nanos,
+            field_violations=field_violations,
         )
         err.trailing_metadata.return_value = [
             ("some-other-key", "irrelevant"),
@@ -87,6 +103,7 @@ class TestParsedErrorDefaults:
         assert parsed.reason is None
         assert parsed.metadata == {}
         assert parsed.retry_delay is None
+        assert parsed.field_violations == ()
 
 
 class TestParseErrorInfo:
@@ -131,6 +148,75 @@ class TestParseErrorInfo:
         assert parsed is not None
         assert parsed.reason is None
         assert parsed.retry_delay == timedelta(seconds=2)
+
+    def test_bad_request_field_violations_without_error_info(self) -> None:
+        err = _make_error(
+            field_violations=[
+                ("tags[0]", "tags may contain letters, numbers, '.', '_' or '-'"),
+                ("tags[2]", "tags must be 59 characters or fewer"),
+            ]
+        )
+        parsed = parse_error_info(err)
+        assert parsed is not None
+        assert parsed.reason is None
+        assert parsed.retry_delay is None
+        assert parsed.field_violations == (
+            FieldViolation(
+                field="tags[0]",
+                description="tags may contain letters, numbers, '.', '_' or '-'",
+            ),
+            FieldViolation(
+                field="tags[2]",
+                description="tags must be 59 characters or fewer",
+            ),
+        )
+
+    def test_bad_request_uses_reason_and_localized_message_as_description_fallback(self) -> None:
+        status = status_pb2.Status(code=2, message="test")
+        bad_request = error_details_pb2.BadRequest()
+        bad_request.field_violations.append(
+            error_details_pb2.BadRequest.FieldViolation(
+                field="tags[0]",
+                reason="TAG_INVALID",
+                localized_message=error_details_pb2.LocalizedMessage(
+                    locale="en-US",
+                    message="Invalid tag",
+                ),
+            )
+        )
+        packed = any_pb2.Any()
+        packed.Pack(bad_request)
+        status.details.append(packed)
+
+        err = _make_error(trailing=[("grpc-status-details-bin", status.SerializeToString())])
+        parsed = parse_error_info(err)
+
+        assert parsed is not None
+        assert parsed.field_violations == (
+            FieldViolation(
+                field="tags[0]",
+                description="Invalid tag",
+            ),
+        )
+
+    def test_bad_request_with_error_info(self) -> None:
+        err = _make_error(
+            reason="CWSANDBOX_INVALID_ARGUMENT",
+            field_violations=[("tags[0]", "invalid tag")],
+        )
+        parsed = parse_error_info(err)
+        assert parsed is not None
+        assert parsed.reason == "CWSANDBOX_INVALID_ARGUMENT"
+        assert parsed.field_violations == (
+            FieldViolation(
+                field="tags[0]",
+                description="invalid tag",
+            ),
+        )
+
+    def test_empty_bad_request_returns_none(self) -> None:
+        err = _make_error(field_violations=[])
+        assert parse_error_info(err) is None
 
     def test_no_trailing_metadata_method(self) -> None:
         err = _make_error(no_trailing_method=True)

@@ -25,23 +25,44 @@ from cwsandbox.exceptions import (
     CWSandboxAuthenticationError,
     CWSandboxError,
     DiscoveryError,
+    DiscoveryValidationError,
+    FieldViolation,
     SandboxError,
+    SandboxValidationError,
 )
 
 
-def _status_bytes(reason: str, metadata: dict[str, str] | None = None, retry: int = 0) -> bytes:
+def _status_bytes(
+    reason: str | None,
+    metadata: dict[str, str] | None = None,
+    retry: int = 0,
+    field_violations: list[tuple[str, str]] | None = None,
+) -> bytes:
     status = status_pb2.Status(code=2, message="test")
-    info = error_details_pb2.ErrorInfo(
-        reason=reason, domain="cwsandbox.com", metadata=metadata or {}
-    )
-    packed = any_pb2.Any()
-    packed.Pack(info)
-    status.details.append(packed)
+    if reason is not None:
+        info = error_details_pb2.ErrorInfo(
+            reason=reason, domain="cwsandbox.com", metadata=metadata or {}
+        )
+        packed = any_pb2.Any()
+        packed.Pack(info)
+        status.details.append(packed)
     if retry:
         retry_detail = error_details_pb2.RetryInfo(retry_delay=Duration(seconds=retry))
         packed_retry = any_pb2.Any()
         packed_retry.Pack(retry_detail)
         status.details.append(packed_retry)
+    if field_violations is not None:
+        bad_request = error_details_pb2.BadRequest()
+        for field, description in field_violations:
+            bad_request.field_violations.append(
+                error_details_pb2.BadRequest.FieldViolation(
+                    field=field,
+                    description=description,
+                )
+            )
+        packed_bad_request = any_pb2.Any()
+        packed_bad_request.Pack(bad_request)
+        status.details.append(packed_bad_request)
     return status.SerializeToString()
 
 
@@ -301,6 +322,76 @@ class TestTranslateGrpcErrorWithErrorInfo:
         assert result.reason is None
         assert result.metadata == {}
         assert result.retry_delay is None
+
+    def test_field_violations_are_attached_and_rendered_when_details_empty(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "",
+            trailing=[
+                (
+                    "grpc-status-details-bin",
+                    _status_bytes(
+                        None,
+                        field_violations=[
+                            ("tags[0]", "invalid tag"),
+                            ("tags[2]", "tag too long"),
+                        ],
+                    ),
+                )
+            ],
+        )
+        result = translate_grpc_error(err, operation="Start sandbox", fallback_cls=SandboxError)
+        assert isinstance(result, SandboxValidationError)
+        assert isinstance(result, SandboxError)
+        assert "Start sandbox failed: field violations:" in str(result)
+        assert "tags[0]: invalid tag" in str(result)
+        assert "tags[2]: tag too long" in str(result)
+        assert result.field_violations == (
+            FieldViolation(
+                field="tags[0]",
+                description="invalid tag",
+            ),
+            FieldViolation(
+                field="tags[2]",
+                description="tag too long",
+            ),
+        )
+
+    def test_field_violations_are_rendered_with_existing_details(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "invalid tags",
+            trailing=[
+                (
+                    "grpc-status-details-bin",
+                    _status_bytes(None, field_violations=[("tags[0]", "invalid tag")]),
+                )
+            ],
+        )
+        result = translate_grpc_error(err, operation="Start sandbox", fallback_cls=SandboxError)
+        assert isinstance(result, SandboxValidationError)
+        assert "invalid tags; field violations: tags[0]: invalid tag" in str(result)
+
+    def test_field_violations_use_discovery_validation_error(self) -> None:
+        err = _make_rpc_error(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "",
+            trailing=[
+                (
+                    "grpc-status-details-bin",
+                    _status_bytes(None, field_violations=[("runner_id", "invalid")]),
+                )
+            ],
+        )
+        result = translate_grpc_error(err, operation="Get runner", fallback_cls=DiscoveryError)
+        assert isinstance(result, DiscoveryValidationError)
+        assert isinstance(result, DiscoveryError)
+        assert result.field_violations == (
+            FieldViolation(
+                field="runner_id",
+                description="invalid",
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
