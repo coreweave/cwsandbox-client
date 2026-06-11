@@ -518,12 +518,20 @@ CWSandboxError
     └── AsyncFunctionError
 ```
 
-**Poll retry classification**: The sandbox-status poll loop splits exception
-classes into retryable and fatal, dispatched purely by ``isinstance`` against a
-registry tuple. See ``_classify_poll_error`` and ``_RETRYABLE_POLL_EXCEPTIONS``
-in ``src/cwsandbox/_sandbox.py`` for the current membership. Retryable classes
-are subclasses of the existing umbrella exceptions, so callers catching the
-parent classes continue to work unchanged.
+**Transient-retry mechanism**: The idempotent sandbox reads (status polling,
+``get_status``, ``list``, ``read_file``) share one retry primitive,
+``retry_transient_async`` in ``src/cwsandbox/_retry.py``, instead of per-function
+loops. Transient-vs-fatal is decided in one place by ``classify``/``is_retryable``
+(``cwsandbox._retry``), which dispatches by ``isinstance`` against
+``_RETRYABLE_EXCEPTIONS`` (``SandboxUnavailableError``, ``SandboxRequestTimeoutError``,
+``SandboxResourceExhaustedError``); ``SandboxNotFoundError`` short-circuits to
+fatal. To add a retryable condition,
+create a subclass of the appropriate umbrella exception and add it to that
+registry. Mutating/streaming RPCs (``start``, ``exec``) are never auto-retried;
+they only translate transport errors to typed exceptions. A call site may pass a
+narrower ``should_retry`` predicate when a normally-retryable code means something
+else there (e.g. ``read_file`` excludes ``RESOURCE_EXHAUSTED``, its oversized-message
+→ streaming-fallback signal).
 
 **FSS RPC retries**: The file-system snapshot RPCs (`snapshot()`/create,
 `get_snapshot`, `list_snapshots`, `delete_snapshot`, bucket config) retry

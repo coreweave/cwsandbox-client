@@ -15,9 +15,9 @@ import pytest
 
 from cwsandbox import Sandbox
 from cwsandbox._proto import gateway_pb2
+from cwsandbox._retry import classify as _classify_poll_error
 from cwsandbox._sandbox import (
     SandboxStatus,
-    _classify_poll_error,
     _NotStarted,
     _Running,
     _Starting,
@@ -46,6 +46,10 @@ def _fast_polling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Eliminate poll-interval sleeps so tests run on mock timing alone."""
     monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_MAX_POLL_INTERVAL_SECONDS", 0.0)
+    # The shared retry backoff lives in cwsandbox._retry, which binds these
+    # constants in its own namespace; zero them there too.
+    monkeypatch.setattr("cwsandbox._retry.DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr("cwsandbox._retry.DEFAULT_MAX_POLL_INTERVAL_SECONDS", 0.0)
 
 
 def _install_recording_sleep(
@@ -917,7 +921,7 @@ class TestPollWithRetry:
             # fall through to the real clock so asyncio's scheduler is not
             # affected.
             caller = sys._getframe(1).f_globals.get("__name__", "")
-            if caller == "cwsandbox._sandbox":
+            if caller == "cwsandbox._retry":
                 try:
                     return clock_values.popleft()
                 except IndexError:
@@ -998,13 +1002,13 @@ class TestPollRetryJitterBounds:
         )
 
         # Restore real interval constants since the autouse _fast_polling
-        # fixture zeros them out. Override _sandbox module-scope constants
-        # that _poll_with_retry reads.
+        # fixture zeros them out. The retry backoff reads these from the
+        # cwsandbox._retry namespace, so override them there.
         monkeypatch.setattr(
-            "cwsandbox._sandbox.DEFAULT_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
+            "cwsandbox._retry.DEFAULT_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
         )
         monkeypatch.setattr(
-            "cwsandbox._sandbox.DEFAULT_MAX_POLL_INTERVAL_SECONDS",
+            "cwsandbox._retry.DEFAULT_MAX_POLL_INTERVAL_SECONDS",
             DEFAULT_MAX_POLL_INTERVAL_SECONDS,
         )
 
@@ -1018,7 +1022,7 @@ class TestPollRetryJitterBounds:
             uniform_args.append((low, high))
             return (low + high) / 2.0
 
-        monkeypatch.setattr("cwsandbox._sandbox.random.uniform", fake_uniform)
+        monkeypatch.setattr("cwsandbox._retry.random.uniform", fake_uniform)
 
         attempt = 0
 
@@ -1092,7 +1096,7 @@ class TestPollRetryRpcTimeoutClamp:
 
         def scripted_clock() -> float:
             caller = sys._getframe(1).f_globals.get("__name__", "")
-            if caller == "cwsandbox._sandbox":
+            if caller == "cwsandbox._retry":
                 try:
                     return clock_values.popleft()
                 except IndexError:
@@ -2009,3 +2013,53 @@ class TestConcurrencyAcrossRetryAndNotFound:
         assert call_count == 2  # first UNAVAILABLE + second COMPLETED
         assert isinstance(sandbox._state, _Terminal)
         assert sandbox._state.status == SandboxStatus.COMPLETED
+
+
+class TestGetStatusRetry:
+    """get_status() is an idempotent read and now retries transient UNAVAILABLE
+    via the shared mechanism (previously it bypassed retry entirely)."""
+
+    @pytest.mark.asyncio
+    async def test_get_status_retries_transient_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[UNAVAILABLE, UNAVAILABLE, RUNNING] resolves to RUNNING after retries."""
+        _install_recording_sleep(monkeypatch)
+        attempt = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal attempt
+            attempt += 1
+            if attempt <= 2:
+                raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+
+        sandbox = _make_sandbox()
+        sandbox._stub.Get = mock_get
+
+        status = await sandbox._get_status_async()
+
+        assert attempt == 3
+        assert status == SandboxStatus.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_get_status_budget_zero_raises_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With the retry budget disabled, the first UNAVAILABLE surfaces (one attempt)."""
+        _install_recording_sleep(monkeypatch)
+        attempt = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal attempt
+            attempt += 1
+            raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
+
+        sandbox = _make_sandbox()
+        sandbox._poll_retry_budget_seconds = 0.0
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxUnavailableError):
+            await sandbox._get_status_async()
+
+        assert attempt == 1  # budget=0 disables retry
