@@ -1,6 +1,110 @@
 # CHANGELOG
 
 
+## v0.26.0 (2026-06-11)
+
+### Bug Fixes
+
+- **fss**: Harden snapshot lifecycle, retries, and error mapping
+  ([`d80e6cc`](https://github.com/coreweave/cwsandbox-client/commit/d80e6cced342d627540cb25142f3970844b4a60c))
+
+- snapshot() waits for RUNNING before archiving, matching exec/read_file/write_file -
+  create-snapshot sets max_timeout_seconds when wait_for_ready (mirrors snapshot-on-stop) - bare
+  gRPC NOT_FOUND on a snapshot op maps to SnapshotNotFoundError when a snapshot ID is in context -
+  delete_snapshot treats NOT_FOUND on a retry as success (a committed delete whose response was
+  lost) - list_snapshots retry restarts pagination from page 1 instead of resuming at the last
+  page_token - doc/comment fixes (FileSystemSnapshot return type, keyword-only bucket-config args)
+  and regression tests for each
+
+- **fss**: Raise on incompatible snapshot-on-stop coalescing
+  ([`ae4be3e`](https://github.com/coreweave/cwsandbox-client/commit/ae4be3e7c12dc561a86c2a7de8d1bb799a995e8b))
+
+stop() coalesces concurrent callers onto a single shared _stop_task (first-caller-wins), discarding
+  later callers' parameters. A stop(snapshot_on_stop=True) caller that joined an in-flight plain
+  stop — or a sandbox already stopping/stopped — silently inherited "no snapshot": the sandbox was
+  torn down with no archive, file_system snapshot_id stayed None, and .result() returned success.
+  Silent data loss.
+
+Detect the incompatible join under _stop_lock and raise the new SnapshotOnStopConflictError instead
+  of coalescing. Coalescing is kept for every compatible case (plain joining plain, plain joining
+  snapshot, snapshot joining snapshot, user-stop joining a server-initiated drain), preserving the
+  idempotent-teardown contract the context manager and cleanup handlers rely on. Mirrors the
+  backend's FailedPrecondition for a snapshot-on-stop that arrives after the sandbox has begun
+  terminating.
+
+Cases that now raise when snapshot_on_stop=True: a plain stop already in flight; a TERMINATING drain
+  with no owned stop task (no snapshot RPC will be sent); already terminal with no snapshot
+  captured. Already-terminal with a snapshot already captured stays a convergent no-op, and a
+  never-started sandbox stays on the normal no-op path (no mount to archive).
+
+Addresses PR #137 review finding #1.
+
+- **fss**: Size snapshot-on-stop client deadline to cover the grace phase
+  ([`430a1b3`](https://github.com/coreweave/cwsandbox-client/commit/430a1b3bbe7518cad905042f12e0829f18ea6996))
+
+The backend runs a snapshot-on-stop in two sequential phases: it archives the mount (bounded by
+  max_timeout_seconds) and THEN deletes the pod (bounded by graceful_shutdown_seconds). The client
+  deadline was hard-set to the archive budget alone (DEFAULT_FSS_STOP_TIMEOUT_SECONDS + 5s ≈ 605s),
+  ignoring the additive pod-delete grace — so a healthy stop whose archive runs long plus a real
+  grace could exceed the client deadline and surface a spurious DEADLINE_EXCEEDED. The old 5s buffer
+  was also smaller than the backend's ~30s gateway request slack, so a near-budget archive alone
+  could trip it.
+
+Decouple the proto field from the client deadline: - proto max_timeout_seconds stays
+  DEFAULT_FSS_STOP_TIMEOUT_SECONDS (600, the archive budget; the backend defaults to this and does
+  not cap it). - client deadline = archive budget + effective grace + slack, where effective grace
+  substitutes the backend's 30s default when 0 is sent (sending 0 does not mean "no grace"), and
+  slack (~35s) covers the backend's ~30s gateway request slack plus network round-trip. This keeps
+  the client deadline ~5s past the backend's worst-case wall-clock at every grace value.
+
+Adds DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS and DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS (named +
+  commented) and documents the grace semantics on stop(). No client-side graceful>300 validation;
+  the backend rejects it.
+
+Backend behavior confirmed against coreweave/aviato: 600s is a default, not a cap; the only hard cap
+  is graceful_shutdown_seconds <= 300.
+
+Addresses PR #137 review finding #7.
+
+- **fss**: Stop retrying the client deadline on a wait-for-ready snapshot
+  ([`c7b64d0`](https://github.com/coreweave/cwsandbox-client/commit/c7b64d099ad6cb96eff32135ded899d9a0cea2e3))
+
+snapshot(wait_for_ready=True) uses a ~605s client deadline (just past the 600s server-side wait
+  bound) and wraps the create in _retry_transient_rpc (30s inter-attempt budget). A client
+  DEADLINE_EXCEEDED maps to SandboxRequestTimeoutError, which is retryable, and the loop bounds only
+  the gap between attempts — not attempt duration — so a wedged backend that blows past its own
+  wait-timeout triggers a second full ~605s attempt: ~1210s wall-clock vs the ~605s the ceiling
+  implies.
+
+A client deadline on a wait-for-ready create is the ceiling being hit, not a transient blip (that's
+  UNAVAILABLE / RESOURCE_EXHAUSTED / throttle, which still retry). Treat it as terminal: add an
+  optional non_retryable override to _retry_transient_rpc and pass SandboxRequestTimeoutError on the
+  create call. The wait now ends at ~605s, and the surfaced error is unchanged
+  (SandboxRequestTimeoutError — the snapshot may still finish server-side; poll get_snapshot()).
+  Scoped to snapshot(); the stop path has no retry loop.
+
+Addresses PR #137 review finding #8.
+
+### Features
+
+- **fss**: Add file-system snapshot support
+  ([`83f60ca`](https://github.com/coreweave/cwsandbox-client/commit/83f60ca4b73b1434ab670e3dd82caa6ad4c9e537))
+
+Wire the backend file-system snapshot (FSS) feature into the SDK.
+
+- FileSystemSnapshotOptions mount config on run()/Session.sandbox()/ @session.function() and
+  SandboxDefaults (mount_path, size, restore via file_system_snapshot_id) - snapshot() captures a
+  mid-life snapshot and returns the new ID; stop(snapshot_on_stop=True) snapshots on shutdown and
+  exposes the ID via the file_system_snapshot_id property - management classmethods: get_snapshot,
+  list_snapshots, delete_snapshot, get_snapshot_bucket_config, set_snapshot_bucket_config -
+  FileSystemSnapshot record plus status/trigger/bucket enums and the FileSystemSnapshotBucketConfig
+  type - SandboxSnapshotError hierarchy mapped from CWSANDBOX_FSS_* reasons - bounded client-side
+  transient retry for the FSS RPCs, reusing the poll loop's retry classification and AIP-193
+  backoff; create auto-generates an idempotency key so a retried create dedups - vendored gateway
+  proto stubs regenerated for the FSS messages and RPCs - unit and integration tests, an example,
+  and docs
+
+
 ## v0.25.0 (2026-06-09)
 
 ### Bug Fixes
