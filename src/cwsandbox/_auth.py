@@ -20,6 +20,10 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from cwsandbox._client_metadata import (
+    HEADER_CWSANDBOX_CLIENT_VERSION,
+    client_metadata_headers,
+)
 from cwsandbox.exceptions import CWSandboxAuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -107,11 +111,18 @@ def resolve_auth() -> AuthHeaders:
 def resolve_auth_metadata() -> tuple[tuple[str, str], ...]:
     """Resolve authentication credentials and return as gRPC metadata tuples.
 
-    Convenience wrapper around resolve_auth() that returns metadata in the
-    format expected by gRPC calls (lowercase key-value tuples).
+    Convenience wrapper around resolve_auth() that returns auth headers plus
+    cwsandbox-managed client metadata in the format expected by gRPC calls
+    (lowercase key-value tuples).
 
     Returns:
         Tuple of (key, value) pairs suitable for gRPC metadata parameter
     """
     auth = resolve_auth()
-    return tuple((k.lower(), v) for k, v in auth.headers.items())
+    metadata = {k.lower(): v for k, v in auth.headers.items()}
+    for key, value in client_metadata_headers():
+        if key == HEADER_CWSANDBOX_CLIENT_VERSION:
+            metadata[key] = value
+        else:
+            metadata.setdefault(key, value)
+    return tuple(metadata.items())

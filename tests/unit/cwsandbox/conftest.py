@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from collections.abc import Generator
 from typing import TypeVar
 from unittest.mock import MagicMock
 
 import pytest
 
 from cwsandbox import OperationRef
+from cwsandbox._client_metadata import _reset_client_metadata_for_testing
 from cwsandbox._types import Process, ProcessResult, StreamReader
 
 T = TypeVar("T")
@@ -33,7 +35,7 @@ AUTH_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Clear all auth-related env vars before each test.
 
     This runs automatically for every test (autouse=True) and ensures:
@@ -43,6 +45,9 @@ def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for var in AUTH_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    _reset_client_metadata_for_testing()
+    yield
+    _reset_client_metadata_for_testing()
 
 
 @pytest.fixture(autouse=True)
