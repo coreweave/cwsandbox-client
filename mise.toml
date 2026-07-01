@@ -21,6 +21,10 @@ run = "uv run ruff check --fix ."
 description = "Lint code without auto-fix"
 run = "uv run ruff check ."
 
+[tasks."lint:docstrings"]
+description = "Guard src/ docstrings against patterns that break docs generation"
+run = "uv run python scripts/check_docstring_hygiene.py"
+
 # =============================================================================
 # Type Checking
 # =============================================================================
@@ -98,7 +102,7 @@ echo "==> Packaging smoke test passed."
 
 [tasks.check]
 description = "Run all quality checks (runs in parallel)"
-depends = ["format:check", "lint:check", "typecheck", "test"]
+depends = ["format:check", "lint:check", "lint:docstrings", "typecheck", "test"]
 alias = "c"
 
 # =============================================================================

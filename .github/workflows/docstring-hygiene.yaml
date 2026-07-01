@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: cwsandbox-client
+
+# This package's public docstrings are the source for an auto-generated API
+# reference. This guard rejects typographic characters in docstrings that the
+# documentation build does not accept, before they merge.
+# See scripts/check_docstring_hygiene.py for the rationale.
+
+name: Docstring hygiene
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  docstring-hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Check docstring hygiene
+        run: uv run --no-project python scripts/check_docstring_hygiene.py
