@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""cwsandbox logs — stream logs from a sandbox."""
+"""cwsandbox logs - stream logs from a sandbox."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def logs(
 
     Streams stdout/stderr from the command used to create the sandbox (the
     entrypoint passed to Sandbox.run()). Output from exec commands is not
-    included — use 'cwsandbox exec' for those.
+    included; use 'cwsandbox exec' for those.
 
     Note: sandboxes created with the default keep-alive command do not
     produce any log output.

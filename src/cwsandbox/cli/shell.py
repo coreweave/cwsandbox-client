@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""cwsandbox shell — interactive shell in a sandbox."""
+"""cwsandbox shell - interactive shell in a sandbox."""
 
 from __future__ import annotations
 

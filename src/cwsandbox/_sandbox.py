@@ -430,7 +430,7 @@ async def _iter_sync_source_in_executor(source: Iterable[bytes]) -> AsyncIterato
 
     A caller-supplied sync iterable (a file handle, an NFS/FUSE read, a network
     generator) can block on ``next()``; driving it inline on the shared
-    background loop would stall every other operation — heartbeats, other
+    background loop would stall every other operation: heartbeats, other
     sandboxes' RPCs. Each ``next()`` is instead run in the default executor, so
     the blocking call parks an executor thread rather than the event loop.
 
@@ -822,9 +822,9 @@ def _is_resumable_transport_error(exc: BaseException) -> bool:
     """Return True if a streaming gRPC error is worth attempting to resume.
 
     Only the transport-level codes that typically map to a gateway pod
-    restart or a transient network blip qualify.  Anything else — including
+    restart or a transient network blip qualify.  Anything else, including
     DEADLINE_EXCEEDED (caller-requested timeout), NOT_FOUND, PERMISSION_DENIED,
-    INVALID_ARGUMENT — propagates as-is.
+    and INVALID_ARGUMENT, propagates as-is.
 
     Note: this classifier intentionally diverges from ``_translate_rpc_error``,
     the canonical translator that consults AIP-193 ``ErrorInfo`` reasons
@@ -837,7 +837,7 @@ def _is_resumable_transport_error(exc: BaseException) -> bool:
     streaming error (e.g. a hypothetical ``CWSANDBOX_RUNNER_TERMINATED``
     on ``INTERNAL``), this classifier should be updated to consult
     ``_translate_rpc_error`` first and dispatch on the resulting typed
-    exception — matching the pattern in ``_classify_poll_error``.
+    exception, matching the pattern in ``_classify_poll_error``.
     """
     if not isinstance(exc, grpc.aio.AioRpcError):
         return False
@@ -3885,7 +3885,7 @@ class Sandbox:
         only when this caller will own a fresh stop (creating the task) or when
         it joins a stop that is itself a snapshot-on-stop. Every other state
         means the sandbox is, or is about to be, torn down without archiving
-        the mount — joining would silently drop the snapshot. A sandbox that
+        the mount: joining would silently drop the snapshot. A sandbox that
         was never started has no mount to archive, so it is left to the normal
         no-op path rather than raising here.
         """
@@ -3995,8 +3995,8 @@ class Sandbox:
         Multiple callers share the same underlying stop task: the first caller
         creates it, subsequent callers join it. A ``snapshot_on_stop=True``
         request that would join (or observe) a stop that is not capturing a
-        snapshot — because the sandbox is already stopping, already stopped, or
-        a plain ``stop()`` is already in flight — raises
+        snapshot, because the sandbox is already stopping, already stopped, or
+        a plain ``stop()`` is already in flight, raises
         ``SnapshotOnStopConflictError`` instead of silently completing without
         an archive. Plain stops always coalesce.
 
@@ -4187,7 +4187,7 @@ class Sandbox:
         and, on a transient transport failure, re-init with resume_session_id
         and resume_offset so the stream picks up where it left off.  Servers
         that do not advertise a session_id (or reply with an in-band
-        SESSION_NOT_FOUND on the resume init) fall back to a fresh init —
+        SESSION_NOT_FOUND on the resume init) fall back to a fresh init:
         the live tail restarts from the current head with no replay of
         older bytes.  ``tail_lines`` and ``since_time`` are only applied to
         the very first attempt; fresh-fallback re-inits send no replay
@@ -5288,7 +5288,7 @@ class Sandbox:
     ) -> tuple[int, bytes, bytes]:
         """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
-        See also ``_exec_streaming_async`` — the queue-driven public variant;
+        See also ``_exec_streaming_async``, the queue-driven public variant;
         keep handshake/timeout/error-translation in sync between the two.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
@@ -5530,7 +5530,7 @@ class Sandbox:
         unexpected output, transient transport error). Used by
         ``read_file_streaming`` to capture a pre-read size baseline for the
         truncation check; a ``None`` result means the check is skipped rather
-        than raising — a stat failure on its own is not a streaming-read failure.
+        than raising: a stat failure on its own is not a streaming-read failure.
         """
         try:
             returncode, stdout, _stderr = await self._exec_streaming_binary_async(
@@ -5567,7 +5567,7 @@ class Sandbox:
 
         ``stat`` is an O(1) metadata lookup, so it is capped at
         ``STAT_INTEGRITY_TIMEOUT_SECONDS`` and never allowed to exceed the
-        operation's remaining wall-clock budget — the stat and the read it
+        operation's remaining wall-clock budget: the stat and the read it
         precedes share one deadline and together stay within the caller's
         timeout.
         """
@@ -5583,7 +5583,7 @@ class Sandbox:
 
         Pure comparison shared by read_file (exec-stream fallback) and
         read_file_streaming. ``expected`` is the file's size captured *before*
-        the read — the server-reported size for the read_file fallback, or a
+        the read: the server-reported size for the read_file fallback, or a
         pre-read ``stat`` for read_file_streaming. On a backend where the
         streaming channel silently truncates (e.g. the lossless gate is off),
         the read command exits 0 having produced the whole file while the client
@@ -5591,7 +5591,7 @@ class Sandbox:
         read as if complete (issue #1172).
 
         Only a SHORT read (``delivered < expected``) is flagged. Specifically:
-        - ``expected is None`` (size unknown — server omitted it, or ``stat`` is
+        - ``expected is None`` (size unknown: server omitted it, or ``stat`` is
           unavailable on a distroless/scratch image): skip. The check is a
           best-effort backstop, not a guarantee; the public docstrings scope
           this.
@@ -5600,7 +5600,7 @@ class Sandbox:
           avoid a false-positive on a fully-delivered read.
         - ``delivered >= expected``: not short, so no raise. Because ``expected``
           is the *pre-read* size, a file appended to during the read grows the
-          delivered byte count above the baseline rather than below it — a
+          delivered byte count above the baseline rather than below it: a
           benign concurrent append never trips the check (the false-positive
           that an after-the-fact stat would produce).
         """
@@ -5692,7 +5692,7 @@ class Sandbox:
 
         Behavior:
             Files up to ~32 MiB are read in a single unary call. Larger files
-            (up to ~256 MiB) transparently fall back to a streaming read — the
+            (up to ~256 MiB) transparently fall back to a streaming read: the
             first such fallback per Sandbox logs once at INFO. When the server
             reports the file's size, files above ~256 MiB are refused with
             ``CWSANDBOX_FILE_TOO_LARGE``; use ``read_file_streaming`` for those.
@@ -5701,7 +5701,7 @@ class Sandbox:
             cannot always know the remote size in advance (e.g. when the backend
             signals the oversized read via resource exhaustion rather than a
             sized ``CWSANDBOX_FILE_TOO_LARGE``), so a very large file can still
-            be buffered in full rather than refused — prefer
+            be buffered in full rather than refused: prefer
             ``read_file_streaming`` for anything large to consume it
             incrementally and bound memory.
 
@@ -5997,7 +5997,7 @@ class Sandbox:
         Behavior:
             Payloads up to ~32 MiB are written in a single unary call. Larger
             payloads (up to ~256 MiB) transparently fall back to a streaming
-            write — the first such fallback per Sandbox logs once at INFO.
+            write: the first such fallback per Sandbox logs once at INFO.
             Payloads above ~256 MiB are refused; use ``write_file_streaming``
             for those.
 
@@ -6113,7 +6113,7 @@ class Sandbox:
                 ``AsyncIterable[bytes]``. Each yielded chunk is sent as-is;
                 ``bytes`` input is sliced into 1 MiB chunks internally.
                 Yielded items must be ``bytes``, ``bytearray``, or
-                ``memoryview`` — anything else raises ``TypeError``.
+                ``memoryview``; anything else raises ``TypeError``.
             timeout_seconds: Wall-clock timeout for the streaming write.
 
         Returns:
@@ -6360,7 +6360,7 @@ class Sandbox:
     ) -> StreamReader[str]:
         """Stream logs from the sandbox's main process.
 
-        Streams stdout/stderr from the sandbox's **main command** — the
+        Streams stdout/stderr from the sandbox's **main command**: the
         entrypoint passed to ``Sandbox.run()`` (or the default shell-trapped
         keep-alive). Output from commands started via ``exec()`` is **not**
         included; use ``Process.stdout``/``Process.stderr`` for those.
@@ -6372,7 +6372,7 @@ class Sandbox:
             writes to stdout/stderr when calling ``Sandbox.run()``.
 
         Returns a StreamReader that yields log lines as strings. The method
-        returns immediately — iteration on the StreamReader blocks until
+        returns immediately; iteration on the StreamReader blocks until
         data arrives.
 
         Can also retrieve historical logs from stopped sandboxes when
