@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""cwsandbox exec — execute a command in a sandbox."""
+"""cwsandbox exec - execute a command in a sandbox."""
 
 from __future__ import annotations
 

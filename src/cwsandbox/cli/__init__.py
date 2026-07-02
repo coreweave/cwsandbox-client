@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""CWSandbox CLI — terminal interface for CoreWeave sandboxes.
+"""CWSandbox CLI - terminal interface for CoreWeave sandboxes.
 
 The functions in this package are intended to be called via the CLI,
 not from Python code. No backwards compatibility guarantees are made

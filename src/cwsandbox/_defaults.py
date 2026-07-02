@@ -280,12 +280,12 @@ class SandboxDefaults:
         temp_dir: Temp directory path inside the sandbox.
         tags: Tags for filtering and organizing sandboxes.
         profile_ids: Legacy selector accepting profile IDs. Prefer
-            ``profile_names``. Resolves independently of ``profile_names`` —
+            ``profile_names``. Resolves independently of ``profile_names``:
             setting one explicitly does not suppress the other's default.
             Pass an empty list to explicitly clear any default; pass None
             (the default) to inherit any configured default.
         profile_names: Select sandboxes by profile name. Resolves
-            independently of ``profile_ids`` — both may be combined.
+            independently of ``profile_ids``: both may be combined.
             Pass an empty list to explicitly clear any default; pass None
             (the default) to inherit any configured default.
         runner_ids: Restrict to specific runner IDs. Pass an empty list to

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 
-"""cwsandbox ls — list sandboxes."""
+"""cwsandbox ls - list sandboxes."""
 
 from __future__ import annotations
 

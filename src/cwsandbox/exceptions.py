@@ -133,14 +133,14 @@ class SandboxStreamBackpressureError(SandboxExecutionError):
     Attributes:
         stream_code: The terminal ``ExecStreamError.code`` that triggered this
             exception (``"STREAM_BACKPRESSURE"``). This is a streaming-channel
-            code, NOT an AIP-193 ErrorInfo ``reason`` — the two namespaces are
+            code, NOT an AIP-193 ErrorInfo ``reason``: the two namespaces are
             kept distinct, so ``.reason`` is ``None`` here and callers should
             branch on the exception class (or ``stream_code``) rather than
             ``.reason``.
 
     How to avoid it:
 
-    - Read the stream as output arrives — iterate the reader / drain stdout in
+    - Read the stream as output arrives: iterate the reader / drain stdout in
       a tight loop and move slow work (disk writes, network calls) off the read
       loop. The common cause is doing per-chunk work inline; drain into a fast
       local sink (e.g. a file) first and process afterward. See
@@ -149,9 +149,9 @@ class SandboxStreamBackpressureError(SandboxExecutionError):
       ``write_file_streaming`` (chunked) instead of reading everything at once.
     - If the *destination* itself cannot keep up no matter how tight the loop
       (a rate-limited API, a slow disk, a human watching a terminal), no amount
-      of loop-tightening helps — split the work into smaller transfers, or move
+      of loop-tightening helps: split the work into smaller transfers, or move
       very large payloads out of the streaming path entirely.
-    - This is not a transient error — retrying the same consumer pattern will
+    - This is not a transient error: retrying the same consumer pattern will
       hit it again. Fix the read pace (or chunk the work) first, then retry.
     """
 
@@ -197,7 +197,7 @@ class SandboxStreamTruncatedError(SandboxExecutionError):
     Attributes:
         stream_code: The terminal ``ExecStreamError.code`` that triggered this
             exception (``"STREAM_TRUNCATED"``). This is a streaming-channel
-            code, NOT an AIP-193 ErrorInfo ``reason`` — the two namespaces are
+            code, NOT an AIP-193 ErrorInfo ``reason``: the two namespaces are
             kept distinct, so ``.reason`` is ``None`` here and callers should
             branch on the exception class (or ``stream_code``) rather than
             ``.reason``.
