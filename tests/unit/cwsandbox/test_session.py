@@ -238,7 +238,8 @@ class TestSessionCleanup:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        mock_get_response.exit_code = 0
+        mock_get_response.HasField.side_effect = lambda name: name == "exit_code"
         sandbox._stub.Get = AsyncMock(return_value=mock_get_response)
 
         assert id(sandbox) in session._sandboxes
