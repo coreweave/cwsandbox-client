@@ -34,6 +34,17 @@ from cwsandbox.exceptions import (
 )
 
 
+def _prime_exit_code(mock: MagicMock, exit_code: int = 0) -> None:
+    """Mirror proto3 optional presence for exit_code on a Get-response mock.
+
+    A bare MagicMock returns a truthy MagicMock from HasField, which would
+    leak a Mock into _Terminal.returncode — always prime terminal Get
+    responses through this helper.
+    """
+    mock.exit_code = exit_code
+    mock.HasField.side_effect = lambda name: name == "exit_code"
+
+
 class MockRpcError(grpc.RpcError):
     """Mock gRPC error for testing."""
 
@@ -2525,7 +2536,7 @@ class TestSandboxWaitUntilComplete:
 
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
@@ -2549,7 +2560,7 @@ class TestSandboxWaitUntilComplete:
         sandbox._stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_TERMINATED
-        mock_response.returncode = 0
+        _prime_exit_code(mock_response)
         mock_response.started_at_time = None
         sandbox._stub.Get = AsyncMock(return_value=mock_response)
 
@@ -2672,7 +2683,7 @@ class TestSandboxWaitForRunning:
 
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_get_response.runner_id = "tower-1"
         mock_get_response.profile_id = "runway-1"
         mock_get_response.runner_group_id = None
@@ -3225,7 +3236,7 @@ class TestSandboxStop:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
 
         mock_stub = MagicMock()
         mock_stub.Start = AsyncMock(return_value=mock_start_response)
@@ -3597,7 +3608,7 @@ class TestResourceOptionsWiring:
         info.runner_id = "runner-1"
         info.profile_id = "profile-1"
         info.runner_group_id = "rg-1"
-        info.returncode = 0
+        _prime_exit_code(info)
 
         sandbox = Sandbox._from_sandbox_info(info, base_url="http://test", timeout_seconds=30.0)
         assert sandbox.resource_limits is None
@@ -6307,7 +6318,7 @@ class TestStoppingStateTransitions:
         mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
-        mock_info.returncode = 0
+        _prime_exit_code(mock_info)
 
         new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
         assert isinstance(new_state, _Terminal)
@@ -6476,7 +6487,7 @@ class TestStoppingStopFlow:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_stub.Get = AsyncMock(return_value=mock_get_response)
 
         sandbox._stub = mock_stub
@@ -6619,7 +6630,7 @@ class TestStoppingStopFlow:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_stub.Get = AsyncMock(return_value=mock_get_response)
 
         sandbox._stub = mock_stub
@@ -6787,7 +6798,7 @@ class TestStopOwnedTermination:
 
         # Then observe COMPLETED
         mock_info.sandbox_status = gateway_pb2.SANDBOX_STATUS_COMPLETED
-        mock_info.returncode = 0
+        _prime_exit_code(mock_info)
         sandbox._state = new_state
         terminal_state = sandbox._apply_sandbox_info(mock_info, source="poll")
         assert isinstance(terminal_state, _Terminal)
@@ -6860,7 +6871,7 @@ class TestStoppingSessionClose:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_stub.Get = AsyncMock(return_value=mock_get_response)
         sandbox._stub = mock_stub
 
@@ -6989,7 +7000,7 @@ class TestDoPolRunningStoppingBranch:
         completed_response.profile_id = ""
         completed_response.runner_group_id = ""
         completed_response.started_at_time = None
-        completed_response.returncode = 0
+        _prime_exit_code(completed_response)
 
         with patch.object(sandbox, "_poll_until_stable", return_value=completed_response):
             await sandbox._do_poll_complete()
@@ -7028,7 +7039,7 @@ class TestStoppingWaitUntilComplete:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_stub.Get = AsyncMock(return_value=mock_get_response)
         sandbox._stub = mock_stub
 
@@ -7062,7 +7073,7 @@ class TestStoppingWaitUntilComplete:
         mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
-        mock_get_response.returncode = 0
+        _prime_exit_code(mock_get_response)
         mock_stub.Get = AsyncMock(return_value=mock_get_response)
         sandbox._stub = mock_stub
 

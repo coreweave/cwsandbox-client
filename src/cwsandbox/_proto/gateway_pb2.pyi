@@ -209,6 +209,18 @@ class FileSystemSnapshotSource(_message.Message):
     file_system_snapshot_id: str
     def __init__(self, file_system_snapshot_id: _Optional[str] = ...) -> None: ...
 
+class VolumeAttachment(_message.Message):
+    __slots__ = ("volume_id", "mount_path", "sub_path", "read_only")
+    VOLUME_ID_FIELD_NUMBER: _ClassVar[int]
+    MOUNT_PATH_FIELD_NUMBER: _ClassVar[int]
+    SUB_PATH_FIELD_NUMBER: _ClassVar[int]
+    READ_ONLY_FIELD_NUMBER: _ClassVar[int]
+    volume_id: str
+    mount_path: str
+    sub_path: str
+    read_only: bool
+    def __init__(self, volume_id: _Optional[str] = ..., mount_path: _Optional[str] = ..., sub_path: _Optional[str] = ..., read_only: bool = ...) -> None: ...
+
 class SandboxFileSystemMount(_message.Message):
     __slots__ = ("mount_path", "size", "file_system_snapshot")
     MOUNT_PATH_FIELD_NUMBER: _ClassVar[int]
@@ -256,15 +268,17 @@ class ResourceUsage(_message.Message):
     def __init__(self, cpu_millicores_used: _Optional[int] = ..., memory_mb_used: _Optional[int] = ..., gpu_count_used: _Optional[int] = ...) -> None: ...
 
 class ObjectStorageAccess(_message.Message):
-    __slots__ = ("buckets", "permission")
+    __slots__ = ("buckets", "permission", "object_prefix")
     BUCKETS_FIELD_NUMBER: _ClassVar[int]
     PERMISSION_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_PREFIX_FIELD_NUMBER: _ClassVar[int]
     buckets: _containers.RepeatedScalarFieldContainer[str]
     permission: ObjectStoragePermission
-    def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ...) -> None: ...
+    object_prefix: str
+    def __init__(self, buckets: _Optional[_Iterable[str]] = ..., permission: _Optional[_Union[ObjectStoragePermission, str]] = ..., object_prefix: _Optional[str] = ...) -> None: ...
 
 class StartSandboxRequest(_message.Message):
-    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "file_system", "profile_ids", "runner_ids", "profile_names", "max_lifetime_seconds", "max_timeout_seconds", "runner_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests")
+    __slots__ = ("command", "args", "tags", "resources", "container_image", "environment_variables", "ports", "mounted_files", "s3_mount", "network", "file_system", "profile_ids", "runner_ids", "profile_names", "max_lifetime_seconds", "max_timeout_seconds", "runner_cluster_secrets", "object_storage_access", "pod_annotations", "secret_stores", "resource_limits", "resource_requests", "volumes")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -301,6 +315,7 @@ class StartSandboxRequest(_message.Message):
     SECRET_STORES_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_LIMITS_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_REQUESTS_FIELD_NUMBER: _ClassVar[int]
+    VOLUMES_FIELD_NUMBER: _ClassVar[int]
     command: str
     args: _containers.RepeatedScalarFieldContainer[str]
     tags: _containers.RepeatedScalarFieldContainer[str]
@@ -323,7 +338,8 @@ class StartSandboxRequest(_message.Message):
     secret_stores: _containers.RepeatedCompositeFieldContainer[_secrets_pb2.SecretStoreReference]
     resource_limits: ResourceRequest
     resource_requests: ResourceRequest
-    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., file_system: _Optional[_Union[SandboxFileSystemMount, _Mapping]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., runner_cluster_secrets: _Optional[_Iterable[_Union[RunnerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ...) -> None: ...
+    volumes: _containers.RepeatedCompositeFieldContainer[VolumeAttachment]
+    def __init__(self, command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., resources: _Optional[_Union[ResourceRequest, _Mapping]] = ..., container_image: _Optional[str] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., mounted_files: _Optional[_Iterable[_Union[MountedFile, _Mapping]]] = ..., s3_mount: _Optional[_Union[S3Mount, _Mapping]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., file_system: _Optional[_Union[SandboxFileSystemMount, _Mapping]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_lifetime_seconds: _Optional[int] = ..., max_timeout_seconds: _Optional[int] = ..., runner_cluster_secrets: _Optional[_Iterable[_Union[RunnerClusterSecretReference, _Mapping]]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., pod_annotations: _Optional[_Mapping[str, str]] = ..., secret_stores: _Optional[_Iterable[_Union[_secrets_pb2.SecretStoreReference, _Mapping]]] = ..., resource_limits: _Optional[_Union[ResourceRequest, _Mapping]] = ..., resource_requests: _Optional[_Union[ResourceRequest, _Mapping]] = ..., volumes: _Optional[_Iterable[_Union[VolumeAttachment, _Mapping]]] = ...) -> None: ...
 
 class StartSandboxResponse(_message.Message):
     __slots__ = ("sandbox_id", "started_at_time", "service_address", "exposed_ports", "requested_resources", "profile_id", "runner_id", "sandbox_status", "applied_ingress_mode", "applied_egress_mode", "requested_resource_limits", "requested_resource_requests")
@@ -478,7 +494,7 @@ class GetSandboxRequest(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., max_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class GetSandboxResponse(_message.Message):
-    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode", "status_reason")
+    __slots__ = ("sandbox_id", "started_at_time", "sandbox_status", "current_resource_usage", "runner_id", "runner_group_id", "profile_id", "service_address", "exposed_ports", "applied_ingress_mode", "applied_egress_mode", "status_reason", "exit_code")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_TIME_FIELD_NUMBER: _ClassVar[int]
     SANDBOX_STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -491,6 +507,7 @@ class GetSandboxResponse(_message.Message):
     APPLIED_INGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_EGRESS_MODE_FIELD_NUMBER: _ClassVar[int]
     STATUS_REASON_FIELD_NUMBER: _ClassVar[int]
+    EXIT_CODE_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     started_at_time: _timestamp_pb2.Timestamp
     sandbox_status: SandboxStatus
@@ -503,10 +520,11 @@ class GetSandboxResponse(_message.Message):
     applied_ingress_mode: str
     applied_egress_mode: str
     status_reason: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., status_reason: _Optional[str] = ...) -> None: ...
+    exit_code: int
+    def __init__(self, sandbox_id: _Optional[str] = ..., started_at_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., sandbox_status: _Optional[_Union[SandboxStatus, str]] = ..., current_resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., profile_id: _Optional[str] = ..., service_address: _Optional[str] = ..., exposed_ports: _Optional[_Iterable[_Union[Port, _Mapping]]] = ..., applied_ingress_mode: _Optional[str] = ..., applied_egress_mode: _Optional[str] = ..., status_reason: _Optional[str] = ..., exit_code: _Optional[int] = ...) -> None: ...
 
 class ListSandboxesRequest(_message.Message):
-    __slots__ = ("tags", "status", "profile_ids", "runner_ids", "profile_names", "max_timeout_seconds", "include_stopped", "page_size", "page_token")
+    __slots__ = ("tags", "status", "profile_ids", "runner_ids", "profile_names", "max_timeout_seconds", "include_stopped", "page_size", "page_token", "volume_ids")
     TAGS_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     PROFILE_IDS_FIELD_NUMBER: _ClassVar[int]
@@ -516,6 +534,7 @@ class ListSandboxesRequest(_message.Message):
     INCLUDE_STOPPED_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    VOLUME_IDS_FIELD_NUMBER: _ClassVar[int]
     tags: _containers.RepeatedScalarFieldContainer[str]
     status: SandboxStatus
     profile_ids: _containers.RepeatedScalarFieldContainer[str]
@@ -525,7 +544,8 @@ class ListSandboxesRequest(_message.Message):
     include_stopped: bool
     page_size: int
     page_token: str
-    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ...) -> None: ...
+    volume_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, tags: _Optional[_Iterable[str]] = ..., status: _Optional[_Union[SandboxStatus, str]] = ..., profile_ids: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., profile_names: _Optional[_Iterable[str]] = ..., max_timeout_seconds: _Optional[int] = ..., include_stopped: bool = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., volume_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ListSandboxesResponse(_message.Message):
     __slots__ = ("sandboxes", "next_page_token")

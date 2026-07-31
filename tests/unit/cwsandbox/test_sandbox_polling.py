@@ -46,6 +46,7 @@ def _fast_polling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Eliminate poll-interval sleeps so tests run on mock timing alone."""
     monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_MAX_POLL_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_POLL_INTERVAL_SECONDS", 0.0)
 
 
 def _install_recording_sleep(
@@ -108,7 +109,17 @@ def _get_response(status: int, **kwargs: object) -> MagicMock:
     resp.runner_group_id = kwargs.get("runner_group_id", "")
     resp.profile_id = kwargs.get("profile_id", "")
     resp.started_at_time = kwargs.get("started_at_time", None)
-    resp.returncode = kwargs.get("returncode", 0)
+    # Mirror proto3 optional presence: HasField("exit_code") is True only
+    # when an exit code is supplied. Default matches the backend contract:
+    # present (0) for COMPLETED, absent for every other status (the backend
+    # omits the field for non-terminal sandboxes and gateway stops).
+    default_exit_code = 0 if status == gateway_pb2.SANDBOX_STATUS_COMPLETED else None
+    exit_code = kwargs.get("exit_code", default_exit_code)
+    if exit_code is None:
+        resp.HasField.side_effect = lambda name: False
+    else:
+        resp.exit_code = exit_code
+        resp.HasField.side_effect = lambda name: name == "exit_code"
     return resp
 
 
@@ -2009,3 +2020,345 @@ class TestConcurrencyAcrossRetryAndNotFound:
         assert call_count == 2  # first UNAVAILABLE + second COMPLETED
         assert isinstance(sandbox._state, _Terminal)
         assert sandbox._state.status == SandboxStatus.COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# Exit-code grace re-poll tests
+# ---------------------------------------------------------------------------
+
+
+class TestExitCodeGraceRepoll:
+    """Bounded grace re-poll on COMPLETED-without-exit-code.
+
+    The runner reports exit codes on a batched flush, so a Get can observe
+    COMPLETED before the code lands in the backend. The poll loop takes up
+    to EXIT_CODE_GRACE_POLLS extra polls before latching the terminal state
+    (which freezes returncode).
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_repoll_when_exit_code_present(self) -> None:
+        """A COMPLETED response carrying an exit code latches immediately."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=7)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert call_count == 1
+        assert sandbox.returncode == 7
+
+    @pytest.mark.asyncio
+    async def test_repoll_recovers_late_exit_code(self) -> None:
+        """A code arriving on the grace re-poll is latched into returncode."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=3)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert call_count == 2
+        assert sandbox.returncode == 3
+
+    @pytest.mark.asyncio
+    async def test_repoll_bounded_then_latches_none(self) -> None:
+        """A code that never arrives stops the re-poll at the bound.
+
+        returncode stays None — a legitimate permanent state (older gateway,
+        container never ran) — and the poll does not spin forever.
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        from cwsandbox._sandbox import EXIT_CODE_GRACE_POLLS
+
+        assert call_count == 1 + EXIT_CODE_GRACE_POLLS
+        assert sandbox.status == SandboxStatus.COMPLETED
+        assert sandbox.returncode is None
+
+    @pytest.mark.asyncio
+    async def test_repoll_skipped_for_client_initiated_stop(self) -> None:
+        """Stop-owned polls latch immediately: gateway stops never stamp a code."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+        sandbox._stop_owned = True
+
+        # raise_on_termination=False: a stop-owned COMPLETED raises
+        # SandboxTerminatedError under the default policy.
+        await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert call_count == 1
+        assert sandbox.returncode is None
+
+    @pytest.mark.asyncio
+    async def test_no_repoll_for_failed_terminal(self) -> None:
+        """FAILED latches immediately even without an exit code.
+
+        The grace re-poll is COMPLETED-only; a FAILED response (whose code
+        the backend omits unless nonzero) must not burn grace polls.
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert call_count == 1
+        assert sandbox.status == SandboxStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_repoll_stops_on_mid_grace_status_flip(self) -> None:
+        """A status change on the grace re-poll ends the grace loop.
+
+        COMPLETED-without-code followed by FAILED (e.g. a reconciler
+        correction) latches the new status without burning the remaining
+        grace poll.
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        with pytest.raises(SandboxFailedError):
+            await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert call_count == 2
+        assert sandbox.status == SandboxStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_repoll_skipped_when_stopping_observed(self) -> None:
+        """The _is_stopping half of the skip guard also suppresses grace."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+
+        sandbox = _make_sandbox()
+        sandbox._stub.Get = mock_get
+        # _is_stopping derives from the lifecycle state.
+        sandbox._state = _Stopping(sandbox_id="test-sandbox")
+
+        await sandbox._wait_until_complete_async(raise_on_termination=False)
+
+        assert call_count == 1
+        assert sandbox.returncode is None
+
+    @pytest.mark.asyncio
+    async def test_repoll_transient_error_does_not_retry(self) -> None:
+        """The bonus poll is one unretried Get — never the retry envelope.
+
+        UNAVAILABLE is retryable under _poll_with_retry's 15s/30s budget;
+        the grace poll must instead give up immediately and keep the in-hand
+        COMPLETED. Exactly 2 Gets pins the no-retry contract (a swap back to
+        _poll_with_retry would issue more).
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert call_count == 2
+        assert sandbox.status == SandboxStatus.COMPLETED
+        assert sandbox.returncode is None
+
+    @pytest.mark.asyncio
+    async def test_grace_get_uses_dedicated_rpc_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bonus Get runs on EXIT_CODE_GRACE_RPC_TIMEOUT_SECONDS, not the
+        primary poll's RPC timeout."""
+        monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_RPC_TIMEOUT_SECONDS", 7.5)
+        timeouts: list[float] = []
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            timeouts.append(timeout)
+            if len(timeouts) == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=3)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert sandbox.returncode == 3
+        assert timeouts[1] == 7.5
+        assert timeouts[0] != 7.5
+
+    @pytest.mark.asyncio
+    async def test_stale_nonterminal_bonus_response_not_adopted(self) -> None:
+        """A stale RUNNING read must not un-observe the in-hand COMPLETED.
+
+        The bonus response is adopted only when terminal or code-bearing;
+        a stale non-terminal read burns the grace iteration and the next
+        one still enriches successfully.
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            if call_count == 2:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=5)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert call_count == 3
+        assert sandbox.status == SandboxStatus.COMPLETED
+        assert sandbox.returncode == 5
+
+    @pytest.mark.asyncio
+    async def test_timeout_during_grace_latches_in_hand_completion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A waiter deadline expiring mid-grace must not raise a timeout.
+
+        The COMPLETED response is already in hand when the grace window
+        starts; the TimeoutError handler latches it (returncode None) and
+        resolves instead of converting an observed completion into
+        SandboxTimeoutError.
+        """
+        monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_POLL_INTERVAL_SECONDS", 0.3)
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async(timeout=0.05)
+
+        assert sandbox.status == SandboxStatus.COMPLETED
+        assert sandbox.returncode is None
+        # Drain the shared poll task (still in its grace sleep) so it does
+        # not outlive the test's event loop; its _is_done guard ends grace.
+        if sandbox._complete_task is not None:
+            await sandbox._complete_task
+
+    @pytest.mark.asyncio
+    async def test_timeout_during_grace_latches_for_wait_until_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same deadline-vs-grace protection on the wait()/RUNNING path."""
+        monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_POLL_INTERVAL_SECONDS", 0.3)
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+
+        sandbox = _make_sandbox()
+        sandbox._stub.Get = mock_get
+
+        # COMPLETED-during-startup resolves the running wait without error.
+        await sandbox._wait_until_running_async(timeout=0.05)
+
+        assert sandbox.status == SandboxStatus.COMPLETED
+        if sandbox._running_task is not None:
+            await sandbox._running_task
+
+    @pytest.mark.asyncio
+    async def test_repoll_failure_keeps_terminal_response(self) -> None:
+        """A failing grace re-poll must not fail the wait.
+
+        The caller already holds a terminal COMPLETED response; the bonus
+        poll is best-effort enrichment. A concurrent Sandbox.delete() can
+        make it raise SandboxNotFoundError — the wait still resolves with
+        the response in hand (returncode None).
+        """
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            raise _rpc_error(grpc.StatusCode.NOT_FOUND)
+
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_complete_async()
+
+        assert call_count == 2
+        assert sandbox.status == SandboxStatus.COMPLETED
+        assert sandbox.returncode is None
+
+    @pytest.mark.asyncio
+    async def test_repoll_applies_to_wait_until_running(self) -> None:
+        """A sandbox that completes during startup also gets the grace re-poll."""
+        call_count = 0
+
+        async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=0)
+
+        sandbox = _make_sandbox()
+        sandbox._stub.Get = mock_get
+
+        await sandbox._wait_until_running_async()
+
+        assert call_count == 2
+        assert sandbox.returncode == 0

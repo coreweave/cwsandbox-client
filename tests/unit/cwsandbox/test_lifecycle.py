@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cwsandbox._proto import gateway_pb2
 from cwsandbox._sandbox import (
     SandboxStatus,
     _lifecycle_state_from_info,
@@ -40,18 +41,26 @@ def _make_proto_info(
     profile_id: str = "",
     runner_group_id: str = "",
     started_at_time: object | None = None,
-    returncode: int = 0,
+    exit_code: int | None = None,
 ) -> SimpleNamespace:
-    """Build a lightweight stand-in for a protobuf sandbox info message."""
-    return SimpleNamespace(
+    """Build a lightweight stand-in for a protobuf sandbox info message.
+
+    Has no HasField, so _apply_sandbox_info takes the getattr fallback path;
+    exit_code is only set as an attribute when provided (None = "field absent",
+    mirroring proto3 optional presence). Real-proto presence semantics are
+    covered by TestApplySandboxInfoRealProto below.
+    """
+    info = SimpleNamespace(
         sandbox_id=sandbox_id,
         sandbox_status=sandbox_status,
         runner_id=runner_id,
         profile_id=profile_id,
         runner_group_id=runner_group_id,
         started_at_time=started_at_time,
-        returncode=returncode,
     )
+    if exit_code is not None:
+        info.exit_code = exit_code
+    return info
 
 
 def _proto_status(status: SandboxStatus) -> int:
@@ -291,7 +300,7 @@ class TestApplySandboxInfo:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.COMPLETED),
-            returncode=0,
+            exit_code=0,
         )
         new_state = sb._apply_sandbox_info(info, source="poll")
         assert isinstance(new_state, _Terminal)
@@ -302,7 +311,7 @@ class TestApplySandboxInfo:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.COMPLETED),
-            returncode=42,
+            exit_code=42,
         )
         new_state = sb._apply_sandbox_info(info, source="query")
         assert isinstance(new_state, _Terminal)
@@ -373,7 +382,7 @@ class TestApplySandboxInfo:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.COMPLETED),
-            returncode=99,
+            exit_code=99,
         )
         new_state = sb._apply_sandbox_info(info, source="query")
         assert isinstance(new_state, _Terminal)
@@ -383,7 +392,7 @@ class TestApplySandboxInfo:
         sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.UNSPECIFIED),
-            returncode=0,
+            exit_code=0,
         )
         new_state = sb._apply_sandbox_info(info, source="poll")
         assert isinstance(new_state, _Terminal)
@@ -464,7 +473,7 @@ class TestFromSandboxInfoState:
         info = _make_proto_info(
             sandbox_id="sb-1",
             sandbox_status=_proto_status(SandboxStatus.COMPLETED),
-            returncode=42,
+            exit_code=42,
         )
         from cwsandbox import Sandbox
 
@@ -533,3 +542,62 @@ class TestSandboxStatusFromProto:
 
         assert result is SandboxStatus.UNSPECIFIED
         assert any("Unknown sandbox status" in msg for msg in caplog.messages)
+
+
+class TestApplySandboxInfoRealProto:
+    """Exercise _apply_sandbox_info against the real GetSandboxResponse proto.
+
+    Regression coverage for the sandbox.returncode-always-None bug: the old
+    guard read a `returncode` attribute that never existed on the proto, and
+    SimpleNamespace/MagicMock stand-ins hid the field-name drift. These tests
+    pin the actual vendored proto field (`optional int32 exit_code`) and its
+    presence semantics, so a rename or removal fails loudly.
+    """
+
+    def _make_sandbox(self, state: _LifecycleState) -> Sandbox:
+        from cwsandbox import Sandbox
+
+        sb = Sandbox.__new__(Sandbox)
+        sb._state = state
+        return sb
+
+    def _make_response(
+        self, status: SandboxStatus, exit_code: int | None = None
+    ) -> gateway_pb2.GetSandboxResponse:
+        response = gateway_pb2.GetSandboxResponse(
+            sandbox_id="sb-1",
+            sandbox_status=status.to_proto(),
+        )
+        if exit_code is not None:
+            response.exit_code = exit_code
+        return response
+
+    def test_poll_completed_exit_zero_sets_returncode(self) -> None:
+        sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
+        info = self._make_response(SandboxStatus.COMPLETED, exit_code=0)
+        new_state = sb._apply_sandbox_info(info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.returncode == 0
+
+    def test_poll_completed_nonzero_exit_sets_returncode(self) -> None:
+        sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
+        info = self._make_response(SandboxStatus.COMPLETED, exit_code=7)
+        new_state = sb._apply_sandbox_info(info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.returncode == 7
+
+    def test_poll_completed_field_absent_returncode_none(self) -> None:
+        """Older gateways (or containers that never ran) omit exit_code."""
+        sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
+        info = self._make_response(SandboxStatus.COMPLETED)
+        assert not info.HasField("exit_code")
+        new_state = sb._apply_sandbox_info(info, source="poll")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.returncode is None
+
+    def test_query_source_still_omits_returncode(self) -> None:
+        sb = self._make_sandbox(_Running(sandbox_id="sb-1"))
+        info = self._make_response(SandboxStatus.COMPLETED, exit_code=0)
+        new_state = sb._apply_sandbox_info(info, source="query")
+        assert isinstance(new_state, _Terminal)
+        assert new_state.returncode is None
