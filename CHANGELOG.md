@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v0.26.1 (2026-07-31)
+
+### Bug Fixes
+
+- Surface sandbox exit code via proto3 optional exit_code presence
+  ([`90947c5`](https://github.com/coreweave/cwsandbox-client/commit/90947c58bbd6bf1df2f80d8c8669e727f5b7cf2c))
+
+sandbox.returncode was always None: the old guard read a returncode attribute that never existed on
+  GetSandboxResponse, and mock-based tests hid the field-name drift. The backend now serves the
+  main-process exit code as `optional int32 exit_code = 13` (aviato #1490, BSR commit 033ca7a80802).
+
+- Re-vendor proto stubs from buf.build at the new pins (picks up exit_code plus upstream
+  volume/streaming proto changes). - _apply_sandbox_info reads the code via HasField("exit_code")
+  presence for COMPLETED sandboxes observed by polling: 0 is meaningful and "not reported" is a real
+  state (older gateways, gateway-initiated stops, containers that never ran), with a getattr
+  fallback for stand-ins lacking presence tracking. - Bounded grace re-poll
+  (EXIT_CODE_GRACE_POLLS=2) when a poll observes COMPLETED without a code: the runner flushes exit
+  codes on a batched report (~5s cadence), so re-poll briefly before latching the terminal state,
+  which freezes returncode. The re-poll is strictly best-effort: skipped for client-initiated stops
+  and once a terminal state latches concurrently; a failed bonus poll returns the in-hand terminal
+  response; each bonus poll is a single unretried Get on a short timeout, never the primary poll's
+  retry envelope; and a waiter whose deadline expires mid-grace latches the in-hand terminal
+  response instead of raising a spurious SandboxTimeoutError. - Tests: real-proto presence coverage
+  (TestApplySandboxInfoRealProto) so field renames fail loudly; grace re-poll coverage incl.
+  failure, status-flip, stop-path guards, and deadline-during-grace on both wait paths; mock helpers
+  primed with per-status presence semantics.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Guard docstrings against typography that breaks docs generation
+  ([`3e0c382`](https://github.com/coreweave/cwsandbox-client/commit/3e0c3820110eba10496ee853022d1853e42c8d45))
+
+Add an AST-based guard that flags em dashes, en dashes, smart quotes, and ellipsis in docstrings
+  under src/ (including PEP 257 attribute docstrings), skipping the generated _proto stubs. Wire it
+  into a new PR workflow and the mise check aggregate so future docstrings stay clean.
+
+### Documentation
+
+- Remove em dashes from public docstrings
+  ([`3bf2f60`](https://github.com/coreweave/cwsandbox-client/commit/3bf2f600d34e79d34767e2bb2c5d6b828a6f2baa))
+
+The public docstrings are the source for an auto-generated API reference whose build rejects em
+  dashes. Replace them with hyphens or colons. Scope is docstrings only; comment em dashes are left
+  unchanged.
+
+
 ## v0.26.0 (2026-06-11)
 
 ### Bug Fixes
