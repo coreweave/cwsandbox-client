@@ -131,17 +131,20 @@ alias = "pc"
 # =============================================================================
 
 [tasks."proto:update"]
-description = "Update vendored proto stubs from buf.build"
-run = "scripts/update-protos.sh"
-
-[tasks."proto:update:local"]
-description = "Update vendored proto stubs from local aviato checkout"
+description = "Update vendored v1 proto stubs from a local backend checkout (protobuf 26.1)"
 run = """
 #!/bin/bash
 set -e
 BACKEND_REPO="${CWSANDBOX_BACKEND_PATH:-../aviato}"
-echo "==> Generating Python protos from $BACKEND_REPO..."
-(cd "$BACKEND_REPO" && make buf-gen-python)
-echo "==> Copying stubs into vendored _proto directory..."
-scripts/update-protos.sh --local "$BACKEND_REPO/gen/python"
+echo "==> Generating and vendoring v1 consumer stubs from $BACKEND_REPO..."
+scripts/update-protos.sh --from-backend "$BACKEND_REPO"
+"""
+
+[tasks."proto:update:local"]
+description = "Copy already-generated v1 stubs from a local gen/python tree (must be protobuf <=26.1)"
+run = """
+#!/bin/bash
+set -e
+BACKEND_REPO="${CWSANDBOX_BACKEND_PATH:-../aviato}"
+scripts/update-protos.sh --local "${1:-$BACKEND_REPO/gen/python}"
 """

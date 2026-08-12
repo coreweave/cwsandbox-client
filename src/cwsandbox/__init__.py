@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.26.1"
+__version__ = "1.0.0b1"
 
 import asyncio
 from typing import TYPE_CHECKING, Any, TypeVar, overload
@@ -16,16 +16,11 @@ from cwsandbox import _cleanup as _cleanup  # noqa: F401
 from cwsandbox._auth import AuthHeaders, set_auth_mode
 from cwsandbox._defaults import SandboxDefaults
 from cwsandbox._discovery import (
-    EgressMode,
-    Profile,
     Runner,
     RunnerResources,
-    ServiceExposureMode,
     format_bytes,
     format_cpu,
-    get_profile,
     get_runner,
-    list_profiles,
     list_runners,
 )
 from cwsandbox._function import RemoteFunction
@@ -39,12 +34,18 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     FileSystemSnapshotStatus,
     FileSystemSnapshotTrigger,
+    ImagePullCredentials,
     NetworkOptions,
     OperationRef,
+    PlacementMode,
     Process,
     ProcessResult,
     ResourceOptions,
+    ScratchVolumeOptions,
     Secret,
+    Service,
+    ServiceProtocol,
+    ServiceVisibility,
     StreamReader,
     StreamWriter,
     TerminalResult,
@@ -56,7 +57,6 @@ from cwsandbox.exceptions import (
     CWSandboxError,
     DiscoveryError,
     FunctionError,
-    ProfileNotFoundError,
     RunnerNotFoundError,
     SandboxCommandTimeoutError,
     SandboxError,
@@ -282,7 +282,6 @@ __all__ = [
     "CWSandboxAuthenticationError",
     "CWSandboxError",
     "DiscoveryError",
-    "EgressMode",
     "FileSystemSnapshot",
     "FileSystemSnapshotBucketConfig",
     "FileSystemSnapshotBucketMode",
@@ -290,22 +289,24 @@ __all__ = [
     "FileSystemSnapshotStatus",
     "FileSystemSnapshotTrigger",
     "FunctionError",
-    "ServiceExposureMode",
-    "get_profile",
+    "ImagePullCredentials",
     "get_runner",
-    "list_profiles",
     "list_runners",
     "NetworkOptions",
     "OperationRef",
+    "PlacementMode",
     "Process",
     "ProcessResult",
     "RemoteFunction",
-    "Profile",
-    "ProfileNotFoundError",
     "ResourceOptions",
     "Runner",
     "RunnerNotFoundError",
     "RunnerResources",
+    "ScratchVolumeOptions",
+    "Secret",
+    "Service",
+    "ServiceProtocol",
+    "ServiceVisibility",
     "set_auth_mode",
     "Sandbox",
     "SandboxCommandTimeoutError",
@@ -335,7 +336,6 @@ __all__ = [
     "SnapshotQuotaExceededError",
     "SnapshotSizeExceededError",
     "SnapshotWaitTimeoutError",
-    "Secret",
     "Session",
     "StreamReader",
     "StreamWriter",

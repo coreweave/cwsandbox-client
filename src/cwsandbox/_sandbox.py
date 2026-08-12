@@ -103,10 +103,10 @@ from cwsandbox._network import (
     translate_grpc_error,
 )
 from cwsandbox._proto import (
-    gateway_pb2,
-    gateway_pb2_grpc,
-    streaming_pb2,
-    streaming_pb2_grpc,
+    sandbox_pb2,
+    sandbox_pb2_grpc,
+    settings_pb2,
+    settings_pb2_grpc,
 )
 from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
@@ -117,12 +117,18 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     FileSystemSnapshotStatus,
     FileSystemSnapshotTrigger,
+    ImagePullCredentials,
     NetworkOptions,
     OperationRef,
+    PlacementMode,
     Process,
     ProcessResult,
     ResourceOptions,
+    ScratchVolumeOptions,
     Secret,
+    Service,
+    ServiceProtocol,
+    ServiceVisibility,
     StreamReader,
     StreamWriter,
     TerminalResult,
@@ -196,27 +202,25 @@ class SandboxStatus(StrEnum):
 
     @classmethod
     def from_proto(cls, proto_status: int) -> SandboxStatus:
-        """Convert protobuf status enum to SandboxStatus."""
+        """Convert protobuf State enum to SandboxStatus."""
         try:
-            proto_name = gateway_pb2.SandboxStatus.Name(proto_status)
-            enum_name = proto_name.replace("SANDBOX_STATUS_", "")
+            proto_name = sandbox_pb2.State.Name(proto_status)
+            enum_name = proto_name.replace("STATE_", "")
             return cls[enum_name]
         except (ValueError, KeyError):
             logger.warning("Unknown sandbox status %s, treating as UNSPECIFIED", proto_status)
             return cls.UNSPECIFIED
 
     def to_proto(self) -> int:
-        """Convert SandboxStatus to protobuf enum"""
-        proto_name = f"SANDBOX_STATUS_{self.name}"
-        return gateway_pb2.SandboxStatus.Value(proto_name)
+        """Convert SandboxStatus to protobuf State enum."""
+        proto_name = f"STATE_{self.name}"
+        return sandbox_pb2.State.Value(proto_name)
 
 
 def _fss_status_from_proto(value: int) -> FileSystemSnapshotStatus:
-    """Convert a proto FileSystemSnapshotStatus enum to the SDK enum."""
+    """Convert a proto SnapshotState enum to the SDK enum."""
     try:
-        name = gateway_pb2.FileSystemSnapshotStatus.Name(value).replace(
-            "FILE_SYSTEM_SNAPSHOT_STATUS_", ""
-        )
+        name = sandbox_pb2.SnapshotState.Name(value).replace("SNAPSHOT_STATE_", "")
         return FileSystemSnapshotStatus[name]
     except (ValueError, KeyError):
         logger.warning("Unknown snapshot status %s, treating as UNSPECIFIED", value)
@@ -224,11 +228,11 @@ def _fss_status_from_proto(value: int) -> FileSystemSnapshotStatus:
 
 
 def _fss_trigger_from_proto(value: int) -> FileSystemSnapshotTrigger:
-    """Convert a proto FileSystemSnapshotTrigger enum to the SDK enum."""
+    """Convert a proto SnapshotTrigger enum to the SDK enum."""
     try:
-        name = gateway_pb2.FileSystemSnapshotTrigger.Name(value).replace(
-            "FILE_SYSTEM_SNAPSHOT_TRIGGER_", ""
-        )
+        name = sandbox_pb2.SnapshotTrigger.Name(value).replace("SNAPSHOT_TRIGGER_", "")
+        if name == "ON_DELETE":
+            return FileSystemSnapshotTrigger.ON_DELETE
         return FileSystemSnapshotTrigger[name]
     except (ValueError, KeyError):
         logger.warning("Unknown snapshot trigger %s, treating as UNSPECIFIED", value)
@@ -238,7 +242,7 @@ def _fss_trigger_from_proto(value: int) -> FileSystemSnapshotTrigger:
 def _fss_bucket_mode_from_proto(value: int) -> FileSystemSnapshotBucketMode:
     """Convert a proto FileSystemSnapshotBucketMode enum to the SDK enum."""
     try:
-        name = gateway_pb2.FileSystemSnapshotBucketMode.Name(value).replace(
+        name = settings_pb2.FileSystemSnapshotBucketMode.Name(value).replace(
             "FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_", ""
         )
         return FileSystemSnapshotBucketMode[name]
@@ -255,25 +259,26 @@ def _proto_timestamp_to_datetime(message: Any, field_name: str) -> datetime | No
     return result if isinstance(result, datetime) else None
 
 
-def _snapshot_from_proto(proto: gateway_pb2.FileSystemSnapshot) -> FileSystemSnapshot:
+def _snapshot_from_proto(proto: sandbox_pb2.FileSystemSnapshot) -> FileSystemSnapshot:
     """Convert a proto FileSystemSnapshot to the SDK dataclass."""
     return FileSystemSnapshot(
         file_system_snapshot_id=proto.file_system_snapshot_id,
-        status=_fss_status_from_proto(proto.status),
-        status_reason=proto.status_reason,
+        status=_fss_status_from_proto(proto.state),
+        status_reason=proto.state_reason,
         size_bytes=proto.size_bytes,
         source_sandbox_id=proto.source_sandbox_id,
         trigger=_fss_trigger_from_proto(proto.trigger),
-        idempotency_key=proto.idempotency_key,
+        request_id=proto.request_id,
         object_bucket=proto.object_bucket,
-        created_at=_proto_timestamp_to_datetime(proto, "created_at"),
+        source_volume_name=proto.source_volume_name,
+        created_at=_proto_timestamp_to_datetime(proto, "create_time"),
         updated_at=_proto_timestamp_to_datetime(proto, "updated_at"),
-        completed_at=_proto_timestamp_to_datetime(proto, "completed_at"),
+        completed_at=_proto_timestamp_to_datetime(proto, "complete_time"),
     )
 
 
 def _bucket_config_from_proto(
-    proto: gateway_pb2.FileSystemSnapshotBucketConfig,
+    proto: settings_pb2.FileSystemSnapshotBucketConfig,
 ) -> FileSystemSnapshotBucketConfig:
     """Convert a proto FileSystemSnapshotBucketConfig to the SDK dataclass."""
     return FileSystemSnapshotBucketConfig(
@@ -284,14 +289,84 @@ def _bucket_config_from_proto(
     )
 
 
+@dataclass(frozen=True)
+class _SandboxView:
+    """Adapt a v1 Sandbox resource to poll/lifecycle field accessors."""
+
+    _sandbox: sandbox_pb2.Sandbox
+
+    @property
+    def sandbox_id(self) -> str:
+        return self._sandbox.sandbox_id
+
+    @property
+    def sandbox_status(self) -> int:
+        return self._sandbox.status.state
+
+    @property
+    def exit_code(self) -> int:
+        return self._sandbox.status.exit_code
+
+    @property
+    def runner_id(self) -> str:
+        return self._sandbox.status.runner_id
+
+    @property
+    def runner_group_id(self) -> str:
+        return self._sandbox.status.runner_group_id
+
+    @property
+    def profile_id(self) -> str:
+        # Removed in v1; kept empty for lifecycle dataclass compat.
+        return ""
+
+    @property
+    def status_reason(self) -> str:
+        return self._sandbox.status.state_reason
+
+    @property
+    def started_at_time(self) -> Any:
+        if self._sandbox.status.HasField("start_time"):
+            return self._sandbox.status.start_time
+        return None
+
+    def HasField(self, field_name: str) -> bool:
+        if field_name == "exit_code":
+            return self._sandbox.status.HasField("exit_code")
+        if field_name in ("start_time", "create_time", "end_time", "started_at_time"):
+            key = "start_time" if field_name == "started_at_time" else field_name
+            return self._sandbox.status.HasField(key)
+        if field_name in ("status", "spec"):
+            return self._sandbox.HasField(field_name)
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._sandbox, name)
+
+
+def _as_sandbox_view(value: Any) -> Any:
+    """Normalize Get/List sandbox messages to ``_SandboxView``.
+
+    Duck-typed stand-ins used by unit tests (SimpleNamespace/MagicMock that
+    already expose ``sandbox_status``) are returned unchanged.
+    """
+    if isinstance(value, _SandboxView):
+        return value
+    if isinstance(value, sandbox_pb2.Sandbox):
+        return _SandboxView(value)
+    # Non-proto stand-ins already expose the poll accessors.
+    if hasattr(value, "sandbox_status"):
+        return value
+    return _SandboxView(value)
+
+
+DEFAULT_SCRATCH_VOLUME_NAME = "workspace"
+
+
 def _coerce_file_system_snapshot(
     value: FileSystemSnapshotOptions | Mapping[str, Any] | None,
 ) -> FileSystemSnapshotOptions | None:
-    """Coerce the ``file_system_snapshot`` argument to FileSystemSnapshotOptions.
-
-    Accepts a FileSystemSnapshotOptions, a plain mapping with matching keys, or
-    None. Raises TypeError for anything else.
-    """
+    """Coerce convenience FSS options (maps to a named scratch volume)."""
     if value is None:
         return None
     if isinstance(value, FileSystemSnapshotOptions):
@@ -304,35 +379,37 @@ def _coerce_file_system_snapshot(
     )
 
 
-def _file_system_mount_kwargs(opts: FileSystemSnapshotOptions) -> dict[str, Any]:
-    """Build StartSandboxRequest.file_system (SandboxFileSystemMount) kwargs."""
-    mount: dict[str, Any] = {"mount_path": opts.mount_path}
+def _scratch_from_fss_options(opts: FileSystemSnapshotOptions) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (SandboxVolume kwargs, VolumeMount kwargs) for convenience FSS options."""
+    scratch: dict[str, Any] = {}
     if opts.size is not None:
-        mount["size"] = opts.size
+        scratch["size"] = opts.size
     if opts.file_system_snapshot_id is not None:
-        mount["file_system_snapshot"] = {"file_system_snapshot_id": opts.file_system_snapshot_id}
-    return mount
+        scratch["restore_from_snapshot_id"] = opts.file_system_snapshot_id
+    volume = {"name": DEFAULT_SCRATCH_VOLUME_NAME, "scratch": scratch}
+    mount = {"volume": DEFAULT_SCRATCH_VOLUME_NAME, "mount_path": opts.mount_path}
+    return volume, mount
 
 
 async def _create_snapshot_via_stub(
-    stub: gateway_pb2_grpc.GatewayServiceStub,
+    stub: sandbox_pb2_grpc.SandboxServiceStub,
     sandbox_id: str,
     *,
-    idempotency_key: str | None,
+    request_id: str | None,
     wait_for_ready: bool,
     auth_metadata: tuple[tuple[str, str], ...],
     timeout: float,
-    max_timeout_seconds: int | None = None,
+    scratch_volume_name: str | None = None,
 ) -> str:
-    """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot ID."""
-    request = gateway_pb2.CreateFileSystemSnapshotRequest(
-        sandbox_id=sandbox_id,
-        wait_for_ready=wait_for_ready,
-    )
-    if idempotency_key:
-        request.idempotency_key = idempotency_key
-    if max_timeout_seconds is not None:
-        request.max_timeout_seconds = max_timeout_seconds
+    """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot ID.
+
+    When ``wait_for_ready`` is True, poll GetFileSystemSnapshot until READY/FAILED.
+    """
+    request = sandbox_pb2.CreateFileSystemSnapshotRequest(sandbox_id=sandbox_id)
+    if request_id:
+        request.request_id = request_id
+    if scratch_volume_name:
+        request.scratch_volume_name = scratch_volume_name
     try:
         response = await stub.CreateFileSystemSnapshot(
             request, timeout=timeout, metadata=auth_metadata
@@ -341,22 +418,46 @@ async def _create_snapshot_via_stub(
         raise _translate_rpc_error(
             e, sandbox_id=sandbox_id, operation="Create file-system snapshot"
         ) from e
-    if not response.success:
-        raise SandboxSnapshotError(
-            f"Failed to create file-system snapshot: {response.error_message or 'unknown error'}"
+    snapshot_id = str(response.file_system_snapshot_id)
+    if not wait_for_ready:
+        return snapshot_id
+
+    # Poll until READY/FAILED within the remaining timeout budget.
+    deadline = time.monotonic() + max(0.0, timeout)
+    interval = DEFAULT_POLL_INTERVAL_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SnapshotWaitTimeoutError(
+                f"Timed out waiting for snapshot {snapshot_id} to become ready",
+                file_system_snapshot_id=snapshot_id,
+            )
+        snap = await _get_snapshot_via_stub(
+            stub,
+            snapshot_id,
+            auth_metadata=auth_metadata,
+            timeout=min(remaining, DEFAULT_POLL_RPC_TIMEOUT_SECONDS),
         )
-    return str(response.file_system_snapshot_id)
+        if snap.status == FileSystemSnapshotStatus.READY:
+            return snapshot_id
+        if snap.status == FileSystemSnapshotStatus.FAILED:
+            raise SandboxSnapshotError(
+                f"Snapshot {snapshot_id} failed: {snap.status_reason or 'unknown error'}",
+                file_system_snapshot_id=snapshot_id,
+            )
+        await asyncio.sleep(interval)
+        interval = min(interval * DEFAULT_POLL_BACKOFF_FACTOR, DEFAULT_MAX_POLL_INTERVAL_SECONDS)
 
 
 async def _get_snapshot_via_stub(
-    stub: gateway_pb2_grpc.GatewayServiceStub,
+    stub: sandbox_pb2_grpc.SandboxServiceStub,
     file_system_snapshot_id: str,
     *,
     auth_metadata: tuple[tuple[str, str], ...],
     timeout: float,
 ) -> FileSystemSnapshot:
     """Call GetFileSystemSnapshot on ``stub``; return the snapshot record."""
-    request = gateway_pb2.GetFileSystemSnapshotRequest(
+    request = sandbox_pb2.GetFileSystemSnapshotRequest(
         file_system_snapshot_id=file_system_snapshot_id
     )
     try:
@@ -735,7 +836,7 @@ _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
 # In-band error codes the server may emit on a streaming response.  These
 # are application-level (the gRPC call itself succeeds); the codes describe
 # server-side outcomes for the streaming session.  Mirrors the documented
-# error contract in streaming_pb2.pyi (LogStreamError.code).
+# error contract in sandbox_pb2.pyi (LogStreamError.code).
 #
 # Per the wire contract every LogStreamError is terminal — the server will
 # not send further frames on the same call.  The client's recovery action
@@ -1160,6 +1261,11 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        placement_mode: PlacementMode | str | None = None,
+        services: list[Service] | tuple[Service, ...] | None = None,
+        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
+        template_id: str | None = None,
+        image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
@@ -1265,11 +1371,24 @@ class Sandbox:
         )
         self._annotations = self._defaults.merge_annotations(annotations)
 
-        self._profile_ids = _resolve_selector(profile_ids, self._defaults.profile_ids)
-        self._profile_names = _resolve_selector(profile_names, self._defaults.profile_names)
+        if profile_ids is not None or profile_names is not None:
+            raise TypeError(
+                "profile_ids/profile_names were removed in cwsandbox 1.x; "
+                "use placement_mode, runner_ids, and discovery capabilities"
+            )
+        self._profile_ids = None
+        self._profile_names = None
         self._runner_ids = _resolve_selector(runner_ids, self._defaults.runner_ids)
 
         self._start_kwargs: dict[str, Any] = {}
+        self._create_request_id: str | None = None
+        self._placement_mode: PlacementMode | None = None
+        self._services: list[Service] | None = None
+        self._template_id: str | None = None
+        self._image_pull_credentials: ImagePullCredentials | None = None
+        self._scratch_volume_names: tuple[str, ...] = ()
+        self._service_urls: tuple[tuple[int, str, str], ...] = ()
+        self._file_system_snapshot_ids: tuple[str, ...] = ()
         # Use explicit resources or fall back to defaults, then normalize
         effective_resources = resources if resources is not None else self._defaults.resources
         normalized = normalize_resources(effective_resources)
@@ -1278,7 +1397,7 @@ class Sandbox:
         if mounted_files is not None:
             self._start_kwargs["mounted_files"] = mounted_files
         if s3_mount is not None:
-            self._start_kwargs["s3_mount"] = s3_mount
+            raise TypeError("s3_mount was removed in cwsandbox 1.x")
         if ports is not None:
             self._start_kwargs["ports"] = ports
         # Use explicit network or fall back to defaults
@@ -1295,7 +1414,40 @@ class Sandbox:
         if effective_fss is not None:
             self._start_kwargs["file_system_snapshot"] = effective_fss
         if max_timeout_seconds is not None:
-            self._start_kwargs["max_timeout_seconds"] = max_timeout_seconds
+            raise TypeError(
+                "max_timeout_seconds was removed in cwsandbox 1.x; "
+                "use request_timeout_seconds"
+            )
+        if placement_mode is not None:
+            if isinstance(placement_mode, str):
+                placement_mode = PlacementMode(placement_mode.lower())
+            self._placement_mode = placement_mode
+        elif self._defaults.placement_mode is not None:
+            pm = self._defaults.placement_mode
+            self._placement_mode = (
+                PlacementMode(pm.lower()) if isinstance(pm, str) else pm
+            )
+        if services is not None:
+            self._services = [
+                Service(**s) if isinstance(s, dict) else s for s in services
+            ]
+        elif self._defaults.services is not None:
+            self._services = list(self._defaults.services)
+        if volumes is not None:
+            self._start_kwargs["volumes"] = list(volumes)
+            self._scratch_volume_names = tuple(
+                v.name if isinstance(v, ScratchVolumeOptions) else v.get("name", "")
+                for v in volumes
+            )
+        elif self._defaults.volumes is not None:
+            self._start_kwargs["volumes"] = list(self._defaults.volumes)
+            self._scratch_volume_names = tuple(v.name for v in self._defaults.volumes)
+        if template_id is not None:
+            self._template_id = template_id
+        if image_pull_credentials is not None:
+            if isinstance(image_pull_credentials, dict):
+                image_pull_credentials = ImagePullCredentials(**image_pull_credentials)
+            self._image_pull_credentials = image_pull_credentials
         merged_secrets = list(self._defaults.secrets or ()) + [
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
         ]
@@ -1316,7 +1468,7 @@ class Sandbox:
             self._start_kwargs["secrets"] = list(seen.values())
 
         self._channel: grpc.aio.Channel | None = None
-        self._stub: gateway_pb2_grpc.GatewayServiceStub | None = None
+        self._stub: sandbox_pb2_grpc.SandboxServiceStub | None = None
         self._auth_metadata: tuple[tuple[str, str], ...] = ()
         self._streaming_channel: grpc.aio.Channel | None = None
         self._streaming_channel_lock = asyncio.Lock()
@@ -1343,7 +1495,7 @@ class Sandbox:
         # The grace window defers the terminal latch, so a waiter whose
         # deadline expires mid-window latches this instead of raising a
         # spurious SandboxTimeoutError for an already-observed completion.
-        self._grace_pending_response: gateway_pb2.GetSandboxResponse | None = None
+        self._grace_pending_response: _SandboxView | None = None
 
         # Shared stop task so repeated stop() calls join the same operation
         self._stop_task: asyncio.Task[None] | None = None
@@ -1407,6 +1559,11 @@ class Sandbox:
         network: NetworkOptions | dict[str, Any] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
+        placement_mode: PlacementMode | str | None = None,
+        services: list[Service] | tuple[Service, ...] | None = None,
+        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
+        template_id: str | None = None,
+        image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
@@ -1521,6 +1678,36 @@ class Sandbox:
         sandbox.start().result()
         return sandbox
 
+
+    @classmethod
+    def run_from_template(
+        cls,
+        template_id: str,
+        /,
+        *args: str,
+        command: str | None = None,
+        defaults: SandboxDefaults | None = None,
+        **kwargs: Any,
+    ) -> Sandbox:
+        """Create a sandbox from an organization template (CreateSandboxFromTemplate).
+
+        Args:
+            template_id: Organization-scoped template UUID.
+            *args: Optional command args override.
+            command: Optional command override.
+            defaults: Optional SandboxDefaults.
+            **kwargs: Same advanced create kwargs as ``run()`` (replace-on-presence
+                overlays onto the template).
+
+        Returns:
+            Sandbox handle (lazy-start).
+        """
+        if not template_id:
+            raise ValueError("template_id must not be empty")
+        kwargs = dict(kwargs)
+        kwargs["template_id"] = template_id
+        return cls.run(*args, command=command, defaults=defaults, **kwargs)
+
     @classmethod
     def session(
         cls,
@@ -1566,6 +1753,7 @@ class Sandbox:
         poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
+        info = _as_sandbox_view(info)
         sandbox = cls.__new__(cls)
         sandbox._sandbox_id = str(info.sandbox_id)
         sandbox._status_updated_at = datetime.now(UTC)
@@ -1596,6 +1784,16 @@ class Sandbox:
         sandbox._session = None
         sandbox._defaults = SandboxDefaults()
         sandbox._start_kwargs = {}
+        sandbox._create_request_id = None
+        sandbox._placement_mode = None
+        sandbox._services = None
+        sandbox._template_id = None
+        sandbox._image_pull_credentials = None
+        sandbox._scratch_volume_names = ()
+        sandbox._service_urls = ()
+        sandbox._file_system_snapshot_ids = ()
+        sandbox._observed_file_op_cap_bytes = None
+        sandbox._streaming_fallback_warned = False
         sandbox._start_lock = asyncio.Lock()
         sandbox._running_task = None
         sandbox._running_lock = asyncio.Lock()
@@ -1633,7 +1831,7 @@ class Sandbox:
             sandbox_id=str(info.sandbox_id),
             status=status,
             runner_id=getattr(info, "runner_id", None) or None,
-            profile_id=getattr(info, "profile_id", None) or None,
+            profile_id=None,  # removed in v1
             runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
         )
@@ -1648,7 +1846,7 @@ class Sandbox:
         profile_ids: list[str] | None = None,
         profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
-        include_stopped: bool = False,
+        show_terminated: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
@@ -1660,7 +1858,7 @@ class Sandbox:
         operations like exec(), stop(), get_status(), read_file(), write_file().
 
         By default, only active (non-terminal) sandboxes are returned.
-        Set ``include_stopped=True`` to widen the search to include terminal
+        Set ``show_terminated=True`` to widen the search to include terminal
         sandboxes (completed, failed, terminated).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
@@ -1675,7 +1873,7 @@ class Sandbox:
                 selection (preferred over profile_ids). See
                 SandboxDefaults.profile_names for semantics.
             runner_ids: Filter by runner IDs
-            include_stopped: If True, include terminal sandboxes (completed,
+            show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
@@ -1700,7 +1898,7 @@ class Sandbox:
 
             # Include stopped sandboxes
             all_sandboxes = Sandbox.list(
-                tags=["my-batch-job"], include_stopped=True
+                tags=["my-batch-job"], show_terminated=True
             ).result()
 
             # Async usage
@@ -1716,7 +1914,7 @@ class Sandbox:
                 profile_ids=profile_ids,
                 profile_names=profile_names,
                 runner_ids=runner_ids,
-                include_stopped=include_stopped,
+                show_terminated=show_terminated,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
@@ -1734,7 +1932,7 @@ class Sandbox:
         profile_ids: builtins.list[str] | None = None,
         profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
-        include_stopped: bool = False,
+        show_terminated: bool = False,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
@@ -1768,27 +1966,27 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
             request_kwargs: dict[str, Any] = {}
             if normalized_tags:
                 request_kwargs["tags"] = list(normalized_tags)
             if status_enum:
-                request_kwargs["status"] = status_enum.to_proto()
-            if profile_ids is not None:
-                request_kwargs["profile_ids"] = profile_ids
-            if profile_names is not None:
-                request_kwargs["profile_names"] = profile_names
+                request_kwargs["state"] = status_enum.to_proto()
+            if profile_ids is not None or profile_names is not None:
+                raise TypeError(
+                    "profile_ids/profile_names were removed in cwsandbox 1.x"
+                )
             if runner_ids is not None:
                 request_kwargs["runner_ids"] = runner_ids
 
-            if include_stopped:
-                request_kwargs["include_stopped"] = True
-            request = gateway_pb2.ListSandboxesRequest(**request_kwargs)
+            if show_terminated:
+                request_kwargs["show_terminated"] = True
+            request = sandbox_pb2.ListSandboxesRequest(**request_kwargs)
             try:
                 sandbox_infos = await paginate_async(
-                    stub.List,
+                    stub.ListSandboxes,
                     request,
                     "sandboxes",
                     auth_metadata,
@@ -1800,7 +1998,7 @@ class Sandbox:
 
             return [
                 cls._from_sandbox_info(
-                    sb,
+                    _as_sandbox_view(sb),
                     base_url=effective_base_url,
                     timeout_seconds=timeout,
                     poll_retry_budget_seconds=effective_poll_retry_budget,
@@ -1900,12 +2098,12 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = gateway_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
+            request = sandbox_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Get(request, timeout=timeout, metadata=auth_metadata)
+                response = _as_sandbox_view(await stub.GetSandbox(request, timeout=timeout, metadata=auth_metadata))
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
 
@@ -1992,12 +2190,12 @@ class Sandbox:
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
 
         try:
-            request = gateway_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+            request = sandbox_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = await stub.Delete(request, timeout=timeout, metadata=auth_metadata)
+                await stub.DeleteSandbox(request, timeout=timeout, metadata=auth_metadata)
             except grpc.RpcError as e:
                 parsed = parse_error_info(e)
                 if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
@@ -2005,9 +2203,6 @@ class Sandbox:
                 raise _translate_rpc_error(
                     e, sandbox_id=sandbox_id, operation="Delete sandbox"
                 ) from e
-
-            if not response.success:
-                raise SandboxError(f"Failed to delete sandbox: {response.error_message}")
         finally:
             await channel.close(grace=None)
 
@@ -2064,7 +2259,7 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
             return await _retry_transient_rpc(
                 lambda: _get_snapshot_via_stub(
@@ -2145,14 +2340,14 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
 
             async def _attempt() -> builtins.list[Any]:
                 # Build the request inside the attempt: paginate_async mutates
                 # page_token in place, so a retry must start from a fresh
                 # request (page 1) rather than resuming from the last token.
-                request = gateway_pb2.ListFileSystemSnapshotsRequest()
+                request = sandbox_pb2.ListFileSystemSnapshotsRequest()
                 try:
                     return await paginate_async(
                         stub.ListFileSystemSnapshots,
@@ -2240,9 +2435,9 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
-            request = gateway_pb2.DeleteFileSystemSnapshotRequest(
+            request = sandbox_pb2.DeleteFileSystemSnapshotRequest(
                 file_system_snapshot_id=file_system_snapshot_id
             )
             attempts = {"n": 0}
@@ -2268,12 +2463,8 @@ class Sandbox:
                         operation="Delete file-system snapshot",
                         file_system_snapshot_id=file_system_snapshot_id,
                     ) from e
-                if not response.success:
-                    raise SandboxSnapshotError(
-                        f"Failed to delete file-system snapshot: "
-                        f"{response.error_message or 'unknown error'}",
-                        file_system_snapshot_id=file_system_snapshot_id,
-                    )
+                # v1 returns the deleted FileSystemSnapshot resource (or empty
+                # on allow_missing races handled above).
 
             await _retry_transient_rpc(
                 _attempt,
@@ -2329,9 +2520,9 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = settings_pb2_grpc.SettingsServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
-            request = gateway_pb2.GetFileSystemSnapshotBucketConfigRequest()
+            request = settings_pb2.GetFileSystemSnapshotBucketConfigRequest()
 
             async def _attempt() -> FileSystemSnapshotBucketConfig:
                 try:
@@ -2417,16 +2608,18 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = settings_pb2_grpc.SettingsServiceStub(channel)  # type: ignore[no-untyped-call]
         try:
-            request = gateway_pb2.SetFileSystemSnapshotBucketConfigRequest(
-                bucket_name=bucket_name,
-                region=region,
+            request = settings_pb2.UpdateFileSystemSnapshotBucketConfigRequest(
+                file_system_snapshot_bucket_config=settings_pb2.FileSystemSnapshotBucketConfig(
+                    bucket_name=bucket_name,
+                    region=region,
+                ),
             )
 
             async def _attempt() -> FileSystemSnapshotBucketConfig:
                 try:
-                    proto = await stub.SetFileSystemSnapshotBucketConfig(
+                    proto = await stub.UpdateFileSystemSnapshotBucketConfig(
                         request, timeout=timeout, metadata=auth_metadata
                     )
                 except grpc.RpcError as e:
@@ -2680,6 +2873,7 @@ class Sandbox:
         if self._is_cancelled:
             return self._state
 
+        info = _as_sandbox_view(info)
         status = SandboxStatus.from_proto(info.sandbox_status)
         # Polling: UNSPECIFIED means the sandbox exited cleanly
         if source == "poll" and status == SandboxStatus.UNSPECIFIED:
@@ -2715,7 +2909,7 @@ class Sandbox:
             sandbox_id=sandbox_id,
             status=status,
             runner_id=getattr(info, "runner_id", None) or None,
-            profile_id=getattr(info, "profile_id", None) or None,
+            profile_id=None,  # removed in v1
             runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
             returncode=returncode,
@@ -2775,13 +2969,13 @@ class Sandbox:
         await self._ensure_client()
         assert self._stub is not None
 
-        request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+        request = sandbox_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response = await self._stub.Get(
+            response = _as_sandbox_view(await self._stub.GetSandbox(
                 request,
                 timeout=self._poll_rpc_timeout_seconds,
                 metadata=self._auth_metadata,
-            )
+            ))
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e, sandbox_id=self._sandbox_id, operation="Get status"
@@ -2950,7 +3144,7 @@ class Sandbox:
         auth_metadata = resolve_auth_metadata()
         target, is_secure = parse_grpc_target(self._base_url)
         channel = create_channel(target, is_secure)
-        stub = gateway_pb2_grpc.GatewayServiceStub(channel)  # type: ignore[no-untyped-call]
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
         self._channel = channel
         self._stub = stub
         self._auth_metadata = auth_metadata
@@ -2986,7 +3180,7 @@ class Sandbox:
         self,
         *,
         rpc_timeout_override: float | None = None,
-    ) -> gateway_pb2.GetSandboxResponse:
+    ) -> _SandboxView:
         """Poll sandbox status until a stable state is reached.
 
         Returns the response when sandbox reaches a stable state (RUNNING,
@@ -3026,12 +3220,14 @@ class Sandbox:
                     f"Sandbox {self._sandbox_id} was stopped while polling"
                 )
 
-            request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+            request = sandbox_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
             try:
-                response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
-                    request,
-                    timeout=effective_rpc_timeout,
-                    metadata=self._auth_metadata,
+                response = _as_sandbox_view(
+                    await self._stub.GetSandbox(
+                        request,
+                        timeout=effective_rpc_timeout,
+                        metadata=self._auth_metadata,
+                    )
                 )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(
@@ -3046,13 +3242,13 @@ class Sandbox:
 
             # Stable states - return for caller to handle
             if response.sandbox_status in (
-                gateway_pb2.SANDBOX_STATUS_RUNNING,
-                gateway_pb2.SANDBOX_STATUS_PAUSED,
-                gateway_pb2.SANDBOX_STATUS_TERMINATING,
-                gateway_pb2.SANDBOX_STATUS_COMPLETED,
-                gateway_pb2.SANDBOX_STATUS_FAILED,
-                gateway_pb2.SANDBOX_STATUS_TERMINATED,
-                gateway_pb2.SANDBOX_STATUS_UNSPECIFIED,
+                sandbox_pb2.STATE_RUNNING,
+                sandbox_pb2.STATE_PAUSED,
+                sandbox_pb2.STATE_TERMINATING,
+                sandbox_pb2.STATE_COMPLETED,
+                sandbox_pb2.STATE_FAILED,
+                sandbox_pb2.STATE_TERMINATED,
+                sandbox_pb2.STATE_UNSPECIFIED,
             ):
                 return response
 
@@ -3063,7 +3259,7 @@ class Sandbox:
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
             )
 
-    async def _poll_with_retry(self) -> gateway_pb2.GetSandboxResponse:
+    async def _poll_with_retry(self) -> _SandboxView:
         """Poll ``_poll_until_stable`` with bounded retry on transient errors.
 
         The retry budget (``poll_retry_budget_seconds``) caps wall-clock time
@@ -3183,9 +3379,10 @@ class Sandbox:
             await self._start_async()
 
     async def _start_async(self) -> str:
-        """Internal async: Send StartSandbox to backend, return sandbox_id.
+        """Internal async: Send CreateSandbox to backend, return sandbox_id.
 
         Does NOT wait for RUNNING status. Idempotent - safe to call multiple times.
+        Freezes one ``request_id`` across concurrent starts and ambiguous retries.
         """
         if self._sandbox_id is not None:
             return self._sandbox_id
@@ -3199,157 +3396,364 @@ class Sandbox:
             await self._ensure_client()
             assert self._stub is not None
 
-            request_kwargs: dict[str, Any] = {
-                "command": self._command,
-                "args": self._args or [],
-                "container_image": self._container_image,
-                "tags": self._tags or [],
-            }
+            if not self._create_request_id:
+                self._create_request_id = str(uuid.uuid4())
 
-            if self._max_lifetime_seconds is not None:
-                request_kwargs["max_lifetime_seconds"] = int(self._max_lifetime_seconds)
-            if self._profile_ids is not None:
-                request_kwargs["profile_ids"] = self._profile_ids
-            if self._profile_names is not None:
-                request_kwargs["profile_names"] = self._profile_names
-            if self._runner_ids is not None:
-                request_kwargs["runner_ids"] = self._runner_ids
-            if self._environment_variables:
-                request_kwargs["environment_variables"] = self._environment_variables
-            if self._annotations:
-                request_kwargs["pod_annotations"] = self._annotations
+            kwargs = dict(self._start_kwargs)
+            template_id = kwargs.pop("template_id", None) or self._template_id
 
-            request_kwargs.update(self._start_kwargs)
+            if template_id:
+                request = self._build_create_from_template_request(
+                    template_id=template_id,
+                    request_id=self._create_request_id,
+                    overrides_kwargs=kwargs,
+                )
+                logger.debug("Creating sandbox from template %s", template_id)
+                rpc = self._stub.CreateSandboxFromTemplate
+                op_name = "Create sandbox from template"
+            else:
+                request = self._build_create_request(
+                    request_id=self._create_request_id,
+                    start_kwargs=kwargs,
+                )
+                logger.debug("Creating sandbox with image %s", self._container_image)
+                rpc = self._stub.CreateSandbox
+                op_name = "Create sandbox"
 
-            # Convert ResourceOptions to new proto fields (resource_limits / resource_requests)
-            resources_opt = request_kwargs.pop("resources", None)
-            if resources_opt is not None:
-                if isinstance(resources_opt, ResourceOptions):
-                    limits_kwargs: dict[str, Any] = {}
-                    if resources_opt.limits:
-                        if "cpu" in resources_opt.limits:
-                            limits_kwargs["cpu"] = resources_opt.limits["cpu"]
-                        if "memory" in resources_opt.limits:
-                            limits_kwargs["memory"] = resources_opt.limits["memory"]
-                    if resources_opt.gpu:
-                        gpu_kwargs: dict[str, Any] = {}
-                        if "count" in resources_opt.gpu:
-                            gpu_kwargs["gpu_count"] = resources_opt.gpu["count"]
-                        if "type" in resources_opt.gpu:
-                            gpu_kwargs["gpu_type"] = resources_opt.gpu["type"]
-                        if "memory_gb" in resources_opt.gpu:
-                            gpu_kwargs["gpu_memory_gb"] = resources_opt.gpu["memory_gb"]
-                        if gpu_kwargs:
-                            limits_kwargs["gpu"] = gpu_kwargs
-                    if limits_kwargs:
-                        request_kwargs["resource_limits"] = limits_kwargs
-
-                    requests_kwargs: dict[str, Any] = {}
-                    if resources_opt.requests:
-                        if "cpu" in resources_opt.requests:
-                            requests_kwargs["cpu"] = resources_opt.requests["cpu"]
-                        if "memory" in resources_opt.requests:
-                            requests_kwargs["memory"] = resources_opt.requests["memory"]
-                    if resources_opt.gpu:
-                        gpu_ref = limits_kwargs.get("gpu")
-                        requests_kwargs["gpu"] = dict(gpu_ref) if gpu_ref else gpu_ref
-                    if requests_kwargs:
-                        request_kwargs["resource_requests"] = requests_kwargs
-
-            # Convert NetworkOptions to dict for proto
-            network = request_kwargs.get("network")
-            if network is not None and isinstance(network, NetworkOptions):
-                net_opts = network
-                network_dict: dict[str, Any] = {}
-                if net_opts.ingress_mode is not None:
-                    network_dict["ingress_mode"] = net_opts.ingress_mode
-                if net_opts.exposed_ports is not None:
-                    network_dict["exposed_ports"] = list(net_opts.exposed_ports)
-                if net_opts.egress_mode is not None:
-                    network_dict["egress_mode"] = net_opts.egress_mode
-                request_kwargs["network"] = network_dict
-
-            # Convert flat Secret list to grouped proto SecretStoreReference dicts
-            secrets = request_kwargs.pop("secrets", None)
-            if secrets is not None and secrets and isinstance(secrets[0], Secret):
-                grouped: dict[str, list[dict[str, str]]] = {}
-                for s in secrets:
-                    grouped.setdefault(s.store, []).append(
-                        {"path": s.name, "field": s.field, "env_var": s.env_var}
-                    )
-                request_kwargs["secret_stores"] = [
-                    {"store_name": store, "secrets": mappings}
-                    for store, mappings in grouped.items()
-                ]
-
-            # Convert FileSystemSnapshotOptions to the proto file_system mount.
-            fss_opts = request_kwargs.pop("file_system_snapshot", None)
-            if fss_opts is not None:
-                request_kwargs["file_system"] = _file_system_mount_kwargs(fss_opts)
-
-            logger.debug("Starting sandbox with image %s", self._container_image)
-
-            request = gateway_pb2.StartSandboxRequest(**request_kwargs)
             self._start_accepted_at = time.monotonic()
             try:
-                response = await self._stub.Start(
+                response = await rpc(
                     request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
                 )
             except grpc.RpcError as e:
-                raise _translate_rpc_error(e, operation="Start sandbox") from e
+                raise _translate_rpc_error(e, operation=op_name) from e
 
-            sandbox_id = str(response.sandbox_id)
+            view = _SandboxView(response)
+            sandbox_id = str(view.sandbox_id)
             self._sandbox_id = sandbox_id
             self._status_updated_at = datetime.now(UTC)
             self._state = _Starting(sandbox_id=sandbox_id)
-            self._service_address = response.service_address or None
-            self._exposed_ports = (
-                tuple((p.container_port, p.name) for p in response.exposed_ports)
-                if response.exposed_ports
-                else None
-            )
-            self._applied_ingress_mode = response.applied_ingress_mode or None
-            self._applied_egress_mode = response.applied_egress_mode or None
-
-            # Extract resource limits/requests echoed back from the start response
-            if response.HasField("requested_resource_limits"):
-                rl = response.requested_resource_limits
-                d = {}
-                if rl.cpu:
-                    d["cpu"] = rl.cpu
-                if rl.memory:
-                    d["memory"] = rl.memory
-                self._resource_limits = d if d else None
-                if rl.HasField("gpu"):
-                    gpu = rl.gpu
-                    gd: dict[str, Any] = {}
-                    if gpu.gpu_count:
-                        gd["count"] = gpu.gpu_count
-                    if gpu.gpu_type:
-                        gd["type"] = gpu.gpu_type
-                    if gpu.gpu_memory_gb:
-                        gd["memory_gb"] = gpu.gpu_memory_gb
-                    self._resource_gpu = gd if gd else None
-            if response.HasField("requested_resource_requests"):
-                rr = response.requested_resource_requests
-                d = {}
-                if rr.cpu:
-                    d["cpu"] = rr.cpu
-                if rr.memory:
-                    d["memory"] = rr.memory
-                self._resource_requests = d if d else None
-
+            self._apply_create_echo(view)
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
 
-    async def _get_sandbox_once(self, *, rpc_timeout: float) -> gateway_pb2.GetSandboxResponse:
+    def _build_create_request(
+        self, *, request_id: str, start_kwargs: dict[str, Any]
+    ) -> sandbox_pb2.CreateSandboxRequest:
+        """Build a v1 CreateSandboxRequest from constructor/start kwargs."""
+        container = sandbox_pb2.Container(
+            name="main",
+            image=self._container_image,
+            command=self._command,
+            args=list(self._args or []),
+        )
+        if self._environment_variables:
+            container.environment_variables.update(self._environment_variables)
+
+        resources_opt = start_kwargs.pop("resources", None)
+        if resources_opt is not None:
+            if not isinstance(resources_opt, ResourceOptions):
+                resources_opt = normalize_resources(resources_opt)
+            if resources_opt is not None:
+                reqs = self._resources_to_proto(resources_opt.requests, resources_opt.gpu)
+                lims = self._resources_to_proto(resources_opt.limits, resources_opt.gpu)
+                if reqs is not None or lims is not None:
+                    container.resource_requirements.CopyFrom(
+                        sandbox_pb2.ResourceRequirements(
+                            requests=reqs or sandbox_pb2.Resources(),
+                            limits=lims or sandbox_pb2.Resources(),
+                        )
+                    )
+
+        secrets = start_kwargs.pop("secrets", None)
+        if secrets:
+            grouped: dict[str, list[dict[str, str]]] = {}
+            for s in secrets:
+                if not isinstance(s, Secret):
+                    s = Secret(**s)
+                grouped.setdefault(s.store, []).append(
+                    {"path": s.name, "field": s.field, "env_var": s.env_var or s.name}
+                )
+            for store, mappings in grouped.items():
+                container.secret_stores.append(
+                    sandbox_pb2.SecretStoreReference(store_name=store, secrets=mappings)
+                )
+
+        ipc = start_kwargs.pop("image_pull_credentials", None) or self._image_pull_credentials
+        if ipc is not None:
+            if isinstance(ipc, dict):
+                ipc = ImagePullCredentials(**ipc)
+            container.image_pull_credentials.CopyFrom(
+                sandbox_pb2.ImagePullCredentials(
+                    registry=ipc.registry,
+                    credentials=sandbox_pb2.SecretSource(
+                        store_name=ipc.store, path=ipc.name, field=ipc.field
+                    ),
+                )
+            )
+
+        mounted_files = start_kwargs.pop("mounted_files", None)
+        if mounted_files:
+            for path, content in mounted_files.items():
+                data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
+                container.files.append(sandbox_pb2.FileMount(path=path, content=bytes(data)))
+
+        volumes: list[sandbox_pb2.SandboxVolume] = []
+        mounts: list[sandbox_pb2.VolumeMount] = []
+
+        volumes_arg = start_kwargs.pop("volumes", None)
+        if volumes_arg:
+            for vol in volumes_arg:
+                if isinstance(vol, ScratchVolumeOptions):
+                    scratch: dict[str, Any] = {}
+                    if vol.size:
+                        scratch["size"] = vol.size
+                    if vol.restore_from_snapshot_id:
+                        scratch["restore_from_snapshot_id"] = vol.restore_from_snapshot_id
+                    volumes.append(
+                        sandbox_pb2.SandboxVolume(name=vol.name, scratch=scratch)
+                    )
+                    mounts.append(
+                        sandbox_pb2.VolumeMount(volume=vol.name, mount_path=vol.mount_path)
+                    )
+                elif isinstance(vol, dict) and "volume_id" in vol:
+                    volumes.append(
+                        sandbox_pb2.SandboxVolume(
+                            name=vol["name"], volume_id=vol["volume_id"]
+                        )
+                    )
+                    if vol.get("mount_path"):
+                        mounts.append(
+                            sandbox_pb2.VolumeMount(
+                                volume=vol["name"], mount_path=vol["mount_path"]
+                            )
+                        )
+                else:
+                    raise TypeError(
+                        "volumes entries must be ScratchVolumeOptions or "
+                        f"dict with volume_id, got {type(vol).__name__}"
+                    )
+
+        fss_opts = start_kwargs.pop("file_system_snapshot", None)
+        if fss_opts is not None:
+            if not isinstance(fss_opts, FileSystemSnapshotOptions):
+                fss_opts = FileSystemSnapshotOptions(**fss_opts)
+            scratch_opts = fss_opts.to_scratch_volume()
+            scratch_kw: dict[str, Any] = {}
+            if scratch_opts.size:
+                scratch_kw["size"] = scratch_opts.size
+            if scratch_opts.restore_from_snapshot_id:
+                scratch_kw["restore_from_snapshot_id"] = scratch_opts.restore_from_snapshot_id
+            volumes.append(
+                sandbox_pb2.SandboxVolume(name=scratch_opts.name, scratch=scratch_kw)
+            )
+            mounts.append(
+                sandbox_pb2.VolumeMount(
+                    volume=scratch_opts.name, mount_path=scratch_opts.mount_path
+                )
+            )
+            self._scratch_volume_names = tuple(
+                list(self._scratch_volume_names) + [scratch_opts.name]
+            )
+
+        for mount in mounts:
+            container.volume_mounts.append(mount)
+
+        services_arg = start_kwargs.pop("services", None) or self._services
+        services: list[sandbox_pb2.Service] = []
+        if services_arg:
+            for svc in services_arg:
+                if isinstance(svc, dict):
+                    svc = Service(**svc)
+                if not isinstance(svc, Service):
+                    raise TypeError(
+                        f"services entries must be Service or dict, got {type(svc).__name__}"
+                    )
+                proto_svc = sandbox_pb2.Service(port=svc.port)
+                if svc.name:
+                    proto_svc.name = svc.name
+                if svc.protocol is not None:
+                    proto_svc.protocol = sandbox_pb2.ServiceProtocol.Value(
+                        f"SERVICE_PROTOCOL_{svc.protocol.name}"
+                    )
+                if svc.visibility is not None:
+                    proto_svc.visibility = sandbox_pb2.Visibility.Value(
+                        f"VISIBILITY_{svc.visibility.name}"
+                    )
+                services.append(proto_svc)
+
+        network = start_kwargs.pop("network", None)
+        network_proto = None
+        if network is not None:
+            if isinstance(network, dict):
+                network = NetworkOptions(**network)
+            if not isinstance(network, NetworkOptions):
+                raise TypeError(
+                    f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
+                )
+            network_proto = sandbox_pb2.NetworkOptions()
+            if network.deny_egress is not None:
+                network_proto.deny_egress = network.deny_egress
+            if network.deny_ingress is not None:
+                network_proto.deny_ingress = network.deny_ingress
+
+        # Reject removed kwargs loudly.
+        for removed in ("s3_mount", "max_timeout_seconds", "profile_ids", "profile_names", "ports"):
+            if removed in start_kwargs:
+                raise TypeError(
+                    f"{removed!r} is not supported in cwsandbox 1.x; see the v1 migration notes"
+                )
+
+        placement = start_kwargs.pop("placement_mode", None) or self._placement_mode
+        mode = sandbox_pb2.SANDBOX_MODE_UNSPECIFIED
+        if placement is not None:
+            if isinstance(placement, str):
+                placement = PlacementMode(placement.lower())
+            if placement == PlacementMode.SERVERLESS:
+                mode = sandbox_pb2.SANDBOX_MODE_SERVERLESS
+            elif placement == PlacementMode.CKS:
+                mode = sandbox_pb2.SANDBOX_MODE_CKS
+
+        runner_ids = self._runner_ids
+        if runner_ids and mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS:
+            raise ValueError("runner_ids requires placement_mode=CKS")
+        if runner_ids and mode == sandbox_pb2.SANDBOX_MODE_UNSPECIFIED:
+            # Explicit CKS required by v1 when pinning runners.
+            mode = sandbox_pb2.SANDBOX_MODE_CKS
+
+        spec = sandbox_pb2.SandboxSpec(
+            containers=[container],
+            primary_container="main",
+            volumes=volumes,
+            services=services,
+            tags=list(self._tags or []),
+            mode=mode,
+        )
+        if self._max_lifetime_seconds is not None:
+            spec.max_lifetime_seconds = int(self._max_lifetime_seconds)
+        if runner_ids:
+            spec.runner_ids.extend(runner_ids)
+        if self._annotations:
+            spec.annotations.update(self._annotations)
+        if network_proto is not None:
+            spec.network.CopyFrom(network_proto)
+
+        # Ignore unknown leftover keys that were consumed above; warn on leftovers.
+        start_kwargs.pop("ports", None)
+        if start_kwargs:
+            logger.debug("Ignoring unhandled start kwargs: %s", sorted(start_kwargs))
+
+        return sandbox_pb2.CreateSandboxRequest(
+            sandbox=sandbox_pb2.Sandbox(spec=spec),
+            request_id=request_id,
+        )
+
+    def _build_create_from_template_request(
+        self,
+        *,
+        template_id: str,
+        request_id: str,
+        overrides_kwargs: dict[str, Any],
+    ) -> sandbox_pb2.CreateSandboxFromTemplateRequest:
+        """Build CreateSandboxFromTemplate with replace-on-presence overrides."""
+        # Reuse plain create builder for override shaping, then project to Partial*.
+        create_req = self._build_create_request(
+            request_id=request_id, start_kwargs=dict(overrides_kwargs)
+        )
+        spec = create_req.sandbox.spec
+        overrides = sandbox_pb2.PartialSandboxSpec(
+            containers=[
+                sandbox_pb2.PartialContainer(
+                    name=c.name,
+                    image=c.image,
+                    command=c.command,
+                    args=list(c.args),
+                    environment_variables=dict(c.environment_variables),
+                    files=list(c.files),
+                    volume_mounts=list(c.volume_mounts),
+                    secret_stores=list(c.secret_stores),
+                    working_dir=c.working_dir,
+                    resource_requirements=c.resource_requirements,
+                    security_context=c.security_context,
+                )
+                for c in spec.containers
+            ],
+            primary_container=spec.primary_container,
+            volumes=list(spec.volumes),
+            services=list(spec.services),
+            max_lifetime_seconds=spec.max_lifetime_seconds,
+            tags=list(spec.tags),
+            runner_ids=list(spec.runner_ids),
+            annotations=dict(spec.annotations),
+            mode=spec.mode,
+        )
+        if spec.HasField("network"):
+            overrides.network.CopyFrom(spec.network)
+        return sandbox_pb2.CreateSandboxFromTemplateRequest(
+            template_id=template_id,
+            overrides=overrides,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _resources_to_proto(
+        cpu_mem: dict[str, str] | None, gpu: dict[str, Any] | None
+    ) -> sandbox_pb2.Resources | None:
+        if not cpu_mem and not gpu:
+            return None
+        kwargs: dict[str, Any] = {}
+        if cpu_mem:
+            if "cpu" in cpu_mem:
+                kwargs["cpu"] = cpu_mem["cpu"]
+            if "memory" in cpu_mem:
+                kwargs["memory"] = cpu_mem["memory"]
+        if gpu:
+            g: dict[str, Any] = {}
+            if "count" in gpu:
+                g["count"] = int(gpu["count"])
+            if "type" in gpu:
+                g["type"] = gpu["type"]
+            if "memory_gb" in gpu:
+                g["memory_gb"] = int(gpu["memory_gb"])
+            if g:
+                kwargs["gpu"] = g
+        return sandbox_pb2.Resources(**kwargs) if kwargs else None
+
+    def _apply_create_echo(self, view: _SandboxView) -> None:
+        """Capture create/Get echoes used by public properties."""
+        status = view._sandbox.status
+        self._service_urls = tuple(
+            (s.port, s.name, s.url) for s in status.services if s.url
+        )
+        if status.HasField("effective_resource_requirements"):
+            err = status.effective_resource_requirements
+            if err.HasField("limits"):
+                self._resource_limits = self._resources_from_proto(err.limits)
+            if err.HasField("requests"):
+                self._resource_requests = self._resources_from_proto(err.requests)
+        elif status.HasField("effective_resources"):
+            self._resource_limits = self._resources_from_proto(status.effective_resources)
+            self._resource_requests = self._resource_limits
+
+    @staticmethod
+    def _resources_from_proto(res: sandbox_pb2.Resources) -> dict[str, str] | None:
+        d: dict[str, str] = {}
+        if res.cpu:
+            d["cpu"] = res.cpu
+        if res.memory:
+            d["memory"] = res.memory
+        return d or None
+
+
+    async def _get_sandbox_once(self, *, rpc_timeout: float) -> _SandboxView:
         """One Get RPC with error translation: no retries, no status loop."""
         await self._ensure_client()
         assert self._stub is not None
-        request = gateway_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
+        request = sandbox_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response: gateway_pb2.GetSandboxResponse = await self._stub.Get(
-                request, timeout=rpc_timeout, metadata=self._auth_metadata
+            response: _SandboxView = _as_sandbox_view(await self._stub.GetSandbox(
+                    request, timeout=rpc_timeout, metadata=self._auth_metadata
+                )
             )
             return response
         except grpc.RpcError as e:
@@ -3358,8 +3762,8 @@ class Sandbox:
             ) from e
 
     async def _grace_repoll_for_exit_code(
-        self, response: gateway_pb2.GetSandboxResponse
-    ) -> gateway_pb2.GetSandboxResponse:
+        self, response: _SandboxView
+    ) -> _SandboxView:
         """Briefly re-poll a COMPLETED response that lacks an exit code.
 
         Covers the runner's batch-flush lag: a Get can observe COMPLETED
@@ -3376,10 +3780,10 @@ class Sandbox:
         is only emitted by backends that predate exit codes, so a grace
         window for it could never produce one.
         """
-        published: gateway_pb2.GetSandboxResponse | None = None
+        published: _SandboxView | None = None
         try:
             for _ in range(EXIT_CODE_GRACE_POLLS):
-                if response.sandbox_status != gateway_pb2.SANDBOX_STATUS_COMPLETED:
+                if response.sandbox_status != sandbox_pb2.STATE_COMPLETED:
                     return response
                 if self._stop_owned or self._is_stopping or self._is_done:
                     return response
@@ -3425,9 +3829,9 @@ class Sandbox:
                 if (
                     bonus.sandbox_status
                     in (
-                        gateway_pb2.SANDBOX_STATUS_COMPLETED,
-                        gateway_pb2.SANDBOX_STATUS_FAILED,
-                        gateway_pb2.SANDBOX_STATUS_TERMINATED,
+                        sandbox_pb2.STATE_COMPLETED,
+                        sandbox_pb2.STATE_FAILED,
+                        sandbox_pb2.STATE_TERMINATED,
                     )
                     or _exit_code_from_info(bonus) is not None
                 ):
@@ -3572,7 +3976,7 @@ class Sandbox:
                 ) from None
             raise
 
-    async def _retry_post_stop_not_found(self) -> gateway_pb2.GetSandboxResponse:
+    async def _retry_post_stop_not_found(self) -> _SandboxView:
         """Retry ``Get`` for a bounded budget after a post-stop NOT_FOUND.
 
         Raises:
@@ -3908,12 +4312,12 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
         wait_for_ready: bool = True,
-        idempotency_key: str | None = None,
+        request_id: str | None = None,
     ) -> None:
         """Body of the shared _stop_task: send Stop RPC, poll to terminal, cleanup.
 
         Only the first caller's parameters (snapshot_on_stop,
-        graceful_shutdown_seconds, wait_for_ready, idempotency_key) are used.
+        graceful_shutdown_seconds, wait_for_ready, request_id) are used.
         Later stop() calls join the existing task.
         """
         sent_rpc = False
@@ -3971,22 +4375,25 @@ class Sandbox:
                     )
                     client_deadline = max_timeout + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
                 # The renamed proto field is file_system_snapshot_on_stop;
-                # wait_for_ready/idempotency_key are only valid alongside it,
+                # wait_for_ready/request_id are only valid alongside it,
                 # so only send them when a snapshot is requested.
-                request = gateway_pb2.StopSandboxRequest(
-                    sandbox_id=sandbox_id,
-                    graceful_shutdown_seconds=int(graceful_shutdown_seconds),
-                    file_system_snapshot_on_stop=snapshot_on_stop,
-                    max_timeout_seconds=max_timeout,
-                )
+                snapshot_volumes: list[str] = []
                 if snapshot_on_stop:
-                    request.wait_for_ready = wait_for_ready
-                    if idempotency_key:
-                        request.idempotency_key = idempotency_key
+                    # Snapshot configured scratch volumes (convenience default: workspace).
+                    names = list(self._scratch_volume_names) or [DEFAULT_SCRATCH_VOLUME_NAME]
+                    snapshot_volumes = names
+                request = sandbox_pb2.DeleteSandboxRequest(
+                    sandbox_id=sandbox_id,
+                    grace_period_seconds=int(graceful_shutdown_seconds),
+                    snapshot_volumes=snapshot_volumes,
+                    allow_missing=missing_ok,
+                )
+                if snapshot_on_stop and request_id:
+                    request.request_id = request_id
 
                 # Send Stop RPC first, then update state on success
                 try:
-                    response = await self._stub.Stop(
+                    response = await self._stub.DeleteSandbox(
                         request,
                         timeout=client_deadline,
                         metadata=self._auth_metadata,
@@ -4016,14 +4423,12 @@ class Sandbox:
                         e, sandbox_id=sandbox_id, operation="Stop sandbox"
                     ) from e
 
-                if not response.success:
-                    error_msg = response.error_message or "unknown error"
-                    raise SandboxError(f"Failed to stop sandbox: {error_msg}")
 
-                # Capture the snapshot ID produced by snapshot-on-stop, if any.
-                # Only populated when file_system_snapshot_on_stop was accepted.
-                if response.file_system_snapshot_id:
-                    self._file_system_snapshot_id = response.file_system_snapshot_id
+                # Capture snapshot IDs produced by snapshot-on-delete, if any.
+                snapshot_ids = list(getattr(response, "file_system_snapshot_ids", ()) or ())
+                if snapshot_ids:
+                    self._file_system_snapshot_id = snapshot_ids[0]
+                    self._file_system_snapshot_ids = tuple(snapshot_ids)
 
                 # RPC succeeded: transition to _Stopping
                 self._state = _Stopping(
@@ -4106,7 +4511,7 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
         wait_for_ready: bool = True,
-        idempotency_key: str | None = None,
+        request_id: str | None = None,
     ) -> None:
         """Internal async: Stop the sandbox using shared _stop_task pattern.
 
@@ -4135,7 +4540,7 @@ class Sandbox:
                         graceful_shutdown_seconds=graceful_shutdown_seconds,
                         missing_ok=missing_ok,
                         wait_for_ready=wait_for_ready,
-                        idempotency_key=idempotency_key,
+                        request_id=request_id,
                     )
                 )
                 self._stop_task.add_done_callback(self._on_stop_task_done)
@@ -4166,7 +4571,7 @@ class Sandbox:
         graceful_shutdown_seconds: float = DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
         missing_ok: bool = False,
         wait_for_ready: bool = True,
-        idempotency_key: str | None = None,
+        request_id: str | None = None,
     ) -> OperationRef[None]:
         """Stop sandbox, return OperationRef immediately.
 
@@ -4206,7 +4611,7 @@ class Sandbox:
             wait_for_ready: When ``snapshot_on_stop`` is True, block until the
                 snapshot reaches READY (or FAILED) before the stop completes.
                 Ignored when ``snapshot_on_stop`` is False.
-            idempotency_key: Optional client-supplied key to deduplicate the
+            request_id: Optional client-supplied key to deduplicate the
                 snapshot-on-stop request on retries. Ignored when
                 ``snapshot_on_stop`` is False.
 
@@ -4237,7 +4642,7 @@ class Sandbox:
                 graceful_shutdown_seconds=graceful_shutdown_seconds,
                 missing_ok=missing_ok,
                 wait_for_ready=wait_for_ready,
-                idempotency_key=idempotency_key,
+                request_id=request_id,
             )
         )
         return OperationRef(future)
@@ -4246,7 +4651,7 @@ class Sandbox:
         self,
         *,
         wait_for_ready: bool,
-        idempotency_key: str | None,
+        request_id: str | None,
     ) -> str:
         """Internal async: create a mid-life snapshot and return its ID."""
         await self._ensure_started_async()
@@ -4270,20 +4675,21 @@ class Sandbox:
         # When blocking on the archive, also bound the server-side wait (mirror
         # snapshot-on-stop) so the backend's own default request ceiling cannot
         # cut a large snapshot short before the client's FSS deadline.
-        create_max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) if wait_for_ready else None
         # Generate an idempotency key when the caller didn't supply one so a
         # retried create (after a transient failure that may have already
         # committed server-side) dedups instead of creating a second snapshot.
-        effective_idempotency_key = idempotency_key or uuid.uuid4().hex
+        effective_request_id = request_id or uuid.uuid4().hex
         return await _retry_transient_rpc(
             lambda: _create_snapshot_via_stub(
                 stub,
                 sandbox_id,
-                idempotency_key=effective_idempotency_key,
+                request_id=effective_request_id,
                 wait_for_ready=wait_for_ready,
                 auth_metadata=self._auth_metadata,
                 timeout=create_timeout,
-                max_timeout_seconds=create_max_timeout,
+                scratch_volume_name=(
+                    self._scratch_volume_names[0] if self._scratch_volume_names else None
+                ),
             ),
             budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
             operation="Create file-system snapshot",
@@ -4301,7 +4707,7 @@ class Sandbox:
         self,
         *,
         wait_for_ready: bool = True,
-        idempotency_key: str | None = None,
+        request_id: str | None = None,
     ) -> OperationRef[str]:
         """Capture a file-system snapshot (FSS) of the configured mount.
 
@@ -4318,7 +4724,7 @@ class Sandbox:
             wait_for_ready: Block until the snapshot reaches READY (or FAILED)
                 before returning. When False, returns once the snapshot is
                 created (likely still CREATING).
-            idempotency_key: Optional client-supplied key to deduplicate the
+            request_id: Optional client-supplied key to deduplicate the
                 request on retries.
 
         Returns:
@@ -4344,7 +4750,7 @@ class Sandbox:
         future = self._loop_manager.run_async(
             self._snapshot_async(
                 wait_for_ready=wait_for_ready,
-                idempotency_key=idempotency_key,
+                request_id=request_id,
             )
         )
         return OperationRef(future)
@@ -4359,31 +4765,7 @@ class Sandbox:
         timestamps: bool = False,
         timeout_seconds: float | None = None,
     ) -> None:
-        """Internal async: Stream logs from sandbox, push lines to queue.
-
-        Uses gRPC bidirectional streaming to receive log data as it arrives.
-        Buffers partial lines and pushes complete lines to output_queue.
-        Signals end-of-stream with None sentinel when log stream completes.
-
-        Resume handling: when the server includes a session_id and cumulative
-        byte offset on each log frame, we remember the last-received values
-        and, on a transient transport failure, re-init with resume_session_id
-        and resume_offset so the stream picks up where it left off.  Servers
-        that do not advertise a session_id (or reply with an in-band
-        SESSION_NOT_FOUND on the resume init) fall back to a fresh init:
-        the live tail restarts from the current head with no replay of
-        older bytes.  ``tail_lines`` and ``since_time`` are only applied to
-        the very first attempt; fresh-fallback re-inits send no replay
-        filters so the user does not see the original window re-emitted on
-        every transient disconnect.
-        """
-        # Track whether the inner block exited normally.  Only on a clean
-        # exit do we emit the EOF sentinel.  On the failure path the
-        # outer ``except`` below emits the exception, and StreamReader
-        # stops iteration on Exception, so the sentinel would be
-        # redundant — and emitting it first (via an unconditional
-        # ``finally``) would race the exception to the queue and cause
-        # the consumer to see a clean EOS instead of the actual failure.
+        """Stream PID-1 logs via v1 unary StreamLogs → LogEntry server stream."""
         inner_exit_clean = False
         try:
             await self._ensure_started_async()
@@ -4394,375 +4776,130 @@ class Sandbox:
                     f"Sandbox {self._sandbox_id} is terminating"
                     " (follow=True requires a running sandbox)"
                 )
-
             if not self._is_done and not self._is_stopping:
                 await self._wait_until_running_async()
 
             await self._ensure_client()
             auth_metadata = self._auth_metadata
-
-            logger.debug("Streaming logs from sandbox %s (follow=%s)", self._sandbox_id, follow)
-
-            # Resume state.  ``session_id`` is the opaque token the server
-            # echoes on every data frame; ``last_offset`` is the cumulative
-            # byte count after the most recently *delivered* chunk.  Bytes
-            # that were in flight at disconnect (sent by the server but not
-            # consumed by us) are NOT in last_offset, so the server replays
-            # them on resume — that is the at-least-once delivery contract.
-            session_id = ""
-            last_offset = 0
-            # Line-buffer state spans attempts so a partial line received
-            # before a disconnect is concatenated with the bytes replayed on
-            # resume.  The server's at-least-once replay may duplicate a
-            # final partial line, which is acceptable — the alternative
-            # (dropping the buffer on disconnect) would drop user output.
-            line_parts: list[str] = []
-            line_parts_bytes = 0
-
-            # Narrow for closure capture: the None-check above already
-            # raised, but mypy cannot propagate that narrowing into the
-            # request_generator closure below.
             sandbox_id = self._sandbox_id
             assert sandbox_id is not None
 
+            session_id = ""
+            last_offset = 0
+            line_parts: list[str] = []
+            line_parts_bytes = 0
             attempt = 0
             done = False
-            # Retain the most recent transport error so it can chain into
-            # the synthesized SandboxUnavailableError if the retry budget
-            # is exhausted.  Without this, an SRE debugging a resume-
-            # failure run sees only the generic "could not be resumed"
-            # message with no underlying gRPC status code.
             last_transport_error: grpc.aio.AioRpcError | None = None
-            try:
-                while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
-                    is_first_attempt = attempt == 0
-                    is_resume = bool(session_id) and attempt > 0
-                    if is_resume:
-                        logger.debug(
-                            "Resuming log stream for sandbox %s (attempt %d, offset %d)",
-                            self._sandbox_id,
-                            attempt,
-                            last_offset,
-                        )
 
-                    # Reacquire the streaming channel and stub on every
-                    # attempt.  ``_get_or_create_streaming_channel`` returns
-                    # the cached channel when it is still healthy, so this
-                    # is free in the common case.  After an external
-                    # teardown (the integration test forcibly closes the
-                    # cached channel; ``stop()`` invalidates it during
-                    # shutdown), this is what gives the retry loop a live
-                    # stub to run the next ``StreamLogs`` against.
-                    channel = await self._get_or_create_streaming_channel()
-                    stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+            while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
+                is_first_attempt = attempt == 0
+                is_resume = bool(session_id) and attempt > 0
+                channel = await self._get_or_create_streaming_channel()
+                stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
 
-                    shutdown_event = asyncio.Event()
+                request = sandbox_pb2.StreamLogsRequest(
+                    sandbox_id=sandbox_id,
+                    follow=follow,
+                    timestamps=timestamps,
+                )
+                if is_resume:
+                    request.resume_log_session_id = session_id
+                    request.resume_log_offset = last_offset
+                elif is_first_attempt:
+                    if tail_lines is not None:
+                        request.tail_lines = tail_lines
+                    if since_time is not None:
+                        ts = timestamp_pb2.Timestamp()
+                        ts.FromDatetime(since_time)
+                        request.since_time.CopyFrom(ts)
 
-                    def make_request_generator(
-                        resume_id: str,
-                        resume_off: int,
-                        first_attempt: bool,
-                        shutdown: asyncio.Event,
-                    ) -> Callable[[], AsyncIterator[streaming_pb2.LogStreamRequest]]:
-                        async def request_generator() -> AsyncIterator[
-                            streaming_pb2.LogStreamRequest
-                        ]:
-                            init = streaming_pb2.LogStreamInit(
-                                sandbox_id=sandbox_id,
-                                follow=follow,
+                grpc_timeout = timeout_seconds if not follow else None
+                call = stub.StreamLogs(
+                    request,
+                    metadata=auth_metadata,
+                    **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
+                )
+
+                try:
+                    async for entry in call:
+                        if entry.HasField("error") and entry.error.code:
+                            code = entry.error.code
+                            msg = entry.error.message or code
+                            if code in {
+                                "SESSION_NOT_FOUND",
+                                "REPLAY_GAP",
+                                "INVALID_RESUME_OFFSET",
+                            }:
+                                session_id = ""
+                                last_offset = 0
+                                break
+                            if code == STREAM_TRUNCATED:
+                                raise SandboxStreamTruncatedError(msg)
+                            raise SandboxError(f"Log stream error: {msg}")
+                        if entry.log_session_id:
+                            session_id = entry.log_session_id
+                        if entry.next_log_offset:
+                            last_offset = int(entry.next_log_offset)
+                        chunk = entry.data.decode("utf-8", errors="replace")
+                        if not chunk:
+                            continue
+                        line_parts.append(chunk)
+                        line_parts_bytes += len(chunk.encode("utf-8", errors="replace"))
+                        if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
+                            raise SandboxStreamTruncatedError(
+                                f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
                             )
-                            if resume_id:
-                                # Per the wire contract: when resume_session_id
-                                # is set, all fields except sandbox_id are
-                                # ignored.  Keep the others off the wire to
-                                # make that explicit and avoid log noise
-                                # from servers that validate the rule.
-                                init.resume_session_id = resume_id
-                                init.resume_offset = resume_off
-                            elif first_attempt:
-                                # tail_lines / since_time describe the
-                                # *original* replay window the caller asked
-                                # for.  Re-emitting them on every fresh-
-                                # fallback re-init would replay the same
-                                # window after each transient disconnect —
-                                # for ``stream_logs(follow=True,
-                                # tail_lines=100)`` the user would see the
-                                # last 100 lines re-emitted whenever
-                                # SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_*
-                                # forced a fresh init.  ``timestamps`` is
-                                # a formatting flag, not a replay window,
-                                # so it stays across attempts.
-                                if tail_lines is not None:
-                                    init.tail_lines = tail_lines
-                                if since_time is not None:
-                                    ts = timestamp_pb2.Timestamp()
-                                    ts.FromDatetime(since_time)
-                                    init.since_time.CopyFrom(ts)
-                            if timestamps:
-                                init.timestamps = True
-                            yield streaming_pb2.LogStreamRequest(init=init)
-                            if follow:
-                                await shutdown.wait()
-                                yield streaming_pb2.LogStreamRequest(
-                                    close=streaming_pb2.LogStreamClose()
-                                )
+                        buf = "".join(line_parts)
+                        if "\n" in buf:
+                            *complete, remainder = buf.split("\n")
+                            for line in complete:
+                                await output_queue.put(line + "\n")
+                            line_parts = [remainder] if remainder else []
+                            line_parts_bytes = (
+                                len(remainder.encode("utf-8")) if remainder else 0
+                            )
+                    else:
+                        if line_parts:
+                            await output_queue.put("".join(line_parts))
+                            line_parts = []
+                            line_parts_bytes = 0
+                        done = True
+                        continue
+                except grpc.aio.AioRpcError as exc:
+                    last_transport_error = exc
+                    if not (_is_resumable_transport_error(exc) and follow):
+                        raise _translate_rpc_error(
+                            exc, sandbox_id=sandbox_id, operation="Stream logs"
+                        ) from exc
 
-                        return request_generator
-
-                    # For follow=False, apply a client-side deadline so a
-                    # stalled server doesn't block the client indefinitely.
-                    # follow=True streams are intentionally unbounded.
-                    grpc_timeout = timeout_seconds if not follow else None
-
-                    call: grpc.aio.StreamStreamCall[
-                        streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
-                    ] = stub.StreamLogs(
-                        request_iterator=make_request_generator(
-                            session_id, last_offset, is_first_attempt, shutdown_event
-                        )(),
-                        metadata=auth_metadata,
-                        **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
+                if done:
+                    break
+                attempt += 1
+                await asyncio.sleep(
+                    min(
+                        STREAMING_RESUME_BACKOFF_SECONDS * (2 ** max(attempt - 1, 0)),
+                        STREAMING_RESUME_MAX_BACKOFF_SECONDS,
                     )
+                )
 
-                    response_queue: asyncio.Queue[
-                        streaming_pb2.LogStreamResponse | Exception | None
-                    ] = asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
-
-                    async def collect_responses(
-                        active_call: grpc.aio.StreamStreamCall[
-                            streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse
-                        ],
-                        queue: asyncio.Queue[streaming_pb2.LogStreamResponse | Exception | None],
-                    ) -> None:
-                        try:
-                            async for response in active_call:
-                                await queue.put(response)
-                                if response.HasField("error") or response.HasField("complete"):
-                                    return
-                        except grpc.aio.AioRpcError as exc_inner:
-                            await queue.put(exc_inner)
-                        except Exception as exc_inner:
-                            await queue.put(exc_inner)
-                        finally:
-                            await queue.put(None)
-
-                    collect_task = asyncio.create_task(collect_responses(call, response_queue))
-
-                    # Outcome of this attempt: "done" (terminal), "resume"
-                    # (transient — try again), or "fresh" (server told us
-                    # the session is gone, drop resume state and re-init).
-                    attempt_outcome: str = "done"
-                    pending_error: Exception | None = None
-
-                    try:
-                        while True:
-                            item = await response_queue.get()
-                            if item is None:
-                                # Stream ended without a terminal frame and
-                                # without a transport error — treat as done.
-                                break
-                            if isinstance(item, grpc.aio.AioRpcError):
-                                if follow and _is_resumable_transport_error(item):
-                                    # The outer `while attempt < MAX_ATTEMPTS`
-                                    # is the only budget — let it decide
-                                    # whether another retry is possible.
-                                    # Marking the outcome "resume" here keeps
-                                    # the exhaustion path (the synthesized
-                                    # SandboxUnavailableError below) the
-                                    # single place that translates "budget
-                                    # spent" to a user-visible error.
-                                    #
-                                    # We do NOT gate on session_id being
-                                    # populated: if the first transport
-                                    # error happens before any frame
-                                    # arrives, session_id is still "", and
-                                    # the next request_generator will fall
-                                    # into the empty-resume_id branch — a
-                                    # bounded fresh-init retry, which is
-                                    # exactly the right behavior for a
-                                    # flaky gateway connection at the
-                                    # opening edge of the tail.
-                                    logger.debug(
-                                        "Log stream transport error %s; will attempt resume",
-                                        item.code(),
-                                    )
-                                    last_transport_error = item
-                                    attempt_outcome = "resume"
-                                else:
-                                    translated = _translate_rpc_error(
-                                        item,
-                                        sandbox_id=self._sandbox_id,
-                                        operation="Stream logs",
-                                    )
-                                    # Chain the gRPC error so callers can
-                                    # inspect the underlying status code via
-                                    # __cause__ — matches the convention
-                                    # used at other _translate_rpc_error
-                                    # call sites in this module.
-                                    translated.__cause__ = item
-                                    pending_error = translated
-                                break
-                            if isinstance(item, Exception):
-                                pending_error = item
-                                break
-
-                            response = item
-                            if response.HasField("data"):
-                                data_msg = response.data
-                                # Capture resume metadata.  These fields are
-                                # only populated by servers that speak the
-                                # resume protocol; on older builds they are
-                                # the proto defaults ("" and 0), which means
-                                # we never attempt resume — exactly right.
-                                incoming_session_id = data_msg.session_id
-                                if incoming_session_id:
-                                    session_id = incoming_session_id
-                                if data_msg.offset:
-                                    last_offset = data_msg.offset
-
-                                text = data_msg.data.decode("utf-8", errors="replace")
-                                line_parts.append(text)
-                                line_parts_bytes += len(text)
-
-                                if "\n" not in text and line_parts_bytes < MAX_LINE_BUFFER_BYTES:
-                                    continue
-
-                                combined = "".join(line_parts)
-                                line_parts.clear()
-                                line_parts_bytes = 0
-                                parts = combined.split("\n")
-                                for part in parts[:-1]:
-                                    await output_queue.put(part + "\n")
-                                if parts[-1]:
-                                    line_parts.append(parts[-1])
-                                    line_parts_bytes = len(parts[-1])
-
-                            elif response.HasField("error"):
-                                code = response.error.code or None
-                                # The wire contract documents every
-                                # LogStreamError as terminal — the server
-                                # will not send further frames on this call.
-                                # REPLAY_GAP also warrants an operator-
-                                # visible warning, because data below the
-                                # server's replay window was permanently
-                                # missed.
-                                if code == _STREAMING_REPLAY_GAP:
-                                    logger.warning(
-                                        "Log stream replay gap for sandbox %s"
-                                        " (offset %d below server replay window);"
-                                        " reconnecting with fresh init",
-                                        self._sandbox_id,
-                                        last_offset,
-                                    )
-                                if follow and code in _STREAMING_FRESH_REINIT_CODES:
-                                    # The server told us to reconnect from
-                                    # scratch.  Drop resume state and clear
-                                    # the cross-attempt line buffer — on a
-                                    # fresh init we are NOT going to receive
-                                    # the bytes that preceded any partial
-                                    # line, so preserving it would splice
-                                    # unrelated future bytes into a stale
-                                    # fragment.
-                                    logger.debug(
-                                        "Log stream %s; falling back to fresh init",
-                                        code,
-                                    )
-                                    session_id = ""
-                                    last_offset = 0
-                                    line_parts.clear()
-                                    line_parts_bytes = 0
-                                    attempt_outcome = "fresh"
-                                    break
-                                # Every other code — including
-                                # INVALID_RESUME_OFFSET (echoed offset is
-                                # corrupt; retrying with the same state
-                                # would loop), SANDBOX_NOT_FOUND, and
-                                # PERMISSION_DENIED — is terminal, no
-                                # retry.  Surface as a SandboxError.
-                                pending_error = SandboxError(
-                                    f"Log stream error: {response.error.message}",
-                                    reason=code,
-                                )
-                                break
-
-                            elif response.HasField("complete"):
-                                # Server signaled clean completion.  Exit
-                                # the inner loop with attempt_outcome
-                                # still "done"; the outer loop will set
-                                # done=True and the `finally` below cancels
-                                # the call and collector.  Any frames the
-                                # server pushed after `complete` would be
-                                # a protocol violation and are discarded.
-                                break
-
-                        # Determine terminal-vs-retry outcome.
-                        if attempt_outcome == "done":
-                            done = True
-                            if pending_error is not None:
-                                await output_queue.put(pending_error)
-                                return
-                    except asyncio.CancelledError:
-                        raise
-                    finally:
-                        shutdown_event.set()
-                        with contextlib.suppress(Exception):
-                            call.cancel()
-                        collect_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await collect_task
-
-                    if not done:
-                        # Bounded exponential backoff before resume/fresh
-                        # init.  Capped so the orphan window on the server
-                        # (30s) doesn't expire while the client sleeps.
-                        backoff = min(
-                            STREAMING_RESUME_BACKOFF_SECONDS * (2**attempt),
-                            STREAMING_RESUME_MAX_BACKOFF_SECONDS,
-                        )
-                        await asyncio.sleep(backoff)
-
-                    attempt += 1
-
-                if not done and attempt >= STREAMING_RESUME_MAX_ATTEMPTS:
-                    # Exhausted the retry budget after the final transport
-                    # error.  pending_error is set only on paths that
-                    # chose not to resume; the resume-chosen path leaves
-                    # pending_error=None, so synthesize a stable user-
-                    # facing error but chain the underlying gRPC error
-                    # so SREs can see the real status code post-mortem.
-                    synthesized = SandboxUnavailableError(
-                        "Log stream disconnected and could not be resumed",
-                    )
-                    if last_transport_error is not None:
-                        synthesized.__cause__ = last_transport_error
-                    await output_queue.put(synthesized)
-                    return
-
-                # Flush any remaining partial line on clean completion.
-                if line_parts:
-                    await output_queue.put("".join(line_parts))
-                inner_exit_clean = True
-            finally:
-                # See ``inner_exit_clean`` declaration above for rationale.
-                if inner_exit_clean:
-                    await output_queue.put(None)
-        except Exception as exc:
-            # A failure escaped the retry loop (early-setup failure, an
-            # asyncio cancellation propagating mid-loop, a per-attempt
-            # setup error that is not an AioRpcError, etc.).  Surface it
-            # to the consumer.  StreamReader stops iteration on Exception,
-            # so no trailing None sentinel is needed — and the inner
-            # ``finally`` deliberately did not emit one for this path.
-            # ``put_nowait`` avoids blocking if the consumer stopped
-            # draining.
+            if not done:
+                raise SandboxUnavailableError(
+                    f"Log stream for sandbox {sandbox_id} could not be resumed"
+                ) from last_transport_error
+            inner_exit_clean = True
+        except Exception as e:
             try:
-                output_queue.put_nowait(exc)
+                output_queue.put_nowait(e)
             except asyncio.QueueFull:
                 pass
+        finally:
+            if inner_exit_clean:
+                await output_queue.put(None)
 
     async def _prepare_streaming_call(
         self,
-    ) -> streaming_pb2_grpc.GatewayStreamingServiceStub:
+    ) -> sandbox_pb2_grpc.SandboxServiceStub:
         """Shared StreamExec preamble: ensure running, return a stub."""
         await self._ensure_started_async()
         if self._is_done or self._is_stopping:
@@ -4772,7 +4909,7 @@ class Sandbox:
         await self._wait_until_running_async()
         await self._ensure_client()
         channel = await self._get_or_create_streaming_channel()
-        return streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
+        return sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
 
     async def _exec_streaming_tty_async(
         self,
@@ -4819,9 +4956,9 @@ class Sandbox:
             request_error: Exception | None = None
             exec_start_time = time.monotonic()
 
-            async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+            async def request_generator() -> AsyncIterator[sandbox_pb2.ExecStreamRequest]:
                 """Generate request messages for the TTY bidirectional stream."""
-                init_msg = streaming_pb2.ExecStreamInit(
+                init_msg = sandbox_pb2.ExecStreamInit(
                     sandbox_id=sandbox_id,
                     command=list(command),
                     tty=True,
@@ -4830,7 +4967,7 @@ class Sandbox:
                     init_msg.tty_width = tty_width
                 if tty_height is not None:
                     init_msg.tty_height = tty_height
-                yield streaming_pb2.ExecStreamRequest(init=init_msg)
+                yield sandbox_pb2.ExecStreamRequest(init=init_msg)
 
                 nonlocal request_error
                 ready_timeout = 5.0
@@ -4872,8 +5009,8 @@ class Sandbox:
                             resize_task = asyncio.create_task(resize_queue.get())
                             if dims is not None:
                                 w, h = dims
-                                yield streaming_pb2.ExecStreamRequest(
-                                    resize=streaming_pb2.ExecStreamResize(width=w, height=h)
+                                yield sandbox_pb2.ExecStreamRequest(
+                                    resize=sandbox_pb2.ExecStreamResize(width=w, height=h)
                                 )
                             if get_task not in done:
                                 continue
@@ -4881,8 +5018,8 @@ class Sandbox:
                         if get_task in done:
                             data = get_task.result()
                             if data is None:
-                                yield streaming_pb2.ExecStreamRequest(
-                                    close=streaming_pb2.ExecStreamClose()
+                                yield sandbox_pb2.ExecStreamRequest(
+                                    close=sandbox_pb2.ExecStreamClose()
                                 )
                                 to_cancel: list[asyncio.Task[Any]] = [resize_task, shutdown_task]
                                 for t in to_cancel:
@@ -4895,9 +5032,7 @@ class Sandbox:
                             get_task = asyncio.create_task(stdin_queue.get())
                             for i in range(0, len(data), STDIN_CHUNK_SIZE):
                                 chunk = data[i : i + STDIN_CHUNK_SIZE]
-                                yield streaming_pb2.ExecStreamRequest(
-                                    stdin=streaming_pb2.ExecStreamData(data=chunk)
-                                )
+                                yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
                     except asyncio.CancelledError:
                         cleanup: list[asyncio.Task[Any]] = [get_task, resize_task, shutdown_task]
                         for t in cleanup:
@@ -4909,7 +5044,7 @@ class Sandbox:
 
             # No client-side timeout for interactive sessions
             call: grpc.aio.StreamStreamCall[
-                streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+                sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
             ] = stub.StreamExec(
                 request_iterator=request_generator(),
                 timeout=None,
@@ -4920,7 +5055,7 @@ class Sandbox:
             # consumer is slow, collect_responses() blocks on put(), stopping
             # reads from gRPC.  Without this bound, long-lived TTY sessions
             # can accumulate unlimited protobuf messages in memory.
-            response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
+            response_queue: asyncio.Queue[sandbox_pb2.ExecStreamResponse | Exception | None] = (
                 asyncio.Queue(maxsize=STREAMING_RESPONSE_QUEUE_SIZE)
             )
 
@@ -4960,7 +5095,7 @@ class Sandbox:
                             extra={
                                 "sandbox_id": self._sandbox_id,
                                 "ready_latency_ms": ready_latency * 1000,
-                                "ready_at": response.ready.ready_at.ToDatetime().isoformat(),
+                                "ready_at": response.ready.ready_time.ToDatetime().isoformat(),
                             },
                         )
                         ready_event.set()
@@ -5062,7 +5197,7 @@ class Sandbox:
         # Track exec start time for ready latency measurement (only used when stdin enabled)
         exec_start_time = time.monotonic()
 
-        async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+        async def request_generator() -> AsyncIterator[sandbox_pb2.ExecStreamRequest]:
             """Generate request messages for the bidirectional stream.
 
             Yields init message, then stdin data if enabled, then returns.
@@ -5070,8 +5205,8 @@ class Sandbox:
             which signals gRPC to half-close the send direction.
             """
             # Yield init message first
-            yield streaming_pb2.ExecStreamRequest(
-                init=streaming_pb2.ExecStreamInit(
+            yield sandbox_pb2.ExecStreamRequest(
+                init=sandbox_pb2.ExecStreamInit(
                     sandbox_id=sandbox_id,
                     command=rpc_command,
                 )
@@ -5118,17 +5253,15 @@ class Sandbox:
                         # Process queue data
                         data = get_task.result()
                         if data is None:  # EOF sentinel - close stdin
-                            yield streaming_pb2.ExecStreamRequest(
-                                close=streaming_pb2.ExecStreamClose()
+                            yield sandbox_pb2.ExecStreamRequest(
+                                close=sandbox_pb2.ExecStreamClose()
                             )
                             return
 
                         # Chunk large data into 64KB pieces
                         for i in range(0, len(data), STDIN_CHUNK_SIZE):
                             chunk = data[i : i + STDIN_CHUNK_SIZE]
-                            yield streaming_pb2.ExecStreamRequest(
-                                stdin=streaming_pb2.ExecStreamData(data=chunk)
-                            )
+                            yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
                     except asyncio.CancelledError:
                         return
 
@@ -5137,7 +5270,7 @@ class Sandbox:
             timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
         )
         call: grpc.aio.StreamStreamCall[
-            streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+            sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
         ] = stub.StreamExec(
             request_iterator=request_generator(),
             timeout=call_timeout,
@@ -5146,7 +5279,7 @@ class Sandbox:
 
         # Queue decouples stream iteration from our processing.
         # Without this, processing suspends the stream and can cause issues.
-        response_queue: asyncio.Queue[streaming_pb2.ExecStreamResponse | Exception | None] = (
+        response_queue: asyncio.Queue[sandbox_pb2.ExecStreamResponse | Exception | None] = (
             asyncio.Queue()
         )
 
@@ -5197,7 +5330,7 @@ class Sandbox:
                             extra={
                                 "sandbox_id": self._sandbox_id,
                                 "ready_latency_ms": ready_latency * 1000,
-                                "ready_at": response.ready.ready_at.ToDatetime().isoformat(),
+                                "ready_at": response.ready.ready_time.ToDatetime().isoformat(),
                             },
                         )
                     ready_event.set()
@@ -5206,17 +5339,17 @@ class Sandbox:
                     data = response.output.data
                     # Decode as UTF-8 for queue (replacing invalid chars)
                     text = data.decode("utf-8", errors="replace")
-                    stream_type = response.output.stream_type
+                    stream_type = response.output.stream
 
-                    if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDOUT:
+                    if stream_type == sandbox_pb2.ExecStreamOutput.STREAM_STDOUT:
                         stdout_buffer.append(data)
                         await stdout_queue.put(text)
-                    elif stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                    elif stream_type == sandbox_pb2.ExecStreamOutput.STREAM_STDERR:
                         stderr_buffer.append(data)
                         await stderr_queue.put(text)
                     else:
                         logger.warning(
-                            "Received output with unexpected stream_type %s, treating as stdout",
+                            "Received output with unexpected stream %s, treating as stdout",
                             stream_type,
                         )
                         stdout_buffer.append(data)
@@ -5499,9 +5632,9 @@ class Sandbox:
         shutdown_event = asyncio.Event()
         request_error: Exception | None = None
 
-        async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-            yield streaming_pb2.ExecStreamRequest(
-                init=streaming_pb2.ExecStreamInit(
+        async def request_generator() -> AsyncIterator[sandbox_pb2.ExecStreamRequest]:
+            yield sandbox_pb2.ExecStreamRequest(
+                init=sandbox_pb2.ExecStreamInit(
                     sandbox_id=sandbox_id,
                     command=list(command),
                 )
@@ -5530,9 +5663,7 @@ class Sandbox:
                     if shutdown_event.is_set():
                         return
                     chunk = buf[i : i + STDIN_CHUNK_SIZE]
-                    yield streaming_pb2.ExecStreamRequest(
-                        stdin=streaming_pb2.ExecStreamData(data=chunk)
-                    )
+                    yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
             else:
                 # AsyncIterable[bytes] — caller controls chunk size; each
                 # yielded chunk is passed through unmodified so the caller
@@ -5542,17 +5673,17 @@ class Sandbox:
                         return
                     if not chunk:
                         continue
-                    yield streaming_pb2.ExecStreamRequest(
-                        stdin=streaming_pb2.ExecStreamData(data=_coerce_bytes_chunk(chunk))
+                    yield sandbox_pb2.ExecStreamRequest(
+                        stdin=sandbox_pb2.ExecStreamData(data=_coerce_bytes_chunk(chunk))
                     )
 
-            yield streaming_pb2.ExecStreamRequest(close=streaming_pb2.ExecStreamClose())
+            yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
         call_timeout = (
             timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
         )
         call: grpc.aio.StreamStreamCall[
-            streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+            sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
         ] = stub.StreamExec(
             request_iterator=request_generator(),
             timeout=call_timeout,
@@ -5565,8 +5696,8 @@ class Sandbox:
                     ready_event.set()
                 elif response.HasField("output"):
                     data = response.output.data
-                    stream_type = response.output.stream_type
-                    if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                    stream_type = response.output.stream
+                    if stream_type == sandbox_pb2.ExecStreamOutput.STREAM_STDERR:
                         if not stderr_truncated:
                             remaining = stderr_cap_bytes - stderr_total_bytes
                             if remaining >= len(data):
@@ -5622,14 +5753,13 @@ class Sandbox:
 
     async def _read_file_unary_async(self, filepath: str, timeout: float) -> bytes:
         assert self._stub is not None
-        request = gateway_pb2.RetrieveFileSandboxRequest(
+        request = sandbox_pb2.ReadFileRequest(
             sandbox_id=self._sandbox_id,
-            filepath=filepath,
-            max_timeout_seconds=int(timeout),
+            path=filepath,
         )
 
         try:
-            response = await self._stub.RetrieveFile(
+            response = await self._stub.ReadFile(
                 request, timeout=timeout, metadata=self._auth_metadata
             )
         except grpc.RpcError as e:
@@ -5640,14 +5770,7 @@ class Sandbox:
                 filepath=filepath,
             ) from e
 
-        if not response.success:
-            logger.warning("Failed to read file %s from sandbox %s", filepath, self._sandbox_id)
-            raise SandboxFileError(
-                f"Failed to read file '{filepath}': {response.error_message}",
-                filepath=filepath,
-            )
-
-        return bytes(response.file_contents)
+        return bytes(response.content)
 
     async def _read_file_via_exec_streaming(
         self, filepath: str, timeout: float, *, expected_size: int | None = None
@@ -5914,15 +6037,14 @@ class Sandbox:
         timeout: float,
     ) -> None:
         assert self._stub is not None
-        request = gateway_pb2.AddFileSandboxRequest(
+        request = sandbox_pb2.WriteFileRequest(
             sandbox_id=self._sandbox_id,
-            filepath=filepath,
-            file_contents=contents,
-            max_timeout_seconds=int(timeout),
+            path=filepath,
+            content=contents,
         )
 
         try:
-            response = await self._stub.AddFile(
+            await self._stub.WriteFile(
                 request, timeout=timeout, metadata=self._auth_metadata
             )
         except grpc.RpcError as e:
@@ -5932,13 +6054,6 @@ class Sandbox:
                 operation="Write file",
                 filepath=filepath,
             ) from e
-
-        if not response.success:
-            logger.warning("Failed to write file %s to sandbox %s", filepath, self._sandbox_id)
-            raise SandboxFileError(
-                f"Failed to write file '{filepath}'",
-                filepath=filepath,
-            )
 
     async def _write_file_via_exec_streaming(
         self,
@@ -6361,15 +6476,15 @@ class Sandbox:
             exit_code: int | None = None
             total_bytes = 0
 
-            async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
-                yield streaming_pb2.ExecStreamRequest(
-                    init=streaming_pb2.ExecStreamInit(
+            async def request_generator() -> AsyncIterator[sandbox_pb2.ExecStreamRequest]:
+                yield sandbox_pb2.ExecStreamRequest(
+                    init=sandbox_pb2.ExecStreamInit(
                         sandbox_id=sandbox_id,
                         command=["/bin/cat", "--", filepath],
                     )
                 )
                 # Close stdin immediately so cat reads the file and exits.
-                yield streaming_pb2.ExecStreamRequest(close=streaming_pb2.ExecStreamClose())
+                yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
             # The read gets the budget remaining after the pre-read stat, so the
             # two phases together honor the caller's overall timeout.
@@ -6380,7 +6495,7 @@ class Sandbox:
                 else None
             )
             call: grpc.aio.StreamStreamCall[
-                streaming_pb2.ExecStreamRequest, streaming_pb2.ExecStreamResponse
+                sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
             ] = stub.StreamExec(
                 request_iterator=request_generator(),
                 timeout=call_timeout,
@@ -6389,9 +6504,9 @@ class Sandbox:
             try:
                 async for response in call:
                     if response.HasField("output"):
-                        stream_type = response.output.stream_type
+                        stream_type = response.output.stream
                         data = response.output.data
-                        if stream_type == streaming_pb2.ExecStreamOutput.STREAM_TYPE_STDERR:
+                        if stream_type == sandbox_pb2.ExecStreamOutput.STREAM_STDERR:
                             remaining = stderr_cap - len(stderr_buf)
                             if remaining > 0:
                                 stderr_buf.extend(data[:remaining])

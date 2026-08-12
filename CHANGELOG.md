@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v1.0.0b1 (2026-08-12)
+
+Breaking cutover to the Sandbox **v1** API. Stay on **0.26.x** if you still need
+v1beta2.
+
+### Breaking Changes
+
+- Speak only `coreweave.sandbox.v1` (Create/Delete/Get/List, StreamExec, unary
+  StreamLogs, volumes, templates, settings bucket). Vendored beta stubs
+  (`gateway_*`, `streaming_*`, `secrets_*`) are removed.
+- Drop profiles from the public surface (`profile_ids` / `profile_names`,
+  `list_profiles` / `get_profile`, `Profile` / `ProfileNotFoundError`). Place
+  workloads with `placement_mode` and runner filters; use templates for CKS pod
+  fragments.
+- Replace string network modes with typed services: `Service`,
+  `ServiceVisibility`, `ServiceProtocol` on `NetworkOptions`.
+- Prefer named scratch volumes (`ScratchVolumeOptions`) for filesystem snapshot
+  mounts; `file_system_snapshot=` remains as a convenience where supported.
+- Reject `s3_mount` and `max_timeout_seconds` with a loud `TypeError` (use
+  `request_timeout_seconds` for client deadlines).
+- `stop()` maps to `DeleteSandbox` under the hood; create uses a frozen
+  `request_id` for idempotency.
+
+### Features
+
+- Export `PlacementMode`, `Service` / `ServiceVisibility` / `ServiceProtocol`,
+  `ScratchVolumeOptions`, `ImagePullCredentials`, and `Sandbox.run_from_template`.
+- Proto generation pins protobuf runtime v26.1 via `scripts/buf.gen.python.yaml`
+  and `scripts/update-protos.sh --from-backend`.
+
+### Tests
+
+- Unit and integration suites retargeted to v1 (prod smoke: unit + full
+  integration green against production).
+
+
 ## v0.26.1 (2026-07-31)
 
 ### Bug Fixes

@@ -396,13 +396,11 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 ### Discovery API
 
-Module-level sync functions (`_discovery.py`) for querying available runners and profiles. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed).
+Module-level sync functions (`_discovery.py`) for querying available runners and capabilities. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed). Profiles were removed in 1.x.
 
 **Functions:**
-- `list_runners(*, runner_group_id=None, profile_name=None, gpu_type=None, architecture=None, include_resources=False, min_available_cpu_millicores=None, min_available_memory_bytes=None, min_available_gpu_count=None, service_exposure_mode=None, egress_mode=None)` -> `list[Runner]`: List available runners with optional filtering. Set `include_resources=True` for live resource availability (automatically enabled by `min_available_*` filters). The `service_exposure_mode` and `egress_mode` filters require an additional profile fetch and check across all profiles on each runner. Auto-paginates.
-- `get_runner(runner_id)` -> `Runner`: Get a single runner by ID. Always returns full details including resources. Raises `RunnerNotFoundError` if not found.
-- `list_profiles(*, gpu_type=None, architecture=None, runner_id=None, service_exposure_mode=None, egress_mode=None)` -> `list[Profile]`: List available profiles with optional filtering. The `service_exposure_mode` and `egress_mode` filters are applied client-side. Auto-paginates.
-- `get_profile(profile_name, *, runner_id=None)` -> `Profile`: Get a single profile by name, optionally scoped to a runner. Raises `ProfileNotFoundError` if not found.
+- `list_runners(*, organization_id=None, runner_group_id=None, gpu_type=None, architecture=None, include_resources=False, min_available_cpu_millicores=None, min_available_memory_bytes=None, min_available_gpu_count=None, service_visibility=None, healthy_only=False, ...)` -> `list[Runner]`: List available runners with optional filtering. Set `include_resources=True` for live resource availability. Auto-paginates.
+- `get_runner(runner_id, *, organization_id=...)` -> `Runner`: Get a single runner by ID (organization_id required). Raises `RunnerNotFoundError` if not found.
 
 **Types:**
 - `Runner`: Frozen dataclass with runner capabilities (CPU, memory, GPU), health status, `profile_names`, and optional `RunnerResources`. Has human-readable `__repr__`.
@@ -427,11 +425,11 @@ for r in runners:
 runner = cwsandbox.get_runner("runner-123")
 print(f"CPU: {cwsandbox.format_cpu(runner.max_cpu_millicores)}")
 
-# List profiles, filter by GPU type
-profiles = cwsandbox.list_profiles(gpu_type="A100")
+# Filter runners by capability / visibility
+runners = cwsandbox.list_runners(gpu_type="A100", include_resources=True)
 ```
 
-Note: `profile_names` from discovery map directly to `SandboxDefaults(profile_names=[...])` (preferred) or `SandboxDefaults(profile_ids=[...])` for backward compatibility. The backend unions both fields server-side, so either works; `profile_names` is clearer. The API reference generator in `coreweave/docs` repo needs `MANIFEST_GROUPS` updated in `scripts/cwsandbox-api-ref/generate.py` to include the new discovery types and functions.
+Use `placement_mode`, `runner_ids`, and discovery capabilities instead of removed profiles. The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated for v1 types.
 
 ### Backend Communication
 

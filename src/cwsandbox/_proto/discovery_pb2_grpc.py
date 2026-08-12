@@ -5,13 +5,11 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from cwsandbox._proto import discovery_pb2 as coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2
+from cwsandbox._proto import discovery_pb2 as coreweave_dot_sandbox_dot_v1_dot_discovery__pb2
 
 
 class DiscoveryServiceStub(object):
-    """DiscoveryService provides read-only endpoints for discovering available
-    runners and profiles visible to the authenticated user's organization.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -20,56 +18,32 @@ class DiscoveryServiceStub(object):
             channel: A grpc.Channel.
         """
         self.ListAvailableRunners = channel.unary_unary(
-                '/coreweave.sandbox.v1beta2.DiscoveryService/ListAvailableRunners',
-                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
-                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
-                _registered_method=True)
+                '/coreweave.sandbox.v1.DiscoveryService/ListAvailableRunners',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
+                )
         self.GetAvailableRunner = channel.unary_unary(
-                '/coreweave.sandbox.v1beta2.DiscoveryService/GetAvailableRunner',
-                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
-                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.FromString,
-                _registered_method=True)
-        self.ListProfiles = channel.unary_unary(
-                '/coreweave.sandbox.v1beta2.DiscoveryService/ListProfiles',
-                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.SerializeToString,
-                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.FromString,
-                _registered_method=True)
-        self.GetProfile = channel.unary_unary(
-                '/coreweave.sandbox.v1beta2.DiscoveryService/GetProfile',
-                request_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.SerializeToString,
-                response_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.FromString,
-                _registered_method=True)
+                '/coreweave.sandbox.v1.DiscoveryService/GetAvailableRunner',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.AvailableRunner.FromString,
+                )
 
 
 class DiscoveryServiceServicer(object):
-    """DiscoveryService provides read-only endpoints for discovering available
-    runners and profiles visible to the authenticated user's organization.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def ListAvailableRunners(self, request, context):
-        """ListAvailableRunners returns runners visible to the caller's organization,
-        optionally filtered by capabilities.
+        """ListAvailableRunners lists the runners visible to the caller's organization,
+        optionally filtered. RunnerView defaults to BASIC when unspecified.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetAvailableRunner(self, request, context):
-        """GetAvailableRunner returns a single runner by ID, if visible to the caller.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ListProfiles(self, request, context):
-        """ListProfiles returns an aggregated view of profiles across visible runners.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetProfile(self, request, context):
-        """GetProfile returns a single profile by name.
+        """GetAvailableRunner returns a single runner by id. Returns NOT_FOUND (reason
+        CWSANDBOX_RUNNER_NOT_FOUND) if the runner is unknown or not visible.
+        RunnerView defaults to FULL when unspecified.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -80,36 +54,23 @@ def add_DiscoveryServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'ListAvailableRunners': grpc.unary_unary_rpc_method_handler(
                     servicer.ListAvailableRunners,
-                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.FromString,
-                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.SerializeToString,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersResponse.SerializeToString,
             ),
             'GetAvailableRunner': grpc.unary_unary_rpc_method_handler(
                     servicer.GetAvailableRunner,
-                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.FromString,
-                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.SerializeToString,
-            ),
-            'ListProfiles': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListProfiles,
-                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.FromString,
-                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.SerializeToString,
-            ),
-            'GetProfile': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetProfile,
-                    request_deserializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.FromString,
-                    response_serializer=coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.SerializeToString,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.GetAvailableRunnerRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.AvailableRunner.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'coreweave.sandbox.v1beta2.DiscoveryService', rpc_method_handlers)
+            'coreweave.sandbox.v1.DiscoveryService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('coreweave.sandbox.v1beta2.DiscoveryService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
 class DiscoveryService(object):
-    """DiscoveryService provides read-only endpoints for discovering available
-    runners and profiles visible to the authenticated user's organization.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def ListAvailableRunners(request,
@@ -122,21 +83,11 @@ class DiscoveryService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/coreweave.sandbox.v1beta2.DiscoveryService/ListAvailableRunners',
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.DiscoveryService/ListAvailableRunners',
+            coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.ListAvailableRunnersResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def GetAvailableRunner(request,
@@ -149,72 +100,8 @@ class DiscoveryService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/coreweave.sandbox.v1beta2.DiscoveryService/GetAvailableRunner',
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.AvailableRunner.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ListProfiles(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/coreweave.sandbox.v1beta2.DiscoveryService/ListProfiles',
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesRequest.SerializeToString,
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ListProfilesResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetProfile(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/coreweave.sandbox.v1beta2.DiscoveryService/GetProfile',
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.GetProfileRequest.SerializeToString,
-            coreweave_dot_sandbox_dot_v1beta2_dot_discovery__pb2.ProfileSummary.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.DiscoveryService/GetAvailableRunner',
+            coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.GetAvailableRunnerRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_discovery__pb2.AvailableRunner.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

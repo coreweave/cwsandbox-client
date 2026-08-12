@@ -18,6 +18,9 @@ from cwsandbox._defaults import DEFAULT_TEMP_DIR
 from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
+    PlacementMode,
+    ScratchVolumeOptions,
+    Service,
     OperationRef,
     ResourceOptions,
 )
@@ -80,16 +83,14 @@ class RemoteFunction(Generic[P, R]):
         session: Session,
         container_image: str | None = None,
         temp_dir: str = DEFAULT_TEMP_DIR,
-        profile_ids: list[str] | None = None,
-        profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
-        s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        services: list[Any] | None = None,
+        volumes: list[Any] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
-        max_timeout_seconds: int | None = None,
+        placement_mode: Any | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
     ) -> None:
@@ -151,16 +152,19 @@ class RemoteFunction(Generic[P, R]):
         self._session = session
         self._container_image = container_image
         self._temp_dir = temp_dir
-        self._profile_ids = list(profile_ids) if profile_ids is not None else None
-        self._profile_names = list(profile_names) if profile_names is not None else None
+        self._profile_ids = None
+        self._profile_names = None
         self._runner_ids = list(runner_ids) if runner_ids is not None else None
         self._resources = resources
         self._mounted_files = mounted_files
-        self._s3_mount = s3_mount
-        self._ports = ports
+        self._s3_mount = None
+        self._ports = None
         self._network = network
+        self._services = services
+        self._volumes = volumes
+        self._placement_mode = placement_mode
         self._file_system_snapshot = file_system_snapshot
-        self._max_timeout_seconds = max_timeout_seconds
+        self._max_timeout_seconds = None
         self._environment_variables = environment_variables
         self._annotations = annotations
         # Preserve function metadata
@@ -264,26 +268,24 @@ class RemoteFunction(Generic[P, R]):
         )
 
         sandbox_kwargs: dict[str, Any] = {}
-        if self._profile_ids is not None:
-            sandbox_kwargs["profile_ids"] = self._profile_ids
-        if self._profile_names is not None:
-            sandbox_kwargs["profile_names"] = self._profile_names
         if self._runner_ids is not None:
             sandbox_kwargs["runner_ids"] = self._runner_ids
         if self._resources is not None:
             sandbox_kwargs["resources"] = self._resources
         if self._mounted_files is not None:
             sandbox_kwargs["mounted_files"] = self._mounted_files
-        if self._s3_mount is not None:
-            sandbox_kwargs["s3_mount"] = self._s3_mount
         if self._ports is not None:
             sandbox_kwargs["ports"] = self._ports
         if self._network is not None:
             sandbox_kwargs["network"] = self._network
+        if self._services is not None:
+            sandbox_kwargs["services"] = self._services
+        if self._volumes is not None:
+            sandbox_kwargs["volumes"] = self._volumes
+        if self._placement_mode is not None:
+            sandbox_kwargs["placement_mode"] = self._placement_mode
         if self._file_system_snapshot is not None:
             sandbox_kwargs["file_system_snapshot"] = self._file_system_snapshot
-        if self._max_timeout_seconds is not None:
-            sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
         if self._environment_variables is not None:
             sandbox_kwargs["environment_variables"] = self._environment_variables
         if self._annotations is not None:

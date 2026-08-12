@@ -12,6 +12,9 @@ from typing import Any
 from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
+    PlacementMode,
+    ScratchVolumeOptions,
+    Service,
     ResourceOptions,
     Secret,
 )
@@ -328,11 +331,12 @@ class SandboxDefaults:
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
     temp_dir: str = DEFAULT_TEMP_DIR
     tags: tuple[str, ...] = field(default_factory=tuple)
-    profile_ids: tuple[str, ...] | None = None
-    profile_names: tuple[str, ...] | None = None
     runner_ids: tuple[str, ...] | None = None
+    placement_mode: PlacementMode | str | None = None
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
+    services: tuple[Service, ...] | None = None
+    volumes: tuple[ScratchVolumeOptions, ...] | None = None
     file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
@@ -426,7 +430,7 @@ class SandboxDefaults:
                 Secret(**s) if not isinstance(s, Secret) else s for s in secrets
             )
         # Coerce sequences -> tuples for tuple fields (reject bare strings)
-        for key in ("args", "tags", "profile_ids", "profile_names", "runner_ids"):
+        for key in ("args", "tags", "runner_ids"):
             val = kwargs.get(key)
             if val is None or isinstance(val, tuple):
                 continue

@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-PackageName: cwsandbox-client
+#
+# Used by scripts/update-protos.sh --from-backend to generate Python stubs from a
+# local aviato/sandbox proto checkout with protobuf <=5.26 (no runtime version
+# check), preserving protobuf>=5,<7 install compatibility for ML stacks.
+version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/python:v26.1
+    out: gen/python
+  - remote: buf.build/protocolbuffers/pyi:v26.1
+    out: gen/python
+  - remote: buf.build/grpc/python:v1.62.1
+    out: gen/python
