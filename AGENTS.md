@@ -72,7 +72,8 @@ Properties:
 - Legacy hollow: `profile_id`, `service_address`, `applied_ingress_mode`, `applied_egress_mode` remain as attributes but are unused / always empty on v1
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
-- `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string
+- `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover
+- `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure with a spillable capacity/placement reason (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, or bare `RESOURCE_EXHAUSTED`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol`
 - `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
@@ -128,6 +129,7 @@ Fields (all optional with sensible defaults):
 - `tags` - Tuple of tags for filtering
 - `runner_ids` - Optional CKS runner pin (tuple). Empty list clears a default; `None` inherits
 - `placement_mode` - `PlacementMode` or string (`serverless` / `cks`)
+- `placement_spillover` - `PlacementSpillover` (default `strict`); see advanced kwargs above
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Deny-flag `NetworkOptions`
 - `services` - Tuple of typed `Service` ports
@@ -183,6 +185,8 @@ data = await ref
 - `TerminalResult`: Frozen dataclass with `returncode` and `command`. Unlike `ProcessResult`, does not contain captured stdout/stderr because TTY sessions do not buffer output.
 
 **`PlacementMode`** (`_types.py`): `UNSPECIFIED` | `SERVERLESS` | `CKS`. Use with `runner_ids` only for CKS.
+
+**`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
 **`Service` / `ServiceVisibility` / `ServiceProtocol`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults.
 

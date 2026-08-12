@@ -33,8 +33,13 @@ v1 backends implement them. Create-time `Secret` inject still works.
 
 ### Features
 
-- Export `PlacementMode`, `Service` / `ServiceVisibility` / `ServiceProtocol`,
-  `ScratchVolumeOptions`, `ImagePullCredentials`, and `Sandbox.run_from_template`.
+- Export `PlacementMode`, `PlacementSpillover`, `Service` /
+  `ServiceVisibility` / `ServiceProtocol`, `ScratchVolumeOptions`,
+  `ImagePullCredentials`, and `Sandbox.run_from_template`.
+- Add `placement_spillover` (`PlacementSpillover`: `strict` default,
+  `cks_then_serverless`, `serverless_then_cks`) for a one-shot CreateSandbox
+  retry on the alternate mode when the primary fails with a spillable capacity
+  or placement-constraint reason. Template creates require `strict`.
 - Proto generation pins protobuf runtime v26.1 via `scripts/buf.gen.python.yaml`
   and `scripts/update-protos.sh --from-backend`.
 

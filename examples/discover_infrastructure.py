@@ -74,6 +74,14 @@ def main() -> None:
         print("  #     placement_mode=PlacementMode.CKS,")
         print(f'  #     runner_ids=["{runner.runner_id}"],')
         print("  # )")
+        print()
+        print("  # Optional: spill to serverless once if CKS is at capacity")
+        print("  # from cwsandbox import PlacementSpillover")
+        print("  # sandbox = Sandbox.run(")
+        print("  #     placement_mode=PlacementMode.CKS,")
+        print(f'  #     runner_ids=["{runner.runner_id}"],')
+        print("  #     placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,")
+        print("  # )")
     else:
         print("  # No runners discovered - check credentials and connectivity.")
 

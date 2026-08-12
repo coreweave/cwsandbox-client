@@ -19,6 +19,7 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
     OperationRef,
+    PlacementSpillover,
     ResourceOptions,
 )
 from cwsandbox.exceptions import AsyncFunctionError, SandboxExecutionError
@@ -88,6 +89,7 @@ class RemoteFunction(Generic[P, R]):
         volumes: list[Any] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         placement_mode: Any | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
     ) -> None:
@@ -160,6 +162,7 @@ class RemoteFunction(Generic[P, R]):
         self._services = services
         self._volumes = volumes
         self._placement_mode = placement_mode
+        self._placement_spillover = placement_spillover
         self._file_system_snapshot = file_system_snapshot
         self._max_timeout_seconds = None
         self._environment_variables = environment_variables
@@ -281,6 +284,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["volumes"] = self._volumes
         if self._placement_mode is not None:
             sandbox_kwargs["placement_mode"] = self._placement_mode
+        if self._placement_spillover is not None:
+            sandbox_kwargs["placement_spillover"] = self._placement_spillover
         if self._file_system_snapshot is not None:
             sandbox_kwargs["file_system_snapshot"] = self._file_system_snapshot
         if self._environment_variables is not None:

@@ -13,6 +13,7 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
     PlacementMode,
+    PlacementSpillover,
     ResourceOptions,
     ScratchVolumeOptions,
     Secret,
@@ -286,6 +287,10 @@ class SandboxDefaults:
             explicitly clear any default; pass None (the default) to inherit
             any configured default. Incompatible with serverless placement.
         placement_mode: ``PlacementMode`` (``serverless`` / ``cks``) or string.
+        placement_spillover: ``PlacementSpillover`` policy for a one-shot create
+            retry on the alternate mode when the primary fails with a spillable
+            capacity/placement reason. Default ``STRICT`` (no spill). Template
+            sandboxes require ``STRICT``.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Deny-flag network options via ``NetworkOptions``.
@@ -328,6 +333,7 @@ class SandboxDefaults:
     tags: tuple[str, ...] = field(default_factory=tuple)
     runner_ids: tuple[str, ...] | None = None
     placement_mode: PlacementMode | str | None = None
+    placement_spillover: PlacementSpillover | str = PlacementSpillover.STRICT
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
     services: tuple[Service, ...] | None = None
@@ -344,6 +350,9 @@ class SandboxDefaults:
             self.poll_rpc_timeout_seconds,
         )
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
+        spill = self.placement_spillover
+        if isinstance(spill, str):
+            object.__setattr__(self, "placement_spillover", PlacementSpillover(spill.lower()))
 
     def merge_tags(self, additional: Iterable[str] | None) -> list[str]:
         """Combine default tags with additional tags.

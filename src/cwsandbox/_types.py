@@ -125,6 +125,28 @@ class PlacementMode(StrEnum):
     CKS = "cks"
 
 
+class PlacementSpillover(StrEnum):
+    """Client-side create retry across placement modes on capacity / constraint failure.
+
+    ``placement_mode`` remains the primary (first-attempt) mode. Spillover modes
+    retry CreateSandbox once with the alternate mode when the first attempt fails
+    with a spillable AIP-193 reason. Template creates allow only ``STRICT``.
+
+    Attributes:
+        STRICT: No spill (default). Honor ``placement_mode`` only.
+        CKS_THEN_SERVERLESS: Attempt CKS first, then serverless. Unset
+            ``placement_mode`` is treated as CKS for attempt 1. Explicit
+            ``placement_mode=serverless`` raises ``ValueError``.
+        SERVERLESS_THEN_CKS: Attempt serverless first, then CKS. Unset
+            ``placement_mode`` is treated as serverless for attempt 1. Explicit
+            ``placement_mode=cks`` raises ``ValueError``.
+    """
+
+    STRICT = "strict"
+    CKS_THEN_SERVERLESS = "cks_then_serverless"
+    SERVERLESS_THEN_CKS = "serverless_then_cks"
+
+
 class ServiceVisibility(StrEnum):
     """Reachability intent for a typed sandbox service port."""
 

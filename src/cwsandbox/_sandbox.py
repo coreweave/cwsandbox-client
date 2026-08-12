@@ -89,6 +89,8 @@ from cwsandbox._error_info import (
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
     SNAPSHOT_TRANSIENT_REASONS,
+    SPILLOVER_BLOCKED_REASONS,
+    SPILLOVER_ELIGIBLE_REASONS,
     STREAM_BACKPRESSURE,
     STREAM_TRUNCATED,
     UNAVAILABLE_REASONS,
@@ -121,6 +123,7 @@ from cwsandbox._types import (
     NetworkOptions,
     OperationRef,
     PlacementMode,
+    PlacementSpillover,
     Process,
     ProcessResult,
     ResourceOptions,
@@ -810,6 +813,76 @@ def _translate_rpc_error(
     )
 
 
+def _normalize_placement_spillover(
+    value: PlacementSpillover | str | None,
+) -> PlacementSpillover:
+    """Normalize spillover config; ``None`` means ``STRICT``."""
+    if value is None:
+        return PlacementSpillover.STRICT
+    if isinstance(value, str):
+        return PlacementSpillover(value.lower())
+    return value
+
+
+def _resolve_placement_for_spillover(
+    placement_mode: PlacementMode | None,
+    spillover: PlacementSpillover,
+    *,
+    from_template: bool,
+) -> PlacementMode | None:
+    """Validate spillover against placement_mode/template; resolve attempt-1 mode.
+
+    For non-``STRICT`` spillover, an unset/unspecified primary is filled in as
+    the spillover's first mode (CKS or serverless). Templates only allow
+    ``STRICT``.
+    """
+    if from_template and spillover != PlacementSpillover.STRICT:
+        raise ValueError(
+            "placement_spillover must be STRICT for template sandboxes "
+            f"(got {spillover.value!r})"
+        )
+    if spillover == PlacementSpillover.STRICT:
+        return placement_mode
+
+    primary = placement_mode
+    if primary == PlacementMode.UNSPECIFIED:
+        primary = None
+
+    if spillover == PlacementSpillover.CKS_THEN_SERVERLESS:
+        if primary == PlacementMode.SERVERLESS:
+            raise ValueError(
+                "placement_spillover='cks_then_serverless' requires "
+                "placement_mode=cks (or unset); got serverless"
+            )
+        return PlacementMode.CKS if primary is None else primary
+
+    if spillover == PlacementSpillover.SERVERLESS_THEN_CKS:
+        if primary == PlacementMode.CKS:
+            raise ValueError(
+                "placement_spillover='serverless_then_cks' requires "
+                "placement_mode=serverless (or unset); got cks"
+            )
+        return PlacementMode.SERVERLESS if primary is None else primary
+
+    return placement_mode
+
+
+def _is_spillover_eligible(exc: Exception) -> bool:
+    """True when a CreateSandbox failure may trigger one alternate-mode retry.
+
+    Spillable: capacity / placement-constraint AIP-193 reasons, or bare
+    ``SandboxResourceExhaustedError`` with no conflicting reason (covers
+    throttle-shaped capacity pressure). Never spills on serverless product
+    gates, auth, or ``INVALID_ARGUMENT``.
+    """
+    reason = getattr(exc, "reason", None)
+    if reason in SPILLOVER_BLOCKED_REASONS:
+        return False
+    if reason in SPILLOVER_ELIGIBLE_REASONS:
+        return True
+    return isinstance(exc, SandboxResourceExhaustedError) and reason is None
+
+
 _PollErrorClassification = Literal["retryable", "fatal"]
 
 
@@ -1280,6 +1353,7 @@ class Sandbox:
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         placement_mode: PlacementMode | str | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
         volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
         template_id: str | None = None,
@@ -1320,6 +1394,10 @@ class Sandbox:
             network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
                 ``services=``.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
+            placement_spillover: ``PlacementSpillover`` or string. Default
+                ``strict`` (no create retry). Non-strict modes retry CreateSandbox
+                once on the alternate mode for spillable capacity/placement
+                failures. Template sandboxes require ``strict``.
             services: Typed service ports (``Service`` list/tuple).
             volumes: Named scratch volumes (``ScratchVolumeOptions``).
             file_system_snapshot: Convenience single-mount FSS options
@@ -1412,6 +1490,7 @@ class Sandbox:
         self._start_kwargs: dict[str, Any] = {}
         self._create_request_id: str | None = None
         self._placement_mode: PlacementMode | None = None
+        self._placement_spillover: PlacementSpillover = PlacementSpillover.STRICT
         self._services: list[Service] | None = None
         self._template_id: str | None = None
         self._image_pull_credentials: ImagePullCredentials | None = None
@@ -1457,6 +1536,19 @@ class Sandbox:
         elif not from_template and self._defaults.placement_mode is not None:
             pm = self._defaults.placement_mode
             self._placement_mode = PlacementMode(pm.lower()) if isinstance(pm, str) else pm
+        if placement_spillover is not None:
+            self._placement_spillover = _normalize_placement_spillover(placement_spillover)
+        elif not from_template:
+            self._placement_spillover = _normalize_placement_spillover(
+                self._defaults.placement_spillover
+            )
+        else:
+            self._placement_spillover = PlacementSpillover.STRICT
+        self._placement_mode = _resolve_placement_for_spillover(
+            self._placement_mode,
+            self._placement_spillover,
+            from_template=from_template,
+        )
         if services is not None:
             self._services = [Service(**s) if isinstance(s, dict) else s for s in services]
         elif not from_template and self._defaults.services is not None:
@@ -1590,6 +1682,7 @@ class Sandbox:
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         placement_mode: PlacementMode | str | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
         volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
         template_id: str | None = None,
@@ -1632,6 +1725,8 @@ class Sandbox:
             network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
                 ``services=``.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
+            placement_spillover: ``PlacementSpillover`` or string. Default
+                ``strict``. See ``Sandbox.__init__``.
             services: Typed service ports (``Service`` list/tuple).
             volumes: Named scratch volumes (``ScratchVolumeOptions``).
             file_system_snapshot: Convenience single-mount FSS options
@@ -1699,6 +1794,7 @@ class Sandbox:
             file_system_snapshot=file_system_snapshot,
             max_timeout_seconds=max_timeout_seconds,
             placement_mode=placement_mode,
+            placement_spillover=placement_spillover,
             services=services,
             volumes=volumes,
             template_id=template_id,
@@ -1830,6 +1926,7 @@ class Sandbox:
         sandbox._start_kwargs = {}
         sandbox._create_request_id = None
         sandbox._placement_mode = None
+        sandbox._placement_spillover = PlacementSpillover.STRICT
         sandbox._services = None
         sandbox._template_id = None
         sandbox._image_pull_credentials = None
@@ -3447,35 +3544,30 @@ class Sandbox:
             if not self._create_request_id:
                 self._create_request_id = str(uuid.uuid4())
 
-            kwargs = dict(self._start_kwargs)
-            template_id = kwargs.pop("template_id", None) or self._template_id
+            template_id = self._start_kwargs.get("template_id") or self._template_id
+            self._start_accepted_at = time.monotonic()
 
-            request: sandbox_pb2.CreateSandboxRequest | sandbox_pb2.CreateSandboxFromTemplateRequest
             if template_id:
+                kwargs = dict(self._start_kwargs)
+                kwargs.pop("template_id", None)
                 request = self._build_create_from_template_request(
                     template_id=template_id,
                     request_id=self._create_request_id,
                     overrides_kwargs=kwargs,
                 )
                 logger.debug("Creating sandbox from template %s", template_id)
-                rpc = self._stub.CreateSandboxFromTemplate
-                op_name = "Create sandbox from template"
+                try:
+                    response = await self._stub.CreateSandboxFromTemplate(
+                        request,
+                        timeout=self._request_timeout_seconds,
+                        metadata=self._auth_metadata,
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(
+                        e, operation="Create sandbox from template"
+                    ) from e
             else:
-                request = self._build_create_request(
-                    request_id=self._create_request_id,
-                    start_kwargs=kwargs,
-                )
-                logger.debug("Creating sandbox with image %s", self._container_image)
-                rpc = self._stub.CreateSandbox
-                op_name = "Create sandbox"
-
-            self._start_accepted_at = time.monotonic()
-            try:
-                response = await rpc(
-                    request, timeout=self._request_timeout_seconds, metadata=self._auth_metadata
-                )
-            except grpc.RpcError as e:
-                raise _translate_rpc_error(e, operation=op_name) from e
+                response = await self._create_with_optional_spillover()
 
             view = _SandboxView(response)
             sandbox_id = str(view.sandbox_id)
@@ -3485,6 +3577,66 @@ class Sandbox:
             self._apply_create_echo(view)
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
+
+    async def _create_with_optional_spillover(self) -> Any:
+        """CreateSandbox with at most one placement-mode spillover retry.
+
+        On a spillable primary failure (and non-``STRICT`` spillover), mints a
+        new ``request_id``, flips ``_placement_mode`` to the alternate, clears
+        ``runner_ids`` when spilling to serverless, and retries once. Attempt-2
+        failures raise with ``__cause__`` set to the primary error.
+        """
+        assert self._stub is not None
+        assert self._create_request_id is not None
+
+        primary_error: Exception | None = None
+        for attempt in (1, 2):
+            request = self._build_create_request(
+                request_id=self._create_request_id,
+                start_kwargs=dict(self._start_kwargs),
+            )
+            logger.debug(
+                "Creating sandbox with image %s (placement_mode=%s, attempt=%s)",
+                self._container_image,
+                self._placement_mode,
+                attempt,
+            )
+            try:
+                return await self._stub.CreateSandbox(
+                    request,
+                    timeout=self._request_timeout_seconds,
+                    metadata=self._auth_metadata,
+                )
+            except grpc.RpcError as e:
+                translated = _translate_rpc_error(e, operation="Create sandbox")
+                if (
+                    attempt == 1
+                    and primary_error is None
+                    and self._placement_spillover != PlacementSpillover.STRICT
+                    and _is_spillover_eligible(translated)
+                ):
+                    primary_error = translated
+                    alternate = (
+                        PlacementMode.SERVERLESS
+                        if self._placement_spillover == PlacementSpillover.CKS_THEN_SERVERLESS
+                        else PlacementMode.CKS
+                    )
+                    logger.warning(
+                        "CreateSandbox failed with reason %s; spilling placement_mode "
+                        "%s -> %s (new request_id)",
+                        getattr(translated, "reason", None) or e.code().name,
+                        self._placement_mode,
+                        alternate,
+                    )
+                    self._placement_mode = alternate
+                    if alternate == PlacementMode.SERVERLESS:
+                        self._runner_ids = None
+                    self._create_request_id = str(uuid.uuid4())
+                    continue
+                if primary_error is not None:
+                    raise translated from primary_error
+                raise translated from e
+        raise AssertionError("unreachable: placement spillover loop exited without return")
 
     def _build_create_request(
         self, *, request_id: str, start_kwargs: dict[str, Any]
