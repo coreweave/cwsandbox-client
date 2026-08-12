@@ -838,8 +838,7 @@ def _resolve_placement_for_spillover(
     """
     if from_template and spillover != PlacementSpillover.STRICT:
         raise ValueError(
-            "placement_spillover must be STRICT for template sandboxes "
-            f"(got {spillover.value!r})"
+            f"placement_spillover must be STRICT for template sandboxes (got {spillover.value!r})"
         )
     if spillover == PlacementSpillover.STRICT:
         return placement_mode
@@ -3563,9 +3562,7 @@ class Sandbox:
                         metadata=self._auth_metadata,
                     )
                 except grpc.RpcError as e:
-                    raise _translate_rpc_error(
-                        e, operation="Create sandbox from template"
-                    ) from e
+                    raise _translate_rpc_error(e, operation="Create sandbox from template") from e
             else:
                 response = await self._create_with_optional_spillover()
 
