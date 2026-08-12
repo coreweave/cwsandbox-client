@@ -810,7 +810,6 @@ class TestRemoteFunctionResourceOptions:
             assert call_kwargs["resources"].limits == {"cpu": "8", "memory": "2Gi"}
 
 
-
 class TestJsonReturnContract:
     """Sandbox-side JSON return handling.
 

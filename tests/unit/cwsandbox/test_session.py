@@ -497,6 +497,21 @@ class TestSessionKwargsValidation:
                 invalid_param="value",
             )
 
+    @pytest.mark.parametrize(
+        "removed", ["profile_ids", "profile_names", "s3_mount", "max_timeout_seconds"]
+    )
+    def test_sandbox_rejects_removed_kwargs(self, removed: str) -> None:
+        session = Session()
+
+        with pytest.raises(
+            TypeError,
+            match=(
+                rf"session\.sandbox\(\) got unexpected keyword argument\(s\): {removed}\. "
+                "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds were removed in 1.x"
+            ),
+        ):
+            session.sandbox(**{removed: [] if removed != "max_timeout_seconds" else 30})
+
     def test_function_with_valid_sandbox_kwargs(self) -> None:
         """Test session.function() accepts valid sandbox_kwargs."""
         session = Session()
@@ -579,7 +594,9 @@ class TestSessionList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -680,7 +697,9 @@ class TestSessionList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -733,7 +752,6 @@ class TestSessionList:
             assert len(sandboxes) == 1
             assert sandboxes[0]._poll_retry_budget_seconds == 12.0
             assert sandboxes[0]._poll_rpc_timeout_seconds == 7.0
-
 
 
 class TestSessionFromId:

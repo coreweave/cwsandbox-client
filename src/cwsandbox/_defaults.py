@@ -13,10 +13,10 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
     PlacementMode,
-    ScratchVolumeOptions,
-    Service,
     ResourceOptions,
+    ScratchVolumeOptions,
     Secret,
+    Service,
 )
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"

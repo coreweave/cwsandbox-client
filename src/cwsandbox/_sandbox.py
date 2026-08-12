@@ -30,7 +30,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
 
 import grpc
 import grpc.aio
@@ -344,7 +344,7 @@ class _SandboxView:
         return getattr(self._sandbox, name)
 
 
-def _as_sandbox_view(value: Any) -> Any:
+def _as_sandbox_view(value: Any) -> _SandboxView:
     """Normalize Get/List sandbox messages to ``_SandboxView``.
 
     Duck-typed stand-ins used by unit tests (SimpleNamespace/MagicMock that
@@ -356,7 +356,7 @@ def _as_sandbox_view(value: Any) -> Any:
         return _SandboxView(value)
     # Non-proto stand-ins already expose the poll accessors.
     if hasattr(value, "sandbox_status"):
-        return value
+        return cast(_SandboxView, value)
     return _SandboxView(value)
 
 
@@ -379,7 +379,9 @@ def _coerce_file_system_snapshot(
     )
 
 
-def _scratch_from_fss_options(opts: FileSystemSnapshotOptions) -> tuple[dict[str, Any], dict[str, Any]]:
+def _scratch_from_fss_options(
+    opts: FileSystemSnapshotOptions,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (SandboxVolume kwargs, VolumeMount kwargs) for convenience FSS options."""
     scratch: dict[str, Any] = {}
     if opts.size is not None:
@@ -1415,8 +1417,7 @@ class Sandbox:
             self._start_kwargs["file_system_snapshot"] = effective_fss
         if max_timeout_seconds is not None:
             raise TypeError(
-                "max_timeout_seconds was removed in cwsandbox 1.x; "
-                "use request_timeout_seconds"
+                "max_timeout_seconds was removed in cwsandbox 1.x; use request_timeout_seconds"
             )
         if placement_mode is not None:
             if isinstance(placement_mode, str):
@@ -1424,13 +1425,9 @@ class Sandbox:
             self._placement_mode = placement_mode
         elif self._defaults.placement_mode is not None:
             pm = self._defaults.placement_mode
-            self._placement_mode = (
-                PlacementMode(pm.lower()) if isinstance(pm, str) else pm
-            )
+            self._placement_mode = PlacementMode(pm.lower()) if isinstance(pm, str) else pm
         if services is not None:
-            self._services = [
-                Service(**s) if isinstance(s, dict) else s for s in services
-            ]
+            self._services = [Service(**s) if isinstance(s, dict) else s for s in services]
         elif self._defaults.services is not None:
             self._services = list(self._defaults.services)
         if volumes is not None:
@@ -1670,6 +1667,11 @@ class Sandbox:
             network=network,
             file_system_snapshot=file_system_snapshot,
             max_timeout_seconds=max_timeout_seconds,
+            placement_mode=placement_mode,
+            services=services,
+            volumes=volumes,
+            template_id=template_id,
+            image_pull_credentials=image_pull_credentials,
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
@@ -1677,7 +1679,6 @@ class Sandbox:
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
         return sandbox
-
 
     @classmethod
     def run_from_template(
@@ -1706,7 +1707,8 @@ class Sandbox:
             raise ValueError("template_id must not be empty")
         kwargs = dict(kwargs)
         kwargs["template_id"] = template_id
-        return cls.run(*args, command=command, defaults=defaults, **kwargs)
+        run_args = (command, *args) if command is not None else args
+        return cls.run(*run_args, defaults=defaults, **kwargs)
 
     @classmethod
     def session(
@@ -1975,9 +1977,7 @@ class Sandbox:
             if status_enum:
                 request_kwargs["state"] = status_enum.to_proto()
             if profile_ids is not None or profile_names is not None:
-                raise TypeError(
-                    "profile_ids/profile_names were removed in cwsandbox 1.x"
-                )
+                raise TypeError("profile_ids/profile_names were removed in cwsandbox 1.x")
             if runner_ids is not None:
                 request_kwargs["runner_ids"] = runner_ids
 
@@ -2103,7 +2103,9 @@ class Sandbox:
         try:
             request = sandbox_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
-                response = _as_sandbox_view(await stub.GetSandbox(request, timeout=timeout, metadata=auth_metadata))
+                response = _as_sandbox_view(
+                    await stub.GetSandbox(request, timeout=timeout, metadata=auth_metadata)
+                )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
 
@@ -2445,7 +2447,7 @@ class Sandbox:
             async def _attempt() -> None:
                 attempts["n"] += 1
                 try:
-                    response = await stub.DeleteFileSystemSnapshot(
+                    await stub.DeleteFileSystemSnapshot(
                         request, timeout=timeout, metadata=auth_metadata
                     )
                 except grpc.RpcError as e:
@@ -2971,11 +2973,13 @@ class Sandbox:
 
         request = sandbox_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response = _as_sandbox_view(await self._stub.GetSandbox(
-                request,
-                timeout=self._poll_rpc_timeout_seconds,
-                metadata=self._auth_metadata,
-            ))
+            response = _as_sandbox_view(
+                await self._stub.GetSandbox(
+                    request,
+                    timeout=self._poll_rpc_timeout_seconds,
+                    metadata=self._auth_metadata,
+                )
+            )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e, sandbox_id=self._sandbox_id, operation="Get status"
@@ -3402,6 +3406,7 @@ class Sandbox:
             kwargs = dict(self._start_kwargs)
             template_id = kwargs.pop("template_id", None) or self._template_id
 
+            request: sandbox_pb2.CreateSandboxRequest | sandbox_pb2.CreateSandboxFromTemplateRequest
             if template_id:
                 request = self._build_create_from_template_request(
                     template_id=template_id,
@@ -3510,17 +3515,13 @@ class Sandbox:
                         scratch["size"] = vol.size
                     if vol.restore_from_snapshot_id:
                         scratch["restore_from_snapshot_id"] = vol.restore_from_snapshot_id
-                    volumes.append(
-                        sandbox_pb2.SandboxVolume(name=vol.name, scratch=scratch)
-                    )
+                    volumes.append(sandbox_pb2.SandboxVolume(name=vol.name, scratch=scratch))
                     mounts.append(
                         sandbox_pb2.VolumeMount(volume=vol.name, mount_path=vol.mount_path)
                     )
                 elif isinstance(vol, dict) and "volume_id" in vol:
                     volumes.append(
-                        sandbox_pb2.SandboxVolume(
-                            name=vol["name"], volume_id=vol["volume_id"]
-                        )
+                        sandbox_pb2.SandboxVolume(name=vol["name"], volume_id=vol["volume_id"])
                     )
                     if vol.get("mount_path"):
                         mounts.append(
@@ -3544,9 +3545,7 @@ class Sandbox:
                 scratch_kw["size"] = scratch_opts.size
             if scratch_opts.restore_from_snapshot_id:
                 scratch_kw["restore_from_snapshot_id"] = scratch_opts.restore_from_snapshot_id
-            volumes.append(
-                sandbox_pb2.SandboxVolume(name=scratch_opts.name, scratch=scratch_kw)
-            )
+            volumes.append(sandbox_pb2.SandboxVolume(name=scratch_opts.name, scratch=scratch_kw))
             mounts.append(
                 sandbox_pb2.VolumeMount(
                     volume=scratch_opts.name, mount_path=scratch_opts.mount_path
@@ -3572,13 +3571,21 @@ class Sandbox:
                 proto_svc = sandbox_pb2.Service(port=svc.port)
                 if svc.name:
                     proto_svc.name = svc.name
-                if svc.protocol is not None:
-                    proto_svc.protocol = sandbox_pb2.ServiceProtocol.Value(
-                        f"SERVICE_PROTOCOL_{svc.protocol.name}"
+                protocol = svc.protocol
+                if isinstance(protocol, str):
+                    protocol = ServiceProtocol(protocol.lower())
+                if isinstance(protocol, ServiceProtocol):
+                    proto_svc.protocol = cast(
+                        sandbox_pb2.ServiceProtocol,
+                        sandbox_pb2.ServiceProtocol.Value(f"SERVICE_PROTOCOL_{protocol.name}"),
                     )
-                if svc.visibility is not None:
-                    proto_svc.visibility = sandbox_pb2.Visibility.Value(
-                        f"VISIBILITY_{svc.visibility.name}"
+                visibility = svc.visibility
+                if isinstance(visibility, str):
+                    visibility = ServiceVisibility(visibility.lower())
+                if isinstance(visibility, ServiceVisibility):
+                    proto_svc.visibility = cast(
+                        sandbox_pb2.Visibility,
+                        sandbox_pb2.Visibility.Value(f"VISIBILITY_{visibility.name}"),
                     )
                 services.append(proto_svc)
 
@@ -3722,9 +3729,7 @@ class Sandbox:
     def _apply_create_echo(self, view: _SandboxView) -> None:
         """Capture create/Get echoes used by public properties."""
         status = view._sandbox.status
-        self._service_urls = tuple(
-            (s.port, s.name, s.url) for s in status.services if s.url
-        )
+        self._service_urls = tuple((s.port, s.name, s.url) for s in status.services if s.url)
         if status.HasField("effective_resource_requirements"):
             err = status.effective_resource_requirements
             if err.HasField("limits"):
@@ -3744,14 +3749,14 @@ class Sandbox:
             d["memory"] = res.memory
         return d or None
 
-
     async def _get_sandbox_once(self, *, rpc_timeout: float) -> _SandboxView:
         """One Get RPC with error translation: no retries, no status loop."""
         await self._ensure_client()
         assert self._stub is not None
         request = sandbox_pb2.GetSandboxRequest(sandbox_id=self._sandbox_id)
         try:
-            response: _SandboxView = _as_sandbox_view(await self._stub.GetSandbox(
+            response: _SandboxView = _as_sandbox_view(
+                await self._stub.GetSandbox(
                     request, timeout=rpc_timeout, metadata=self._auth_metadata
                 )
             )
@@ -3761,9 +3766,7 @@ class Sandbox:
                 e, sandbox_id=self._sandbox_id, operation="Poll sandbox status"
             ) from e
 
-    async def _grace_repoll_for_exit_code(
-        self, response: _SandboxView
-    ) -> _SandboxView:
+    async def _grace_repoll_for_exit_code(self, response: _SandboxView) -> _SandboxView:
         """Briefly re-poll a COMPLETED response that lacks an exit code.
 
         Covers the runner's batch-flush lag: a Get can observe COMPLETED
@@ -4423,7 +4426,6 @@ class Sandbox:
                         e, sandbox_id=sandbox_id, operation="Stop sandbox"
                     ) from e
 
-
                 # Capture snapshot IDs produced by snapshot-on-delete, if any.
                 snapshot_ids = list(getattr(response, "file_system_snapshot_ids", ()) or ())
                 if snapshot_ids:
@@ -4856,9 +4858,7 @@ class Sandbox:
                             for line in complete:
                                 await output_queue.put(line + "\n")
                             line_parts = [remainder] if remainder else []
-                            line_parts_bytes = (
-                                len(remainder.encode("utf-8")) if remainder else 0
-                            )
+                            line_parts_bytes = len(remainder.encode("utf-8")) if remainder else 0
                     else:
                         if line_parts:
                             await output_queue.put("".join(line_parts))
@@ -5253,9 +5253,7 @@ class Sandbox:
                         # Process queue data
                         data = get_task.result()
                         if data is None:  # EOF sentinel - close stdin
-                            yield sandbox_pb2.ExecStreamRequest(
-                                close=sandbox_pb2.ExecStreamClose()
-                            )
+                            yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
                             return
 
                         # Chunk large data into 64KB pieces
@@ -5673,9 +5671,7 @@ class Sandbox:
                         return
                     if not chunk:
                         continue
-                    yield sandbox_pb2.ExecStreamRequest(
-                        stdin=sandbox_pb2.ExecStreamData(data=_coerce_bytes_chunk(chunk))
-                    )
+                    yield sandbox_pb2.ExecStreamRequest(stdin=_coerce_bytes_chunk(chunk))
 
             yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
@@ -6044,9 +6040,7 @@ class Sandbox:
         )
 
         try:
-            await self._stub.WriteFile(
-                request, timeout=timeout, metadata=self._auth_metadata
-            )
+            await self._stub.WriteFile(request, timeout=timeout, metadata=self._auth_metadata)
         except grpc.RpcError as e:
             raise _translate_rpc_error(
                 e,

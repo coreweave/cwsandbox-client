@@ -17,7 +17,6 @@ import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from cwsandbox._discovery import (
-    Runner,
     RunnerResources,
     _runner_from_proto,
     format_bytes,
@@ -234,7 +233,9 @@ class TestGetRunner:
             patch("cwsandbox._discovery.is_not_found", return_value=True),
             patch(
                 "cwsandbox._discovery.parse_error_info",
-                return_value=MagicMock(reason="CWSANDBOX_RUNNER_NOT_FOUND", metadata=None, retry_delay=None),
+                return_value=MagicMock(
+                    reason="CWSANDBOX_RUNNER_NOT_FOUND", metadata=None, retry_delay=None
+                ),
             ),
         ):
             with pytest.raises(RunnerNotFoundError):

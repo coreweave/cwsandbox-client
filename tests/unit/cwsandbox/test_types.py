@@ -13,12 +13,11 @@ import pytest
 
 from cwsandbox._types import (
     NetworkOptions,
-    PlacementMode,
-    Service,
-    ServiceVisibility,
     OperationRef,
     Process,
     ProcessResult,
+    Service,
+    ServiceVisibility,
     StreamReader,
     StreamWriter,
     TerminalResult,

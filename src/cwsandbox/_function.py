@@ -18,9 +18,6 @@ from cwsandbox._defaults import DEFAULT_TEMP_DIR
 from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
-    PlacementMode,
-    ScratchVolumeOptions,
-    Service,
     OperationRef,
     ResourceOptions,
 )

@@ -52,6 +52,19 @@ class TestSandboxDefaults:
         # Network should default to None (backend defaults)
         assert defaults.network is None
 
+    @pytest.mark.parametrize(
+        "removed",
+        [
+            "profile_ids",
+            "profile_names",
+            "s3_mount",
+            "max_timeout_seconds",
+        ],
+    )
+    def test_constructor_rejects_removed_kwargs(self, removed: str) -> None:
+        with pytest.raises(TypeError, match=rf"unexpected keyword argument '{removed}'"):
+            SandboxDefaults(**{removed: None})  # type: ignore[arg-type]
+
     def test_defaults_are_immutable(self) -> None:
         """Test SandboxDefaults is frozen/immutable."""
         defaults = SandboxDefaults(container_image="python:3.11")

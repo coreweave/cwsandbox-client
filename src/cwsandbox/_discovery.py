@@ -11,6 +11,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 import grpc
 import grpc.aio
@@ -201,14 +202,14 @@ def _runner_from_proto(proto: discovery_pb2.AvailableRunner) -> Runner:
     )
 
 
-def _parse_service_visibility(value: str | None) -> int:
+def _parse_service_visibility(value: str | None) -> sandbox_pb2.Visibility:
     if value is None:
         return sandbox_pb2.VISIBILITY_UNSPECIFIED
     name = value.strip().upper()
     if not name.startswith("VISIBILITY_"):
         name = f"VISIBILITY_{name}"
     try:
-        return sandbox_pb2.Visibility.Value(name)
+        return cast(sandbox_pb2.Visibility, sandbox_pb2.Visibility.Value(name))
     except ValueError as e:
         raise ValueError(f"unknown service_visibility: {value!r}") from e
 

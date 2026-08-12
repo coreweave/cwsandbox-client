@@ -393,7 +393,22 @@ class SnapshotWaitTimeoutError(SandboxTimeoutError):
 
     Emitted for ``CWSANDBOX_FSS_WAIT_TIMEOUT``. The snapshot may still complete
     server-side; poll with ``Sandbox.get_snapshot()`` to check.
+
+    Attributes:
+        file_system_snapshot_id: Snapshot ID that was still pending, or None.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        file_system_snapshot_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.file_system_snapshot_id = file_system_snapshot_id
 
 
 class SnapshotBackendThrottledError(SandboxUnavailableError):

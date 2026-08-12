@@ -25,6 +25,7 @@ from cwsandbox import (
     Sandbox,
     SandboxDefaults,
     SandboxStatus,
+    ScratchVolumeOptions,
 )
 from cwsandbox._defaults import (
     DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
@@ -44,7 +45,6 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_WAIT_TIMEOUT,
 )
 from cwsandbox._proto import sandbox_pb2, settings_pb2
-from cwsandbox._proto import settings_pb2_grpc
 from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
@@ -189,6 +189,8 @@ class TestProtoConversions:
             request_id="k",
             object_bucket="bucket-x",
             create_time=ts,
+            updated_at=ts,
+            complete_time=ts,
         )
         snap = sandbox_module._snapshot_from_proto(proto)
         assert snap.file_system_snapshot_id == "fss-9"
@@ -196,11 +198,11 @@ class TestProtoConversions:
         assert snap.size_bytes == 4096
         assert snap.source_sandbox_id == "sb-1"
         assert snap.trigger == FileSystemSnapshotTrigger.MANUAL
+        assert snap.request_id == "k"
         assert snap.object_bucket == "bucket-x"
         assert snap.created_at is not None
-        # Unset timestamps stay None.
-        assert snap.updated_at is None
-        assert snap.completed_at is None
+        assert snap.updated_at is not None
+        assert snap.completed_at is not None
 
     def test_bucket_config_from_proto(self) -> None:
         proto = settings_pb2.FileSystemSnapshotBucketConfig(
@@ -215,25 +217,27 @@ class TestProtoConversions:
         assert cfg.mode == FileSystemSnapshotBucketMode.BRING_YOUR_OWN
         assert cfg.effective_bucket_name == "my-bucket"
 
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_mount_kwargs_fresh(self) -> None:
-        mount = sandbox_module._file_system_mount_kwargs(
+        volume, mount = sandbox_module._scratch_from_fss_options(
             FileSystemSnapshotOptions(mount_path="/data")
         )
-        assert mount == {"mount_path": "/data"}
+        assert volume == {"name": "workspace", "scratch": {}}
+        assert mount == {"volume": "workspace", "mount_path": "/data"}
 
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_mount_kwargs_restore(self) -> None:
-        mount = sandbox_module._file_system_mount_kwargs(
+        volume, mount = sandbox_module._scratch_from_fss_options(
             FileSystemSnapshotOptions(
                 mount_path="/data", size="5Gi", file_system_snapshot_id="fss-1"
             )
         )
-        assert mount == {
-            "mount_path": "/data",
-            "size": "5Gi",
-            "file_system_snapshot": {"file_system_snapshot_id": "fss-1"},
+        assert volume == {
+            "name": "workspace",
+            "scratch": {
+                "size": "5Gi",
+                "restore_from_snapshot_id": "fss-1",
+            },
         }
+        assert mount == {"volume": "workspace", "mount_path": "/data"}
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +339,6 @@ class TestSnapshotErrorMapping:
 
 
 class TestStartWiring:
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_run_param_builds_file_system_mount(self) -> None:
         sandbox = Sandbox(
             command="sleep",
@@ -344,17 +347,23 @@ class TestStartWiring:
                 mount_path="/workspace", size="10Gi", file_system_snapshot_id="fss-7"
             ),
         )
-        mock_response = MagicMock()
-        mock_response.sandbox_id = "sb-1"
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
             sandbox._stub = MagicMock()
             sandbox._stub.CreateSandbox = AsyncMock(return_value=mock_response)
             sandbox.start().result()
             request = sandbox._stub.CreateSandbox.call_args[0][0]
-            assert request.file_system.mount_path == "/workspace"
-            assert request.file_system.size == "10Gi"
-            assert request.file_system.file_system_snapshot.file_system_snapshot_id == "fss-7"
+            volume = request.sandbox.spec.volumes[0]
+            assert volume.name == "workspace"
+            assert volume.scratch.size == "10Gi"
+            assert volume.scratch.restore_from_snapshot_id == "fss-7"
+            mount = request.sandbox.spec.containers[0].volume_mounts[0]
+            assert mount.volume == "workspace"
+            assert mount.mount_path == "/workspace"
 
     def test_dict_coercion(self) -> None:
         sandbox = Sandbox(
@@ -377,7 +386,6 @@ class TestStartWiring:
 
 
 class TestStopWiring:
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_snapshot_on_stop_sends_renamed_field_and_captures_id(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
@@ -386,21 +394,17 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub  # stop() tears down _stub on completion; keep a ref.
-        mock_response = MagicMock()
-        mock_response.file_system_snapshot_id = "fss-new"
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, request_id="k").result()
 
         request = stub.DeleteSandbox.call_args[0][0]
-        assert "workspace" in list(request.snapshot_volumes) or len(list(request.snapshot_volumes)) >= 0
-        assert list(getattr(request, "snapshot_volumes", [])) or True
+        assert list(request.snapshot_volumes) == ["workspace"]
         assert request.request_id == "k"
-        # Snapshot-on-stop uses the generous FSS ceiling, not graceful shutdown.
         assert sandbox.file_system_snapshot_id == "fss-new"
 
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_plain_stop_does_not_request_snapshot(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
@@ -409,8 +413,7 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub  # stop() tears down _stub on completion; keep a ref.
-        mock_response = MagicMock()
-        mock_response.file_system_snapshot_id = ""
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
@@ -418,15 +421,11 @@ class TestStopWiring:
 
         request = stub.DeleteSandbox.call_args[0][0]
         assert list(request.snapshot_volumes) == []
-        # wait_for_ready is only set when snapshotting.
-        assert list(getattr(request, "snapshot_volumes", [])) == []
+        assert request.request_id == ""
         assert sandbox.file_system_snapshot_id is None
 
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_snapshot_on_stop_deadline_covers_archive_plus_grace(self) -> None:
-        # The backend archives (max_timeout_seconds) THEN deletes the pod
-        # (graceful_shutdown_seconds). The client deadline must cover both, not
-        # just the archive — the proto archive budget stays the FSS default.
+        # The backend archives the requested volume, then applies the grace period.
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Starting(sandbox_id="sb-1")
@@ -434,21 +433,19 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
-        mock_response = MagicMock()
-        mock_response.file_system_snapshot_id = "fss-new"
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=30).result()
 
         request = stub.DeleteSandbox.call_args[0][0]
-        assert request.graceful_shutdown_seconds == 30
+        assert request.grace_period_seconds == 30
         timeout = stub.DeleteSandbox.call_args.kwargs["timeout"]
         assert timeout == (
             int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) + 30 + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
         )
 
-    @pytest.mark.skip(reason="v1 cutover: scratch volumes / DeleteSandbox wiring rewrite pending")
     def test_snapshot_on_stop_deadline_budgets_backend_grace_default_when_zero(self) -> None:
         # Sending graceful_shutdown_seconds=0 makes the backend substitute its
         # own grace default, so the client deadline budgets that default — not 0.
@@ -459,14 +456,13 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
-        mock_response = MagicMock()
-        mock_response.file_system_snapshot_id = "fss-new"
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=0).result()
 
-        assert stub.DeleteSandbox.call_args[0][0].graceful_shutdown_seconds == 0
+        assert stub.DeleteSandbox.call_args[0][0].grace_period_seconds == 0
         timeout = stub.DeleteSandbox.call_args.kwargs["timeout"]
         assert timeout == (
             int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
@@ -580,13 +576,15 @@ def _ready_snapshot_proto(file_system_snapshot_id: str = "fss-1") -> sandbox_pb2
 
 
 class TestSnapshotMethod:
-    @pytest.mark.skip(reason="v1 cutover: snapshot create response shape")
     def test_snapshot_returns_id(self) -> None:
-        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi")],
+        )
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        create_resp = MagicMock()
-        create_resp.file_system_snapshot_id = "fss-1"
+        create_resp = _ready_snapshot_proto("fss-1")
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
         sandbox._stub.GetFileSystemSnapshot = AsyncMock()
         with (
@@ -603,25 +601,31 @@ class TestSnapshotMethod:
         sandbox._stub.GetFileSystemSnapshot.assert_not_called()
         create_req = sandbox._stub.CreateFileSystemSnapshot.call_args[0][0]
         assert create_req.sandbox_id == "sb-1"
-        # v1 create has no wait_for_ready; client polls Get when wait_for_ready=True
         assert create_req.request_id == "k"
-        # wait_for_ready blocks on the archive, so the server-side ceiling is set.
-        assert create_req.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+        assert create_req.scratch_volume_name == "data"
 
-    @pytest.mark.skip(reason="v1 cutover: snapshot create response shape")
     def test_snapshot_failure_raises(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        create_resp = MagicMock()
-        create_resp.error_message = "nope"
+        create_resp = sandbox_pb2.FileSystemSnapshot(
+            file_system_snapshot_id="fss-1",
+            state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+        )
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_FAILED,
+                state_reason="nope",
+            )
+        )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
         ):
             with pytest.raises(SandboxSnapshotError, match="nope"):
-                sandbox.snapshot(wait_for_ready=False).result()
+                sandbox.snapshot(wait_for_ready=True).result()
 
 
 class TestManagementClassmethods:
@@ -861,14 +865,12 @@ class TestBucketConfig:
 class TestTransientRetry:
     """The FSS RPCs retry transient backend errors with a bounded budget."""
 
-    @pytest.mark.skip(reason="v1 cutover: snapshot create response shape")
     def test_snapshot_retries_transient_then_succeeds(self) -> None:
         """A transient UNAVAILABLE on create is retried; the same auto-key reused."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        ok = MagicMock()
-        ok.file_system_snapshot_id = "fss-1"
+        ok = _ready_snapshot_proto("fss-1")
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
             side_effect=[_bare_rpc_error(grpc.StatusCode.UNAVAILABLE), ok]
         )

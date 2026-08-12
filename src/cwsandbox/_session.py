@@ -758,7 +758,8 @@ class Session:
                 bad = ", ".join(sorted(kwargs))
                 raise TypeError(
                     f"session.function() got unexpected keyword argument(s): {bad}. "
-                    "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds were removed in 1.x"
+                    "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds "
+                    "were removed in 1.x"
                 )
             return RemoteFunction(
                 f,

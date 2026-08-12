@@ -17,7 +17,18 @@ import grpc
 import grpc.aio
 import pytest
 
-from cwsandbox import NetworkOptions, Sandbox, SandboxDefaults, Secret
+from cwsandbox import (
+    ImagePullCredentials,
+    NetworkOptions,
+    PlacementMode,
+    Sandbox,
+    SandboxDefaults,
+    ScratchVolumeOptions,
+    Secret,
+    Service,
+    ServiceProtocol,
+    ServiceVisibility,
+)
 from cwsandbox._sandbox import (
     SandboxStatus,
     _Running,
@@ -45,17 +56,16 @@ def _prime_exit_code(mock: MagicMock, exit_code: int = 0) -> None:
     mock.HasField.side_effect = lambda name: name == "exit_code"
 
 
-
 def _create_sandbox_response(sandbox_id: str = "test-123", state: int | None = None) -> Any:
     """Build a v1 CreateSandbox response (Sandbox resource)."""
     from cwsandbox._proto import sandbox_pb2
+
     if state is None:
         state = sandbox_pb2.STATE_PENDING
     return sandbox_pb2.Sandbox(
         sandbox_id=sandbox_id,
         status=sandbox_pb2.SandboxStatus(state=state),
     )
-
 
 
 class MockRpcError(grpc.RpcError):
@@ -319,6 +329,23 @@ def create_mock_channel_and_stub_bidirectional(
 class TestSandboxRun:
     """Tests for Sandbox.run factory method."""
 
+    @staticmethod
+    def _run_with_mock_stub(*args: str, **kwargs: Any) -> tuple[Sandbox, MagicMock]:
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response("matrix-id"))
+        mock_stub.CreateSandboxFromTemplate = AsyncMock(
+            return_value=_create_sandbox_response("template-id")
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(*args, **kwargs)
+        return sandbox, mock_stub
+
     def test_run_uses_defaults_without_args(self) -> None:
         """Test Sandbox.run uses default command when no args provided."""
         mock_ref = MagicMock()
@@ -329,10 +356,130 @@ class TestSandboxRun:
             mock_ref.result.assert_called_once()
             # Default is a shell-trapped keep-alive so PID 1 responds to SIGTERM
             assert sandbox._command == "/bin/sh"
-            assert sandbox._args == [
-                "-c",
-                'trap "exit 0" TERM INT; sleep infinity & wait',
+
+    def test_create_request_maps_placement_services_and_network(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            placement_mode=PlacementMode.SERVERLESS,
+            services=[
+                Service(
+                    name="http",
+                    port=8080,
+                    protocol=ServiceProtocol.TCP,
+                    visibility=ServiceVisibility.PUBLIC,
+                )
+            ],
+            network=NetworkOptions(deny_egress=True, deny_ingress=False),
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        spec = request.sandbox.spec
+        assert spec.mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS
+        assert len(spec.services) == 1
+        assert spec.services[0].name == "http"
+        assert spec.services[0].port == 8080
+        assert spec.services[0].protocol == sandbox_pb2.SERVICE_PROTOCOL_TCP
+        assert spec.services[0].visibility == sandbox_pb2.VISIBILITY_PUBLIC
+        assert spec.network.deny_egress is True
+        assert spec.network.deny_ingress is False
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_scratch_volume(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            volumes=[
+                ScratchVolumeOptions(
+                    name="cache",
+                    mount_path="/cache",
+                    size="20Gi",
+                    restore_from_snapshot_id="fss-seed",
+                )
             ]
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        volume = request.sandbox.spec.volumes[0]
+        mount = request.sandbox.spec.containers[0].volume_mounts[0]
+        assert volume.name == "cache"
+        assert volume.scratch.size == "20Gi"
+        assert volume.scratch.restore_from_snapshot_id == "fss-seed"
+        assert mount.volume == "cache"
+        assert mount.mount_path == "/cache"
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_image_pull_credentials(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            image_pull_credentials=ImagePullCredentials(
+                registry="ghcr.io",
+                store="wandb",
+                name="registry-creds",
+                field="token",
+            )
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        credentials = request.sandbox.spec.containers[0].image_pull_credentials
+        assert credentials.registry == "ghcr.io"
+        assert credentials.credentials.store_name == "wandb"
+        assert credentials.credentials.path == "registry-creds"
+        assert credentials.credentials.field == "token"
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_uses_v1_request_shape(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        stub = MagicMock()
+        stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response())
+        stub.CreateSandboxFromTemplate = AsyncMock(
+            return_value=_create_sandbox_response("template-id")
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_template(
+                "template-123",
+                "-c",
+                "echo ready",
+                command="/bin/sh",
+                placement_mode=PlacementMode.CKS,
+            )
+
+        stub.CreateSandbox.assert_not_called()
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert request.template_id == "template-123"
+        assert request.request_id
+        assert request.overrides.mode == sandbox_pb2.SANDBOX_MODE_CKS
+        assert request.overrides.containers[0].command == "/bin/sh"
+        assert list(request.overrides.containers[0].args) == ["-c", "echo ready"]
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            (
+                {"profile_ids": ["profile-1"]},
+                "profile_ids/profile_names were removed in cwsandbox 1.x",
+            ),
+            (
+                {"profile_names": ["profile-1"]},
+                "profile_ids/profile_names were removed in cwsandbox 1.x",
+            ),
+            ({"s3_mount": {"bucket": "data"}}, "s3_mount was removed in cwsandbox 1.x"),
+            (
+                {"max_timeout_seconds": 30},
+                "max_timeout_seconds was removed in cwsandbox 1.x",
+            ),
+        ],
+    )
+    def test_run_rejects_removed_kwargs(self, kwargs: dict[str, Any], message: str) -> None:
+        with pytest.raises(TypeError, match=message):
+            Sandbox.run(**kwargs)
 
     def test_run_calls_start(self) -> None:
         """Test Sandbox.run calls start().result() on the sandbox."""
@@ -951,7 +1098,6 @@ class TestSandboxCleanup:
 
     def test_sync_context_manager_calls_stop_on_exit(self) -> None:
         """Test sync context manager calls stop() when exiting if sandbox was started."""
-        import concurrent.futures
 
         from cwsandbox import OperationRef
 
@@ -1012,7 +1158,6 @@ class TestSandboxCleanup:
 
     def test_enter_starts_if_not_started(self) -> None:
         """Test __enter__ starts sandbox if not already started."""
-        import concurrent.futures
 
         from cwsandbox import OperationRef
 
@@ -1442,7 +1587,6 @@ class TestSandboxFileOperationFallback:
         assert stdout == payload
         assert stderr == b""
 
-    @pytest.mark.skip(reason="v1 cutover: needs dedicated rewrite")
     def test_binary_stream_exec_sends_raw_stdin_once(self) -> None:
         import asyncio
 
@@ -1458,7 +1602,7 @@ class TestSandboxFileOperationFallback:
             if request.HasField("init"):
                 init_commands.append(list(request.init.command))
             elif request.HasField("stdin"):
-                stdin_chunks.append(request.stdin.data)
+                stdin_chunks.append(bytes(request.stdin))
             elif request.HasField("close"):
                 close_event.set()
 
@@ -2632,6 +2776,7 @@ class TestSandboxStart:
         )
 
         from cwsandbox._proto import sandbox_pb2
+
         mock_start_response = sandbox_pb2.Sandbox(
             sandbox_id="test-sandbox-id",
             status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
@@ -3055,7 +3200,9 @@ class TestSandboxPollConfigValidation:
 
         mock_sandbox_info = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890)
+            ),
         )
 
         mock_channel = MagicMock()
@@ -3085,7 +3232,9 @@ class TestSandboxPollConfigValidation:
 
         mock_sandbox_info = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890)
+            ),
         )
 
         mock_channel = MagicMock()
@@ -3115,7 +3264,9 @@ class TestSandboxPollConfigValidation:
 
         mock_response = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890)
+            ),
         )
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -3142,7 +3293,9 @@ class TestSandboxPollConfigValidation:
 
         mock_response = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890)
+            ),
         )
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
@@ -3312,7 +3465,6 @@ class TestSandboxTimeouts:
 class TestSandboxKwargsValidation:
     """Tests for kwargs validation in Sandbox methods."""
 
-
     def test_init_rejects_bare_string_tags(self) -> None:
         """Test Sandbox.__init__ rejects bare string tags."""
         with pytest.raises(TypeError, match="tags must be a sequence of strings"):
@@ -3448,7 +3600,12 @@ class TestSandboxList:
 
         mock_sandbox_info = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING, runner_id="tower-1", runner_group_id="group-1", start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                runner_group_id="group-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
         )
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
@@ -3489,7 +3646,9 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
@@ -3518,7 +3677,9 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -3537,7 +3698,9 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
@@ -3558,7 +3721,9 @@ class TestSandboxList:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[]))
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -3581,7 +3746,12 @@ class TestSandboxList:
 
         mock_sandbox_info = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING, runner_id="tower-1", runner_group_id="group-1", start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                runner_group_id="group-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
         )
 
         mock_channel = MagicMock()
@@ -3618,7 +3788,12 @@ class TestSandboxFromId:
 
         mock_response = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING, runner_id="tower-1", runner_group_id="group-1", start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                runner_group_id="group-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
         )
 
         expected_metadata = (("authorization", "Bearer test-api-key"),)
@@ -3648,7 +3823,9 @@ class TestSandboxFromId:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stub.GetSandbox = AsyncMock(side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found"))
+        mock_stub.GetSandbox = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
+        )
 
         with (
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
@@ -3667,7 +3844,12 @@ class TestSandboxFromId:
 
         mock_response = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
-            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING, runner_id="tower-1", runner_group_id="group-1", start_time=timestamp_pb2.Timestamp(seconds=1234567890)),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                runner_group_id="group-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
         )
 
         mock_channel = MagicMock()
@@ -3845,11 +4027,6 @@ class TestSandboxDeleteClassMethod:
         assert not isinstance(exc_info.value, SandboxNotFoundError)
 
 
-
-
-
-
-
 class TestSecretsParameter:
     """Tests for secrets parameter."""
 
@@ -3970,7 +4147,9 @@ class TestSecretsParameter:
 
         # Step 3: Inspect the proto request — only one entry, no duplicate
         request = mock_stub.CreateSandbox.call_args[0][0]
-        assert len(request.sandbox.spec.containers[0].secret_stores) == 1, "Both secrets share store 'wandb'"
+        assert len(request.sandbox.spec.containers[0].secret_stores) == 1, (
+            "Both secrets share store 'wandb'"
+        )
         wandb_store = request.sandbox.spec.containers[0].secret_stores[0]
         assert wandb_store.store_name == "wandb"
         assert len(wandb_store.secrets) == 1, "Deduplicated: only one SecretMapping entry"
@@ -4838,7 +5017,6 @@ class TestExecStdinReadySignal:
     def test_exec_stdin_cancel_unblocks(self) -> None:
         """Test Process.cancel() unblocks stdin waiting for ready."""
         import asyncio
-        import concurrent.futures
 
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "test-id"
@@ -5043,7 +5221,6 @@ class TestShellStreamingTTY:
             with pytest.raises(SandboxError):
                 session.result()
 
-    @pytest.mark.skip(reason="v1 cutover: needs dedicated rewrite")
     def test_shell_stdin_forwarding(self) -> None:
         """stdin.write() sends data chunks to the server."""
         from google.protobuf import timestamp_pb2
@@ -5054,7 +5231,7 @@ class TestShellStreamingTTY:
 
         def on_write(request: Any) -> None:
             if hasattr(request, "stdin") and request.HasField("stdin"):
-                stdin_received.append(request.stdin.data)
+                stdin_received.append(bytes(request.stdin))
 
         close_event = asyncio.Event()
 
@@ -5224,7 +5401,6 @@ class TestShellStreamingTTY:
                 "Output stream did not terminate after cancellation — "
                 "CancelledError path skipped the output_queue sentinel"
             )
-
 
 
 class TestTerminalStateProperties:
@@ -5687,7 +5863,7 @@ class TestStoppingProperties:
 
     def test_started_at_accessible_in_stopping(self) -> None:
         """started_at is accessible in _Stopping state."""
-        from datetime import UTC, datetime
+        from datetime import datetime
 
         ts = datetime.now(UTC)
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -5859,7 +6035,6 @@ class TestStoppingSessionClose:
     """Tests for Session.close() interaction with _Stopping sandboxes."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="v1 cutover: needs dedicated StreamExec/stop rewrite")
     async def test_close_joins_stopping_sandbox(self) -> None:
         """Session.close() on a _Stopping sandbox joins the stop task, not double-stops."""
         from cwsandbox._proto import sandbox_pb2
@@ -5873,29 +6048,31 @@ class TestStoppingSessionClose:
         sandbox._channel = MagicMock()
         sandbox._channel.close = AsyncMock()
         mock_stub = MagicMock()
-        mock_stop_response = MagicMock()
-        pass
-        mock_stub.DeleteSandbox = AsyncMock(return_value=mock_stop_response)
-
-        mock_get_response = MagicMock()
-        mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
-        mock_get_response.sandbox_id = "test-id"
-        mock_get_response.runner_id = ""
-        mock_get_response.profile_id = ""
-        mock_get_response.runner_group_id = ""
-        mock_get_response.started_at_time = None
-        _prime_exit_code(mock_get_response)
-        mock_stub.GetSandbox = AsyncMock(return_value=mock_get_response)
+        mock_stub.DeleteSandbox = AsyncMock(return_value=sandbox_pb2.DeleteSandboxResponse())
         sandbox._stub = mock_stub
 
-        # First stop() puts sandbox into _Stopping then polls to terminal
-        await sandbox._stop_async()
-        assert isinstance(sandbox._state, _Terminal)
+        polling = asyncio.Event()
+        release = asyncio.Event()
 
-        # Session.close() should not call Stop RPC again
-        mock_stub.Stop.reset_mock()
-        await session._close_async()
-        mock_stub.DeleteSandbox.assert_not_called()
+        async def await_terminal() -> None:
+            polling.set()
+            await release.wait()
+            sandbox._state = _Terminal(sandbox_id="test-id", status=SandboxStatus.COMPLETED)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", side_effect=await_terminal):
+            first_stop = asyncio.create_task(sandbox._stop_async())
+            await polling.wait()
+            assert isinstance(sandbox._state, _Stopping)
+
+            close_task = asyncio.create_task(session._close_async())
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.gather(first_stop, close_task)
+
+        mock_stub.DeleteSandbox.assert_awaited_once()
+        request = mock_stub.DeleteSandbox.call_args.args[0]
+        assert request.sandbox_id == "test-id"
+        assert isinstance(sandbox._state, _Terminal)
 
 
 class TestStoppingCancelledError:
@@ -6097,7 +6274,6 @@ class TestStoppingWaitUntilComplete:
         # No raise with raise_on_termination=False
         sandbox._raise_or_return_for_terminal(sandbox._state, raise_on_termination=False)
 
-    @pytest.mark.skip(reason="v1 cutover: needs dedicated rewrite")
     def test_discovered_stopping_sandbox_wait_until_complete(self) -> None:
         """Sandbox.from_id() returning _Stopping then wait_until_complete does not raise.
 
@@ -6109,7 +6285,7 @@ class TestStoppingWaitUntilComplete:
 
         info = sandbox_pb2.Sandbox(
             sandbox_id="sb-discovered",
-            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_TERMINATING),
         )
         sandbox = Sandbox._from_sandbox_info(
             info,
@@ -6119,11 +6295,24 @@ class TestStoppingWaitUntilComplete:
         assert isinstance(sandbox._state, _Stopping)
         assert sandbox._stop_owned is False
 
-        terminal = _Terminal(
-            sandbox_id="sb-discovered", status=SandboxStatus.COMPLETED, returncode=0
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.GetSandbox = AsyncMock(
+            return_value=sandbox_pb2.Sandbox(
+                sandbox_id="sb-discovered",
+                status=sandbox_pb2.SandboxStatus(
+                    state=sandbox_pb2.STATE_COMPLETED,
+                    exit_code=0,
+                ),
+            )
         )
-        # No raise because _stop_owned is False
-        sandbox._raise_or_return_for_terminal(terminal, raise_on_termination=True)
+
+        sandbox.wait_until_complete(raise_on_termination=True).result()
+
+        request = sandbox._stub.GetSandbox.call_args.args[0]
+        assert request.sandbox_id == "sb-discovered"
+        assert isinstance(sandbox._state, _Terminal)
 
 
 class TestStoppingDel:
@@ -6214,9 +6403,7 @@ def _data_frame(data: bytes, session_id: str = "", offset: int = 0) -> Any:
     """Build a real LogEntry message for tests."""
     from cwsandbox._proto import sandbox_pb2 as streaming_pb2
 
-    return streaming_pb2.LogEntry(
-        data=data, log_session_id=session_id, next_log_offset=offset
-    )
+    return streaming_pb2.LogEntry(data=data, log_session_id=session_id, next_log_offset=offset)
 
 
 def _error_frame(code: str, message: str = "") -> Any:
@@ -6366,7 +6553,6 @@ async def _drive_stream_logs(
     return items, sleeps
 
 
-
 class TestStreamLogsResumeTransportClassification:
     """Tests for which gRPC status codes are eligible for resume retry."""
 
@@ -6386,11 +6572,6 @@ class TestStreamLogsResumeTransportClassification:
         assert _is_resumable_transport_error(err) is True
 
 
-
-
-
-
-
 class TestStreamLogsV1Basic:
     """Lean v1 StreamLogs coverage (unary request → LogEntry stream)."""
 
@@ -6407,8 +6588,10 @@ class TestStreamLogsV1Basic:
         class _Call:
             def __init__(self, items):
                 self._items = items
+
             def __aiter__(self):
                 return self
+
             async def __anext__(self):
                 if not self._items:
                     raise StopAsyncIteration
@@ -6423,7 +6606,12 @@ class TestStreamLogsV1Basic:
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch.object(sandbox, "_get_or_create_streaming_channel", new_callable=AsyncMock, return_value=mock_channel),
+            patch.object(
+                sandbox,
+                "_get_or_create_streaming_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
             patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
         ):
             await sandbox._stream_logs_async(output_queue, follow=False)
