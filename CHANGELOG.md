@@ -1,7 +1,7 @@
 # CHANGELOG
 
 
-## v1.0.0b1 (2026-08-12)
+## v1.0.0 (2026-08-12)
 
 Breaking cutover to the Sandbox **v1** API. Stay on **0.26.x** if you still need
 v1beta2.
