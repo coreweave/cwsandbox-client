@@ -69,7 +69,7 @@ Properties:
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
-- Legacy hollow: `profile_id`, `service_address`, `applied_ingress_mode`, `applied_egress_mode` remain as attributes but are unused / always empty on v1
+- `service_urls` - Per-service ``(port, name, url)`` tuples once the backend reports them
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
 - `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover

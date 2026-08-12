@@ -38,7 +38,6 @@ def _make_proto_info(
     sandbox_id: str = "sb-test",
     sandbox_status: int = 2,  # STATE_RUNNING
     runner_id: str = "",
-    profile_id: str = "",
     runner_group_id: str = "",
     started_at_time: object | None = None,
     exit_code: int | None = None,
@@ -54,7 +53,6 @@ def _make_proto_info(
         sandbox_id=sandbox_id,
         sandbox_status=sandbox_status,
         runner_id=runner_id,
-        profile_id=profile_id,
         runner_group_id=runner_group_id,
         started_at_time=started_at_time,
     )
@@ -124,7 +122,6 @@ class TestStateDefaults:
         state = _Running(sandbox_id="sb-1")
         assert state.status == SandboxStatus.RUNNING
         assert state.runner_id is None
-        assert state.profile_id is None
         assert state.runner_group_id is None
         assert state.started_at is None
 
@@ -284,7 +281,6 @@ class TestApplySandboxInfo:
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.RUNNING),
             runner_id="tower-1",
-            profile_id="runway-1",
             runner_group_id="tg-1",
             started_at_time=ts,
         )
@@ -292,7 +288,6 @@ class TestApplySandboxInfo:
         assert isinstance(new_state, _Running)
         assert new_state.sandbox_id == "sb-1"
         assert new_state.runner_id == "tower-1"
-        assert new_state.profile_id in (None, "")
         assert new_state.runner_group_id == "tg-1"
         assert new_state.started_at is not None
 
@@ -404,13 +399,11 @@ class TestApplySandboxInfo:
         info = _make_proto_info(
             sandbox_status=_proto_status(SandboxStatus.RUNNING),
             runner_id="",
-            profile_id="",
             runner_group_id="",
         )
         new_state = sb._apply_sandbox_info(info)
         assert isinstance(new_state, _Running)
         assert new_state.runner_id is None
-        assert new_state.profile_id is None
         assert new_state.runner_group_id is None
 
 

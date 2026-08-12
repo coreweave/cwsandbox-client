@@ -31,8 +31,7 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.runner_id = "tower-1"
-        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_id = "runner-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -47,8 +46,7 @@ class TestListCommand:
         assert result.exit_code == 0
         assert "abc-123" in result.output
         assert "running" in result.output
-        assert "tower-1" in result.output
-        assert "runway-1" in result.output
+        assert "runner-1" in result.output
         assert "2026-01-15" in result.output
 
     def test_list_empty(self) -> None:
@@ -126,8 +124,7 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.runner_id = "tower-1"
-        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_id = "runner-1"
         mock_sb.runner_group_id = "tg-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
@@ -146,8 +143,7 @@ class TestListCommand:
                 {
                     "sandbox_id": "abc-123",
                     "status": "running",
-                    "runner_id": "tower-1",
-                    "profile_id": "runway-1",
+                    "runner_id": "runner-1",
                     "runner_group_id": "tg-1",
                     "started_at": "2026-01-15T10:30:00+00:00",
                 }

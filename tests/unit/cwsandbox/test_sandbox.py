@@ -1071,10 +1071,7 @@ class TestSandboxAuth:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_id = "test-id"
-        mock_response.service_address = ""
         mock_response.exposed_ports = []
-        mock_response.applied_ingress_mode = ""
-        mock_response.applied_egress_mode = ""
         mock_stub.CreateSandbox = AsyncMock(return_value=mock_response)
 
         sandbox._channel = MagicMock()
@@ -1101,10 +1098,7 @@ class TestSandboxAuth:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_id = "test-id"
-        mock_response.service_address = ""
         mock_response.exposed_ports = []
-        mock_response.applied_ingress_mode = ""
-        mock_response.applied_egress_mode = ""
         mock_stub.CreateSandbox = AsyncMock(return_value=mock_response)
 
         sandbox._channel = MagicMock()
@@ -1331,7 +1325,6 @@ class TestSandboxWait:
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_get_response.runner_id = "tower-1"
-        mock_get_response.profile_id = "runway-1"
         mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
@@ -1363,7 +1356,6 @@ class TestSandboxAutoStartFileOps:
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_get_response.runner_id = "tower-1"
-        mock_get_response.profile_id = "runway-1"
         mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
@@ -1399,7 +1391,6 @@ class TestSandboxAutoStartFileOps:
         mock_get_response = MagicMock()
         mock_get_response.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_get_response.runner_id = "tower-1"
-        mock_get_response.profile_id = "runway-1"
         mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
@@ -2907,7 +2898,6 @@ class TestSandboxWaitForRunning:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         _prime_exit_code(mock_get_response)
         mock_get_response.runner_id = "tower-1"
-        mock_get_response.profile_id = "runway-1"
         mock_get_response.runner_group_id = None
         mock_get_response.started_at_time = None
 
@@ -3084,10 +3074,7 @@ class TestSandboxAnnotations:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_id = "test-id"
-        mock_response.service_address = ""
         mock_response.exposed_ports = []
-        mock_response.applied_ingress_mode = ""
-        mock_response.applied_egress_mode = ""
         mock_stub.CreateSandbox = AsyncMock(return_value=mock_response)
 
         sandbox._channel = MagicMock()
@@ -3109,10 +3096,7 @@ class TestSandboxAnnotations:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_id = "test-id"
-        mock_response.service_address = ""
         mock_response.exposed_ports = []
-        mock_response.applied_ingress_mode = ""
-        mock_response.applied_egress_mode = ""
         mock_stub.CreateSandbox = AsyncMock(return_value=mock_response)
 
         sandbox._channel = MagicMock()
@@ -3133,7 +3117,6 @@ class TestSandboxAnnotations:
         mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
         mock_info.started_at_time = None
         mock_info.runner_id = None
-        mock_info.profile_id = None
         mock_info.runner_group_id = None
 
         sandbox = Sandbox._from_sandbox_info(
@@ -3173,7 +3156,6 @@ class TestSandboxAnnotations:
         mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
         mock_info.started_at_time = None
         mock_info.runner_id = None
-        mock_info.profile_id = None
         mock_info.runner_group_id = None
 
         sandbox = Sandbox._from_sandbox_info(
@@ -3192,7 +3174,6 @@ class TestSandboxAnnotations:
         mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
         mock_info.started_at_time = None
         mock_info.runner_id = None
-        mock_info.profile_id = None
         mock_info.runner_group_id = None
 
         sandbox = Sandbox._from_sandbox_info(
@@ -3481,7 +3462,6 @@ class TestSandboxStop:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_get_response.sandbox_id = "race-sandbox-id"
         mock_get_response.runner_id = ""
-        mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
         _prime_exit_code(mock_get_response)
@@ -4213,10 +4193,7 @@ class TestSecretsParameter:
         mock_stub = MagicMock()
         mock_response = MagicMock()
         mock_response.sandbox_id = "test-id"
-        mock_response.service_address = ""
         mock_response.exposed_ports = []
-        mock_response.applied_ingress_mode = ""
-        mock_response.applied_egress_mode = ""
         mock_stub.CreateSandbox = AsyncMock(return_value=mock_response)
         sandbox._channel = MagicMock()
         sandbox._stub = mock_stub
@@ -4422,10 +4399,7 @@ class TestSandboxStartupTimeTracking:
 
         mock_start_response = MagicMock()
         mock_start_response.sandbox_id = "test-sandbox-id"
-        mock_start_response.service_address = ""
         mock_start_response.exposed_ports = []
-        mock_start_response.applied_ingress_mode = ""
-        mock_start_response.applied_egress_mode = ""
 
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._stub = MagicMock()
@@ -4450,7 +4424,6 @@ class TestSandboxStartupTimeTracking:
         info.started_at_time = timestamp_pb2.Timestamp(seconds=1234567890)
         info.runner_id = "tower-1"
         info.runner_group_id = "group-1"
-        info.profile_id = "runway-1"
         sandbox = Sandbox._from_sandbox_info(
             info,
             base_url="https://api.example.com",
@@ -4478,7 +4451,6 @@ class TestSandboxStartupTimeTracking:
         mock_response.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_response.runner_id = "tower-1"
         mock_response.runner_group_id = None
-        mock_response.profile_id = "runway-1"
         mock_response.started_at_time = None
         sandbox._stub.GetSandbox = AsyncMock(return_value=mock_response)
 
@@ -4508,7 +4480,6 @@ class TestSandboxStartupTimeTracking:
         mock_response.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_response.runner_id = "tower-1"
         mock_response.runner_group_id = None
-        mock_response.profile_id = "runway-1"
         mock_response.started_at_time = None
         sandbox._stub.GetSandbox = AsyncMock(return_value=mock_response)
 
@@ -5511,14 +5482,6 @@ class TestTerminalStateProperties:
         )
         assert sandbox.runner_id == "tower-99"
 
-    def test_profile_id_always_none_on_v1(self) -> None:
-        """profile_id is hollow on v1 even when internal state carries a value."""
-        sandbox = Sandbox(command="sleep", args=["infinity"])
-        sandbox._state = _Terminal(
-            sandbox_id="sb-1", status=SandboxStatus.COMPLETED, profile_id="runway-99"
-        )
-        assert sandbox.profile_id is None
-
 
 class TestTerminatingStatus:
     """Tests for TERMINATING status and _Stopping lifecycle state."""
@@ -5550,14 +5513,12 @@ class TestTerminatingStatus:
             sandbox_id="sb-1",
             status=SandboxStatus.TERMINATING,
             runner_id="tower-1",
-            profile_id="runway-1",
             runner_group_id="group-1",
         )
         assert isinstance(state, _Stopping)
         assert state.sandbox_id == "sb-1"
         assert state.status == SandboxStatus.TERMINATING
         assert state.runner_id == "tower-1"
-        assert state.profile_id == "runway-1"
         assert state.runner_group_id == "group-1"
 
     def test_stopping_is_frozen(self) -> None:
@@ -5582,7 +5543,6 @@ class TestStoppingStateTransitions:
         mock_info.sandbox_id = "sb-1"
         mock_info.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_info.runner_id = "tower-1"
-        mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
         _prime_exit_code(mock_info)
@@ -5603,7 +5563,6 @@ class TestStoppingStateTransitions:
         mock_info.sandbox_id = "sb-1"
         mock_info.sandbox_status = sandbox_pb2.STATE_RUNNING
         mock_info.runner_id = ""
-        mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
 
@@ -5622,7 +5581,6 @@ class TestStoppingStateTransitions:
         mock_info.sandbox_id = "sb-1"
         mock_info.sandbox_status = sandbox_pb2.STATE_PENDING
         mock_info.runner_id = ""
-        mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
 
@@ -5641,7 +5599,6 @@ class TestStoppingStateTransitions:
         mock_info.sandbox_id = "sb-1"
         mock_info.sandbox_status = sandbox_pb2.STATE_FAILED
         mock_info.runner_id = ""
-        mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
 
@@ -5751,7 +5708,6 @@ class TestStoppingStopFlow:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_get_response.sandbox_id = "test-id"
         mock_get_response.runner_id = "tower-1"
-        mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
         _prime_exit_code(mock_get_response)
@@ -5894,7 +5850,6 @@ class TestStoppingStopFlow:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_get_response.sandbox_id = "test-id"
         mock_get_response.runner_id = ""
-        mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
         _prime_exit_code(mock_get_response)
@@ -5927,12 +5882,6 @@ class TestStoppingProperties:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Stopping(sandbox_id="sb-1", runner_id="tower-1")
         assert sandbox.runner_id == "tower-1"
-
-    def test_profile_id_none_in_stopping(self) -> None:
-        """profile_id stays None in _Stopping state on v1."""
-        sandbox = Sandbox(command="sleep", args=["infinity"])
-        sandbox._state = _Stopping(sandbox_id="sb-1", profile_id="runway-1")
-        assert sandbox.profile_id is None
 
     def test_runner_group_id_accessible_in_stopping(self) -> None:
         """runner_group_id is accessible in _Stopping state."""
@@ -5982,7 +5931,6 @@ class TestStoppingProperties:
         mock_response.sandbox_status = sandbox_pb2.STATE_TERMINATING
         mock_response.sandbox_id = "sb-1"
         mock_response.runner_id = ""
-        mock_response.profile_id = ""
         mock_response.runner_group_id = ""
         mock_response.started_at_time = None
         sandbox._stub.GetSandbox = AsyncMock(return_value=mock_response)
@@ -6055,7 +6003,6 @@ class TestStopOwnedTermination:
         mock_info.sandbox_id = "sb-1"
         mock_info.sandbox_status = sandbox_pb2.STATE_TERMINATING
         mock_info.runner_id = ""
-        mock_info.profile_id = ""
         mock_info.runner_group_id = ""
         mock_info.started_at_time = None
 
@@ -6223,7 +6170,6 @@ class TestDoPolRunningStoppingBranch:
         mock_response.sandbox_id = "sb-1"
         mock_response.sandbox_status = sandbox_pb2.STATE_TERMINATING
         mock_response.runner_id = ""
-        mock_response.profile_id = ""
         mock_response.runner_group_id = ""
         mock_response.started_at_time = None
 
@@ -6251,7 +6197,6 @@ class TestDoPolRunningStoppingBranch:
         terminating_response.sandbox_id = "sb-1"
         terminating_response.sandbox_status = sandbox_pb2.STATE_TERMINATING
         terminating_response.runner_id = ""
-        terminating_response.profile_id = ""
         terminating_response.runner_group_id = ""
         terminating_response.started_at_time = None
 
@@ -6266,7 +6211,6 @@ class TestDoPolRunningStoppingBranch:
         completed_response.sandbox_id = "sb-1"
         completed_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         completed_response.runner_id = ""
-        completed_response.profile_id = ""
         completed_response.runner_group_id = ""
         completed_response.started_at_time = None
         _prime_exit_code(completed_response)
@@ -6305,7 +6249,6 @@ class TestStoppingWaitUntilComplete:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_get_response.sandbox_id = "sb-1"
         mock_get_response.runner_id = ""
-        mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
         _prime_exit_code(mock_get_response)
@@ -6339,7 +6282,6 @@ class TestStoppingWaitUntilComplete:
         mock_get_response.sandbox_status = sandbox_pb2.STATE_COMPLETED
         mock_get_response.sandbox_id = "sb-1"
         mock_get_response.runner_id = ""
-        mock_get_response.profile_id = ""
         mock_get_response.runner_group_id = ""
         mock_get_response.started_at_time = None
         _prime_exit_code(mock_get_response)

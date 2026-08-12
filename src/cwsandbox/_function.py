@@ -100,12 +100,6 @@ class RemoteFunction(Generic[P, R]):
             session: The sandbox session to use for execution
             container_image: Override container image for this function
             temp_dir: Directory for temporary payload/result files in sandbox
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -113,13 +107,10 @@ class RemoteFunction(Generic[P, R]):
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
             file_system_snapshot: File-system snapshot (FSS) mount configuration.
                 Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
                 optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -151,8 +142,6 @@ class RemoteFunction(Generic[P, R]):
         self._session = session
         self._container_image = container_image
         self._temp_dir = temp_dir
-        self._profile_ids = None
-        self._profile_names = None
         self._runner_ids = list(runner_ids) if runner_ids is not None else None
         self._resources = resources
         self._mounted_files = mounted_files

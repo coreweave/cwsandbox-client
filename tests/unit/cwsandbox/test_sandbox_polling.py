@@ -107,7 +107,6 @@ def _get_response(status: int, **kwargs: object) -> MagicMock:
     resp.sandbox_status = status
     resp.runner_id = kwargs.get("runner_id", "")
     resp.runner_group_id = kwargs.get("runner_group_id", "")
-    resp.profile_id = kwargs.get("profile_id", "")
     resp.started_at_time = kwargs.get("started_at_time", None)
     # Mirror proto3 optional presence: HasField("exit_code") is True only
     # when an exit code is supplied. Default matches the backend contract:

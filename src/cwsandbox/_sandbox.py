@@ -319,11 +319,6 @@ class _SandboxView:
         return self._sandbox.status.runner_group_id
 
     @property
-    def profile_id(self) -> str:
-        # Removed in v1; kept empty for lifecycle dataclass compat.
-        return ""
-
-    @property
     def status_reason(self) -> str:
         return self._sandbox.status.state_reason
 
@@ -1174,7 +1169,6 @@ class _Running:
     sandbox_id: str
     status: SandboxStatus = SandboxStatus.RUNNING
     runner_id: str | None = None
-    profile_id: str | None = None
     runner_group_id: str | None = None
     started_at: datetime | None = None
 
@@ -1184,7 +1178,6 @@ class _Stopping:
     sandbox_id: str
     status: SandboxStatus = SandboxStatus.TERMINATING
     runner_id: str | None = None
-    profile_id: str | None = None
     runner_group_id: str | None = None
     started_at: datetime | None = None
 
@@ -1195,7 +1188,6 @@ class _Terminal:
     status: SandboxStatus
     returncode: int | None = None
     runner_id: str | None = None
-    profile_id: str | None = None
     runner_group_id: str | None = None
     started_at: datetime | None = None
 
@@ -1252,7 +1244,6 @@ def _lifecycle_state_from_info(
     sandbox_id: str,
     status: SandboxStatus,
     runner_id: str | None = None,
-    profile_id: str | None = None,
     runner_group_id: str | None = None,
     started_at: datetime | None = None,
     returncode: int | None = None,
@@ -1266,7 +1257,6 @@ def _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
             runner_id=runner_id,
-            profile_id=profile_id,
             runner_group_id=runner_group_id,
             started_at=started_at,
         )
@@ -1275,7 +1265,6 @@ def _lifecycle_state_from_info(
             sandbox_id=sandbox_id,
             status=status,
             runner_id=runner_id,
-            profile_id=profile_id,
             runner_group_id=runner_group_id,
             started_at=started_at,
         )
@@ -1285,7 +1274,6 @@ def _lifecycle_state_from_info(
             status=status,
             returncode=returncode,
             runner_id=runner_id,
-            profile_id=profile_id,
             runner_group_id=runner_group_id,
             started_at=started_at,
         )
@@ -1323,7 +1311,6 @@ class Sandbox:
         sandbox_id: Unique identifier for this sandbox.
         status: Cached status from last API call.
         runner_id: Runner ID where sandbox is running.
-        profile_id: Profile ID for this sandbox.
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
     """
@@ -1480,8 +1467,6 @@ class Sandbox:
                 "profile_ids/profile_names were removed in cwsandbox 1.x; "
                 "use placement_mode, runner_ids, and discovery capabilities"
             )
-        self._profile_ids = None
-        self._profile_names = None
         self._runner_ids = _resolve_selector(
             runner_ids, None if from_template else self._defaults.runner_ids
         )
@@ -1634,10 +1619,7 @@ class Sandbox:
         self._missing_ok_observe: bool = False
 
         self._status_updated_at: datetime | None = None
-        self._service_address: str | None = None
         self._exposed_ports: tuple[tuple[int, str], ...] | None = None
-        self._applied_ingress_mode: str | None = None
-        self._applied_egress_mode: str | None = None
         self._resource_limits: dict[str, str] | None = None
         self._resource_requests: dict[str, str] | None = None
         self._resource_gpu: dict[str, Any] | None = None
@@ -1910,8 +1892,6 @@ class Sandbox:
         sandbox._container_image = None
         sandbox._tags = None
         sandbox._max_lifetime_seconds = None
-        sandbox._profile_ids = None
-        sandbox._profile_names = None
         sandbox._runner_ids = None
         sandbox._environment_variables = {}
         sandbox._annotations = {}
@@ -1951,10 +1931,7 @@ class Sandbox:
         sandbox._stop_owned = False
         sandbox._missing_ok_observe = False
         sandbox._loop_manager = _LoopManager.get()
-        sandbox._service_address = None
         sandbox._exposed_ports = None
-        sandbox._applied_ingress_mode = None
-        sandbox._applied_egress_mode = None
         sandbox._resource_limits = None
         sandbox._resource_requests = None
         sandbox._resource_gpu = None
@@ -1977,7 +1954,6 @@ class Sandbox:
             sandbox_id=str(info.sandbox_id),
             status=status,
             runner_id=getattr(info, "runner_id", None) or None,
-            profile_id=None,  # removed in v1
             runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
         )
@@ -2814,14 +2790,6 @@ class Sandbox:
         return None
 
     @property
-    def profile_id(self) -> str | None:
-        """Always ``None`` on Sandbox v1 (profiles were removed).
-
-        Kept for attribute compatibility with older call sites.
-        """
-        return None
-
-    @property
     def status(self) -> SandboxStatus | None:
         """Last known status of the sandbox.
 
@@ -2875,18 +2843,9 @@ class Sandbox:
         """Per-service URLs reported by the backend once ready.
 
         Each entry is ``(port, name, url)``. Empty until the sandbox reports
-        service status (typically after RUNNING). Prefer this over the legacy
-        ``service_address`` property.
+        service status (typically after RUNNING).
         """
         return self._service_urls
-
-    @property
-    def service_address(self) -> str | None:
-        """Legacy singular address; usually ``None`` on Sandbox v1.
-
-        Prefer ``service_urls`` for per-service URLs from typed services.
-        """
-        return self._service_address
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
@@ -2896,16 +2855,6 @@ class Sandbox:
         ``None`` until the sandbox has reported services (or none were exposed).
         """
         return self._exposed_ports
-
-    @property
-    def applied_ingress_mode(self) -> str | None:
-        """Legacy beta echo field; always ``None`` on Sandbox v1."""
-        return self._applied_ingress_mode
-
-    @property
-    def applied_egress_mode(self) -> str | None:
-        """Legacy beta echo field; always ``None`` on Sandbox v1."""
-        return self._applied_egress_mode
 
     @property
     def resource_limits(self) -> dict[str, str] | None:
@@ -3000,7 +2949,7 @@ class Sandbox:
         Guards against regressing from terminal or cancelled states.
 
         Args:
-            info: Protobuf response with sandbox_status, runner_id, profile_id,
+            info: Protobuf response with sandbox_status, runner_id,
                 runner_group_id, started_at_time, and optionally an exit_code
                 field (proto3 optional; presence checked via HasField).
             source: Controls returncode behavior:
@@ -3051,7 +3000,6 @@ class Sandbox:
             sandbox_id=sandbox_id,
             status=status,
             runner_id=getattr(info, "runner_id", None) or None,
-            profile_id=None,  # removed in v1
             runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
             returncode=returncode,
@@ -4639,7 +4587,6 @@ class Sandbox:
                             sandbox_id=sandbox_id,
                             status=SandboxStatus.TERMINATED,
                             runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
-                            profile_id=(prev.profile_id if isinstance(prev, (_Running,)) else None),
                             runner_group_id=(
                                 prev.runner_group_id if isinstance(prev, (_Running,)) else None
                             ),
@@ -4663,7 +4610,6 @@ class Sandbox:
                 self._state = _Stopping(
                     sandbox_id=sandbox_id,
                     runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
-                    profile_id=(prev.profile_id if isinstance(prev, (_Running,)) else None),
                     runner_group_id=(
                         prev.runner_group_id if isinstance(prev, (_Running,)) else None
                     ),

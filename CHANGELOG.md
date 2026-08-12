@@ -14,7 +14,9 @@ v1beta2. One package version speaks one dialect (no hybrid fallback).
 - Drop profiles from the public surface (`profile_ids` / `profile_names`,
   `list_profiles` / `get_profile`, `Profile`). Place workloads with
   `placement_mode` and runner filters; use `Sandbox.run_from_template` for CKS
-  pod-fragment templates.
+  pod-fragment templates. Remove hollow beta leftovers
+  (`profile_id`, `service_address`, `applied_ingress_mode`,
+  `applied_egress_mode`); use `service_urls` for per-service URLs.
 - Replace string network modes with typed `services=[Service(...)]` using
   `ServiceVisibility` / `ServiceProtocol`. `NetworkOptions` is now deny-flag
   only (`deny_egress` / `deny_ingress`), not ingress/egress mode strings.
