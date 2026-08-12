@@ -424,7 +424,23 @@ async def _create_snapshot_via_stub(
     if not wait_for_ready:
         return snapshot_id
 
-    # Poll until READY/FAILED within the remaining timeout budget.
+    await _wait_for_snapshot_via_stub(
+        stub,
+        snapshot_id,
+        auth_metadata=auth_metadata,
+        timeout=timeout,
+    )
+    return snapshot_id
+
+
+async def _wait_for_snapshot_via_stub(
+    stub: sandbox_pb2_grpc.SandboxServiceStub,
+    snapshot_id: str,
+    *,
+    auth_metadata: tuple[tuple[str, str], ...],
+    timeout: float,
+) -> None:
+    """Poll an existing snapshot until READY or FAILED."""
     deadline = time.monotonic() + max(0.0, timeout)
     interval = DEFAULT_POLL_INTERVAL_SECONDS
     while True:
@@ -441,7 +457,7 @@ async def _create_snapshot_via_stub(
             timeout=min(remaining, DEFAULT_POLL_RPC_TIMEOUT_SECONDS),
         )
         if snap.status == FileSystemSnapshotStatus.READY:
-            return snapshot_id
+            return
         if snap.status == FileSystemSnapshotStatus.FAILED:
             raise SandboxSnapshotError(
                 f"Snapshot {snapshot_id} failed: {snap.status_reason or 'unknown error'}",
@@ -1333,12 +1349,18 @@ class Sandbox:
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
 
-        # Note: These can be None for sandboxes discovered via list()/from_id()
-        self._command: str | None = command or self._defaults.command
-        self._args: list[str] | None = args if args is not None else list(self._defaults.args)
+        from_template = template_id is not None
+        # Template creates must remain sparse: SDK defaults would otherwise
+        # replace the corresponding template fields merely by being present.
+        self._command: str | None = command if from_template else command or self._defaults.command
+        self._args: list[str] | None = (
+            args if args is not None else (None if from_template else list(self._defaults.args))
+        )
 
         # Apply defaults with explicit values taking precedence
-        self._container_image: str | None = container_image or self._defaults.container_image
+        self._container_image: str | None = (
+            container_image if from_template else container_image or self._defaults.container_image
+        )
         self._base_url = (
             base_url or os.environ.get("CWSANDBOX_BASE_URL") or self._defaults.base_url
         ).rstrip("/")
@@ -1361,17 +1383,23 @@ class Sandbox:
             self._poll_retry_budget_seconds,
             self._poll_rpc_timeout_seconds,
         )
-        self._max_lifetime_seconds = (
-            max_lifetime_seconds
-            if max_lifetime_seconds is not None
-            else self._defaults.max_lifetime_seconds
-        )
+        self._max_lifetime_seconds = max_lifetime_seconds
+        if not from_template and self._max_lifetime_seconds is None:
+            self._max_lifetime_seconds = self._defaults.max_lifetime_seconds
 
-        self._tags: list[str] | None = self._defaults.merge_tags(tags)
-        self._environment_variables = self._defaults.merge_environment_variables(
-            environment_variables
+        self._tags: list[str] | None = (
+            list(tags or []) if from_template else self._defaults.merge_tags(tags)
         )
-        self._annotations = self._defaults.merge_annotations(annotations)
+        self._environment_variables = (
+            dict(environment_variables or {})
+            if from_template
+            else self._defaults.merge_environment_variables(environment_variables)
+        )
+        self._annotations = (
+            dict(annotations or {})
+            if from_template
+            else self._defaults.merge_annotations(annotations)
+        )
 
         if profile_ids is not None or profile_names is not None:
             raise TypeError(
@@ -1380,7 +1408,9 @@ class Sandbox:
             )
         self._profile_ids = None
         self._profile_names = None
-        self._runner_ids = _resolve_selector(runner_ids, self._defaults.runner_ids)
+        self._runner_ids = _resolve_selector(
+            runner_ids, None if from_template else self._defaults.runner_ids
+        )
 
         self._start_kwargs: dict[str, Any] = {}
         self._create_request_id: str | None = None
@@ -1392,7 +1422,9 @@ class Sandbox:
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         # Use explicit resources or fall back to defaults, then normalize
-        effective_resources = resources if resources is not None else self._defaults.resources
+        effective_resources = (
+            resources if resources is not None or from_template else self._defaults.resources
+        )
         normalized = normalize_resources(effective_resources)
         if normalized is not None:
             self._start_kwargs["resources"] = normalized
@@ -1401,16 +1433,18 @@ class Sandbox:
         if s3_mount is not None:
             raise TypeError("s3_mount was removed in cwsandbox 1.x")
         if ports is not None:
-            self._start_kwargs["ports"] = ports
+            raise TypeError("ports was removed in cwsandbox 1.x")
         # Use explicit network or fall back to defaults
-        effective_network = network if network is not None else self._defaults.network
+        effective_network = (
+            network if network is not None or from_template else self._defaults.network
+        )
         if effective_network is not None:
             self._start_kwargs["network"] = effective_network
         # Use explicit file-system snapshot mount or fall back to defaults.
         effective_fss = (
             file_system_snapshot
             if file_system_snapshot is not None
-            else self._defaults.file_system_snapshot
+            else (None if from_template else self._defaults.file_system_snapshot)
         )
         effective_fss = _coerce_file_system_snapshot(effective_fss)
         if effective_fss is not None:
@@ -1423,12 +1457,12 @@ class Sandbox:
             if isinstance(placement_mode, str):
                 placement_mode = PlacementMode(placement_mode.lower())
             self._placement_mode = placement_mode
-        elif self._defaults.placement_mode is not None:
+        elif not from_template and self._defaults.placement_mode is not None:
             pm = self._defaults.placement_mode
             self._placement_mode = PlacementMode(pm.lower()) if isinstance(pm, str) else pm
         if services is not None:
             self._services = [Service(**s) if isinstance(s, dict) else s for s in services]
-        elif self._defaults.services is not None:
+        elif not from_template and self._defaults.services is not None:
             self._services = list(self._defaults.services)
         if volumes is not None:
             self._start_kwargs["volumes"] = list(volumes)
@@ -1436,16 +1470,18 @@ class Sandbox:
                 v.name if isinstance(v, ScratchVolumeOptions) else v.get("name", "")
                 for v in volumes
             )
-        elif self._defaults.volumes is not None:
+        elif not from_template and self._defaults.volumes is not None:
             self._start_kwargs["volumes"] = list(self._defaults.volumes)
             self._scratch_volume_names = tuple(v.name for v in self._defaults.volumes)
         if template_id is not None:
             self._template_id = template_id
         if image_pull_credentials is not None:
+            if from_template:
+                raise TypeError("image_pull_credentials is not supported with template sandboxes")
             if isinstance(image_pull_credentials, dict):
                 image_pull_credentials = ImagePullCredentials(**image_pull_credentials)
             self._image_pull_credentials = image_pull_credentials
-        merged_secrets = list(self._defaults.secrets or ()) + [
+        merged_secrets = ([] if from_template else list(self._defaults.secrets or ())) + [
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
         ]
         if merged_secrets:
@@ -1707,8 +1743,19 @@ class Sandbox:
             raise ValueError("template_id must not be empty")
         kwargs = dict(kwargs)
         kwargs["template_id"] = template_id
-        run_args = (command, *args) if command is not None else args
-        return cls.run(*run_args, defaults=defaults, **kwargs)
+        # Do not route args-only overrides through run(*args): run() treats the
+        # first positional as the command, which would replace the template
+        # command with an argument value.
+        if command is not None:
+            return cls.run(command, *args, defaults=defaults, **kwargs)
+        sandbox = cls(
+            command=None,
+            args=list(args) if args else None,
+            defaults=defaults,
+            **kwargs,
+        )
+        sandbox.start().result()
+        return sandbox
 
     @classmethod
     def session(
@@ -1791,7 +1838,13 @@ class Sandbox:
         sandbox._services = None
         sandbox._template_id = None
         sandbox._image_pull_credentials = None
-        sandbox._scratch_volume_names = ()
+        sandbox._scratch_volume_names = (
+            tuple(
+                volume.name for volume in info._sandbox.spec.volumes if volume.HasField("scratch")
+            )
+            if isinstance(info, _SandboxView)
+            else ()
+        )
         sandbox._service_urls = ()
         sandbox._file_system_snapshot_ids = ()
         sandbox._observed_file_op_cap_bytes = None
@@ -3499,7 +3552,17 @@ class Sandbox:
 
         mounted_files = start_kwargs.pop("mounted_files", None)
         if mounted_files:
-            for path, content in mounted_files.items():
+            entries = (
+                (
+                    {"mount_path": path, "file_content": content}
+                    for path, content in mounted_files.items()
+                )
+                if isinstance(mounted_files, Mapping)
+                else iter(mounted_files)
+            )
+            for entry in entries:
+                path = entry["mount_path"]
+                content = entry["file_content"]
                 data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
                 container.files.append(sandbox_pb2.FileMount(path=path, content=bytes(data)))
 
@@ -3663,38 +3726,54 @@ class Sandbox:
         overrides_kwargs: dict[str, Any],
     ) -> sandbox_pb2.CreateSandboxFromTemplateRequest:
         """Build CreateSandboxFromTemplate with replace-on-presence overrides."""
-        # Reuse plain create builder for override shaping, then project to Partial*.
+        if self._image_pull_credentials is not None or overrides_kwargs.get(
+            "image_pull_credentials"
+        ):
+            raise TypeError("image_pull_credentials is not supported with template sandboxes")
+
+        explicit_keys = set(overrides_kwargs)
         create_req = self._build_create_request(
             request_id=request_id, start_kwargs=dict(overrides_kwargs)
         )
         spec = create_req.sandbox.spec
-        overrides = sandbox_pb2.PartialSandboxSpec(
-            containers=[
-                sandbox_pb2.PartialContainer(
-                    name=c.name,
-                    image=c.image,
-                    command=c.command,
-                    args=list(c.args),
-                    environment_variables=dict(c.environment_variables),
-                    files=list(c.files),
-                    volume_mounts=list(c.volume_mounts),
-                    secret_stores=list(c.secret_stores),
-                    working_dir=c.working_dir,
-                    resource_requirements=c.resource_requirements,
-                    security_context=c.security_context,
-                )
-                for c in spec.containers
-            ],
-            primary_container=spec.primary_container,
-            volumes=list(spec.volumes),
-            services=list(spec.services),
-            max_lifetime_seconds=spec.max_lifetime_seconds,
-            tags=list(spec.tags),
-            runner_ids=list(spec.runner_ids),
-            annotations=dict(spec.annotations),
-            mode=spec.mode,
-        )
-        if spec.HasField("network"):
+        source_container = spec.containers[0]
+        container = sandbox_pb2.PartialContainer()
+        if self._container_image is not None:
+            container.image = self._container_image
+        if self._command is not None:
+            container.command = self._command
+        if self._args is not None:
+            container.args.extend(self._args)
+        if self._environment_variables:
+            container.environment_variables.update(self._environment_variables)
+        if "mounted_files" in explicit_keys:
+            container.files.extend(source_container.files)
+        if {"volumes", "file_system_snapshot"} & explicit_keys:
+            container.volume_mounts.extend(source_container.volume_mounts)
+        if "secrets" in explicit_keys:
+            container.secret_stores.extend(source_container.secret_stores)
+        if "resources" in explicit_keys and source_container.HasField("resource_requirements"):
+            container.resource_requirements.CopyFrom(source_container.resource_requirements)
+
+        overrides = sandbox_pb2.PartialSandboxSpec()
+        if container.ListFields():
+            container.name = "main"
+            overrides.containers.append(container)
+        if {"volumes", "file_system_snapshot"} & explicit_keys:
+            overrides.volumes.extend(spec.volumes)
+        if self._services:
+            overrides.services.extend(spec.services)
+        if self._max_lifetime_seconds is not None:
+            overrides.max_lifetime_seconds = int(self._max_lifetime_seconds)
+        if self._tags:
+            overrides.tags.extend(self._tags)
+        if self._runner_ids:
+            overrides.runner_ids.extend(self._runner_ids)
+        if self._annotations:
+            overrides.annotations.update(self._annotations)
+        if spec.mode != sandbox_pb2.SANDBOX_MODE_UNSPECIFIED:
+            overrides.mode = spec.mode
+        if "network" in explicit_keys and spec.HasField("network"):
             overrides.network.CopyFrom(spec.network)
         return sandbox_pb2.CreateSandboxFromTemplateRequest(
             template_id=template_id,
@@ -3728,6 +3807,9 @@ class Sandbox:
 
     def _apply_create_echo(self, view: _SandboxView) -> None:
         """Capture create/Get echoes used by public properties."""
+        self._scratch_volume_names = tuple(
+            volume.name for volume in view._sandbox.spec.volumes if volume.HasField("scratch")
+        )
         status = view._sandbox.status
         self._service_urls = tuple((s.port, s.name, s.url) for s in status.services if s.url)
         if status.HasField("effective_resource_requirements"):
@@ -4382,9 +4464,12 @@ class Sandbox:
                 # so only send them when a snapshot is requested.
                 snapshot_volumes: list[str] = []
                 if snapshot_on_stop:
-                    # Snapshot configured scratch volumes (convenience default: workspace).
-                    names = list(self._scratch_volume_names) or [DEFAULT_SCRATCH_VOLUME_NAME]
-                    snapshot_volumes = names
+                    if not self._scratch_volume_names:
+                        raise SandboxSnapshotError(
+                            "Cannot snapshot on stop: sandbox has no known scratch volumes",
+                            file_system_snapshot_id=None,
+                        )
+                    snapshot_volumes = list(self._scratch_volume_names)
                 request = sandbox_pb2.DeleteSandboxRequest(
                     sandbox_id=sandbox_id,
                     grace_period_seconds=int(graceful_shutdown_seconds),
@@ -4445,6 +4530,14 @@ class Sandbox:
                 self._stop_owned = True
                 sent_rpc = True
                 logger.info("Sandbox %s stop accepted, draining", sandbox_id)
+                if snapshot_ids and wait_for_ready:
+                    for snapshot_id in snapshot_ids:
+                        await _wait_for_snapshot_via_stub(
+                            self._stub,
+                            snapshot_id,
+                            auth_metadata=self._auth_metadata,
+                            timeout=DEFAULT_FSS_STOP_TIMEOUT_SECONDS,
+                        )
 
         # Cancel the running poll only when we sent the Stop RPC.
         # In the observe-only path (_is_stopping), the poll already
@@ -4828,13 +4921,11 @@ class Sandbox:
                         if entry.HasField("error") and entry.error.code:
                             code = entry.error.code
                             msg = entry.error.message or code
-                            if code in {
-                                "SESSION_NOT_FOUND",
-                                "REPLAY_GAP",
-                                "INVALID_RESUME_OFFSET",
-                            }:
+                            if code in _STREAMING_FRESH_REINIT_CODES:
                                 session_id = ""
                                 last_offset = 0
+                                line_parts = []
+                                line_parts_bytes = 0
                                 break
                             if code == STREAM_TRUNCATED:
                                 raise SandboxStreamTruncatedError(msg)

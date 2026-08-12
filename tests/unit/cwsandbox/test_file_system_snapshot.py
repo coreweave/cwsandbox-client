@@ -394,8 +394,12 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub  # stop() tears down _stub on completion; keep a ref.
+        sandbox._scratch_volume_names = ("workspace",)
         mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, request_id="k").result()
@@ -404,6 +408,21 @@ class TestStopWiring:
         assert list(request.snapshot_volumes) == ["workspace"]
         assert request.request_id == "k"
         assert sandbox.file_system_snapshot_id == "fss-new"
+        stub.GetFileSystemSnapshot.assert_awaited_once()
+
+    def test_snapshot_on_stop_rejects_unknown_scratch_volume(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+
+        with pytest.raises(SandboxSnapshotError, match="no known scratch volumes"):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+        stub.DeleteSandbox.assert_not_called()
 
     def test_plain_stop_does_not_request_snapshot(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -433,8 +452,12 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
         mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=30).result()
@@ -456,8 +479,12 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
         mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
         sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=0).result()

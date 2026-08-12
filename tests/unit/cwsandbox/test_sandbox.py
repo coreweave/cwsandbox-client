@@ -427,6 +427,21 @@ class TestSandboxRun:
         assert credentials.credentials.field == "token"
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_request_maps_mounted_files(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            mounted_files=[
+                {"mount_path": "/etc/config.txt", "file_content": b"configured"},
+                {"mount_path": "/etc/count.txt", "file_content": "3"},
+            ]
+        )
+
+        files = stub.CreateSandbox.call_args.args[0].sandbox.spec.containers[0].files
+        assert [(item.path, item.content) for item in files] == [
+            ("/etc/config.txt", b"configured"),
+            ("/etc/count.txt", b"3"),
+        ]
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
     def test_run_from_template_uses_v1_request_shape(self) -> None:
         from cwsandbox._proto import sandbox_pb2
 
@@ -459,6 +474,49 @@ class TestSandboxRun:
         assert list(request.overrides.containers[0].args) == ["-c", "echo ready"]
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
+    def test_run_from_template_without_overrides_is_sparse(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(template_id="template-123")
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert list(request.overrides.containers) == []
+        assert request.overrides.primary_container == ""
+        assert request.overrides.ListFields() == []
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_args_only_does_not_steal_command(self) -> None:
+        """Positional *args are command args, not a new command name."""
+        stub = MagicMock()
+        stub.CreateSandboxFromTemplate = AsyncMock(
+            return_value=_create_sandbox_response("template-id")
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_template("template-123", "-c", "echo ready")
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        container = request.overrides.containers[0]
+        assert container.command == ""
+        assert list(container.args) == ["-c", "echo ready"]
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_rejects_image_pull_credentials(self) -> None:
+        with pytest.raises(
+            TypeError, match="image_pull_credentials is not supported with template sandboxes"
+        ):
+            Sandbox.run_from_template(
+                "template-123",
+                image_pull_credentials=ImagePullCredentials(
+                    registry="ghcr.io",
+                    store="wandb",
+                    name="registry-creds",
+                ),
+            )
+
     @pytest.mark.parametrize(
         ("kwargs", "message"),
         [
@@ -475,6 +533,7 @@ class TestSandboxRun:
                 {"max_timeout_seconds": 30},
                 "max_timeout_seconds was removed in cwsandbox 1.x",
             ),
+            ({"ports": [{"container_port": 8080}]}, "ports was removed in cwsandbox 1.x"),
         ],
     )
     def test_run_rejects_removed_kwargs(self, kwargs: dict[str, Any], message: str) -> None:
@@ -3085,6 +3144,28 @@ class TestSandboxAnnotations:
 
         assert sandbox._annotations == {}
 
+    def test_from_sandbox_info_captures_scratch_volume_names(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        info = sandbox_pb2.Sandbox(
+            sandbox_id="test-id",
+            spec=sandbox_pb2.SandboxSpec(
+                volumes=[
+                    sandbox_pb2.SandboxVolume(name="cache", scratch={}),
+                    sandbox_pb2.SandboxVolume(name="persistent", volume_id="vol-1"),
+                ]
+            ),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+
+        assert sandbox._scratch_volume_names == ("cache",)
+
     def test_from_sandbox_info_default_poll_fields(self) -> None:
         """_from_sandbox_info applies poll defaults when callers omit them."""
         mock_info = MagicMock()
@@ -3500,7 +3581,6 @@ class TestSandboxKwargsValidation:
                 "echo",
                 "hello",
                 resources={"cpu": "100m"},
-                ports=[{"container_port": 8080}],
                 secrets=secrets,
             )
             from cwsandbox._types import ResourceOptions
@@ -3510,7 +3590,6 @@ class TestSandboxKwargsValidation:
             assert isinstance(stored_res, ResourceOptions)
             assert stored_res.requests == {"cpu": "100m"}
             assert stored_res.limits == {"cpu": "100m"}
-            assert sandbox._start_kwargs["ports"] == [{"container_port": 8080}]
             stored = sandbox._start_kwargs["secrets"]
             assert len(stored) == 1 and stored[0].store == "wandb"
             assert stored[0].name == "OPENAI_API_KEY"
@@ -6628,3 +6707,37 @@ class TestStreamLogsV1Basic:
         req = mock_stub.StreamLogs.call_args[0][0]
         assert isinstance(req, sandbox_pb2.StreamLogsRequest)
         assert req.sandbox_id == "sb-test"
+
+    @pytest.mark.asyncio
+    async def test_fresh_reinit_discards_resume_state_and_partial_line(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"stale", session_id="session-1", offset=5),
+                    _error_frame("REPLAY_GAP"),
+                ],
+                [_data_frame(b"fresh\n", session_id="session-2", offset=6)],
+            ]
+        )
+
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert items == ["fresh\n", None]
+        assert programmed.call_count == 2
+        assert programmed.init_messages[1].resume_log_session_id == ""
+        assert programmed.init_messages[1].resume_log_offset == 0
+
+    @pytest.mark.asyncio
+    async def test_invalid_resume_offset_is_terminal(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [[_error_frame("INVALID_RESUME_OFFSET", "invalid offset")]]
+        )
+
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert len(items) == 1
+        assert isinstance(items[0], SandboxError)
+        assert "invalid offset" in str(items[0])
+        assert programmed.call_count == 1
