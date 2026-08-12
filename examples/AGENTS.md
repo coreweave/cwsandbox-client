@@ -14,7 +14,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 
 | File | Pattern | Entry Point | Description |
 |------|---------|-------------|-------------|
-| `discover_infrastructure.py` | Sync | `def main()` | List profiles and runners, filter by networking and capacity |
+| `discover_infrastructure.py` | Sync | `def main()` | List runners, filter by visibility and capacity; placement tips |
 | `quick_start.py` | Sync | `def main()` | Context manager with exec |
 | `basic_execution.py` | Sync | `def main()` | Context manager pattern with exec, file ops |
 | `streaming_exec.py` | Sync | `def main()` | Real-time stdout iteration |
@@ -26,7 +26,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
 | `delete_sandboxes.py` | Sync | `def main()` | Deletion patterns with `Sandbox.delete()` |
 | `interactive_streaming_sandbox.py` | Sync | `def main()` | Log streaming with `stream_logs()` and CLI interaction |
-| `list_stopped_sandboxes.py` | Sync | `def main()` | List sandboxes including stopped with `include_stopped=True` |
+| `list_stopped_sandboxes.py` | Sync | `def main()` | List sandboxes including stopped with `show_terminated=True` |
 | `reconnect_to_sandbox.py` | Sync | `def main()` | Attach via `Sandbox.from_id()` |
 | `async_patterns.py` | Async | `async def main()` | Using await with OperationRef and Process |
 | `session_adopt_orphans.py` | Sync | `def main()` | Orphan management with `session.list()` |

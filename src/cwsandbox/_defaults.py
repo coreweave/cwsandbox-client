@@ -180,8 +180,8 @@ def _resolve_selector(
     - Else if default is truthy (non-empty), return list(default).
     - Else return None.
 
-    This captures the independent-precedence invariant used for profile_ids,
-    profile_names, and runner_ids across Sandbox and Session.
+    This captures the independent-precedence invariant used for ``runner_ids``
+    (and historically other selector lists) across Sandbox and Session.
 
     Raises:
         TypeError: If ``override`` or ``default`` is a bare string. Strings
@@ -282,25 +282,20 @@ class SandboxDefaults:
             None lets the backend control the default.
         temp_dir: Temp directory path inside the sandbox.
         tags: Tags for filtering and organizing sandboxes.
-        profile_ids: Legacy selector accepting profile IDs. Prefer
-            ``profile_names``. Resolves independently of ``profile_names``:
-            setting one explicitly does not suppress the other's default.
-            Pass an empty list to explicitly clear any default; pass None
-            (the default) to inherit any configured default.
-        profile_names: Select sandboxes by profile name. Resolves
-            independently of ``profile_ids``: both may be combined.
-            Pass an empty list to explicitly clear any default; pass None
-            (the default) to inherit any configured default.
-        runner_ids: Restrict to specific runner IDs. Pass an empty list to
+        runner_ids: Restrict to specific runner IDs (CKS). Pass an empty list to
             explicitly clear any default; pass None (the default) to inherit
-            any configured default.
+            any configured default. Incompatible with serverless placement.
+        placement_mode: ``PlacementMode`` (``serverless`` / ``cks``) or string.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
-        network: Network configuration via ``NetworkOptions``.
-        file_system_snapshot: File-system snapshot (FSS) mount configuration via
+        network: Deny-flag network options via ``NetworkOptions``.
+        services: Typed service ports (``Service``) for PUBLIC/PRIVATE/CUSTOM.
+        volumes: Named scratch volumes (``ScratchVolumeOptions``) for FSS mounts.
+        file_system_snapshot: Convenience single-mount FSS options via
             ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
-            size); an explicit ``run()`` value replaces it wholesale.
-        secrets: Secrets to inject as environment variables.
+            size); an explicit ``run()`` value replaces it wholesale. Prefer
+            ``volumes=`` for multi-volume setups.
+        secrets: Secrets to inject as environment variables at create time.
         environment_variables: Environment variables injected into the sandbox.
         annotations: Kubernetes pod annotations (key-value string pairs).
             Merged with per-sandbox annotations; explicit values override defaults.
@@ -390,8 +385,8 @@ class SandboxDefaults:
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
-        - ``args``, ``tags``, ``profile_ids``, ``profile_names``,
-          ``runner_ids`` lists -> tuples
+        - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes`` lists
+          -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:

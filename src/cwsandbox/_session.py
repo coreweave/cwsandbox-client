@@ -353,26 +353,23 @@ class Session:
             args: Arguments for the command
             container_image: Container image to use
             tags: Tags for the sandbox (merged with session defaults)
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -477,16 +474,10 @@ class Session:
         Args:
             tags: Additional tags to filter by (merged with session's default tags)
             status: Filter by status
-            profile_ids: Optional list of profile IDs for infrastructure selection
-                (defaults to session's profile_ids if set). See
-                SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). Defaults to session's
-                profile_names if set. See SandboxDefaults.profile_names for
-                semantics.
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
-            include_stopped: If True, include terminal sandboxes (completed,
+            show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
@@ -692,26 +683,23 @@ class Session:
             container_image: Override session's default image for this function
             temp_dir: Override temp directory for payload/result files in sandbox.
                 Defaults to session default. Created if missing.
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.

@@ -7,7 +7,7 @@
 """Example: List sandboxes including stopped ones.
 
 By default, Sandbox.list() only returns active sandboxes. Use
-``include_stopped=True`` to also retrieve terminal sandboxes
+``show_terminated=True`` to also retrieve terminal sandboxes
 (completed, failed, terminated).
 
 This is useful for:
@@ -23,7 +23,7 @@ Usage:
     uv run examples/list_stopped_sandboxes.py --list
 
     # Include stopped sandboxes to see the completed ones
-    uv run examples/list_stopped_sandboxes.py --list --include-stopped
+    uv run examples/list_stopped_sandboxes.py --list --show-terminated
 """
 
 import argparse
@@ -50,17 +50,17 @@ def create_sandboxes(count: int) -> None:
         print(f"  Completed: {sb.sandbox_id}")
 
     print(f"\nAll {count} sandboxes completed.")
-    print("Run with --list --include-stopped to see them.")
+    print("Run with --list --show-terminated to see them.")
 
 
-def list_sandboxes(include_stopped: bool) -> None:
+def list_sandboxes(show_terminated: bool) -> None:
     """List sandboxes using both Sandbox and Session APIs."""
-    label = "active + stopped" if include_stopped else "active only"
+    label = "active + stopped" if show_terminated else "active only"
     print(f"Listing sandboxes ({label})\n")
 
     # Sandbox.list() - direct class method
     print("=== Sandbox.list() ===")
-    sandboxes = Sandbox.list(tags=[TAG], include_stopped=include_stopped).result()
+    sandboxes = Sandbox.list(tags=[TAG], show_terminated=show_terminated).result()
 
     if not sandboxes:
         print("  No sandboxes found.")
@@ -74,7 +74,7 @@ def list_sandboxes(include_stopped: bool) -> None:
 
     print("\n=== Session.list() ===")
     with Session(defaults) as session:
-        sandboxes = session.list(include_stopped=include_stopped).result()
+        sandboxes = session.list(show_terminated=show_terminated).result()
 
         if not sandboxes:
             print("  No sandboxes found for session tags.")
@@ -98,7 +98,7 @@ def main() -> None:
         help="List sandboxes",
     )
     parser.add_argument(
-        "--include-stopped",
+        "--show-terminated",
         action="store_true",
         help="Include terminal sandboxes (completed, failed, terminated)",
     )
@@ -113,7 +113,7 @@ def main() -> None:
     if args.create:
         create_sandboxes(args.count)
     elif args.list_sandboxes:
-        list_sandboxes(args.include_stopped)
+        list_sandboxes(args.show_terminated)
     else:
         parser.print_help()
 

@@ -4,7 +4,7 @@
 ## v1.0.0 (2026-08-12)
 
 Breaking cutover to the Sandbox **v1** API. Stay on **0.26.x** if you still need
-v1beta2.
+v1beta2. One package version speaks one dialect (no hybrid fallback).
 
 ### Breaking Changes
 
@@ -12,17 +12,24 @@ v1beta2.
   StreamLogs, volumes, templates, settings bucket). Vendored beta stubs
   (`gateway_*`, `streaming_*`, `secrets_*`) are removed.
 - Drop profiles from the public surface (`profile_ids` / `profile_names`,
-  `list_profiles` / `get_profile`, `Profile` / `ProfileNotFoundError`). Place
-  workloads with `placement_mode` and runner filters; use templates for CKS pod
-  fragments.
-- Replace string network modes with typed services: `Service`,
-  `ServiceVisibility`, `ServiceProtocol` on `NetworkOptions`.
+  `list_profiles` / `get_profile`, `Profile`). Place workloads with
+  `placement_mode` and runner filters; use `Sandbox.run_from_template` for CKS
+  pod-fragment templates.
+- Replace string network modes with typed `services=[Service(...)]` using
+  `ServiceVisibility` / `ServiceProtocol`. `NetworkOptions` is now deny-flag
+  only (`deny_egress` / `deny_ingress`), not ingress/egress mode strings.
 - Prefer named scratch volumes (`ScratchVolumeOptions`) for filesystem snapshot
-  mounts; `file_system_snapshot=` remains as a convenience where supported.
-- Reject `s3_mount` and `max_timeout_seconds` with a loud `TypeError` (use
-  `request_timeout_seconds` for client deadlines).
+  mounts; `file_system_snapshot=` remains as a single-mount convenience.
+- List filter rename: `include_stopped` → `show_terminated`. Snapshot/stop
+  idempotency kwarg rename: `idempotency_key` → `request_id`.
+- Reject `s3_mount`, `ports`, and `max_timeout_seconds` with a loud `TypeError`
+  (use `request_timeout_seconds` for client deadlines).
 - `stop()` maps to `DeleteSandbox` under the hood; create uses a frozen
   `request_id` for idempotency.
+
+Surfaces that were never part of the public 0.26 SDK (WIF admin, SecretStore
+admin, NetworkService, TOKEN product endpoints) remain unsupported on 1.0 until
+v1 backends implement them. Create-time `Secret` inject still works.
 
 ### Features
 

@@ -6,6 +6,8 @@ This file provides guidance to AI coding assistants when working with code in th
 
 Python client library for CoreWeave Sandbox - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
 
+**API dialect:** package **1.0.x** speaks Sandbox **v1** only. Callers that still need v1beta2 must pin **`cwsandbox==0.26.x`**. There is no hybrid / dual-dialect mode in one install.
+
 ## Public API and Documentation
 
 When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `scripts/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
@@ -45,8 +47,9 @@ async with Sandbox.run() as sb:
 ```
 
 Key methods:
-- `run(*args, **kwargs)`: Create and start sandbox, return immediately. Accepts advanced configuration kwargs (see below).
-- `start()`: Send start request, return `OperationRef[None]`. Call `.result()` to block until backend accepts.
+- `run(*args, **kwargs)`: Create and start sandbox (CreateSandbox), return immediately. Accepts advanced configuration kwargs (see below). Rejects removed kwargs (`profile_ids`, `profile_names`, `s3_mount`, `ports`, `max_timeout_seconds`) with `TypeError`.
+- `run_from_template(template_id, /, *args, command=None, defaults=None, **kwargs)`: Create from an org template (CreateSandboxFromTemplate) with replace-on-presence overlays.
+- `start()`: Send create request, return `OperationRef[None]`. Call `.result()` to block until backend accepts. Freezes one create `request_id` for idempotent retries.
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Polls through TERMINATING automatically. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
 - `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
@@ -54,32 +57,38 @@ Key methods:
 - `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
 - `read_file(path)`: Return `OperationRef[bytes]`
 - `write_file(path, content)`: Return `OperationRef[None]`
-- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False, wait_for_ready=True, idempotency_key=None)`: Stop sandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the stop RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture a file-system snapshot (FSS) of the configured mount before shutdown — the resulting ID is then available via the `file_system_snapshot_id` property. Because `stop()` coalesces concurrent callers onto one shared stop task, a `snapshot_on_stop=True` request that would join (or observe) a stop not capturing a snapshot — sandbox already stopping/stopped, or a plain `stop()` already in flight — raises `SnapshotOnStopConflictError` rather than completing with no archive; plain stops always coalesce. `wait_for_ready`/`idempotency_key` apply only when `snapshot_on_stop=True` (the client uses a larger timeout when snapshotting, since the stop blocks on the archive). Set `missing_ok=True` to suppress `SandboxNotFoundError`.
-- `snapshot(wait_for_ready=True, idempotency_key=None)`: Capture a file-system snapshot (FSS) of the configured mount without stopping, return `OperationRef[str]` (the new snapshot's ID). Call `Sandbox.get_snapshot(id)` for the full record. Requires the sandbox to have been started with a `file_system_snapshot` mount and the org to be enabled for FSS. Auto-starts the sandbox first if needed. With `wait_for_ready=True` (default) blocks until the snapshot is READY/FAILED. To fork a sandbox, `snapshot()` then `Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(..., file_system_snapshot_id=<id>))`.
+- `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False, wait_for_ready=True, request_id=None)`: Stop sandbox via DeleteSandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the delete RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture a file-system snapshot of the configured scratch volume before shutdown — the resulting ID is then available via the `file_system_snapshot_id` property. Because `stop()` coalesces concurrent callers onto one shared stop task, a `snapshot_on_stop=True` request that would join (or observe) a stop not capturing a snapshot — sandbox already stopping/stopped, or a plain `stop()` already in flight — raises `SnapshotOnStopConflictError` rather than completing with no archive; plain stops always coalesce. `wait_for_ready`/`request_id` apply only when `snapshot_on_stop=True` (the client uses a larger timeout when snapshotting, since the stop blocks on the archive). Set `missing_ok=True` to suppress `SandboxNotFoundError`.
+- `snapshot(wait_for_ready=True, request_id=None)`: Capture a file-system snapshot (FSS) of the configured scratch volume without stopping, return `OperationRef[str]` (the new snapshot's ID). Call `Sandbox.get_snapshot(id)` for the full record. Requires a scratch / `file_system_snapshot` mount and the org to be enabled for FSS. Auto-starts the sandbox first if needed. With `wait_for_ready=True` (default) blocks until the snapshot is READY/FAILED. To fork a sandbox, `snapshot()` then `Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(..., file_system_snapshot_id=<id>))` (or equivalent `volumes=`).
 - `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
 
 Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
-- `sandbox_id`, `runner_id`, `profile_id`, `runner_group_id`, `returncode`, `started_at`
+- `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
+- `service_urls`: Tuple of `(port, name, url)` from typed services once ready (empty until reported)
+- `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
+- Legacy hollow: `profile_id`, `service_address`, `applied_ingress_mode`, `applied_egress_mode` remain as attributes but are unused / always empty on v1
 
-Advanced configuration kwargs (for `run()`, `Session.sandbox()`, and `@session.function()`):
+Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
+- `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string
+- `runner_ids` - CKS runner pin (rejected with serverless)
+- `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol`
+- `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
+- `volumes` - Named scratch volumes via `ScratchVolumeOptions`
+- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox at startup (read-only at runtime; use `write_file()` for writable files)
-- `s3_mount` - S3 bucket mount configuration
-- `ports` - Port mappings for the sandbox
-- `network` - Network configuration via `NetworkOptions` or dict (ingress/egress modes, exposed ports)
-- `file_system_snapshot` - File-system snapshot (FSS) mount configuration via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id` to restore/fork)
-- `secrets` - Secrets to inject from secret stores as environment variables, via `Secret` or dict
-- `max_timeout_seconds` - Maximum timeout for sandbox operations
+- `image_pull_credentials` - Private registry pull credentials (not with template sandboxes)
+- `secrets` - Create-time secret inject from secret stores as env vars, via `Secret` or dict
 - `environment_variables` - Environment variables to inject (merges with defaults)
 - `annotations` - Kubernetes pod annotations (merges with defaults, explicit keys win)
+- Removed (loud `TypeError`): `profile_ids`, `profile_names`, `s3_mount`, `ports`, `max_timeout_seconds` — use `request_timeout_seconds` for client deadlines
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, profile_ids=None, profile_names=None, runner_ids=None, include_stopped=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `include_stopped=True` to include them. `profile_names` and `profile_ids` resolve independently; either or both may be supplied.
+- `Sandbox.list(tags=None, status=None, runner_ids=None, show_terminated=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `profile_ids` / `profile_names` raise `TypeError`.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 - `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
@@ -94,7 +103,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, profile_ids=None, profile_names=None, runner_ids=None, include_stopped=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `include_stopped=True` to include terminal sandboxes. `profile_ids` and `profile_names` each fall back to the matching session default independently.
+- `session.list(tags=None, status=None, runner_ids=None, show_terminated=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `show_terminated=True` to include terminal sandboxes.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -117,11 +126,14 @@ Fields (all optional with sensible defaults):
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
 - `tags` - Tuple of tags for filtering
-- `profile_ids`, `profile_names`, `runner_ids` - Infrastructure filtering (optional tuples). `profile_names` is the preferred form; both fields resolve independently through the None/empty/defaults precedence
+- `runner_ids` - Optional CKS runner pin (tuple). Empty list clears a default; `None` inherits
+- `placement_mode` - `PlacementMode` or string (`serverless` / `cks`)
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
-- `network` - Network configuration via `NetworkOptions`
-- `file_system_snapshot` - FSS mount configuration via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
-- `secrets` - Secrets to inject from secret stores (tuple of `Secret`)
+- `network` - Deny-flag `NetworkOptions`
+- `services` - Tuple of typed `Service` ports
+- `volumes` - Tuple of `ScratchVolumeOptions` for named FSS mounts
+- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
+- `secrets` - Create-time secret inject (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
 - `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
 
@@ -170,31 +182,25 @@ data = await ref
 - `TerminalSession`: Handle for an interactive TTY session. Extends `OperationRef[TerminalResult]`. Properties: `output` (StreamReader[bytes] — merged stdout/stderr as raw bytes), `stdin` (StreamWriter — always present), `command` (list executed). Methods: `resize(width, height)` (fire-and-forget), `wait(timeout)` (blocks until session ends, returns exit code), `result(timeout)` (returns TerminalResult). Awaitable in async contexts.
 - `TerminalResult`: Frozen dataclass with `returncode` and `command`. Unlike `ProcessResult`, does not contain captured stdout/stderr because TTY sessions do not buffer output.
 
-**`NetworkOptions`** (`_types.py`): Frozen dataclass for typed network configuration. Controls sandbox ingress and egress modes. The `network` parameter accepts either a `NetworkOptions` instance or a plain dict (which is automatically converted).
+**`PlacementMode`** (`_types.py`): `UNSPECIFIED` | `SERVERLESS` | `CKS`. Use with `runner_ids` only for CKS.
 
-Fields:
-- `ingress_mode: str | None` - Inbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
-- `exposed_ports: tuple[int, ...] | None` - Ports to expose (required with `ingress_mode`). Lists are normalized to tuples for immutability.
-- `egress_mode: str | None` - Outbound traffic mode. Available modes depend on the profile configurations of runners you have access to.
+**`Service` / `ServiceVisibility` / `ServiceProtocol`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults.
 
-Usage:
 ```python
-from cwsandbox import NetworkOptions
+from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox
 
-# Using NetworkOptions (recommended for type safety)
 sandbox = Sandbox.run(
-    network=NetworkOptions(
-        ingress_mode="public",
-        exposed_ports=(8080,),
-        egress_mode="internet",
-    ),
+    services=[Service(port=8080, visibility=ServiceVisibility.PUBLIC)],
 )
 
-# Using dict (convenient for quick scripts)
+# CKS pin
 sandbox = Sandbox.run(
-    network={"ingress_mode": "public", "exposed_ports": [8080]},
+    placement_mode=PlacementMode.CKS,
+    runner_ids=["runner-123"],
 )
 ```
+
+**`NetworkOptions`** (`_types.py`): Deny-flag network options only (`deny_egress`, `deny_ingress`). Port exposure is via `services=`, not this type.
 
 **`Secret`** (`_types.py`): Frozen dataclass for injecting secrets from secret stores into sandbox environment variables. The `secrets` parameter accepts `Secret` instances or plain dicts (which are automatically converted via `Secret(**d)`).
 
@@ -258,34 +264,39 @@ sandbox = Sandbox.run(
 )
 ```
 
-**File System Snapshots (FSS)** (`_types.py`): A configured working directory can be snapshotted (on request or on stop) and restored into new sandboxes, letting you fork a sandbox's filesystem. FSS is gated per-organization on the backend; orgs that are not enabled get `SnapshotNotSupportedError`.
+**File System Snapshots (FSS)** (`_types.py`): A configured scratch volume can be snapshotted (on request or on stop) and restored into new sandboxes. FSS is gated per-organization on the backend; orgs that are not enabled get `SnapshotNotSupportedError`.
 
-- **`FileSystemSnapshotOptions`**: Frozen dataclass for the FSS mount. Fields: `mount_path` (absolute dir, required — this is the configured directory captured/restored), `size` (K8s quantity like `"10Gi"`, optional), `file_system_snapshot_id` (optional — set to restore that snapshot into `mount_path` at start). Accepts a plain dict. Passed as `file_system_snapshot=` to `run()`/`Session.sandbox()`/`@session.function()` and settable on `SandboxDefaults`.
-- **`FileSystemSnapshot`**: Frozen record returned by `get_snapshot()` and `list_snapshots()` (`snapshot()` returns only the ID). Fields: `file_system_snapshot_id`, `status` (`FileSystemSnapshotStatus`), `status_reason`, `size_bytes`, `source_sandbox_id`, `trigger` (`FileSystemSnapshotTrigger`), `idempotency_key`, `object_bucket`, `created_at`/`updated_at`/`completed_at`.
+- **`ScratchVolumeOptions`**: Named volume mount. Fields: `name`, `mount_path` (absolute), optional `size`, optional `restore_from_snapshot_id`. Prefer `volumes=` for multi-volume setups.
+- **`FileSystemSnapshotOptions`**: Convenience single-mount wrapper (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Maps to a scratch volume via `to_scratch_volume()`.
+- **`FileSystemSnapshot`**: Frozen record from `get_snapshot()` / `list_snapshots()` (`snapshot()` returns only the ID). Fields include `file_system_snapshot_id`, `status`, `status_reason`, `size_bytes`, `source_sandbox_id`, `trigger`, `request_id`, `object_bucket`, `source_volume_name`, timestamps.
 - **`FileSystemSnapshotStatus`**: StrEnum — `UNSPECIFIED`, `CREATING`, `READY`, `FAILED`, `DELETING`.
-- **`FileSystemSnapshotTrigger`**: StrEnum — `UNSPECIFIED`, `STOP` (from `stop(snapshot_on_stop=True)`), `MANUAL` (from `snapshot()`).
+- **`FileSystemSnapshotTrigger`**: StrEnum — `UNSPECIFIED`, `ON_DELETE` (from `stop(snapshot_on_stop=True)`), `MANUAL` (from `snapshot()`).
 - **`FileSystemSnapshotBucketConfig`** / **`FileSystemSnapshotBucketMode`**: Org bucket config (`mode`, `bucket_name`, `region`, `effective_bucket_name`); mode is `UNSPECIFIED`/`CW_MANAGED`/`BRING_YOUR_OWN`.
 
 Usage:
 ```python
-from cwsandbox import Sandbox, FileSystemSnapshotOptions
+from cwsandbox import Sandbox, FileSystemSnapshotOptions, ScratchVolumeOptions
 
-# Start with a snapshot-capable mount and snapshot it (returns the ID)
+# Convenience single mount
 with Sandbox.run(
     file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace", size="10Gi"),
 ) as sb:
     sb.exec(["sh", "-c", "echo seed > /workspace/data.txt"]).result()
-    snapshot_id = sb.snapshot().result()          # str (snapshot is READY)
+    snapshot_id = sb.snapshot().result()
 
-# Fork = restore the snapshot into a fresh sandbox
+# Explicit named scratch volume
 with Sandbox.run(
-    file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace", file_system_snapshot_id=snapshot_id),
-) as restored:
+    volumes=[ScratchVolumeOptions(name="workspace", mount_path="/workspace", size="10Gi")],
+) as sb:
     ...
 
-# Snapshot on stop, then read the ID
-sb.stop(snapshot_on_stop=True).result()
-file_system_snapshot_id = sb.file_system_snapshot_id
+# Fork = restore into a fresh sandbox
+with Sandbox.run(
+    file_system_snapshot=FileSystemSnapshotOptions(
+        mount_path="/workspace", file_system_snapshot_id=snapshot_id
+    ),
+) as restored:
+    ...
 ```
 
 ### Authentication Flow
@@ -396,17 +407,15 @@ done, pending = cwsandbox.wait(procs, timeout=30.0)
 
 ### Discovery API
 
-Module-level sync functions (`_discovery.py`) for querying available runners and capabilities. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed). Profiles were removed in 1.x.
+Module-level sync functions (`_discovery.py`) for querying available runners and capabilities. These are simple read-only queries that return results directly (no `OperationRef`/`await` needed). **Profiles are removed** — place with `placement_mode` + runner capabilities / `runner_ids`.
 
 **Functions:**
-- `list_runners(*, organization_id=None, runner_group_id=None, gpu_type=None, architecture=None, include_resources=False, min_available_cpu_millicores=None, min_available_memory_bytes=None, min_available_gpu_count=None, service_visibility=None, healthy_only=False, ...)` -> `list[Runner]`: List available runners with optional filtering. Set `include_resources=True` for live resource availability. Auto-paginates.
-- `get_runner(runner_id, *, organization_id=...)` -> `Runner`: Get a single runner by ID (organization_id required). Raises `RunnerNotFoundError` if not found.
+- `list_runners(*, runner_group_id=None, gpu_type=None, architecture=None, healthy_only=False, include_resources=False, min_available_cpu_millicores=None, min_available_memory_bytes=None, min_available_gpu_count=None, service_visibility=None)` -> `list[Runner]`: List available runners with optional filtering. Set `include_resources=True` for live resource availability. Auto-paginates.
+- `get_runner(runner_id, *, organization_id)` -> `Runner`: Get a single runner by `(organization_id, runner_id)`. Raises `RunnerNotFoundError` if not found.
 
 **Types:**
-- `Runner`: Frozen dataclass with runner capabilities (CPU, memory, GPU), health status, `profile_names`, and optional `RunnerResources`. Has human-readable `__repr__`.
+- `Runner`: Frozen dataclass with capacity, `supported_gpu_types`, `supported_architectures`, `supported_service_visibilities`, optional `RunnerResources`. Has human-readable `__repr__`.
 - `RunnerResources`: Live resource availability (`available_cpu_millicores`, `available_memory_bytes`, `available_gpu_count`, `running_sandboxes`).
-- `Profile`: Frozen dataclass with `profile_name`, `runner_id`, `supported_gpu_types`, `supported_architectures`, and `service_exposure_modes`/`egress_modes`.
-- `ServiceExposureMode`, `EgressMode`: Wrapper dataclasses (with `name` field) for forward compatibility.
 
 **Utilities:**
 - `format_bytes(value)`: Format bytes as human-readable string (e.g., `17179869184` -> `'16.0 GiB'`).
@@ -416,24 +425,23 @@ Usage:
 ```python
 import cwsandbox
 
-# List all runners with resources
-runners = cwsandbox.list_runners(include_resources=True)
+runners = cwsandbox.list_runners(include_resources=True, service_visibility="public")
 for r in runners:
-    print(r)  # Human-readable repr
+    print(r)
 
-# Get a specific runner
-runner = cwsandbox.get_runner("runner-123")
+runner = cwsandbox.get_runner("runner-123", organization_id=runners[0].organization_id)
 print(f"CPU: {cwsandbox.format_cpu(runner.max_cpu_millicores)}")
-
-# Filter runners by capability / visibility
-runners = cwsandbox.list_runners(gpu_type="A100", include_resources=True)
 ```
 
-Use `placement_mode`, `runner_ids`, and discovery capabilities instead of removed profiles. The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated for v1 types.
+The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated for v1 types.
+
+### Unsupported on 1.0 (not a hybrid fallback)
+
+These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject and FSS bucket get/set still work.
 
 ### Backend Communication
 
-Uses gRPC via `grpcio` with vendored proto stubs in `src/cwsandbox/_proto/`. The stubs (`gateway_pb2`, `gateway_pb2_grpc`, `streaming_pb2`, `streaming_pb2_grpc`) are updated via `scripts/update-protos.sh`.
+Uses gRPC via `grpcio` with vendored v1 proto stubs in `src/cwsandbox/_proto/` (`sandbox_*`, `discovery_*`, `settings_*`, `sandbox_template_*`, `volume_*`). Refresh via `scripts/update-protos.sh` (protobuf runtime v26.1; see `scripts/buf.gen.python.yaml`).
 
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 
@@ -510,11 +518,12 @@ CWSandboxError
 │       ├── SnapshotQuotaExceededError   # CWSANDBOX_FSS_QUOTA_EXCEEDED
 │       └── SnapshotBucketMismatchError  # CWSANDBOX_FSS_BUCKET_MISMATCH (reversible)
 ├── DiscoveryError
-│   ├── RunnerNotFoundError              # .runner_id attribute
-│   └── ProfileNotFoundError             # .profile_name, .runner_id attributes
+│   └── RunnerNotFoundError              # .runner_id attribute
 └── FunctionError
     └── AsyncFunctionError
 ```
+
+(`ProfileNotFoundError` may still exist in `exceptions.py` for import compatibility but is not part of the public 1.0 surface.)
 
 **Poll retry classification**: The sandbox-status poll loop splits exception
 classes into retryable and fatal, dispatched purely by ``isinstance`` against a
@@ -532,20 +541,22 @@ are retried — transient unavailability, request-deadline, resource-exhaustion,
 and FSS backend-throttling. Everything else (NOT_FOUND, FAILED_PRECONDITION,
 quota/size, NOT_SUPPORTED) is fatal on the first attempt. Backoff is decorrelated
 jitter honoring AIP-193 `RetryInfo` hints, via the shared `_retry_transient_rpc`
-helper. `snapshot()` auto-generates an idempotency key when the caller omits one,
+helper. `snapshot()` auto-generates a `request_id` when the caller omits one,
 so a retried create dedups instead of producing a duplicate snapshot.
 
 ## Examples
 
 The `examples/` directory contains runnable scripts demonstrating common patterns:
+- `discover_infrastructure.py` - Runner discovery, visibilities, capacity filters, placement tips
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py`, `stdin_streaming.py` - Sandbox creation and execution
 - `resource_configuration.py` - ResourceOptions, flat dict, nested dict, GPU, and response properties
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
 - `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)
-- `reconnect_to_sandbox.py`, `async_patterns.py` - Discovery and reconnection
+- `reconnect_to_sandbox.py`, `async_patterns.py` - Reconnection and async patterns
 - `delete_sandboxes.py` - Deletion patterns with `Sandbox.delete()`
-- `file_system_snapshots.py` - Snapshot/restore/fork with `file_system_snapshot`, `snapshot()`, and snapshot management
+- `list_stopped_sandboxes.py` - `Sandbox.list(show_terminated=True)`
+- `file_system_snapshots.py` - Snapshot/restore/fork with `file_system_snapshot` / scratch volumes
 - `error_handling.py` - Exception hierarchy and error recovery patterns
 - `session_adopt_orphans.py`, `cleanup_by_tag.py`, `cleanup_old_sandboxes.py` - Orphan management and cleanup
 - `parallel_batch_job.py` - Parallel batch processing with progress tracking
@@ -553,6 +564,8 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 See `examples/README.md` and `examples/AGENTS.md` for full documentation. For detailed guides, see [docs.coreweave.com](https://docs.coreweave.com/products/coreweave-sandbox/client).
 
 ### Key Design Decisions
+
+**One dialect per release**: 1.0.x is Sandbox v1 only; freeze 0.26.x for v1beta2. No dual stubs or `api_version` switch.
 
 **Thread Safety**: The sync API is designed for **single-threaded use**. Calling `.result()` from multiple threads simultaneously is not supported without external synchronization. Users wanting multi-threaded access should use one sandbox per thread or add their own locking. This is intentional to keep the implementation simple.
 

@@ -1306,36 +1306,33 @@ class Sandbox:
                 (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side). If not set,
                 the backend controls the default.
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin (incompatible with serverless).
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id``. When
-                ``file_system_snapshot_id`` is set, the snapshot is restored into
-                ``mount_path`` at start (fork); otherwise the mount starts empty.
-                Requires the organization to be enabled for FSS.
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
+            services: Typed service ports (``Service`` list/tuple).
+            volumes: Named scratch volumes (``ScratchVolumeOptions``).
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups. Requires the organization to be enabled for FSS.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
-            secrets: Secrets to inject as environment variables.
+            secrets: Secrets to inject as environment variables at create time.
                 Merged with defaults (defaults first, then this list).
         """
         if network is not None:
@@ -1621,35 +1618,33 @@ class Sandbox:
                 (default: 15s). Separate from request_timeout_seconds.
             max_lifetime_seconds: Max sandbox lifetime (server-side)
             tags: Optional tags for the sandbox
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin (incompatible with serverless).
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id``. When
-                ``file_system_snapshot_id`` is set, the snapshot is restored into
-                ``mount_path`` at start (fork); otherwise the mount starts empty.
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
+            services: Typed service ports (``Service`` list/tuple).
+            volumes: Named scratch volumes (``ScratchVolumeOptions``).
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
-            secrets: Secrets to inject as environment variables.
+            secrets: Secrets to inject as environment variables at create time.
                 Merged with defaults (defaults first, then this list).
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
@@ -1921,12 +1916,8 @@ class Sandbox:
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
@@ -2728,9 +2719,10 @@ class Sandbox:
 
     @property
     def profile_id(self) -> str | None:
-        """Profile where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
-            return self._state.profile_id
+        """Always ``None`` on Sandbox v1 (profiles were removed).
+
+        Kept for attribute compatibility with older call sites.
+        """
         return None
 
     @property
@@ -2783,41 +2775,40 @@ class Sandbox:
         return None
 
     @property
+    def service_urls(self) -> tuple[tuple[int, str, str], ...]:
+        """Per-service URLs reported by the backend once ready.
+
+        Each entry is ``(port, name, url)``. Empty until the sandbox reports
+        service status (typically after RUNNING). Prefer this over the legacy
+        ``service_address`` property.
+        """
+        return self._service_urls
+
+    @property
     def service_address(self) -> str | None:
-        """External address for accessing sandbox services.
+        """Legacy singular address; usually ``None`` on Sandbox v1.
 
-        Returns an address like '166.19.9.70:8080' for network-accessible sandboxes
-        (SSH, web services). Availability depends on runner configuration.
-
-        Returns None if:
-        - Sandbox hasn't been started yet
-        - Sandbox was obtained via from_id() or list()
-        - Runner uses ClusterIP instead of LoadBalancer
+        Prefer ``service_urls`` for per-service URLs from typed services.
         """
         return self._service_address
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
-        """Exposed ports for the sandbox.
+        """Exposed ``(container_port, name)`` pairs derived from typed services.
 
-        Returns a tuple of (container_port, name) tuples for ports exposed by
-        the sandbox. Useful for network-accessible sandboxes.
-
-        Returns None if:
-        - Sandbox hasn't been started yet
-        - Sandbox was obtained via from_id() or list()
-        - No ports were exposed
+        Populated from status service entries when URLs/ports are reported.
+        ``None`` until the sandbox has reported services (or none were exposed).
         """
         return self._exposed_ports
 
     @property
     def applied_ingress_mode(self) -> str | None:
-        """The ingress mode applied by the backend (set after start)."""
+        """Legacy beta echo field; always ``None`` on Sandbox v1."""
         return self._applied_ingress_mode
 
     @property
     def applied_egress_mode(self) -> str | None:
-        """The egress mode applied by the backend (set after start)."""
+        """Legacy beta echo field; always ``None`` on Sandbox v1."""
         return self._applied_egress_mode
 
     @property
@@ -3812,6 +3803,8 @@ class Sandbox:
         )
         status = view._sandbox.status
         self._service_urls = tuple((s.port, s.name, s.url) for s in status.services if s.url)
+        if status.services:
+            self._exposed_ports = tuple((s.port, s.name) for s in status.services)
         if status.HasField("effective_resource_requirements"):
             err = status.effective_resource_requirements
             if err.HasField("limits"):

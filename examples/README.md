@@ -263,13 +263,13 @@ python examples/list_stopped_sandboxes.py --create
 python examples/list_stopped_sandboxes.py --list
 
 # Include stopped sandboxes to see completed ones
-python examples/list_stopped_sandboxes.py --list --include-stopped
+python examples/list_stopped_sandboxes.py --list --show-terminated
 ```
 
 Demonstrates:
 - Creating sandboxes that complete immediately for testing
-- Using `Sandbox.list(include_stopped=True)` to include terminal sandboxes
-- Using `session.list(include_stopped=True)` with session tags
+- Using `Sandbox.list(show_terminated=True)` to include terminal sandboxes
+- Using `session.list(show_terminated=True)` with session tags
 - Comparing active-only vs all-sandboxes results
 
 ### Cleanup Old Sandboxes (`cleanup_old_sandboxes.py`)

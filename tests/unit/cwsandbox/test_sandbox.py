@@ -5511,13 +5511,13 @@ class TestTerminalStateProperties:
         )
         assert sandbox.runner_id == "tower-99"
 
-    def test_profile_id_from_terminal_state(self) -> None:
-        """Properties read profile_id from _Terminal state."""
+    def test_profile_id_always_none_on_v1(self) -> None:
+        """profile_id is hollow on v1 even when internal state carries a value."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Terminal(
             sandbox_id="sb-1", status=SandboxStatus.COMPLETED, profile_id="runway-99"
         )
-        assert sandbox.profile_id == "runway-99"
+        assert sandbox.profile_id is None
 
 
 class TestTerminatingStatus:
@@ -5928,11 +5928,11 @@ class TestStoppingProperties:
         sandbox._state = _Stopping(sandbox_id="sb-1", runner_id="tower-1")
         assert sandbox.runner_id == "tower-1"
 
-    def test_profile_id_accessible_in_stopping(self) -> None:
-        """profile_id is accessible in _Stopping state."""
+    def test_profile_id_none_in_stopping(self) -> None:
+        """profile_id stays None in _Stopping state on v1."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._state = _Stopping(sandbox_id="sb-1", profile_id="runway-1")
-        assert sandbox.profile_id == "runway-1"
+        assert sandbox.profile_id is None
 
     def test_runner_group_id_accessible_in_stopping(self) -> None:
         """runner_group_id is accessible in _Stopping state."""
