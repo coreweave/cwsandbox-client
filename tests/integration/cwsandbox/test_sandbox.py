@@ -154,7 +154,8 @@ def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
 
 def test_sandbox_large_file_operations(sandbox_defaults: SandboxDefaults) -> None:
     """Test file operations above grpcio's historical 4 MiB default."""
-    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+    defaults = sandbox_defaults.with_overrides(max_lifetime_seconds=150)
+    with Sandbox.run(defaults=defaults) as sandbox:
         payload = bytes(i % 251 for i in range(5 * 1024 * 1024))
         filepath = f"/tmp/test_large_file_{uuid.uuid4().hex}.bin"
 
@@ -181,7 +182,14 @@ def test_sandbox_large_file_exec_fallback(sandbox_defaults: SandboxDefaults) -> 
             "Read file resource exhausted: CLIENT: Received message larger than max"
         )
 
-    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+    # Exec-stream fallback buffers the payload in-guest; the shared 256Mi
+    # fixture OOMs (exit 137) on a 20 MiB round-trip. Lifetime matches the
+    # other large-file test so the transfer is not cut off at 60s.
+    defaults = sandbox_defaults.with_overrides(
+        max_lifetime_seconds=150,
+        resources={"cpu": "1", "memory": "2Gi"},
+    )
+    with Sandbox.run(defaults=defaults) as sandbox:
         payload = bytes(i % 256 for i in range(20 * 1024 * 1024))
         filepath = f"/tmp/test_fallback_file_{uuid.uuid4().hex}.bin"
 
