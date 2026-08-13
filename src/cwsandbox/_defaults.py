@@ -450,9 +450,7 @@ class SandboxDefaults:
             kwargs[key] = tuple(val)
         services = kwargs.get("services")
         if services is not None:
-            kwargs["services"] = tuple(
-                Service(**s) if isinstance(s, dict) else s for s in services
-            )
+            kwargs["services"] = tuple(Service(**s) if isinstance(s, dict) else s for s in services)
         volumes = kwargs.get("volumes")
         if volumes is not None:
             kwargs["volumes"] = tuple(

@@ -3872,9 +3872,7 @@ class Sandbox:
                 container.volume_mounts.extend(source_container.volume_mounts)
             if "secrets" in explicit_keys:
                 container.secret_stores.extend(source_container.secret_stores)
-            if "resources" in explicit_keys and source_container.HasField(
-                "resource_requirements"
-            ):
+            if "resources" in explicit_keys and source_container.HasField("resource_requirements"):
                 container.resource_requirements.CopyFrom(source_container.resource_requirements)
         else:
             container = sandbox_pb2.PartialContainer()
@@ -4639,8 +4637,8 @@ class Sandbox:
                     self._file_system_snapshot_id = snapshot_ids[0]
                     self._file_system_snapshot_ids = tuple(snapshot_ids)
 
-                response_has_sandbox = (
-                    hasattr(response, "HasField") and response.HasField("sandbox")
+                response_has_sandbox = hasattr(response, "HasField") and response.HasField(
+                    "sandbox"
                 )
                 if missing_ok and not response_has_sandbox:
                     self._state = _Terminal(
