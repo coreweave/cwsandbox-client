@@ -5142,10 +5142,14 @@ class Sandbox:
                 ) from last_transport_error
             inner_exit_clean = True
         except Exception as e:
+            # Same guaranteed-delivery pattern as read_file streaming: a
+            # bounded output_queue is often full exactly when a terminal
+            # stream error arrives. Dropping on QueueFull leaves the
+            # consumer hung on the next get().
             try:
                 output_queue.put_nowait(e)
             except asyncio.QueueFull:
-                pass
+                asyncio.create_task(output_queue.put(e))
         finally:
             if inner_exit_clean:
                 await output_queue.put(None)

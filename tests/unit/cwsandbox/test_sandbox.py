@@ -7272,6 +7272,62 @@ class TestStreamLogsV1Basic:
         assert programmed.call_count == 1
 
     @pytest.mark.asyncio
+    async def test_terminal_error_delivered_when_queue_full(self) -> None:
+        """A terminal log-stream error must reach the consumer even when the
+        bounded output queue is full (slow-reader backpressure).
+        """
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox = _build_sandbox_for_log_stream()
+        entry = sandbox_pb2.LogEntry(
+            error=sandbox_pb2.LogStreamError(
+                code="INVALID_RESUME_OFFSET", message="bad resume"
+            )
+        )
+
+        class _Call:
+            def __init__(self, items: list[Any]) -> None:
+                self._items = items
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self) -> Any:
+                if not self._items:
+                    raise StopAsyncIteration
+                return self._items.pop(0)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.StreamLogs = MagicMock(return_value=_Call([entry]))
+
+        output_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
+        output_queue.put_nowait("prefill")
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch.object(
+                sandbox,
+                "_get_or_create_streaming_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            producer = asyncio.create_task(
+                sandbox._stream_logs_async(output_queue, follow=False)
+            )
+            prefill = await asyncio.wait_for(output_queue.get(), timeout=2.0)
+            assert prefill == "prefill"
+            item = await asyncio.wait_for(output_queue.get(), timeout=2.0)
+            await asyncio.wait_for(producer, timeout=2.0)
+
+        assert isinstance(item, SandboxError)
+        assert "bad resume" in str(item)
+
+    @pytest.mark.asyncio
     async def test_resume_attempt_omits_timestamps(self) -> None:
         sandbox = _build_sandbox_for_log_stream()
         init_messages: list[Any] = []
