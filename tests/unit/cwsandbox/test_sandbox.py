@@ -8,6 +8,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import math
+import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import UTC
 from typing import Any
@@ -7326,6 +7327,78 @@ class TestStreamLogsV1Basic:
 
         assert isinstance(item, SandboxError)
         assert "bad resume" in str(item)
+
+    def test_stream_logs_raises_when_queue_full_on_terminal_error(self) -> None:
+        """Public stream_logs() must raise through StreamReader, not hang.
+
+        One log line fills a 1-slot output queue; the next frame is a
+        terminal INVALID_RESUME_OFFSET. After the consumer drains the
+        line, the following read must raise SandboxError rather than
+        block forever.
+        """
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox = _build_sandbox_for_log_stream()
+        entries = [
+            sandbox_pb2.LogEntry(data=b"fill\n", log_session_id="s1", next_log_offset=1),
+            sandbox_pb2.LogEntry(
+                error=sandbox_pb2.LogStreamError(
+                    code="INVALID_RESUME_OFFSET", message="bad resume"
+                )
+            ),
+        ]
+
+        class _Call:
+            def __init__(self, items: list[Any]) -> None:
+                self._items = items
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self) -> Any:
+                if not self._items:
+                    raise StopAsyncIteration
+                return self._items.pop(0)
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.StreamLogs = MagicMock(return_value=_Call(list(entries)))
+
+        async def _anext_timed(reader: Any, timeout: float) -> str:
+            return await asyncio.wait_for(anext(reader), timeout=timeout)
+
+        with (
+            patch("cwsandbox._sandbox.STREAMING_OUTPUT_QUEUE_SIZE", 1),
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch.object(
+                sandbox,
+                "_get_or_create_streaming_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+            patch(
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            reader = sandbox.stream_logs(follow=False)
+            try:
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline and not reader._queue.full():
+                    time.sleep(0.01)
+                assert reader._queue.full(), "producer never filled the 1-slot queue"
+                # Let the background loop process the error frame and
+                # schedule the guaranteed put behind the queued line.
+                sandbox._loop_manager.run_sync(asyncio.sleep(0.05))
+
+                line = sandbox._loop_manager.run_sync(_anext_timed(reader, 2.0))
+                assert line == "fill\n"
+                with pytest.raises(SandboxError, match="bad resume"):
+                    sandbox._loop_manager.run_sync(_anext_timed(reader, 2.0))
+            finally:
+                reader.close()
 
     @pytest.mark.asyncio
     async def test_resume_attempt_omits_timestamps(self) -> None:

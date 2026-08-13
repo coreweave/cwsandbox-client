@@ -1835,3 +1835,75 @@ def test_stream_logs_reconnects_after_transient_disconnect(
             sandbox.stop(missing_ok=True).result()
         except SandboxError:
             pass
+
+
+def _next_log_line(reader: object, timeout: float) -> str:
+    """Read one StreamReader item with a timeout so a hang fails loudly."""
+
+    async def _get() -> str:
+        return await asyncio.wait_for(anext(reader), timeout=timeout)
+
+    return _LoopManager.get().run_sync(_get())
+
+
+def test_stream_logs_terminal_error_reaches_slow_reader(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """stream_logs() must raise when a terminal error arrives on a full queue.
+
+    The unit suite covers the QueueFull put against a stub. This is the
+    public-API smoke against a real StreamLogs RPC: a 1-slot output queue
+    holds the first line, a forced disconnect exhausts a single resume
+    attempt, and the next StreamReader read must raise rather than hang.
+
+    Queue size and resume-attempt caps are patched only so the
+    backpressure-plus-terminal-error race is reachable without flooding
+    4096 lines. The StreamLogs call and StreamReader path are real.
+    """
+    script = (
+        "import sys, time\n"
+        "sys.stdout.write('fill\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(3600)\n"
+    )
+    sandbox = Sandbox.run("python", "-c", script, defaults=sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        with (
+            patch("cwsandbox._sandbox.STREAMING_OUTPUT_QUEUE_SIZE", 1),
+            patch("cwsandbox._sandbox.STREAMING_RESUME_MAX_ATTEMPTS", 1),
+        ):
+            reader = sandbox.stream_logs(follow=True)
+            try:
+                deadline = time.monotonic() + 30.0
+                while time.monotonic() < deadline and not reader._queue.full():
+                    time.sleep(0.05)
+                assert reader._queue.full(), (
+                    "expected the first log line to fill the 1-slot output queue"
+                )
+
+                loop_mgr = _LoopManager.get()
+
+                async def reset_channel() -> None:
+                    if sandbox._streaming_channel is not None:
+                        await sandbox._streaming_channel.close(grace=None)
+                        sandbox._streaming_channel = None
+
+                loop_mgr.run_sync(reset_channel())
+                # One resume backoff (0.5s) plus the terminal raise.
+                loop_mgr.run_sync(asyncio.sleep(1.5))
+
+                line = _next_log_line(reader, timeout=10.0)
+                assert "fill" in line, f"expected the queued fill line, got {line!r}"
+
+                with pytest.raises(SandboxError):
+                    _next_log_line(reader, timeout=10.0)
+            finally:
+                reader.close()
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
