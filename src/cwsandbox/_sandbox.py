@@ -3941,13 +3941,19 @@ class Sandbox:
             )
         if status.HasField("effective_resource_requirements"):
             err = status.effective_resource_requirements
+            gpu: dict[str, Any] | None = None
             if err.HasField("limits"):
                 self._resource_limits = self._resources_from_proto(err.limits)
+                gpu = self._gpu_from_proto(err.limits)
             if err.HasField("requests"):
                 self._resource_requests = self._resources_from_proto(err.requests)
+                if gpu is None:
+                    gpu = self._gpu_from_proto(err.requests)
+            self._resource_gpu = gpu
         elif status.HasField("effective_resources"):
             self._resource_limits = self._resources_from_proto(status.effective_resources)
             self._resource_requests = self._resource_limits
+            self._resource_gpu = self._gpu_from_proto(status.effective_resources)
 
     @staticmethod
     def _resources_from_proto(res: sandbox_pb2.Resources) -> dict[str, str] | None:
@@ -3956,6 +3962,20 @@ class Sandbox:
             d["cpu"] = res.cpu
         if res.memory:
             d["memory"] = res.memory
+        return d or None
+
+    @staticmethod
+    def _gpu_from_proto(res: sandbox_pb2.Resources) -> dict[str, Any] | None:
+        if not res.HasField("gpu"):
+            return None
+        gpu = res.gpu
+        d: dict[str, Any] = {}
+        if gpu.count:
+            d["count"] = gpu.count
+        if gpu.type:
+            d["type"] = gpu.type
+        if gpu.memory_gb:
+            d["memory_gb"] = gpu.memory_gb
         return d or None
 
     async def _get_sandbox_once(self, *, rpc_timeout: float) -> _SandboxView:

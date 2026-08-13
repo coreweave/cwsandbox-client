@@ -3661,8 +3661,17 @@ class TestResourceOptionsWiring:
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()
         mock_stub = MagicMock()
-        status = sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING)
-        # Populate effective resources if the proto supports quantity maps
+        status = sandbox_pb2.SandboxStatus(
+            state=sandbox_pb2.STATE_PENDING,
+            effective_resource_requirements=sandbox_pb2.ResourceRequirements(
+                limits=sandbox_pb2.Resources(
+                    cpu="8",
+                    memory="2Gi",
+                    gpu=sandbox_pb2.Gpu(count=1, type="A100"),
+                ),
+                requests=sandbox_pb2.Resources(cpu="1", memory="256Mi"),
+            ),
+        )
         resp = sandbox_pb2.Sandbox(sandbox_id="r1", status=status)
         mock_stub.CreateSandbox = AsyncMock(return_value=resp)
         with (
@@ -3673,6 +3682,9 @@ class TestResourceOptionsWiring:
             sandbox._auth_metadata = ()
             await sandbox._start_async()
         assert sandbox.sandbox_id == "r1"
+        assert sandbox.resource_limits == {"cpu": "8", "memory": "2Gi"}
+        assert sandbox.resource_requests == {"cpu": "1", "memory": "256Mi"}
+        assert sandbox.resource_gpu == {"count": 1, "type": "A100"}
 
 
 class TestSandboxList:
