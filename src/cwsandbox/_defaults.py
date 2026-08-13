@@ -38,11 +38,10 @@ DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 # budget (graceful_shutdown_seconds), so the client deadline is the sum of both
 # (see _do_stop and the two constants below), not this value alone.
 DEFAULT_FSS_STOP_TIMEOUT_SECONDS: float = 600.0
-# Post-archive pod-delete grace the backend substitutes when a snapshot-on-stop
-# is sent with graceful_shutdown_seconds=0. Mirrors the backend's
-# defaultGraceSecondsAfterFSSnapshot so the client deadline budgets the grace
-# the server will actually apply (sending 0 does NOT mean "no grace").
-DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 30.0
+# Post-archive pod-delete grace budget for snapshot-on-stop client deadlines.
+# In v1, grace_period_seconds=0 means immediate termination (no backend
+# substitute). The client deadline sums archive + grace + slack below.
+DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 0.0
 # Extra slack added to the snapshot-on-stop client deadline on top of the two
 # server phase budgets (archive + grace). Covers the backend's gateway
 # request-context slack (~30s it waits beyond the archive budget) plus ~5s of
@@ -394,12 +393,20 @@ class SandboxDefaults:
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
+        - ``services`` list of dicts -> tuple of ``Service``
+        - ``volumes`` list of dicts -> tuple of ``ScratchVolumeOptions``
         - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes`` lists
           -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:
             return cls()
+        for removed in ("profile_ids", "profile_names"):
+            if removed in d:
+                raise TypeError(
+                    f"SandboxDefaults.from_dict() does not accept {removed!r}; "
+                    "profiles were removed in 1.x"
+                )
         valid = {f.name for f in fields(cls)}
         kwargs: dict[str, Any] = {k: v for k, v in d.items() if k in valid}
         # Drop None values for non-optional fields so they fall back to
@@ -441,6 +448,16 @@ class SandboxDefaults:
             if isinstance(val, str):
                 raise TypeError(f"{key} must be a sequence of strings, not a bare string")
             kwargs[key] = tuple(val)
+        services = kwargs.get("services")
+        if services is not None:
+            kwargs["services"] = tuple(
+                Service(**s) if isinstance(s, dict) else s for s in services
+            )
+        volumes = kwargs.get("volumes")
+        if volumes is not None:
+            kwargs["volumes"] = tuple(
+                ScratchVolumeOptions(**v) if isinstance(v, dict) else v for v in volumes
+            )
         # Coerce resources: preserve ResourceOptions, convert mappings to dicts
         res = kwargs.get("resources")
         if res is not None and not isinstance(res, ResourceOptions):

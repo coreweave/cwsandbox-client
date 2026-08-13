@@ -26,6 +26,7 @@ from cwsandbox import (
     Service,
     ServiceVisibility,
     Session,
+    list_runners,
 )
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._proto import sandbox_pb2 as streaming_pb2
@@ -688,8 +689,42 @@ def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None
         assert sandbox.status == "running"
 
 
+def _wait_for_service_urls(sandbox: Sandbox, *, timeout: float = 60.0) -> None:
+    """Poll until status.services report at least one URL, or fail.
+
+    Service URLs are not available at create time — they appear once the
+    sandbox is RUNNING and the control plane has published them. Skipping
+    when empty would hide a permanent SDK/backend contract break.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sandbox.get_status()
+        if sandbox.service_urls:
+            return
+        time.sleep(0.5)
+    raise AssertionError(
+        f"sandbox {sandbox.sandbox_id} reached RUNNING but service_urls stayed empty "
+        f"after {timeout:.0f}s (exposed_ports={sandbox.exposed_ports!r})"
+    )
+
+
+def _require_service_visibility(visibility: ServiceVisibility) -> None:
+    """Skip when no runner advertises the typed visibility under test.
+
+    Keeps PUBLIC/PRIVATE create/connectivity assertions strict when the org
+    has capable runners; avoids false failures on custom-only fleets.
+    """
+    runners = list_runners(service_visibility=visibility.value)
+    if not runners:
+        pytest.skip(
+            f"No runner supports service visibility {visibility.value!r}; "
+            "skipping visibility-specific create/connectivity check"
+        )
+
+
 def test_sandbox_public_service(sandbox_defaults: SandboxDefaults) -> None:
-    """Test that a typed public service is accepted by the v1 API."""
+    """Public service create must report URLs via get_status / service_urls."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
     service = Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC)
 
     with Sandbox.run(
@@ -697,13 +732,33 @@ def test_sandbox_public_service(sandbox_defaults: SandboxDefaults) -> None:
         services=[service],
     ) as sandbox:
         sandbox.wait()
-        assert sandbox.status == "running"
+        assert sandbox.status == SandboxStatus.RUNNING
+        _wait_for_service_urls(sandbox)
+        assert sandbox.service_urls[0][0] == 8080
+        assert sandbox.exposed_ports is not None
+        assert (8080, "http") in sandbox.exposed_ports
 
 
-def test_sandbox_multiple_typed_services(sandbox_defaults: SandboxDefaults) -> None:
-    """Test multiple typed service declarations in a create request."""
+def test_sandbox_rejects_mixed_public_private_services(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """v1 rejects PRIVATE+PUBLIC on one sandbox (NOT_IMPLEMENTED)."""
     services = [
         Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC),
+        Service(port=9090, name="metrics", visibility=ServiceVisibility.PRIVATE),
+    ]
+
+    with pytest.raises(SandboxError) as exc_info:
+        Sandbox.run(defaults=sandbox_defaults, services=services)
+
+    assert exc_info.value.reason == "CWSANDBOX_NOT_IMPLEMENTED"
+
+
+def test_sandbox_multiple_private_services(sandbox_defaults: SandboxDefaults) -> None:
+    """Multiple services sharing one PRIVATE visibility are accepted."""
+    _require_service_visibility(ServiceVisibility.PRIVATE)
+    services = [
+        Service(port=8080, name="http", visibility=ServiceVisibility.PRIVATE),
         Service(port=9090, name="metrics", visibility=ServiceVisibility.PRIVATE),
     ]
 
@@ -712,15 +767,15 @@ def test_sandbox_multiple_typed_services(sandbox_defaults: SandboxDefaults) -> N
         services=services,
     ) as sandbox:
         sandbox.wait()
-        assert sandbox.status == "running"
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox.exposed_ports is not None
+        ports = {p for p, _ in sandbox.exposed_ports}
+        assert ports >= {8080, 9090}
 
 
 def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
-    """Test that exposed service is actually reachable.
-
-    Starts a simple HTTP server inside the sandbox and verifies we can
-    connect to it from outside using the returned service URL.
-    """
+    """Exposed PUBLIC service URL must be reachable and populated on Get."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
     service = Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC)
 
     with Sandbox.run(
@@ -732,19 +787,34 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
         services=[service],
     ) as sandbox:
         sandbox.wait()
+        _wait_for_service_urls(sandbox)
+        service_url = sandbox.service_urls[0][2]
+        assert service_url.startswith("http")
 
-        if not sandbox._service_urls:
-            pytest.skip("Infrastructure does not provide a public service URL")
-        service_url = sandbox._service_urls[0][2]
+        # from_id must also surface URLs (not only the create-handle cache).
+        reattached = Sandbox.from_id(sandbox.sandbox_id).result()
+        reattached.get_status()
+        assert reattached.service_urls, "from_id/get_status must refresh service_urls"
+        assert reattached.service_urls[0][2] == service_url
 
-        # Give the HTTP server a moment to start
         time.sleep(2)
-
-        response = httpx.get(
-            service_url,
-            timeout=120.0,
-        )
+        response = httpx.get(service_url, timeout=120.0)
         assert response.status_code == 200
+
+
+def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """stop(missing_ok=True) must succeed when Delete already removed the row."""
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    try:
+        sandbox.wait()
+        sandbox_id = sandbox.sandbox_id
+        assert sandbox_id is not None
+        Sandbox.delete(sandbox_id).result()
+        # Local handle may still look non-terminal; missing_ok must not raise
+        # SandboxTerminalStateUnavailableError after allow_missing OK.
+        sandbox.stop(missing_ok=True).result()
+    finally:
+        sandbox.stop(missing_ok=True).result()
 
 
 # Stdin streaming tests
@@ -1590,6 +1660,69 @@ def test_log_resume_with_unknown_session_id_returns_in_band_reject(
             f"unknown resume_session_id must produce SESSION_NOT_FOUND, got"
             f" {first.error.code!r}: {first.error.message!r}"
         )
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
+def test_stream_logs_reconnects_with_timestamps(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """timestamps=True must still resume after a forced disconnect.
+
+    Resume requests must not re-send timestamps (backend rejects that shape).
+    """
+    sandbox = _noisy_sandbox(sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        reader = sandbox.stream_logs(follow=True, timestamps=True)
+        first_batch: list[int] = []
+        try:
+            for line in reader:
+                # Timestamp prefix is ISO-8601 then a space; counter is after.
+                payload = line.split(" ", 1)[-1] if " " in line else line
+                stripped = payload.strip()
+                if stripped.startswith("line-"):
+                    first_batch.append(int(stripped.split("-", 1)[1]))
+                if len(first_batch) >= 5:
+                    break
+
+            assert len(first_batch) >= 5
+
+            loop_mgr = _LoopManager.get()
+
+            async def reset_channel() -> None:
+                if sandbox._streaming_channel is not None:
+                    await sandbox._streaming_channel.close(grace=None)
+                    sandbox._streaming_channel = None
+
+            loop_mgr.run_sync(reset_channel())
+
+            new_line_threshold = first_batch[-1] + 5
+            second_batch: list[int] = []
+            start = time.monotonic()
+            for line in reader:
+                payload = line.split(" ", 1)[-1] if " " in line else line
+                stripped = payload.strip()
+                if stripped.startswith("line-"):
+                    n = int(stripped.split("-", 1)[1])
+                    if n >= new_line_threshold:
+                        second_batch.append(n)
+                if len(second_batch) >= 3:
+                    break
+                if time.monotonic() - start > 30.0:
+                    break
+
+            assert len(second_batch) >= 3, (
+                f"timestamps=True stream must resume after disconnect; "
+                f"first={first_batch}, second={second_batch}"
+            )
+        finally:
+            reader.close()
     finally:
         try:
             sandbox.stop(missing_ok=True).result()

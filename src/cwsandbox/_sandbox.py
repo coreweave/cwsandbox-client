@@ -43,7 +43,6 @@ from cwsandbox._defaults import (
     DEFAULT_FILE_OPERATION_CAP_BYTES,
     DEFAULT_FSS_RETRY_BUDGET_SECONDS,
     DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
-    DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS,
     DEFAULT_FSS_STOP_TIMEOUT_SECONDS,
     DEFAULT_GRACEFUL_SHUTDOWN_SECONDS,
     DEFAULT_MAX_POLL_INTERVAL_SECONDS,
@@ -864,17 +863,15 @@ def _resolve_placement_for_spillover(
 def _is_spillover_eligible(exc: Exception) -> bool:
     """True when a CreateSandbox failure may trigger one alternate-mode retry.
 
-    Spillable: capacity / placement-constraint AIP-193 reasons, or bare
-    ``SandboxResourceExhaustedError`` with no conflicting reason (covers
-    throttle-shaped capacity pressure). Never spills on serverless product
-    gates, auth, or ``INVALID_ARGUMENT``.
+    Spillable only on explicit capacity / placement AIP-193 reasons in
+    ``SPILLOVER_ELIGIBLE_REASONS``. Never spills on serverless product gates,
+    auth, ``INVALID_ARGUMENT``, or bare ``RESOURCE_EXHAUSTED`` without a
+    recognized reason.
     """
     reason = getattr(exc, "reason", None)
     if reason in SPILLOVER_BLOCKED_REASONS:
         return False
-    if reason in SPILLOVER_ELIGIBLE_REASONS:
-        return True
-    return isinstance(exc, SandboxResourceExhaustedError) and reason is None
+    return reason in SPILLOVER_ELIGIBLE_REASONS
 
 
 _PollErrorClassification = Literal["retryable", "fatal"]
@@ -1957,6 +1954,8 @@ class Sandbox:
             runner_group_id=getattr(info, "runner_group_id", None) or None,
             started_at=started_at,
         )
+        if isinstance(info, _SandboxView):
+            sandbox._apply_status_echo(info)
         return sandbox
 
     @classmethod
@@ -2965,6 +2964,8 @@ class Sandbox:
             return self._state
 
         info = _as_sandbox_view(info)
+        if isinstance(info, _SandboxView):
+            self._apply_status_echo(info)
         status = SandboxStatus.from_proto(info.sandbox_status)
         # Polling: UNSPECIFIED means the sandbox exited cleanly
         if source == "poll" and status == SandboxStatus.UNSPECIFIED:
@@ -3519,7 +3520,7 @@ class Sandbox:
             self._sandbox_id = sandbox_id
             self._status_updated_at = datetime.now(UTC)
             self._state = _Starting(sandbox_id=sandbox_id)
-            self._apply_create_echo(view)
+            self._apply_status_echo(view)
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
 
@@ -3529,10 +3530,17 @@ class Sandbox:
         On a spillable primary failure (and non-``STRICT`` spillover), mints a
         new ``request_id``, flips ``_placement_mode`` to the alternate, clears
         ``runner_ids`` when spilling to serverless, and retries once. Attempt-2
-        failures raise with ``__cause__`` set to the primary error.
+        failures restore the primary placement config before raising (so a
+        later ``start()`` retries the caller's original mode). Successful spill
+        keeps the flipped state. Attempt-2 failures raise with ``__cause__`` set
+        to the primary error.
         """
         assert self._stub is not None
         assert self._create_request_id is not None
+
+        original_placement_mode = self._placement_mode
+        original_runner_ids = self._runner_ids
+        original_create_request_id = self._create_request_id
 
         primary_error: Exception | None = None
         for attempt in (1, 2):
@@ -3579,6 +3587,9 @@ class Sandbox:
                     self._create_request_id = str(uuid.uuid4())
                     continue
                 if primary_error is not None:
+                    self._placement_mode = original_placement_mode
+                    self._runner_ids = original_runner_ids
+                    self._create_request_id = original_create_request_id
                     raise translated from primary_error
                 raise translated from e
         raise AssertionError("unreachable: placement spillover loop exited without return")
@@ -3825,27 +3836,51 @@ class Sandbox:
         )
         spec = create_req.sandbox.spec
         source_container = spec.containers[0]
-        container = sandbox_pb2.PartialContainer()
+        container_field_overrides = (
+            self._command is not None
+            or self._args is not None
+            or bool(self._environment_variables)
+            or "mounted_files" in explicit_keys
+            or bool({"volumes", "file_system_snapshot"} & explicit_keys)
+            or "secrets" in explicit_keys
+            or "resources" in explicit_keys
+        )
+        if container_field_overrides and self._container_image is None:
+            raise TypeError(
+                "replace-on-presence container overrides require container_image; "
+                "the API replaces the whole container list and rejects sparse patches"
+            )
         if self._container_image is not None:
-            container.image = self._container_image
-        if self._command is not None:
-            container.command = self._command
-        if self._args is not None:
-            container.args.extend(self._args)
-        if self._environment_variables:
-            container.environment_variables.update(self._environment_variables)
-        if "mounted_files" in explicit_keys:
-            container.files.extend(source_container.files)
-        if {"volumes", "file_system_snapshot"} & explicit_keys:
-            container.volume_mounts.extend(source_container.volume_mounts)
-        if "secrets" in explicit_keys:
-            container.secret_stores.extend(source_container.secret_stores)
-        if "resources" in explicit_keys and source_container.HasField("resource_requirements"):
-            container.resource_requirements.CopyFrom(source_container.resource_requirements)
+            if self._args is not None and self._command is None:
+                raise TypeError(
+                    "container overrides with args require command; "
+                    "the API rejects args without command after a whole-list container replace"
+                )
+            container = sandbox_pb2.PartialContainer(
+                name="main",
+                image=self._container_image,
+            )
+            if self._command is not None:
+                container.command = self._command
+            if self._args is not None:
+                container.args.extend(self._args)
+            if self._environment_variables:
+                container.environment_variables.update(self._environment_variables)
+            if "mounted_files" in explicit_keys:
+                container.files.extend(source_container.files)
+            if {"volumes", "file_system_snapshot"} & explicit_keys:
+                container.volume_mounts.extend(source_container.volume_mounts)
+            if "secrets" in explicit_keys:
+                container.secret_stores.extend(source_container.secret_stores)
+            if "resources" in explicit_keys and source_container.HasField(
+                "resource_requirements"
+            ):
+                container.resource_requirements.CopyFrom(source_container.resource_requirements)
+        else:
+            container = sandbox_pb2.PartialContainer()
 
         overrides = sandbox_pb2.PartialSandboxSpec()
-        if container.ListFields():
-            container.name = "main"
+        if self._container_image is not None:
             overrides.containers.append(container)
         if {"volumes", "file_system_snapshot"} & explicit_keys:
             overrides.volumes.extend(spec.volumes)
@@ -3893,15 +3928,19 @@ class Sandbox:
                 kwargs["gpu"] = g
         return sandbox_pb2.Resources(**kwargs) if kwargs else None
 
-    def _apply_create_echo(self, view: _SandboxView) -> None:
-        """Capture create/Get echoes used by public properties."""
+    def _apply_status_echo(self, view: _SandboxView) -> None:
+        """Refresh property echoes from a v1 Sandbox resource (create/Get/list)."""
         self._scratch_volume_names = tuple(
             volume.name for volume in view._sandbox.spec.volumes if volume.HasField("scratch")
         )
         status = view._sandbox.status
         self._service_urls = tuple((s.port, s.name, s.url) for s in status.services if s.url)
         if status.services:
-            self._exposed_ports = tuple((s.port, s.name) for s in status.services)
+            self._exposed_ports = tuple(
+                (s.port, s.name)
+                for s in status.services
+                if s.visibility != sandbox_pb2.VISIBILITY_UNSPECIFIED
+            )
         if status.HasField("effective_resource_requirements"):
             err = status.effective_resource_requirements
             if err.HasField("limits"):
@@ -4534,13 +4573,7 @@ class Sandbox:
                 # shutdown.
                 if snapshot_on_stop:
                     max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
-                    # The backend substitutes its own grace default when 0 is
-                    # sent, so budget that rather than zero.
-                    effective_grace = (
-                        int(graceful_shutdown_seconds)
-                        if int(graceful_shutdown_seconds) > 0
-                        else int(DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS)
-                    )
+                    effective_grace = int(graceful_shutdown_seconds)
                     client_deadline = (
                         max_timeout + effective_grace + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
                     )
@@ -4605,6 +4638,29 @@ class Sandbox:
                 if snapshot_ids:
                     self._file_system_snapshot_id = snapshot_ids[0]
                     self._file_system_snapshot_ids = tuple(snapshot_ids)
+
+                response_has_sandbox = (
+                    hasattr(response, "HasField") and response.HasField("sandbox")
+                )
+                if missing_ok and not response_has_sandbox:
+                    self._state = _Terminal(
+                        sandbox_id=sandbox_id,
+                        status=SandboxStatus.TERMINATED,
+                        runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                        runner_group_id=(
+                            prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                        ),
+                        started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
+                    )
+                    self._stop_owned = True
+                    if self._complete_task is not None and not self._complete_task.done():
+                        self._complete_task.cancel()
+                        self._complete_task = None
+                    logger.debug(
+                        "Sandbox %s already absent during stop (missing_ok=True)",
+                        sandbox_id,
+                    )
+                    return
 
                 # RPC succeeded: transition to _Stopping
                 self._state = _Stopping(
@@ -4785,10 +4841,10 @@ class Sandbox:
             graceful_shutdown_seconds: Time to wait for graceful shutdown. With
                 ``snapshot_on_stop=True`` this is the post-archive pod-delete
                 grace, applied *after* the snapshot completes, so the client
-                deadline covers the archive budget plus this grace. Passing 0
-                does not mean "no grace": the backend substitutes its own
-                default (~30s), and the client deadline budgets that. The
-                backend caps this at 300s for snapshot-on-stop.
+                deadline covers the archive budget plus this grace. In v1,
+                ``grace_period_seconds=0`` means immediate termination (no
+                backend grace substitute). The backend caps this at 300s for
+                snapshot-on-stop.
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
             wait_for_ready: When ``snapshot_on_stop`` is True, block until the
@@ -4984,12 +5040,12 @@ class Sandbox:
                 request = sandbox_pb2.StreamLogsRequest(
                     sandbox_id=sandbox_id,
                     follow=follow,
-                    timestamps=timestamps,
                 )
                 if is_resume:
                     request.resume_log_session_id = session_id
                     request.resume_log_offset = last_offset
                 elif is_first_attempt:
+                    request.timestamps = timestamps
                     if tail_lines is not None:
                         request.tail_lines = tail_lines
                     if since_time is not None:

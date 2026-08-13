@@ -462,6 +462,7 @@ class TestSandboxRun:
                 "-c",
                 "echo ready",
                 command="/bin/sh",
+                container_image="python:3.11",
                 placement_mode=PlacementMode.CKS,
             )
 
@@ -471,6 +472,7 @@ class TestSandboxRun:
         assert request.request_id
         assert request.overrides.mode == sandbox_pb2.SANDBOX_MODE_CKS
         assert request.overrides.containers[0].command == "/bin/sh"
+        assert request.overrides.containers[0].image == "python:3.11"
         assert list(request.overrides.containers[0].args) == ["-c", "echo ready"]
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
@@ -483,26 +485,27 @@ class TestSandboxRun:
         assert request.overrides.ListFields() == []
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
-    def test_run_from_template_args_only_does_not_steal_command(self) -> None:
-        """Positional *args are command args, not a new command name."""
-        stub = MagicMock()
-        stub.CreateSandboxFromTemplate = AsyncMock(
-            return_value=_create_sandbox_response("template-id")
-        )
+    def test_run_from_template_args_without_image_raises(self) -> None:
+        with pytest.raises(TypeError, match="require container_image"):
+            Sandbox.run_from_template("template-123", "-c", "echo ready")
 
-        async def ensure_client(sandbox: Sandbox) -> None:
-            sandbox._channel = MagicMock()
-            sandbox._channel.close = AsyncMock()
-            sandbox._stub = stub
+    def test_run_from_template_args_without_command_raises(self) -> None:
+        with pytest.raises(TypeError, match="args require command"):
+            Sandbox.run_from_template(
+                "template-123",
+                "-c",
+                "echo ready",
+                container_image="python:3.11",
+            )
 
-        with patch.object(Sandbox, "_ensure_client", ensure_client):
-            sandbox = Sandbox.run_from_template("template-123", "-c", "echo ready")
-
-        request = stub.CreateSandboxFromTemplate.call_args.args[0]
-        container = request.overrides.containers[0]
-        assert container.command == ""
-        assert list(container.args) == ["-c", "echo ready"]
-        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+    def test_run_from_template_command_without_image_raises(self) -> None:
+        with pytest.raises(TypeError, match="require container_image"):
+            Sandbox.run_from_template(
+                "template-123",
+                "-c",
+                "echo ready",
+                command="/bin/sh",
+            )
 
     def test_run_from_template_rejects_image_pull_credentials(self) -> None:
         with pytest.raises(
@@ -5453,6 +5456,201 @@ class TestShellStreamingTTY:
             )
 
 
+class TestCrossLoopRegression:
+    """Regression tests for cross-event-loop bug.
+
+    The sync/async hybrid API uses a background daemon thread (Loop B via _LoopManager)
+    for all gRPC operations. Results bridge back to the caller's loop (Loop A) via
+    asyncio.wrap_future(). If any entrypoint submits work directly to Loop A instead
+    of routing through _LoopManager, it causes RuntimeError when nest_asyncio is not
+    installed (or a subtle deadlock when it is).
+
+    Key invariant: all gRPC operations go through _loop_manager.run_async(), results
+    bridge back via asyncio.wrap_future().
+    """
+
+    def test_await_sandbox_routes_through_loop_manager(self) -> None:
+        """Verify __await__ routes through _loop_manager, not the caller's loop."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+
+        async def do_await() -> Sandbox:
+            return await sandbox
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_ensure_started_async", new_callable=AsyncMock):
+                with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        result = loop.run_until_complete(do_await())
+                        assert result is sandbox
+                        mock_run_async.assert_called_once()
+                    finally:
+                        loop.close()
+
+    def test_aenter_routes_through_loop_manager(self) -> None:
+        """Verify __aenter__ routes through _loop_manager for unstarted sandbox."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        assert sandbox._sandbox_id is None
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_start_async", new_callable=AsyncMock):
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(sandbox.__aenter__())
+                    assert result is sandbox
+                    mock_run_async.assert_called_once()
+                finally:
+                    loop.close()
+
+    def test_aenter_skips_start_when_already_started(self) -> None:
+        """Verify __aenter__ skips _loop_manager when sandbox already has an ID."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "already-started"
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(sandbox.__aenter__())
+                assert result is sandbox
+                mock_run_async.assert_not_called()
+            finally:
+                loop.close()
+
+    def test_start_routes_through_loop_manager(self) -> None:
+        """Verify start() routes through _loop_manager.run_async."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with patch.object(
+            sandbox._loop_manager, "run_async", wraps=sandbox._loop_manager.run_async
+        ) as mock_run_async:
+            with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+                sandbox._channel = MagicMock()
+                sandbox._stub = MagicMock()
+                sandbox._stub.CreateSandbox = AsyncMock(
+                    return_value=_create_sandbox_response("cross-loop-id")
+                )
+
+                ref = sandbox.start()
+                ref.result()
+
+                mock_run_async.assert_called_once()
+
+    def test_operation_ref_await_uses_wrap_future(self) -> None:
+        """Verify OperationRef.__await__ uses asyncio.wrap_future for cross-loop safety."""
+        from cwsandbox import OperationRef
+
+        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future.set_result("test-value")
+        ref = OperationRef(future)
+
+        async def do_await() -> str:
+            return await ref
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(do_await())
+            assert result == "test-value"
+        finally:
+            loop.close()
+
+    def test_dual_loop_sandbox_await(self) -> None:
+        """Deterministic dual-loop test: create on one loop, await on another.
+
+        This is the core regression test. The bug manifested when:
+        1. Sandbox created on Loop A (or no loop)
+        2. Awaited on Loop B (different from _LoopManager's background loop)
+        3. If __await__ submitted work to Loop B directly, it would fail
+
+        The fix routes through _LoopManager.run_async() which always submits
+        to the background daemon loop, making the caller's loop irrelevant.
+        """
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "dual-loop-id"
+
+        async def do_await() -> Sandbox:
+            return await sandbox
+
+        with patch.object(sandbox, "_ensure_started_async", new_callable=AsyncMock):
+            with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                # Await on a fresh event loop (simulates different caller context)
+                loop_a = asyncio.new_event_loop()
+                try:
+                    result = loop_a.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop_a.close()
+
+                # Await on yet another fresh loop (simulates Jupyter cell re-execution)
+                loop_b = asyncio.new_event_loop()
+                try:
+                    result = loop_b.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop_b.close()
+
+    def test_dual_loop_aenter_aexit(self) -> None:
+        """Create sandbox on one loop, use async context manager on another."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.CreateSandbox = AsyncMock(
+                return_value=_create_sandbox_response("dual-loop-ctx-id")
+            )
+
+            # Start on Loop A (sync)
+            sandbox.start().result()
+            assert sandbox.sandbox_id == "dual-loop-ctx-id"
+
+            # Use async context manager on Loop B
+            async def use_async_ctx() -> Sandbox:
+                async with sandbox as sb:
+                    return sb
+
+            with patch.object(sandbox, "_stop_async", new_callable=AsyncMock):
+                loop_b = asyncio.new_event_loop()
+                try:
+                    result = loop_b.run_until_complete(use_async_ctx())
+                    assert result is sandbox
+                finally:
+                    loop_b.close()
+
+    def test_start_then_await_on_different_loop(self) -> None:
+        """Call start() synchronously, then await the sandbox on a different loop."""
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.CreateSandbox = AsyncMock(
+                return_value=_create_sandbox_response("start-then-await-id")
+            )
+
+            # Start synchronously (uses _loop_manager internally)
+            sandbox.start().result()
+            assert sandbox.sandbox_id == "start-then-await-id"
+
+            # Now await on a completely different loop
+            async def do_await() -> Sandbox:
+                return await sandbox
+
+            with patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock):
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(do_await())
+                    assert result is sandbox
+                finally:
+                    loop.close()
+
+
 class TestTerminalStateProperties:
     """Verify property accessors return correct values from _Terminal state."""
 
@@ -5550,6 +5748,42 @@ class TestStoppingStateTransitions:
         new_state = sandbox._apply_sandbox_info(mock_info, source="poll")
         assert isinstance(new_state, _Terminal)
         assert new_state.status == SandboxStatus.COMPLETED
+
+    def test_apply_sandbox_info_refreshes_service_urls_from_proto_view(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_urls = ()
+        sandbox._exposed_ports = None
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="http",
+                        url="https://sb.example/8080",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=9090,
+                        name="metrics",
+                        visibility=sandbox_pb2.VISIBILITY_UNSPECIFIED,
+                    ),
+                ],
+            ),
+        )
+        view = _SandboxView(proto)
+
+        sandbox._apply_sandbox_info(view, source="query")
+
+        assert sandbox.service_urls == ((8080, "http", "https://sb.example/8080"),)
+        assert sandbox.exposed_ports == ((8080, "http"),)
 
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""
@@ -5752,6 +5986,28 @@ class TestStoppingStopFlow:
         assert result is None
         assert isinstance(sandbox._state, _Terminal)
         assert sandbox._state.status == SandboxStatus.TERMINATED
+
+    def test_stop_missing_ok_empty_ok_response_skips_poll(self) -> None:
+        """stop(missing_ok=True) + empty OK DeleteSandboxResponse -> terminal, no poll."""
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1", runner_id="tower-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=sandbox_pb2.DeleteSandboxResponse())
+
+        with patch.object(
+            sandbox, "_await_terminal_after_stop", new_callable=AsyncMock
+        ) as mock_poll:
+            result = sandbox.stop(missing_ok=True).result()
+
+        assert result is None
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.TERMINATED
+        mock_poll.assert_not_called()
 
     # -- missing_ok / status-code / reason matrix -------------------------
     #
@@ -6482,6 +6738,17 @@ class _ProgrammedStreamCall(MockStreamCall):
         self._init_messages = init_messages
         self._init_recorded = True  # already recorded in __call__
 
+    async def __anext__(self) -> Any:
+        if self._error_on_read:
+            raise self._error_on_read
+        if self._iter_index >= len(self._responses):
+            raise StopAsyncIteration
+        response = self._responses[self._iter_index]
+        self._iter_index += 1
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
     async def consume_requests(self) -> None:
         return
 
@@ -6574,6 +6841,172 @@ async def _drive_stream_logs(
     return items, sleeps
 
 
+class TestStreamLogsResumeStateMachine:
+    """Drive _stream_logs_async through every documented resume transition.
+
+    These tests use real protobuf messages and a programmable stub for
+    StreamLogs so we exercise the actual state machine, not a paraphrase
+    of it.  asyncio.sleep is patched so the backoff schedule can be
+    asserted on without burning wall-clock time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resume_after_transport_error(self) -> None:
+        """A transport UNAVAILABLE on a stream that already captured a session_id
+        triggers a resume init carrying resume_log_session_id and resume_log_offset."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_data_frame(b"first\n", session_id="sess-1", offset=6)],
+            ]
+        )
+        programmed._attempts = [
+            [
+                _data_frame(b"first\n", session_id="sess-1", offset=6),
+                MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "gateway flap"),
+            ],
+            [_data_frame(b"second\n", session_id="sess-1", offset=13), _complete_frame()],
+        ]
+        items, sleeps = await _drive_stream_logs(sandbox, programmed)
+
+        assert "first\n" in items
+        assert "second\n" in items
+        assert programmed.call_count == 2
+        assert programmed.init_messages[0].resume_log_session_id == ""
+        assert programmed.init_messages[1].resume_log_session_id == "sess-1"
+        assert programmed.init_messages[1].resume_log_offset == 6
+        assert sleeps == [0.5]
+
+    @pytest.mark.asyncio
+    async def test_session_not_found_falls_back_to_fresh_init(self) -> None:
+        """SESSION_NOT_FOUND on resume drops resume state and reconnects fresh."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"early\n", session_id="sess-1", offset=6),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("SESSION_NOT_FOUND", "expired")],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "early\n" in items
+        assert "head\n" in items
+        assert programmed.init_messages[2].resume_log_session_id == ""
+        assert programmed.init_messages[2].resume_log_offset == 0
+
+    @pytest.mark.asyncio
+    async def test_replay_gap_triggers_fresh_init_per_wire_contract(self) -> None:
+        """REPLAY_GAP is terminal; the client must reconnect fresh from head."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"a\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("REPLAY_GAP", "below replay window")],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "a\n" in items
+        assert "head\n" in items
+        assert programmed.init_messages[2].resume_log_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_runner_unavailable_triggers_fresh_init(self) -> None:
+        """RUNNER_UNAVAILABLE / RUNNER_DRAINING are transient; reconnect fresh."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("RUNNER_UNAVAILABLE", "logs moved")],
+                [_data_frame(b"y\n", session_id="sess-2", offset=2), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "x\n" in items
+        assert "y\n" in items
+        assert programmed.init_messages[2].resume_log_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_invalid_resume_offset_is_terminal_no_retry(self) -> None:
+        """INVALID_RESUME_OFFSET is terminal per the wire contract."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-1", offset=2),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("INVALID_RESUME_OFFSET", "corrupt offset")],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert programmed.call_count == 2
+        errors = [item for item in items if isinstance(item, SandboxError)]
+        assert len(errors) == 1
+        assert "corrupt offset" in str(errors[0])
+
+    @pytest.mark.asyncio
+    async def test_exhaustion_synthesizes_unavailable_with_cause(self) -> None:
+        """When the retry budget is exhausted, the synthesized error chains
+        the underlying gRPC AioRpcError so SREs can see the real status."""
+        from cwsandbox.exceptions import SandboxUnavailableError
+
+        sandbox = _build_sandbox_for_log_stream()
+        rpc_error = MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "persistent flap")
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_data_frame(b"x\n", session_id="sess-1", offset=2), rpc_error],
+                [_data_frame(b"y\n", session_id="sess-1", offset=4), rpc_error],
+                [rpc_error],
+            ]
+        )
+        items, sleeps = await _drive_stream_logs(sandbox, programmed)
+
+        unavailable = [item for item in items if isinstance(item, SandboxUnavailableError)]
+        assert len(unavailable) == 1
+        assert isinstance(unavailable[0].__cause__, grpc.aio.AioRpcError)
+        assert unavailable[0].__cause__.code() == grpc.StatusCode.UNAVAILABLE
+        assert sleeps == [0.5, 1.0, 2.0]
+        assert max(sleeps) <= 4.0
+        assert sum(sleeps) < 30.0
+
+    @pytest.mark.asyncio
+    async def test_fresh_init_clears_partial_line_buffer(self) -> None:
+        """A SESSION_NOT_FOUND fresh fallback must not splice the previous
+        partial line into unrelated bytes from the new head."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"hello wor", session_id="sess-1", offset=9),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
+                ],
+                [_error_frame("SESSION_NOT_FOUND", "expired")],
+                [
+                    _data_frame(b"baz qux\n", session_id="sess-2", offset=8),
+                    _complete_frame(),
+                ],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert "baz qux\n" in items
+        assert all("hello wor" not in item for item in items if isinstance(item, str))
+
+
 class TestStreamLogsResumeTransportClassification:
     """Tests for which gRPC status codes are eligible for resume retry."""
 
@@ -6591,6 +7024,123 @@ class TestStreamLogsResumeTransportClassification:
 
         err = MockAioRpcError(grpc.StatusCode.UNKNOWN, "gateway crashed")
         assert _is_resumable_transport_error(err) is True
+
+
+class TestStreamLogsInitWireShape:
+    """Verify the SDK populates resume fields on the wire when resuming.
+
+    What matters for the SDK is that, on a resume attempt, the client sends
+    StreamLogsRequest with the captured resume_log_session_id and
+    resume_log_offset rather than the tail_lines / since_time / timestamps
+    from the original call.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resume_init_carries_captured_session_id_and_offset(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-xyz", offset=99),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, ""),
+                ],
+                [_complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed)
+
+        resume_init = programmed.init_messages[1]
+        assert resume_init.resume_log_session_id == "sess-xyz"
+        assert resume_init.resume_log_offset == 99
+
+    @pytest.mark.asyncio
+    async def test_fresh_init_omits_resume_fields_when_server_has_no_session(
+        self,
+    ) -> None:
+        """When the server returns no session_id, a retry after a transport
+        error must NOT carry resume fields — the SDK should reconnect with
+        a fresh init."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n"),
+                    MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "edge flap"),
+                ],
+                [_data_frame(b"y\n"), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed)
+
+        assert programmed.call_count == 2
+        assert programmed.init_messages[0].resume_log_session_id == ""
+        assert programmed.init_messages[1].resume_log_session_id == ""
+        assert programmed.init_messages[1].resume_log_offset == 0
+
+
+class TestStreamLogsReplayFiltersFirstAttemptOnly:
+    """The ``tail_lines`` / ``since_time`` / ``timestamps`` filters describe the
+    *original* replay window the caller asked for.  Re-emitting them on every
+    fresh-fallback re-init would replay the same window after each transient
+    disconnect, which the in-code docstring explicitly says should not happen.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tail_lines_only_on_first_attempt(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("SESSION_NOT_FOUND", "expired"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, tail_lines=100)
+
+        assert programmed.init_messages[0].tail_lines == 100
+        assert programmed.init_messages[1].tail_lines == 0
+        assert programmed.init_messages[1].resume_log_session_id == ""
+
+    @pytest.mark.asyncio
+    async def test_since_time_only_on_first_attempt(self) -> None:
+        from datetime import datetime
+
+        sandbox = _build_sandbox_for_log_stream()
+        anchor = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("RUNNER_DRAINING", "logs moved"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, since_time=anchor)
+
+        assert programmed.init_messages[0].HasField("since_time")
+        assert not programmed.init_messages[1].HasField("since_time")
+
+    @pytest.mark.asyncio
+    async def test_timestamps_only_on_first_attempt(self) -> None:
+        """``timestamps`` is a replay-window formatting flag: honor on first
+        init only; resume and fresh-fallback attempts must not re-emit it."""
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"orig\n", session_id="sess-1", offset=5),
+                    _error_frame("SESSION_NOT_FOUND", "expired"),
+                ],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, timestamps=True)
+
+        assert programmed.init_messages[0].timestamps is True
+        assert programmed.init_messages[1].timestamps is False
 
 
 class TestStreamLogsV1Basic:
@@ -6683,3 +7233,53 @@ class TestStreamLogsV1Basic:
         assert isinstance(items[0], SandboxError)
         assert "invalid offset" in str(items[0])
         assert programmed.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_resume_attempt_omits_timestamps(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        init_messages: list[Any] = []
+        call_count = 0
+
+        def make_broken_stream() -> MockStreamCall:
+            async def gen() -> AsyncIterator[Any]:
+                yield _data_frame(b"line\n", session_id="session-1", offset=1)
+                raise MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "gone")
+
+            return MockStreamCall(response_generator=lambda: gen())
+
+        def stream_logs_side_effect(request: Any, **kwargs: Any) -> MockStreamCall:
+            nonlocal call_count
+            call_count += 1
+            init_messages.append(request)
+            if call_count == 1:
+                return make_broken_stream()
+            return MockStreamCall(
+                responses=[_data_frame(b"more\n", session_id="session-1", offset=2)]
+            )
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.StreamLogs = MagicMock(side_effect=stream_logs_side_effect)
+        output_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch.object(
+                sandbox,
+                "_get_or_create_streaming_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+            patch(
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
+                return_value=mock_stub,
+            ),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await sandbox._stream_logs_async(output_queue, follow=True, timestamps=True)
+
+        assert call_count == 2
+        assert init_messages[0].timestamps is True
+        assert init_messages[1].timestamps is False

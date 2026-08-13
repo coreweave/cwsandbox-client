@@ -194,10 +194,9 @@ class Service:
 
 @dataclass(frozen=True, kw_only=True)
 class NetworkOptions:
-    """Advanced network intent beyond typed ``Service`` ports.
+    """Network deny flags for sandbox egress/ingress policy.
 
-    Declares CUSTOM-visibility ingress sources and egress allow rules.
-    Prefer typed ``services=`` for PUBLIC/PRIVATE port exposure.
+    Port exposure uses typed ``services=``; this type only carries deny flags.
 
     Attributes:
         deny_egress: When True, deny all declared egress (policy default unused).
@@ -370,7 +369,6 @@ class FileSystemSnapshotTrigger(StrEnum):
         UNSPECIFIED: Trigger not reported by the backend.
         ON_DELETE: Captured during ``stop(snapshot_on_stop=True)`` / DeleteSandbox.
         MANUAL: Captured via ``snapshot()`` (CreateFileSystemSnapshot).
-        STOP: Deprecated alias of ``ON_DELETE`` retained for migration.
     """
 
     UNSPECIFIED = "unspecified"

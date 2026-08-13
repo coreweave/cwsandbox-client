@@ -342,6 +342,7 @@ class Session:
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
+        request_timeout_seconds: float | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
@@ -372,6 +373,8 @@ class Session:
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.
             max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
+            request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
+                Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -424,6 +427,12 @@ class Session:
                 "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds were removed in 1.x"
             )
 
+        effective_request_timeout = (
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else self._defaults.request_timeout_seconds
+        )
+
         sandbox = Sandbox(
             command=command,
             args=args,
@@ -443,6 +452,7 @@ class Session:
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
+            request_timeout_seconds=effective_request_timeout,
             defaults=self._defaults,
             _session=self,
         )
@@ -674,6 +684,7 @@ class Session:
         placement_spillover: PlacementSpillover | str | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        request_timeout_seconds: float | None = None,
         **kwargs: Any,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
@@ -704,6 +715,8 @@ class Session:
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.
             max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
+            request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
+                Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -769,6 +782,7 @@ class Session:
                 placement_spillover=placement_spillover,
                 environment_variables=environment_variables,
                 annotations=annotations,
+                request_timeout_seconds=request_timeout_seconds,
             )
 
         return decorator

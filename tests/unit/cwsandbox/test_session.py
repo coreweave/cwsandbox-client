@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cwsandbox import Sandbox, Secret, Session
+from cwsandbox import Sandbox, SandboxDefaults, Secret, Session
 from cwsandbox._sandbox import _Running
 from tests.unit.cwsandbox.conftest import make_operation_ref, make_process
 
@@ -527,6 +527,25 @@ class TestSessionKwargsValidation:
 
         # Decorator should work without raising
         assert callable(add.remote)
+
+    def test_sandbox_forwards_request_timeout_seconds(self) -> None:
+        session = Session(SandboxDefaults(request_timeout_seconds=42.0))
+        sandbox = session.sandbox(request_timeout_seconds=99.0)
+        assert sandbox._request_timeout_seconds == 99.0
+
+    def test_sandbox_inherits_defaults_request_timeout(self) -> None:
+        session = Session(SandboxDefaults(request_timeout_seconds=42.0))
+        sandbox = session.sandbox()
+        assert sandbox._request_timeout_seconds == 42.0
+
+    def test_function_forwards_request_timeout_seconds(self) -> None:
+        session = Session(SandboxDefaults(request_timeout_seconds=42.0))
+
+        @session.function(request_timeout_seconds=77.0)
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        assert add._request_timeout_seconds == 77.0
 
     def test_function_with_invalid_sandbox_kwargs(self) -> None:
         """Test session.function() rejects invalid sandbox_kwargs."""

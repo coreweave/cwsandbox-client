@@ -136,10 +136,10 @@ class TestSpilloverEligibility:
         )
         assert _is_spillover_eligible(exc)
 
-    def test_bare_resource_exhausted_is_eligible(self) -> None:
+    def test_bare_resource_exhausted_is_not_eligible(self) -> None:
         exc = SandboxResourceExhaustedError("quota")
         assert exc.reason is None
-        assert _is_spillover_eligible(exc)
+        assert not _is_spillover_eligible(exc)
 
     def test_serverless_not_allowed_is_not_eligible(self) -> None:
         exc = _translate_rpc_error(
@@ -275,16 +275,51 @@ class TestSpilloverCreatePath:
         assert err.__cause__.reason == CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED
         assert stub.CreateSandbox.call_count == 2
 
-    def test_bare_resource_exhausted_spills(self) -> None:
+    def test_bare_resource_exhausted_does_not_spill(self) -> None:
         bare = _MockRpcErrorWithDetails(
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             "throttled",
         )
-        ok = _create_sandbox_response()
         sandbox, stub, err = _run_with_create_side_effect(
-            [bare, ok],
+            [bare],
             placement_spillover="cks_then_serverless",
         )
-        assert err is None
-        assert sandbox is not None
-        assert stub.CreateSandbox.call_count == 2
+        assert sandbox is None
+        assert isinstance(err, SandboxResourceExhaustedError)
+        assert stub.CreateSandbox.call_count == 1
+
+    def test_restore_on_failed_spill_second_start_retries_primary(self) -> None:
+        first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
+        second = _MockRpcErrorWithDetails(
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            "still full",
+            reason=CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+        )
+        sandbox = Sandbox(
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            runner_ids=["runner-a"],
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[first, second])
+
+        async def ensure_client(sb: Sandbox) -> None:
+            sb._channel = MagicMock()
+            sb._channel.close = AsyncMock()
+            sb._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            with pytest.raises(SandboxResourceExhaustedError):
+                sandbox.start().result()
+
+        assert sandbox._placement_mode == PlacementMode.CKS
+        assert sandbox._runner_ids == ["runner-a"]
+        assert mock_stub.CreateSandbox.call_count == 2
+
+        ok = _create_sandbox_response("retry-ok")
+        mock_stub.CreateSandbox = AsyncMock(return_value=ok)
+        sandbox.start().result()
+        req = mock_stub.CreateSandbox.call_args.args[0]
+        assert req.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_CKS
+        assert list(req.sandbox.spec.runner_ids) == ["runner-a"]
+        sandbox._state = _Terminal(sandbox_id="retry-ok", status=SandboxStatus.COMPLETED)

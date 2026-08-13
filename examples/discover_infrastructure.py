@@ -62,26 +62,31 @@ def main() -> None:
     # --- Use With Sandbox.run ---
     print("\n--- Use With Sandbox.run ---")
     if runners:
-        runner = runners[0]
+        # Shared (serverless pool) runners cannot be pinned in CKS mode.
+        pin_candidates = [r for r in runners if not r.is_shared]
+        runner = pin_candidates[0] if pin_candidates else None
         print("  # Serverless (default): place by capabilities, no runner pin")
         print("  # from cwsandbox import PlacementMode, Service, ServiceVisibility")
         print("  # sandbox = Sandbox.run(")
         print("  #     services=[Service(port=8080, visibility=ServiceVisibility.PUBLIC)],")
         print("  # )")
         print()
-        print("  # CKS: pin to a discovered runner")
-        print("  # sandbox = Sandbox.run(")
-        print("  #     placement_mode=PlacementMode.CKS,")
-        print(f'  #     runner_ids=["{runner.runner_id}"],')
-        print("  # )")
-        print()
-        print("  # Optional: spill to serverless once if CKS is at capacity")
-        print("  # from cwsandbox import PlacementSpillover")
-        print("  # sandbox = Sandbox.run(")
-        print("  #     placement_mode=PlacementMode.CKS,")
-        print(f'  #     runner_ids=["{runner.runner_id}"],')
-        print("  #     placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,")
-        print("  # )")
+        if runner is not None:
+            print("  # CKS: pin to a non-shared discovered runner")
+            print("  # sandbox = Sandbox.run(")
+            print("  #     placement_mode=PlacementMode.CKS,")
+            print(f'  #     runner_ids=["{runner.runner_id}"],')
+            print("  # )")
+            print()
+            print("  # Optional: spill to serverless once if CKS is at capacity")
+            print("  # from cwsandbox import PlacementSpillover")
+            print("  # sandbox = Sandbox.run(")
+            print("  #     placement_mode=PlacementMode.CKS,")
+            print(f'  #     runner_ids=["{runner.runner_id}"],')
+            print("  #     placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,")
+            print("  # )")
+        else:
+            print("  # No non-shared runners available to pin for a CKS example.")
     else:
         print("  # No runners discovered - check credentials and connectivity.")
 

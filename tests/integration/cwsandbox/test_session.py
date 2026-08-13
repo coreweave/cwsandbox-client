@@ -26,6 +26,21 @@ def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
         assert sandbox.sandbox_id is not None
 
 
+def test_session_sandbox_accepts_request_timeout_seconds(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """session.sandbox must accept request_timeout_seconds (1.x migration path)."""
+    with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            request_timeout_seconds=120.0,
+        )
+        result = sandbox.exec(["echo", "timeout-ok"]).result()
+        assert result.returncode == 0
+        assert sandbox._request_timeout_seconds == 120.0
+
+
 def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
     """Test session managing multiple sandboxes."""
     with Sandbox.session(sandbox_defaults) as session:

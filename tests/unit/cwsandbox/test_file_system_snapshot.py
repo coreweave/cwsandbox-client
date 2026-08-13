@@ -469,9 +469,8 @@ class TestStopWiring:
             int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) + 30 + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
         )
 
-    def test_snapshot_on_stop_deadline_budgets_backend_grace_default_when_zero(self) -> None:
-        # Sending graceful_shutdown_seconds=0 makes the backend substitute its
-        # own grace default, so the client deadline budgets that default — not 0.
+    def test_snapshot_on_stop_deadline_budgets_zero_grace_when_zero(self) -> None:
+        # In v1, graceful_shutdown_seconds=0 means immediate termination.
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Starting(sandbox_id="sb-1")

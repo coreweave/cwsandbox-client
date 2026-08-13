@@ -92,6 +92,7 @@ class RemoteFunction(Generic[P, R]):
         placement_spillover: PlacementSpillover | str | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> None:
         """Initialize RemoteFunction with function and execution configuration.
 
@@ -154,6 +155,7 @@ class RemoteFunction(Generic[P, R]):
         self._placement_spillover = placement_spillover
         self._file_system_snapshot = file_system_snapshot
         self._max_timeout_seconds = None
+        self._request_timeout_seconds = request_timeout_seconds
         self._environment_variables = environment_variables
         self._annotations = annotations
         # Preserve function metadata
@@ -281,6 +283,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["environment_variables"] = self._environment_variables
         if self._annotations is not None:
             sandbox_kwargs["annotations"] = self._annotations
+        if self._request_timeout_seconds is not None:
+            sandbox_kwargs["request_timeout_seconds"] = self._request_timeout_seconds
 
         # Import here to avoid circular import
         from cwsandbox._sandbox import Sandbox

@@ -429,6 +429,36 @@ class TestSandboxDefaultsFromDict:
         with pytest.raises(TypeError, match="runner_ids must be a sequence of strings"):
             SandboxDefaults.from_dict({"runner_ids": "not-a-list"})
 
+    def test_from_dict_rejects_profile_ids(self) -> None:
+        with pytest.raises(TypeError, match="profile_ids"):
+            SandboxDefaults.from_dict({"profile_ids": ["p1"]})
+
+    def test_from_dict_rejects_profile_names(self) -> None:
+        with pytest.raises(TypeError, match="profile_names"):
+            SandboxDefaults.from_dict({"profile_names": ["default"]})
+
+    def test_from_dict_coerces_services_and_volumes_dicts(self) -> None:
+        from cwsandbox._types import ScratchVolumeOptions, Service
+
+        defaults = SandboxDefaults.from_dict(
+            {
+                "services": [{"port": 8080, "name": "http"}],
+                "volumes": [
+                    {
+                        "name": "workspace",
+                        "mount_path": "/workspace",
+                        "size": "10Gi",
+                    }
+                ],
+            }
+        )
+        assert len(defaults.services) == 1
+        assert isinstance(defaults.services[0], Service)
+        assert defaults.services[0].port == 8080
+        assert len(defaults.volumes) == 1
+        assert isinstance(defaults.volumes[0], ScratchVolumeOptions)
+        assert defaults.volumes[0].mount_path == "/workspace"
+
     def test_from_dict_coerces_network_dict(self) -> None:
         """from_dict converts network dict to NetworkOptions."""
         defaults = SandboxDefaults.from_dict(
