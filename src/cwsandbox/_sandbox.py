@@ -6362,14 +6362,17 @@ class Sandbox:
             total_bytes = 0
 
             async def request_generator() -> AsyncIterator[streaming_pb2.ExecStreamRequest]:
+                # Init only — no stdin frames and no explicit close. The command
+                # reads the file from its argument, never stdin, so an early
+                # stdin close is unnecessary and can race server-side stream
+                # setup. The request stream half-closes when this generator
+                # returns, matching the stdin-less exec path.
                 yield streaming_pb2.ExecStreamRequest(
                     init=streaming_pb2.ExecStreamInit(
                         sandbox_id=sandbox_id,
                         command=["/bin/cat", "--", filepath],
                     )
                 )
-                # Close stdin immediately so cat reads the file and exits.
-                yield streaming_pb2.ExecStreamRequest(close=streaming_pb2.ExecStreamClose())
 
             # The read gets the budget remaining after the pre-read stat, so the
             # two phases together honor the caller's overall timeout.

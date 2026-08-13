@@ -2207,6 +2207,31 @@ class TestSandboxReadFileStreaming:
 
         assert chunks == [b"hello ", b"world"]
 
+    def test_sends_init_only_no_stdin_close(self) -> None:
+        """The request stream must carry only the init frame.
+
+        The read command never consumes stdin, so no stdin close frame is
+        needed; sending one early can race server-side stream setup.
+        """
+        sandbox = self._setup_running_sandbox()
+        responses = [
+            self._output(b"payload"),
+            self._exit(0),
+        ]
+        mock_call, mock_channel, mock_stub = self._drive(sandbox, responses)
+
+        with contextlib.ExitStack() as stack:
+            for p in self._patches(sandbox, mock_channel, mock_stub):
+                stack.enter_context(p)
+
+            reader = sandbox.read_file_streaming("/tmp/hello.txt")
+            chunks = list(reader)
+
+        assert chunks == [b"payload"]
+        assert len(mock_call._writes) == 1
+        assert mock_call._writes[0].HasField("init")
+        assert not any(req.HasField("close") for req in mock_call._writes)
+
     def test_nonzero_exit_surfaces_stderr_detail(self) -> None:
         from cwsandbox.exceptions import SandboxFileError
 
