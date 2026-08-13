@@ -51,6 +51,22 @@ v1 backends implement them. Create-time `Secret` inject still works.
   integration green against production).
 
 
+## v0.26.2 (2026-08-13)
+
+### Bug Fixes
+
+- Send init-only request stream in read_file_streaming
+  ([`9c34a02`](https://github.com/coreweave/cwsandbox-client/commit/9c34a0279e8991ee171ac6bbff46c8b13d742946))
+
+read_file_streaming sent a stdin-close frame immediately after the init frame. The streamed read
+  command never consumes stdin, and the early close could race server-side stream setup,
+  intermittently ending the transfer with exit status 137 after the first chunk.
+
+Send only the init frame; the request stream half-closes when the generator returns, matching the
+  stdin-less exec path. Add a regression test asserting the request stream carries exactly the init
+  frame.
+
+
 ## v0.26.1 (2026-07-31)
 
 ### Bug Fixes
