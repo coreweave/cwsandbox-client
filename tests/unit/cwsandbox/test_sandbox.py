@@ -7281,9 +7281,7 @@ class TestStreamLogsV1Basic:
 
         sandbox = _build_sandbox_for_log_stream()
         entry = sandbox_pb2.LogEntry(
-            error=sandbox_pb2.LogStreamError(
-                code="INVALID_RESUME_OFFSET", message="bad resume"
-            )
+            error=sandbox_pb2.LogStreamError(code="INVALID_RESUME_OFFSET", message="bad resume")
         )
 
         class _Call:
@@ -7317,9 +7315,7 @@ class TestStreamLogsV1Basic:
             ),
             patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
         ):
-            producer = asyncio.create_task(
-                sandbox._stream_logs_async(output_queue, follow=False)
-            )
+            producer = asyncio.create_task(sandbox._stream_logs_async(output_queue, follow=False))
             prefill = await asyncio.wait_for(output_queue.get(), timeout=2.0)
             assert prefill == "prefill"
             item = await asyncio.wait_for(output_queue.get(), timeout=2.0)
@@ -7342,9 +7338,7 @@ class TestStreamLogsV1Basic:
         entries = [
             sandbox_pb2.LogEntry(data=b"fill\n", log_session_id="s1", next_log_offset=1),
             sandbox_pb2.LogEntry(
-                error=sandbox_pb2.LogStreamError(
-                    code="INVALID_RESUME_OFFSET", message="bad resume"
-                )
+                error=sandbox_pb2.LogStreamError(code="INVALID_RESUME_OFFSET", message="bad resume")
             ),
         ]
 

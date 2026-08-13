@@ -1860,12 +1860,7 @@ def test_stream_logs_terminal_error_reaches_slow_reader(
     backpressure-plus-terminal-error race is reachable without flooding
     4096 lines. The StreamLogs call and StreamReader path are real.
     """
-    script = (
-        "import sys, time\n"
-        "sys.stdout.write('fill\\n')\n"
-        "sys.stdout.flush()\n"
-        "time.sleep(3600)\n"
-    )
+    script = "import sys, time\nsys.stdout.write('fill\\n')\nsys.stdout.flush()\ntime.sleep(3600)\n"
     sandbox = Sandbox.run("python", "-c", script, defaults=sandbox_defaults)
     try:
         sandbox.wait()
