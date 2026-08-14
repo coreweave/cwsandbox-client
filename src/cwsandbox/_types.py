@@ -111,30 +111,165 @@ class ExecOutcome(StrEnum):
     FAILURE = "failure"
 
 
-@dataclass(frozen=True, kw_only=True)
-class NetworkOptions:
-    """Network configuration for sandbox ingress/egress.
+class PlacementMode(StrEnum):
+    """Placement candidate set for sandbox scheduling.
 
     Attributes:
-        ingress_mode: Inbound traffic mode. Available modes depend on the
-            profile configurations of runners you have access to.
-        exposed_ports: Ports to expose when using ingress. Required when
-            ``ingress_mode`` is set. Lists are normalized to tuples.
-        egress_mode: Outbound traffic mode. Available modes depend on the
-            profile configurations of runners you have access to.
+        UNSPECIFIED: Leave unset; the backend defaults to serverless.
+        SERVERLESS: CoreWeave-managed serverless pool.
+        CKS: Caller's own CKS cluster. Required when ``runner_ids`` is set.
     """
 
-    ingress_mode: str | None = None
-    exposed_ports: tuple[int, ...] | None = None
-    egress_mode: str | None = None
+    UNSPECIFIED = "unspecified"
+    SERVERLESS = "serverless"
+    CKS = "cks"
+
+
+class PlacementSpillover(StrEnum):
+    """Client-side create retry across placement modes on capacity / constraint failure.
+
+    ``placement_mode`` remains the primary (first-attempt) mode. Spillover modes
+    retry CreateSandbox once with the alternate mode when the first attempt
+    cannot place the request (capacity, no suitable runner, runner
+    unavailable/overloaded, or a placement constraint). Template creates
+    allow only ``STRICT``. ``SERVERLESS_THEN_CKS`` cannot be combined with
+    ``runner_ids``.
+
+    Attributes:
+        STRICT: No spill (default). Honor ``placement_mode`` only.
+        CKS_THEN_SERVERLESS: Attempt CKS first, then serverless. Unset
+            ``placement_mode`` is treated as CKS for attempt 1. Explicit
+            ``placement_mode=serverless`` raises ``ValueError``.
+        SERVERLESS_THEN_CKS: Attempt serverless first, then CKS. Unset
+            ``placement_mode`` is treated as serverless for attempt 1. Explicit
+            ``placement_mode=cks`` or a non-empty ``runner_ids`` pin raises
+            ``ValueError``.
+    """
+
+    STRICT = "strict"
+    CKS_THEN_SERVERLESS = "cks_then_serverless"
+    SERVERLESS_THEN_CKS = "serverless_then_cks"
+
+
+class ServiceVisibility(StrEnum):
+    """Reachability intent for a typed sandbox service port."""
+
+    UNSPECIFIED = "unspecified"
+    PUBLIC = "public"
+    PRIVATE = "private"
+    CUSTOM = "custom"
+
+
+class ServiceProtocol(StrEnum):
+    """L4 protocol for a typed sandbox service port."""
+
+    UNSPECIFIED = "unspecified"
+    TCP = "tcp"
+    UDP = "udp"
+    SCTP = "sctp"
+
+
+@dataclass(frozen=True, kw_only=True)
+class Service:
+    """Typed service port exposed by a sandbox.
+
+    Replaces the beta string ``NetworkOptions`` ingress/egress mode model.
+
+    Attributes:
+        port: Container port the workload listens on.
+        name: Optional service name.
+        protocol: L4 protocol (defaults to TCP when unset).
+        visibility: Who may reach this port (PUBLIC/PRIVATE/CUSTOM).
+            CUSTOM means the fleet assigns reachability; ``service_urls``
+            stays empty unless the API reports a URL. The service still
+            appears in ``exposed_ports``.
+    """
+
+    port: int
+    name: str | None = None
+    protocol: ServiceProtocol | str | None = None
+    visibility: ServiceVisibility | str | None = None
 
     def __post_init__(self) -> None:
-        # Normalize list to tuple for immutability
-        if isinstance(self.exposed_ports, list):
-            object.__setattr__(self, "exposed_ports", tuple(self.exposed_ports))
-        # Normalize empty to None
-        if self.exposed_ports is not None and len(self.exposed_ports) == 0:
-            object.__setattr__(self, "exposed_ports", None)
+        if self.port <= 0 or self.port > 65535:
+            raise ValueError(f"Service.port must be 1-65535, got {self.port}")
+        if isinstance(self.protocol, str):
+            object.__setattr__(self, "protocol", ServiceProtocol(self.protocol.lower()))
+        if isinstance(self.visibility, str):
+            object.__setattr__(self, "visibility", ServiceVisibility(self.visibility.lower()))
+
+
+@dataclass(frozen=True, kw_only=True)
+class NetworkOptions:
+    """Network deny flags for sandbox egress/ingress policy.
+
+    Port exposure uses typed ``services=``; this type only carries deny flags.
+
+    Attributes:
+        deny_egress: When True, deny all declared egress (policy default unused).
+        deny_ingress: When True, deny CUSTOM ingress (policy default unused).
+    """
+
+    deny_egress: bool | None = None
+    deny_ingress: bool | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScratchVolumeOptions:
+    """Named scratch volume for snapshot/restore workflows.
+
+    Attributes:
+        name: Volume name within the sandbox (referenced by mounts/snapshots).
+        mount_path: Absolute path to mount into the primary container.
+        size: Volume size (e.g. ``"10Gi"``). None uses the platform default.
+        restore_from_snapshot_id: When set, restore this snapshot at create.
+    """
+
+    name: str
+    mount_path: str
+    size: str | None = None
+    restore_from_snapshot_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("ScratchVolumeOptions.name cannot be empty")
+        if not self.mount_path:
+            raise ValueError("ScratchVolumeOptions.mount_path cannot be empty")
+        if not self.mount_path.startswith("/"):
+            raise ValueError(
+                f"ScratchVolumeOptions.mount_path must be absolute, got: {self.mount_path!r}"
+            )
+        if self.mount_path == "/":
+            raise ValueError("ScratchVolumeOptions.mount_path cannot be '/'")
+        if self.size is not None and not self.size:
+            object.__setattr__(self, "size", None)
+        if self.restore_from_snapshot_id is not None and not self.restore_from_snapshot_id:
+            object.__setattr__(self, "restore_from_snapshot_id", None)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ImagePullCredentials:
+    """Private-registry pull credentials resolved from a secret store.
+
+    Attributes:
+        registry: Registry authority (e.g. ``"ghcr.io"``).
+        store: Secret store name.
+        name: Secret path/name within the store.
+        field: Optional structured-secret field.
+    """
+
+    registry: str
+    store: str
+    name: str
+    field: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.registry:
+            raise ValueError("ImagePullCredentials.registry cannot be empty")
+        if not self.store:
+            raise ValueError("ImagePullCredentials.store cannot be empty")
+        if not self.name:
+            raise ValueError("ImagePullCredentials.name cannot be empty")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -239,12 +374,12 @@ class FileSystemSnapshotTrigger(StrEnum):
 
     Attributes:
         UNSPECIFIED: Trigger not reported by the backend.
-        STOP: Captured during ``stop(snapshot_on_stop=True)``.
+        ON_DELETE: Captured during ``stop(snapshot_on_stop=True)`` / DeleteSandbox.
         MANUAL: Captured via ``snapshot()`` (CreateFileSystemSnapshot).
     """
 
     UNSPECIFIED = "unspecified"
-    STOP = "stop"
+    ON_DELETE = "on_delete"
     MANUAL = "manual"
 
 
@@ -264,37 +399,23 @@ class FileSystemSnapshotBucketMode(StrEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class FileSystemSnapshotOptions:
-    """Configuration for the sandbox file-system mount used by snapshots.
+    """Convenience single-mount wrapper over a named scratch volume.
 
-    Passed to ``Sandbox.run(file_system_snapshot=...)`` (and
-    ``Session.sandbox`` / ``@session.function``). The mount at ``mount_path``
-    is the directory captured by ``snapshot()`` and
-    ``stop(snapshot_on_stop=True)``, and the directory restored into when
-    ``file_system_snapshot_id`` is set. Plain dicts with matching keys are accepted and
-    converted automatically.
+    Prefer ``ScratchVolumeOptions`` / ``volumes=`` for multi-volume sandboxes.
+    This helper maps to a scratch volume named ``workspace`` (or ``name``)
+    mounted at ``mount_path``.
 
     Attributes:
-        mount_path: Absolute directory to mount (e.g. "/workspace"). This is
-            the directory captured and restored by FSS. Reserved system paths
-            (e.g. /proc, /sys, /dev, /etc) are rejected by the backend.
+        mount_path: Absolute directory to mount (e.g. "/workspace").
         size: Mount size as a Kubernetes resource quantity (e.g. "10Gi").
-            None lets the backend choose a default.
-        file_system_snapshot_id: When set, restore this snapshot's contents into
-            ``mount_path`` at start (fork). When None, the mount starts empty.
-
-    Examples:
-        Fresh scratch mount::
-
-            FileSystemSnapshotOptions(mount_path="/workspace", size="10Gi")
-
-        Restore from an existing snapshot::
-
-            FileSystemSnapshotOptions(mount_path="/workspace", file_system_snapshot_id="fss-...")
+        file_system_snapshot_id: When set, restore this snapshot at start.
+        name: Scratch volume name (default ``"workspace"``).
     """
 
     mount_path: str
     size: str | None = None
     file_system_snapshot_id: str | None = None
+    name: str = "workspace"
 
     def __post_init__(self) -> None:
         if not self.mount_path:
@@ -306,11 +427,21 @@ class FileSystemSnapshotOptions:
             )
         if self.mount_path == "/":
             raise ValueError("FileSystemSnapshotOptions.mount_path cannot be '/'")
-        # Normalize empty optional strings to None.
+        if not self.name:
+            raise ValueError("FileSystemSnapshotOptions.name cannot be empty")
         if self.size is not None and not self.size:
             object.__setattr__(self, "size", None)
         if self.file_system_snapshot_id is not None and not self.file_system_snapshot_id:
             object.__setattr__(self, "file_system_snapshot_id", None)
+
+    def to_scratch_volume(self) -> ScratchVolumeOptions:
+        """Convert to the named scratch-volume model."""
+        return ScratchVolumeOptions(
+            name=self.name,
+            mount_path=self.mount_path,
+            size=self.size,
+            restore_from_snapshot_id=self.file_system_snapshot_id,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -319,8 +450,8 @@ class FileSystemSnapshot:
 
     Returned by ``Sandbox.get_snapshot()`` and ``Sandbox.list_snapshots()``
     (``Sandbox.snapshot()`` returns just the snapshot ID). To restore, pass the
-    ``file_system_snapshot_id`` to a ``FileSystemSnapshotOptions`` on
-    ``Sandbox.run(file_system_snapshot=...)``.
+    ``file_system_snapshot_id`` to ``ScratchVolumeOptions`` /
+    ``FileSystemSnapshotOptions`` on create.
 
     Attributes:
         file_system_snapshot_id: Unique snapshot identifier.
@@ -328,9 +459,10 @@ class FileSystemSnapshot:
         status_reason: Human-readable detail, typically set for FAILED snapshots.
         size_bytes: Archive size in bytes (0 until READY).
         source_sandbox_id: The sandbox the snapshot was captured from.
-        trigger: Whether the snapshot was taken on STOP or via a MANUAL request.
-        idempotency_key: Client-supplied idempotency key, if any.
+        trigger: Whether the snapshot was taken on delete or via a MANUAL request.
+        request_id: Client-supplied create request id, if any.
         object_bucket: The object-storage bucket the archive landed in.
+        source_volume_name: Scratch volume name the snapshot was taken from.
         created_at: When the snapshot record was created (UTC), or None.
         updated_at: When the snapshot record was last updated (UTC), or None.
         completed_at: When the snapshot reached a terminal status (UTC), or None.
@@ -342,8 +474,9 @@ class FileSystemSnapshot:
     size_bytes: int = 0
     source_sandbox_id: str = ""
     trigger: FileSystemSnapshotTrigger = FileSystemSnapshotTrigger.UNSPECIFIED
-    idempotency_key: str = ""
+    request_id: str = ""
     object_bucket: str = ""
+    source_volume_name: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None

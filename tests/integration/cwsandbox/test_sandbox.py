@@ -11,17 +11,26 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator
 from unittest.mock import patch
 
-import grpc
-import grpc.aio
 import httpx
 import pytest
+from grpc.aio import UnaryStreamCall
 
-from cwsandbox import NetworkOptions, ResourceOptions, Sandbox, SandboxDefaults, Session
+from cwsandbox import (
+    NetworkOptions,
+    PlacementMode,
+    ResourceOptions,
+    Sandbox,
+    SandboxDefaults,
+    Service,
+    ServiceVisibility,
+    Session,
+    list_runners,
+)
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._proto import streaming_pb2, streaming_pb2_grpc
+from cwsandbox._proto import sandbox_pb2 as streaming_pb2
+from cwsandbox._proto import sandbox_pb2_grpc as streaming_pb2_grpc
 from cwsandbox._sandbox import SandboxStatus
 from cwsandbox.exceptions import SandboxError, SandboxResourceExhaustedError
 from tests.integration.cwsandbox.conftest import _SESSION_TAG
@@ -145,7 +154,8 @@ def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
 
 def test_sandbox_large_file_operations(sandbox_defaults: SandboxDefaults) -> None:
     """Test file operations above grpcio's historical 4 MiB default."""
-    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+    defaults = sandbox_defaults.with_overrides(max_lifetime_seconds=150)
+    with Sandbox.run(defaults=defaults) as sandbox:
         payload = bytes(i % 251 for i in range(5 * 1024 * 1024))
         filepath = f"/tmp/test_large_file_{uuid.uuid4().hex}.bin"
 
@@ -172,7 +182,14 @@ def test_sandbox_large_file_exec_fallback(sandbox_defaults: SandboxDefaults) -> 
             "Read file resource exhausted: CLIENT: Received message larger than max"
         )
 
-    with Sandbox.run(defaults=sandbox_defaults) as sandbox:
+    # Exec-stream fallback buffers the payload in-guest; the shared 256Mi
+    # fixture OOMs (exit 137) on a 20 MiB round-trip. Lifetime matches the
+    # other large-file test so the transfer is not cut off at 60s.
+    defaults = sandbox_defaults.with_overrides(
+        max_lifetime_seconds=150,
+        resources={"cpu": "1", "memory": "2Gi"},
+    )
+    with Sandbox.run(defaults=defaults) as sandbox:
         payload = bytes(i % 256 for i in range(20 * 1024 * 1024))
         filepath = f"/tmp/test_fallback_file_{uuid.uuid4().hex}.bin"
 
@@ -621,90 +638,40 @@ async def test_sandbox_async_context_manager(sandbox_defaults: SandboxDefaults) 
     # (sandbox._is_done should be True, but we can't easily verify this externally)
 
 
-# Infrastructure filtering tests (profile_ids, runner_ids)
-
-
-def test_sandbox_pinned_to_profile(
-    sandbox_defaults: SandboxDefaults,
-    discovered_infrastructure: tuple[str, str],
-) -> None:
-    """Pinning a sandbox to a profile lands on that profile exactly.
-
-    Exact-equality assertion closes the pin-bypass shape: ``is not None``
-    would pass even if the backend silently ignored ``profile_ids``.
-    """
-    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
-    # test validates profile_ids semantics. sandbox_defaults still carries
-    # runner_ids under a pin rollout; that is compatible with profile-only
-    # intent because discovered_infrastructure filters its pick through the
-    # same --cwsandbox-runner-ids allowlist, so the inherited runner pin and
-    # the chosen profile agree on the targeted runner.
-    _, profile_name = discovered_infrastructure
-
-    with Sandbox.run(profile_ids=[profile_name], defaults=sandbox_defaults) as sandbox:
-        sandbox.wait()
-        assert sandbox.status == "running"
-        assert sandbox.profile_id == profile_name
+# Infrastructure placement tests
 
 
 def test_sandbox_pinned_to_runner(
     sandbox_defaults: SandboxDefaults,
-    discovered_infrastructure: tuple[str, str],
+    discovered_runner_id: str,
 ) -> None:
-    """Pinning a sandbox to a runner lands on that runner exactly."""
-    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
-    # test validates runner_ids semantics directly. The discovered_infrastructure
-    # fixture already honors the --cwsandbox-runner-ids allowlist when picking.
-    runner_id, _ = discovered_infrastructure
-
-    with Sandbox.run(runner_ids=[runner_id], defaults=sandbox_defaults) as sandbox:
-        sandbox.wait()
-        assert sandbox.status == "running"
-        assert sandbox.runner_id == runner_id
-
-
-def test_sandbox_pinned_to_profile_and_runner(
-    sandbox_defaults: SandboxDefaults,
-    discovered_infrastructure: tuple[str, str],
-) -> None:
-    """Pinning to both profile and runner lands on both exactly."""
-    # Opt-out from the configured_runner_ids contract in tests/CLAUDE.md: this
-    # test validates profile_ids and runner_ids semantics together. The
-    # discovered_infrastructure fixture already honors --cwsandbox-runner-ids.
-    runner_id, profile_name = discovered_infrastructure
-
+    """Pinning a CKS sandbox to a runner lands on that runner exactly."""
     with Sandbox.run(
-        profile_ids=[profile_name],
-        runner_ids=[runner_id],
+        runner_ids=[discovered_runner_id],
+        placement_mode=PlacementMode.CKS,
         defaults=sandbox_defaults,
     ) as sandbox:
         sandbox.wait()
         assert sandbox.status == "running"
-        assert sandbox.profile_id == profile_name
-        assert sandbox.runner_id == runner_id
+        assert sandbox.runner_id == discovered_runner_id
 
 
-def test_sandbox_with_empty_runway_and_runner_ids(
+def test_sandbox_serverless_placement(
     sandbox_defaults: SandboxDefaults,
     configured_runner_ids: tuple[str, ...] | None,
 ) -> None:
-    """Test sandbox creation with empty profile_ids and runner_ids lists.
+    """Test explicit serverless placement without a runner pin.
 
-    Verifies that empty lists are accepted (clearing any defaults). This test
-    is a documented opt-out from the runner-pin contract in tests/AGENTS.md:
-    its whole purpose is to exercise auto-scheduling by clearing defaults, so
-    it cannot honor the pin. Skipped under runner-pin rollouts to avoid
-    landing on an unpinned runner and masquerading as a regression in the PR
-    under test.
+    This intentionally skips during runner-targeted rollouts because serverless
+    placement cannot honor a CKS runner allowlist.
     """
     if configured_runner_ids is not None:
         pytest.skip(
-            "Opt-out test clears runner_ids to exercise auto-scheduling; "
-            "skipped under runner-pin rollouts"
+            "Opt-out test exercises serverless placement; skipped under runner-pin rollouts"
         )
 
     with Sandbox.run(
-        profile_ids=[],
+        placement_mode=PlacementMode.SERVERLESS,
         runner_ids=[],
         defaults=sandbox_defaults,
     ) as sandbox:
@@ -713,20 +680,12 @@ def test_sandbox_with_empty_runway_and_runner_ids(
         assert sandbox.status == "running"
 
 
-# Service address and exposed ports tests
+# Typed network and service tests
 
 
 def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox creation with NetworkOptions.
-
-    Creates a sandbox with typed NetworkOptions for network configuration
-    and verifies that applied_* modes are captured from the backend response.
-    """
-    network = NetworkOptions(
-        ingress_mode="public",
-        exposed_ports=(8080,),
-        egress_mode="internet",
-    )
+    """Test sandbox creation with v1 NetworkOptions policy flags."""
+    network = NetworkOptions(deny_ingress=False, deny_egress=False)
 
     with Sandbox.run(
         "sleep",
@@ -735,100 +694,135 @@ def test_sandbox_with_network_options(sandbox_defaults: SandboxDefaults) -> None
         network=network,
     ) as sandbox:
         sandbox.wait()
-
-        # Verify applied modes are captured from StartSandboxResponse
-        assert sandbox.applied_ingress_mode is not None
-        assert sandbox.applied_egress_mode is not None
-
-        # Verify service_address is set for public ingress
-        # (may be None depending on infrastructure configuration)
-        if sandbox.service_address is not None:
-            assert ":" in sandbox.service_address or "." in sandbox.service_address
+        assert sandbox.status == "running"
 
 
-def test_sandbox_public_service_address(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public ingress returns service_address.
+def _wait_for_service_urls(sandbox: Sandbox, *, timeout: float = 60.0) -> None:
+    """Poll until status.services report at least one URL, or fail.
 
-    Creates a sandbox with NetworkOptions for public ingress and verifies that
-    service_address is populated in the response.
+    Service URLs are not available at create time — they appear once the
+    sandbox is RUNNING and the control plane has published them. Skipping
+    when empty would hide a permanent SDK/backend contract break.
     """
-    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sandbox.get_status()
+        if sandbox.service_urls:
+            return
+        time.sleep(0.5)
+    raise AssertionError(
+        f"sandbox {sandbox.sandbox_id} reached RUNNING but service_urls stayed empty "
+        f"after {timeout:.0f}s (exposed_ports={sandbox.exposed_ports!r})"
+    )
+
+
+def _require_service_visibility(visibility: ServiceVisibility) -> None:
+    """Skip when no runner advertises the typed visibility under test.
+
+    Keeps PUBLIC/PRIVATE create/connectivity assertions strict when the org
+    has capable runners; avoids false failures on custom-only fleets.
+    """
+    runners = list_runners(service_visibility=visibility.value)
+    if not runners:
+        pytest.skip(
+            f"No runner supports service visibility {visibility.value!r}; "
+            "skipping visibility-specific create/connectivity check"
+        )
+
+
+def test_sandbox_public_service(sandbox_defaults: SandboxDefaults) -> None:
+    """Public service create must report URLs via get_status / service_urls."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
+    service = Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC)
 
     with Sandbox.run(
         defaults=sandbox_defaults,
-        network=network,
+        services=[service],
     ) as sandbox:
         sandbox.wait()
-
-        # service_address comes from StartSandboxResponse
-        # It may be None if the tower uses ClusterIP instead of LoadBalancer
-        if sandbox.service_address is not None:
-            # Address should look like "ip:port" or hostname format
-            assert ":" in sandbox.service_address or "." in sandbox.service_address
-        else:
-            # If service_address is None, that's acceptable - infrastructure dependent
-            # Just verify the sandbox is running and the property exists
-            assert sandbox.status == "running"
+        assert sandbox.status == SandboxStatus.RUNNING
+        _wait_for_service_urls(sandbox)
+        assert sandbox.service_urls[0][0] == 8080
+        assert sandbox.exposed_ports is not None
+        assert (8080, "http") in sandbox.exposed_ports
 
 
-def test_sandbox_public_exposed_ports(sandbox_defaults: SandboxDefaults) -> None:
-    """Test sandbox with public ingress and ports returns exposed_ports.
+def test_sandbox_rejects_mixed_public_private_services(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """v1 rejects PRIVATE+PUBLIC on one sandbox (NOT_IMPLEMENTED)."""
+    services = [
+        Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC),
+        Service(port=9090, name="metrics", visibility=ServiceVisibility.PRIVATE),
+    ]
 
-    Creates a sandbox with NetworkOptions for public ingress and port mappings,
-    then verifies exposed_ports is populated.
-    """
-    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+    with pytest.raises(SandboxError) as exc_info:
+        Sandbox.run(defaults=sandbox_defaults, services=services)
+
+    assert exc_info.value.reason == "CWSANDBOX_NOT_IMPLEMENTED"
+
+
+def test_sandbox_multiple_private_services(sandbox_defaults: SandboxDefaults) -> None:
+    """Multiple services sharing one PRIVATE visibility are accepted."""
+    _require_service_visibility(ServiceVisibility.PRIVATE)
+    services = [
+        Service(port=8080, name="http", visibility=ServiceVisibility.PRIVATE),
+        Service(port=9090, name="metrics", visibility=ServiceVisibility.PRIVATE),
+    ]
 
     with Sandbox.run(
-        ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
-        network=network,
+        services=services,
     ) as sandbox:
         sandbox.wait()
-
-        # exposed_ports comes from StartSandboxResponse
-        # It may be None depending on infrastructure configuration
-        if sandbox.exposed_ports is not None:
-            assert len(sandbox.exposed_ports) >= 1
-            # Each entry should be (port, name) tuple
-            port, name = sandbox.exposed_ports[0]
-            assert isinstance(port, int)
-            assert isinstance(name, str)
-        else:
-            # If exposed_ports is None, verify sandbox is running
-            assert sandbox.status == "running"
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox.exposed_ports is not None
+        ports = {p for p, _ in sandbox.exposed_ports}
+        assert ports >= {8080, 9090}
 
 
 def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) -> None:
-    """Test that exposed service is actually reachable.
-
-    Starts a simple HTTP server inside the sandbox and verifies we can
-    connect to it from outside using the service_address.
-    """
-    network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+    """Exposed PUBLIC service URL must be reachable and populated on Get."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
+    service = Service(port=8080, name="http", visibility=ServiceVisibility.PUBLIC)
 
     with Sandbox.run(
         "python",
         "-m",
         "http.server",
         "8080",
-        ports=[{"container_port": 8080, "name": "http"}],
         defaults=sandbox_defaults,
-        network=network,
+        services=[service],
     ) as sandbox:
         sandbox.wait()
+        _wait_for_service_urls(sandbox)
+        service_url = sandbox.service_urls[0][2]
+        assert service_url.startswith("http")
 
-        if sandbox.service_address is None:
-            pytest.skip("Infrastructure does not provide service_address")
+        # from_id must also surface URLs (not only the create-handle cache).
+        reattached = Sandbox.from_id(sandbox.sandbox_id).result()
+        reattached.get_status()
+        assert reattached.service_urls, "from_id/get_status must refresh service_urls"
+        assert reattached.service_urls[0][2] == service_url
 
-        # Give the HTTP server a moment to start
         time.sleep(2)
-
-        response = httpx.get(
-            f"http://{sandbox.service_address}/",
-            timeout=120.0,
-        )
+        response = httpx.get(service_url, timeout=120.0)
         assert response.status_code == 200
+
+
+def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:
+    """stop(missing_ok=True) must succeed when Delete already removed the row."""
+    sandbox = Sandbox.run("sleep", "infinity", defaults=sandbox_defaults)
+    try:
+        sandbox.wait()
+        sandbox_id = sandbox.sandbox_id
+        assert sandbox_id is not None
+        Sandbox.delete(sandbox_id).result()
+        # Local handle may still look non-terminal; missing_ok must not raise
+        # SandboxTerminalStateUnavailableError after allow_missing OK.
+        sandbox.stop(missing_ok=True).result()
+    finally:
+        sandbox.stop(missing_ok=True).result()
 
 
 # Stdin streaming tests
@@ -1260,11 +1254,11 @@ def test_sandbox_list_excludes_stopped_by_default(sandbox_defaults: SandboxDefau
         pytest.fail(f"Stopped sandbox {sandbox_id} still appears in default list after 30s")
 
 
-def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None:
-    """Test that list(include_stopped=True) includes terminal sandboxes.
+def test_sandbox_list_show_terminated(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that list(show_terminated=True) includes terminal sandboxes.
 
     Creates a sandbox, stops it, then verifies it appears when
-    include_stopped=True is set.
+    show_terminated=True is set.
     """
     unique_tag = f"e2e-include-stopped-{uuid.uuid4().hex[:8]}"
 
@@ -1275,12 +1269,12 @@ def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
     # Wait for sandbox to reach terminal state
     sandbox.wait_until_complete(timeout=60.0).result()
 
-    # With include_stopped=True, the sandbox should appear.
+    # With show_terminated=True, the sandbox should appear.
     # The status may not yet reflect the final terminal state, so we only
     # assert the sandbox is returned — not a specific status.
     found = False
     for _ in range(15):
-        sandboxes = Sandbox.list(tags=[unique_tag], include_stopped=True).result()
+        sandboxes = Sandbox.list(tags=[unique_tag], show_terminated=True).result()
         for sb in sandboxes:
             if sb.sandbox_id == sandbox_id:
                 found = True
@@ -1289,14 +1283,14 @@ def test_sandbox_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
             break
         time.sleep(1)
 
-    assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+    assert found, f"Stopped sandbox {sandbox_id} not found with show_terminated=True"
 
 
 def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
     """Test that listing with a terminal status filter returns stopped sandboxes.
 
     A terminal status filter automatically widens the search,
-    even without include_stopped=True.
+    even without show_terminated=True.
     """
     unique_tag = f"e2e-status-filter-{uuid.uuid4().hex[:8]}"
 
@@ -1467,8 +1461,8 @@ def test_concurrent_stop_and_wait_until_complete(sandbox_defaults: SandboxDefaul
 # Log-stream resume e2e
 # --------------------------------------------------------------------------
 #
-# These tests cover the wire-additive `session_id` / `offset` fields the
-# server emits on every LogStreamData frame, the in-band SESSION_NOT_FOUND
+# These tests cover the wire-additive log session ID / offset fields the
+# server emits on every LogEntry, the in-band SESSION_NOT_FOUND
 # reject contract on a resume init with an unknown session_id, and the
 # SDK's transparent auto-reconnect on a transient transport disconnect.
 #
@@ -1505,15 +1499,8 @@ async def _open_log_stream(
     follow: bool,
     resume_session_id: str = "",
     resume_offset: int = 0,
-) -> tuple[
-    grpc.aio.StreamStreamCall[streaming_pb2.LogStreamRequest, streaming_pb2.LogStreamResponse],
-    asyncio.Event,
-]:
+) -> UnaryStreamCall[streaming_pb2.StreamLogsRequest, streaming_pb2.LogEntry]:
     """Open a raw StreamLogs RPC against the sandbox.
-
-    Returns the streaming call plus a shutdown Event that, when set, makes
-    the request iterator yield a close message — letting the caller end a
-    follow=True stream cleanly.
 
     Used by the e2e tests below to bypass the SDK's auto-resume machinery
     and exercise the wire protocol directly.
@@ -1522,30 +1509,23 @@ async def _open_log_stream(
     assert sandbox_id is not None
 
     channel = await sandbox._get_or_create_streaming_channel()
-    stub = streaming_pb2_grpc.GatewayStreamingServiceStub(channel)  # type: ignore[no-untyped-call]
-    shutdown = asyncio.Event()
-
-    async def request_iter() -> AsyncIterator[streaming_pb2.LogStreamRequest]:
-        init = streaming_pb2.LogStreamInit(sandbox_id=sandbox_id, follow=follow)
-        if resume_session_id:
-            init.resume_session_id = resume_session_id
-            init.resume_offset = resume_offset
-        yield streaming_pb2.LogStreamRequest(init=init)
-        if follow:
-            await shutdown.wait()
-            yield streaming_pb2.LogStreamRequest(close=streaming_pb2.LogStreamClose())
-
-    call = stub.StreamLogs(
-        request_iterator=request_iter(),
+    stub = streaming_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
+    request = streaming_pb2.StreamLogsRequest(
+        sandbox_id=sandbox_id,
+        follow=follow,
+        resume_log_session_id=resume_session_id,
+        resume_log_offset=resume_offset,
+    )
+    return stub.StreamLogs(
+        request,
         metadata=sandbox._auth_metadata,
     )
-    return call, shutdown
 
 
 def test_log_stream_frames_carry_session_id_and_offset(
     sandbox_defaults: SandboxDefaults,
 ) -> None:
-    """Each LogStreamData frame must include session_id and a cumulative offset.
+    """Each LogEntry must include a log session ID and cumulative offset.
 
     Mirrors the contract validated by aviato's
     TestStreamingLogData_CarriesSessionIDAndCumulativeOffset: session_id is
@@ -1562,19 +1542,18 @@ def test_log_stream_frames_carry_session_id_and_offset(
 
         loop_mgr = _LoopManager.get()
 
-        async def collect_frames() -> list[streaming_pb2.LogStreamData]:
-            call, shutdown = await _open_log_stream(sandbox, follow=True)
-            frames: list[streaming_pb2.LogStreamData] = []
+        async def collect_frames() -> list[streaming_pb2.LogEntry]:
+            call = await _open_log_stream(sandbox, follow=True)
+            frames: list[streaming_pb2.LogEntry] = []
             try:
-                async for resp in call:
-                    if resp.HasField("data"):
-                        frames.append(resp.data)
+                async for entry in call:
+                    if entry.data:
+                        frames.append(entry)
                         if len(frames) >= 3:
                             break
-                    if resp.HasField("error") or resp.HasField("complete"):
+                    if entry.HasField("error"):
                         break
             finally:
-                shutdown.set()
                 call.cancel()
             return frames
 
@@ -1583,29 +1562,30 @@ def test_log_stream_frames_carry_session_id_and_offset(
 
         assert len(frames) >= 3, "noisy sandbox should produce >=3 log frames in 30s"
 
-        if not frames[0].session_id:
+        if not frames[0].log_session_id:
             pytest.skip(
-                "server does not advertise session_id on LogStreamData;"
+                "server does not advertise log_session_id on LogEntry;"
                 " streaming-resume wire protocol not deployed in this env"
             )
 
-        first_session = frames[0].session_id
+        first_session = frames[0].log_session_id
         last_offset = 0
         for frame in frames:
-            assert frame.session_id == first_session, (
-                f"session_id must be stable across frames: saw {frame.session_id!r}"
+            assert frame.log_session_id == first_session, (
+                f"session_id must be stable across frames: saw {frame.log_session_id!r}"
                 f" after {first_session!r}"
             )
-            assert frame.offset > last_offset, (
-                f"offset must advance strictly monotonically: {frame.offset} <= {last_offset}"
+            assert frame.next_log_offset > last_offset, (
+                "offset must advance strictly monotonically: "
+                f"{frame.next_log_offset} <= {last_offset}"
             )
             # offset is cumulative bytes *after* this chunk, so the advance
             # equals chunk byte length exactly.
-            assert frame.offset - last_offset == len(frame.data), (
-                f"offset advance ({frame.offset - last_offset}) must equal"
+            assert frame.next_log_offset - last_offset == len(frame.data), (
+                f"offset advance ({frame.next_log_offset - last_offset}) must equal"
                 f" chunk size ({len(frame.data)})"
             )
-            last_offset = frame.offset
+            last_offset = frame.next_log_offset
     finally:
         try:
             sandbox.stop(missing_ok=True).result()
@@ -1633,20 +1613,19 @@ def test_log_resume_with_unknown_session_id_returns_in_band_reject(
 
         loop_mgr = _LoopManager.get()
 
-        async def probe_resume_reject() -> tuple[bool, streaming_pb2.LogStreamResponse | None]:
+        async def probe_resume_reject() -> tuple[bool, streaming_pb2.LogEntry | None]:
             # First open a normal stream to confirm the server speaks the
             # resume wire protocol — if it doesn't, the resume init below
             # would just be ignored and the test would assert on a normal
             # log frame, which is not the contract we're testing.
-            probe_call, probe_shutdown = await _open_log_stream(sandbox, follow=True)
+            probe_call = await _open_log_stream(sandbox, follow=True)
             wire_supported = False
             try:
-                async for resp in probe_call:
-                    if resp.HasField("data"):
-                        wire_supported = bool(resp.data.session_id)
+                async for entry in probe_call:
+                    if entry.data:
+                        wire_supported = bool(entry.log_session_id)
                         break
             finally:
-                probe_shutdown.set()
                 probe_call.cancel()
 
             if not wire_supported:
@@ -1655,19 +1634,18 @@ def test_log_resume_with_unknown_session_id_returns_in_band_reject(
             # Now send a resume init with a fabricated session_id. The
             # server must reply with an in-band LogStreamError carrying
             # code SESSION_NOT_FOUND.
-            reject_call, reject_shutdown = await _open_log_stream(
+            reject_call = await _open_log_stream(
                 sandbox,
                 follow=True,
                 resume_session_id="this-session-does-not-exist",
                 resume_offset=0,
             )
-            first: streaming_pb2.LogStreamResponse | None = None
+            first: streaming_pb2.LogEntry | None = None
             try:
-                async for resp in reject_call:
-                    first = resp
+                async for entry in reject_call:
+                    first = entry
                     break
             finally:
-                reject_shutdown.set()
                 reject_call.cancel()
             return True, first
 
@@ -1676,7 +1654,7 @@ def test_log_resume_with_unknown_session_id_returns_in_band_reject(
 
         if not wire_supported:
             pytest.skip(
-                "server does not advertise session_id on LogStreamData;"
+                "server does not advertise log_session_id on LogEntry;"
                 " resume-reject contract is not exercised in this env"
             )
 
@@ -1690,6 +1668,69 @@ def test_log_resume_with_unknown_session_id_returns_in_band_reject(
             f"unknown resume_session_id must produce SESSION_NOT_FOUND, got"
             f" {first.error.code!r}: {first.error.message!r}"
         )
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
+def test_stream_logs_reconnects_with_timestamps(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """timestamps=True must still resume after a forced disconnect.
+
+    Resume requests must not re-send timestamps (backend rejects that shape).
+    """
+    sandbox = _noisy_sandbox(sandbox_defaults)
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        reader = sandbox.stream_logs(follow=True, timestamps=True)
+        first_batch: list[int] = []
+        try:
+            for line in reader:
+                # Timestamp prefix is ISO-8601 then a space; counter is after.
+                payload = line.split(" ", 1)[-1] if " " in line else line
+                stripped = payload.strip()
+                if stripped.startswith("line-"):
+                    first_batch.append(int(stripped.split("-", 1)[1]))
+                if len(first_batch) >= 5:
+                    break
+
+            assert len(first_batch) >= 5
+
+            loop_mgr = _LoopManager.get()
+
+            async def reset_channel() -> None:
+                if sandbox._streaming_channel is not None:
+                    await sandbox._streaming_channel.close(grace=None)
+                    sandbox._streaming_channel = None
+
+            loop_mgr.run_sync(reset_channel())
+
+            new_line_threshold = first_batch[-1] + 5
+            second_batch: list[int] = []
+            start = time.monotonic()
+            for line in reader:
+                payload = line.split(" ", 1)[-1] if " " in line else line
+                stripped = payload.strip()
+                if stripped.startswith("line-"):
+                    n = int(stripped.split("-", 1)[1])
+                    if n >= new_line_threshold:
+                        second_batch.append(n)
+                if len(second_batch) >= 3:
+                    break
+                if time.monotonic() - start > 30.0:
+                    break
+
+            assert len(second_batch) >= 3, (
+                f"timestamps=True stream must resume after disconnect; "
+                f"first={first_batch}, second={second_batch}"
+            )
+        finally:
+            reader.close()
     finally:
         try:
             sandbox.stop(missing_ok=True).result()

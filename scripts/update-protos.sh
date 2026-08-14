@@ -3,54 +3,63 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
 #
-# Refresh vendored protobuf/gRPC stubs from buf.build or a local sandbox checkout.
+# Refresh vendored protobuf/gRPC stubs for coreweave.sandbox.v1.
 #
 # Usage:
-#   scripts/update-protos.sh                          # download from buf.build
-#   scripts/update-protos.sh --local ../sandbox/gen/python  # copy from local path
+#   scripts/update-protos.sh --from-backend ../aviato
+#       Generate with protobuf 26.1 / pyi / grpc plugins into a temp dir under
+#       the backend checkout (or via BUF_PROTO_DIR), then vendor consumer stubs.
+#   scripts/update-protos.sh --local ../aviato/gen/python
+#       Copy already-generated stubs from a local gen/python tree (must be
+#       generated with plugin <=26.1 to pass validate_protobuf_version).
 #
-# If the buf.build pins below lag the backend, regenerate from a local sandbox
-# proto checkout with `buf generate` (protobuf python plugin pinned to v26.1 / <=5.26
-# to pass validate_protobuf_version) and pass the output via --local.
+# Only consumer-facing v1 modules are vendored (no runner_management, policy,
+# placement_org_config, or network).
 
 set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# Version pins - update these when bumping protos
-# ---------------------------------------------------------------------------
-# buf.build plugin versions (prefix differs per package, commit suffix is shared)
-GRPC_VERSION="1.80.0.1.20260728134737+033ca7a80802"
-PB_VERSION="26.1.0.2.20260728134737+033ca7a80802"
-PYI_VERSION="26.1.0.2.20260728134737+033ca7a80802"
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROTO_DIR="$REPO_ROOT/src/cwsandbox/_proto"
-BUF_INDEX="https://buf.build/gen/python"
+SCRIPT_DIR="$REPO_ROOT/scripts"
+BUF_GEN_TEMPLATE="$SCRIPT_DIR/buf.gen.python.yaml"
 SPDX_HEADER='# SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client'
 
-# Files we vendor (everything else in the wheels is ignored)
+# Consumer stubs only (flat layout under _proto/)
 PROTO_FILES=(
-    gateway_pb2.py
-    gateway_pb2.pyi
-    gateway_pb2_grpc.py
+    sandbox_pb2.py
+    sandbox_pb2.pyi
+    sandbox_pb2_grpc.py
     discovery_pb2.py
     discovery_pb2.pyi
     discovery_pb2_grpc.py
-    secrets_pb2.py
-    secrets_pb2.pyi
+    settings_pb2.py
+    settings_pb2.pyi
+    settings_pb2_grpc.py
+    sandbox_template_pb2.py
+    sandbox_template_pb2.pyi
+    sandbox_template_pb2_grpc.py
+    volume_pb2.py
+    volume_pb2.pyi
+    volume_pb2_grpc.py
+)
+
+# Legacy beta stubs to delete on refresh
+LEGACY_BETA_FILES=(
+    gateway_pb2.py
+    gateway_pb2.pyi
+    gateway_pb2_grpc.py
     streaming_pb2.py
     streaming_pb2.pyi
     streaming_pb2_grpc.py
+    secrets_pb2.py
+    secrets_pb2.pyi
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 log() { printf '%s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
@@ -62,10 +71,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ---------------------------------------------------------------------------
-# Parse args
-# ---------------------------------------------------------------------------
 LOCAL_PATH=""
+FROM_BACKEND=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --local)
@@ -73,11 +80,13 @@ while [[ $# -gt 0 ]]; do
             LOCAL_PATH="$2"
             shift 2
             ;;
+        --from-backend)
+            [[ -n "${2:-}" ]] || die "--from-backend requires a path argument"
+            FROM_BACKEND="$2"
+            shift 2
+            ;;
         -h|--help)
-            log "Usage: $0 [--local PATH]"
-            log ""
-            log "  --local PATH  Copy from local sandbox gen/python directory"
-            log "                (default: download from buf.build)"
+            log "Usage: $0 --from-backend PATH | --local PATH"
             exit 0
             ;;
         *)
@@ -86,11 +95,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ---------------------------------------------------------------------------
-# Source: local path
-# ---------------------------------------------------------------------------
-copy_from_local() {
-    local src="$1/coreweave/sandbox/v1beta2"
+[[ -n "$LOCAL_PATH" || -n "$FROM_BACKEND" ]] || die "Specify --from-backend PATH or --local PATH"
+[[ -z "$LOCAL_PATH" || -z "$FROM_BACKEND" ]] || die "Specify only one of --from-backend or --local"
+
+copy_from_v1_tree() {
+    local src="$1/coreweave/sandbox/v1"
     [[ -d "$src" ]] || die "Local proto source not found: $src"
 
     log "Copying from local: $src"
@@ -105,49 +114,46 @@ copy_from_local() {
     done
 }
 
-# ---------------------------------------------------------------------------
-# Source: buf.build wheels
-# ---------------------------------------------------------------------------
-copy_from_buf() {
+generate_from_backend() {
+    local backend="$1"
+    [[ -d "$backend" ]] || die "Backend path not found: $backend"
+    [[ -f "$BUF_GEN_TEMPLATE" ]] || die "Missing template: $BUF_GEN_TEMPLATE"
+    command -v buf >/dev/null || die "buf CLI is required to generate protos"
+
     TMPDIR_CREATED="$(mktemp -d)"
-    local tmpdir="$TMPDIR_CREATED"
+    local out="$TMPDIR_CREATED/out"
+    mkdir -p "$out"
 
-    log "Downloading wheels from buf.build..."
-    pip3 download --no-deps --quiet --dest "$tmpdir" \
-        --index-url "$BUF_INDEX" \
-        "coreweave-sandbox-grpc-python==$GRPC_VERSION" \
-        "coreweave-sandbox-protocolbuffers-python==$PB_VERSION" \
-        "coreweave-sandbox-protocolbuffers-pyi==$PYI_VERSION"
+    # aviato buf module root is proto/ (see buf.yaml modules.path).
+    local proto_mod="$backend/proto"
+    [[ -d "$proto_mod/coreweave/sandbox/v1" ]] || die "Expected $proto_mod/coreweave/sandbox/v1"
 
-    log "Wheel checksums (SHA256):"
-    for whl in "$tmpdir"/*.whl; do
-        log "  $(shasum -a 256 "$whl")"
-    done
+    local tmp_template="$TMPDIR_CREATED/buf.gen.python.yaml"
+    sed "s|out: gen/python|out: $out|" "$BUF_GEN_TEMPLATE" > "$tmp_template"
 
-    log "Extracting proto files..."
-    local extract_dir="$tmpdir/extracted"
-    mkdir -p "$extract_dir"
+    log "Generating Python stubs (protobuf 26.1) from $proto_mod ..."
+    (
+        cd "$proto_mod"
+        buf generate --template "$tmp_template" --path coreweave/sandbox/v1 --include-imports
+    )
 
-    for whl in "$tmpdir"/*.whl; do
-        unzip -q -o "$whl" -d "$extract_dir"
-    done
+    copy_from_v1_tree "$out"
+}
 
-    local src="$extract_dir/coreweave/sandbox/v1beta2"
-    [[ -d "$src" ]] || die "Expected path not found in wheels: $src"
-
-    for f in "${PROTO_FILES[@]}"; do
-        [[ -f "$src/$f" ]] || die "Missing file in wheels: $src/$f"
-        cp "$src/$f" "$PROTO_DIR/$f"
+remove_legacy_beta() {
+    for f in "${LEGACY_BETA_FILES[@]}"; do
+        local filepath="$PROTO_DIR/$f"
+        if [[ -f "$filepath" ]]; then
+            log "Removing legacy beta stub: $f"
+            rm -f "$filepath"
+        fi
     done
 }
 
-# ---------------------------------------------------------------------------
-# Post-processing
-# ---------------------------------------------------------------------------
 inject_spdx_header() {
     for f in "${PROTO_FILES[@]}"; do
         local filepath="$PROTO_DIR/$f"
-        # Skip if header already present
+        [[ -f "$filepath" ]] || continue
         if head -1 "$filepath" | grep -q "SPDX-FileCopyrightText"; then
             continue
         fi
@@ -160,22 +166,22 @@ inject_spdx_header() {
 
 rewrite_imports() {
     # Rewrite Python import paths from the upstream package to our vendored location.
-    # Only rewrites "from coreweave.sandbox.v1beta2 import" statements.
-    # gRPC service paths (e.g. '/coreweave.sandbox.v1beta2.GatewayService/Start') are
-    # protocol-level identifiers and must NOT be rewritten.
+    # gRPC service paths (e.g. '/coreweave.sandbox.v1.SandboxService/CreateSandbox')
+    # are protocol-level identifiers and must NOT be rewritten.
     for f in "${PROTO_FILES[@]}"; do
         local filepath="$PROTO_DIR/$f"
+        [[ -f "$filepath" ]] || continue
         local tmp
         tmp="$(mktemp)"
-        sed 's/from coreweave\.sandbox\.v1beta2 import/from cwsandbox._proto import/g' "$filepath" > "$tmp"
+        sed -E \
+            -e 's/from coreweave\.sandbox\.v1 import/from cwsandbox._proto import/g' \
+            -e 's/import coreweave\.sandbox\.v1\./import cwsandbox._proto./g' \
+            "$filepath" > "$tmp"
         mv "$tmp" "$filepath"
     done
 }
 
 validate_imports() {
-    # Verify no stale Python import references remain.
-    # We grep for "from coreweave.sandbox" which catches import statements but
-    # not gRPC service path strings like '/coreweave.sandbox.v1beta2.GatewayService/Start'.
     local stale
     stale=$(grep -rn "from coreweave\.sandbox" "$PROTO_DIR/" 2>/dev/null || true)
     if [[ -n "$stale" ]]; then
@@ -189,7 +195,6 @@ validate_imports() {
 validate_protobuf_version() {
     # Verify generated files use protobuf <=5.26.x, which predates the
     # ValidateProtobufRuntimeVersion check (introduced in 5.27.0).
-    # This avoids pinning users to a specific protobuf minor version.
     local bad_files
     bad_files=$(grep -rl "ValidateProtobufRuntimeVersion" "$PROTO_DIR"/*_pb2.py 2>/dev/null || true)
     if [[ -n "$bad_files" ]]; then
@@ -204,25 +209,23 @@ validate_protobuf_version() {
     log "OK: protobuf version $version (no runtime version check)"
 }
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 main() {
     [[ -d "$PROTO_DIR" ]] || die "Proto directory not found: $PROTO_DIR"
 
-    if [[ -n "$LOCAL_PATH" ]]; then
-        copy_from_local "$LOCAL_PATH"
+    if [[ -n "$FROM_BACKEND" ]]; then
+        generate_from_backend "$FROM_BACKEND"
     else
-        copy_from_buf
+        copy_from_v1_tree "$LOCAL_PATH"
     fi
 
+    remove_legacy_beta
     rewrite_imports
     inject_spdx_header
     validate_imports
     validate_protobuf_version
 
     log ""
-    log "Proto stubs updated in $PROTO_DIR"
+    log "Proto stubs updated in $PROTO_DIR (coreweave.sandbox.v1 consumer surface)"
 }
 
 main

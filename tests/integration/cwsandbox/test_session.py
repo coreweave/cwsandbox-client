@@ -26,6 +26,21 @@ def test_session_create_sandbox(sandbox_defaults: SandboxDefaults) -> None:
         assert sandbox.sandbox_id is not None
 
 
+def test_session_sandbox_accepts_request_timeout_seconds(
+    sandbox_defaults: SandboxDefaults,
+) -> None:
+    """session.sandbox must accept request_timeout_seconds (1.x migration path)."""
+    with Sandbox.session(sandbox_defaults) as session:
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            request_timeout_seconds=120.0,
+        )
+        result = sandbox.exec(["echo", "timeout-ok"]).result()
+        assert result.returncode == 0
+        assert sandbox._request_timeout_seconds == 120.0
+
+
 def test_session_multiple_sandboxes(sandbox_defaults: SandboxDefaults) -> None:
     """Test session managing multiple sandboxes."""
     with Sandbox.session(sandbox_defaults) as session:
@@ -160,14 +175,14 @@ async def test_session_async_context_manager(sandbox_defaults: SandboxDefaults) 
     assert session.sandbox_count == 0
 
 
-# List include_stopped tests
+# List show_terminated tests
 
 
-def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None:
-    """Test session.list(include_stopped=True) returns terminal sandboxes.
+def test_session_list_show_terminated(sandbox_defaults: SandboxDefaults) -> None:
+    """Test session.list(show_terminated=True) returns terminal sandboxes.
 
     Creates a sandbox via session, lets it complete, then verifies that
-    session.list(include_stopped=True) returns it while the default
+    session.list(show_terminated=True) returns it while the default
     session.list() excludes it.
     """
     import time
@@ -195,12 +210,12 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
                 break
             time.sleep(2)
 
-        # include_stopped should include it.
+        # show_terminated should include it.
         # The status may not yet reflect the final terminal state, so we only
         # assert the sandbox is returned — not a specific status.
         found = False
         for _ in range(15):
-            all_sandboxes = session.list(include_stopped=True).result()
+            all_sandboxes = session.list(show_terminated=True).result()
             for sb in all_sandboxes:
                 if sb.sandbox_id == sandbox_id:
                     found = True
@@ -209,14 +224,14 @@ def test_session_list_include_stopped(sandbox_defaults: SandboxDefaults) -> None
                 break
             time.sleep(1)
 
-        assert found, f"Stopped sandbox {sandbox_id} not found with include_stopped=True"
+        assert found, f"Stopped sandbox {sandbox_id} not found with show_terminated=True"
 
 
 def test_session_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) -> None:
     """Test that session.list with a terminal status filter returns stopped sandboxes.
 
     A terminal status filter automatically widens the search,
-    even without include_stopped=True.
+    even without show_terminated=True.
 
     The sandbox is created outside the session context manager to avoid
     session.close() calling stop(), which would change the status from

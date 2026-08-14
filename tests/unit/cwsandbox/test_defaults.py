@@ -46,12 +46,24 @@ class TestSandboxDefaults:
         assert defaults.tags == ()
 
         # Profile/runner IDs should default to None (no filtering)
-        assert defaults.profile_ids is None
-        assert defaults.profile_names is None
+        assert defaults.placement_mode is None
         assert defaults.runner_ids is None
 
         # Network should default to None (backend defaults)
         assert defaults.network is None
+
+    @pytest.mark.parametrize(
+        "removed",
+        [
+            "profile_ids",
+            "profile_names",
+            "s3_mount",
+            "max_timeout_seconds",
+        ],
+    )
+    def test_constructor_rejects_removed_kwargs(self, removed: str) -> None:
+        with pytest.raises(TypeError, match=rf"unexpected keyword argument '{removed}'"):
+            SandboxDefaults(**{removed: None})  # type: ignore[arg-type]
 
     def test_defaults_are_immutable(self) -> None:
         """Test SandboxDefaults is frozen/immutable."""
@@ -206,17 +218,17 @@ class TestSandboxDefaults:
 
     def test_network_can_be_set(self) -> None:
         """Test network can be set in SandboxDefaults."""
-        network = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
+        network = NetworkOptions(deny_egress=True)
         defaults = SandboxDefaults(network=network)
 
         assert defaults.network is network
-        assert defaults.network.ingress_mode == "public"
-        assert defaults.network.exposed_ports == (8080,)
+        assert defaults.network.deny_egress is True
+        assert defaults.network.deny_ingress is None
 
     def test_with_overrides_network(self) -> None:
         """Test with_overrides can change network."""
-        network1 = NetworkOptions(egress_mode="internet")
-        network2 = NetworkOptions(egress_mode="isolated")
+        network1 = NetworkOptions(deny_egress=False)
+        network2 = NetworkOptions(deny_ingress=True)
         defaults = SandboxDefaults(network=network1)
 
         new_defaults = defaults.with_overrides(network=network2)
@@ -405,32 +417,58 @@ class TestSandboxDefaultsFromDict:
             {
                 "tags": ["tag1", "tag2"],
                 "args": ["-f", "/dev/null"],
-                "profile_ids": ["r1"],
-                "profile_names": ["n1", "n2"],
                 "runner_ids": ["t1", "t2"],
             }
         )
         assert defaults.tags == ("tag1", "tag2")
         assert defaults.args == ("-f", "/dev/null")
-        assert defaults.profile_ids == ("r1",)
-        assert defaults.profile_names == ("n1", "n2")
         assert defaults.runner_ids == ("t1", "t2")
 
-    def test_from_dict_rejects_bare_string_profile_names(self) -> None:
+    def test_from_dict_rejects_bare_string_runner_ids_alias(self) -> None:
         """from_dict raises on bare string for profile_names (not a sequence)."""
-        with pytest.raises(TypeError, match="profile_names must be a sequence of strings"):
-            SandboxDefaults.from_dict({"profile_names": "not-a-list"})
+        with pytest.raises(TypeError, match="runner_ids must be a sequence of strings"):
+            SandboxDefaults.from_dict({"runner_ids": "not-a-list"})
+
+    def test_from_dict_rejects_profile_ids(self) -> None:
+        with pytest.raises(TypeError, match="profile_ids"):
+            SandboxDefaults.from_dict({"profile_ids": ["p1"]})
+
+    def test_from_dict_rejects_profile_names(self) -> None:
+        with pytest.raises(TypeError, match="profile_names"):
+            SandboxDefaults.from_dict({"profile_names": ["default"]})
+
+    def test_from_dict_coerces_services_and_volumes_dicts(self) -> None:
+        from cwsandbox._types import ScratchVolumeOptions, Service
+
+        defaults = SandboxDefaults.from_dict(
+            {
+                "services": [{"port": 8080, "name": "http"}],
+                "volumes": [
+                    {
+                        "name": "workspace",
+                        "mount_path": "/workspace",
+                        "size": "10Gi",
+                    }
+                ],
+            }
+        )
+        assert len(defaults.services) == 1
+        assert isinstance(defaults.services[0], Service)
+        assert defaults.services[0].port == 8080
+        assert len(defaults.volumes) == 1
+        assert isinstance(defaults.volumes[0], ScratchVolumeOptions)
+        assert defaults.volumes[0].mount_path == "/workspace"
 
     def test_from_dict_coerces_network_dict(self) -> None:
         """from_dict converts network dict to NetworkOptions."""
         defaults = SandboxDefaults.from_dict(
             {
-                "network": {"ingress_mode": "public", "exposed_ports": [8080]},
+                "network": {"deny_egress": True},
             }
         )
         assert defaults.network is not None
         assert isinstance(defaults.network, NetworkOptions)
-        assert defaults.network.ingress_mode == "public"
+        assert defaults.network.deny_egress is True
 
     def test_from_dict_coerces_secrets_dicts(self) -> None:
         """from_dict converts secret dicts to Secret objects."""
@@ -455,7 +493,7 @@ class TestSandboxDefaultsFromDict:
 
     def test_from_dict_preserves_existing_dataclasses(self) -> None:
         """from_dict passes through Secret and NetworkOptions instances."""
-        net = NetworkOptions(egress_mode="internet")
+        net = NetworkOptions(deny_egress=False)
         secret = Secret(store="wandb", name="HF_TOKEN")
         defaults = SandboxDefaults.from_dict(
             {

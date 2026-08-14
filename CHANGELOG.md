@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.0.0 (2026-08-12)
+
+Breaking cutover to the Sandbox **v1** API. Stay on **0.26.x** if you still need
+v1beta2. One package version speaks one dialect (no hybrid fallback).
+
+### Breaking Changes
+
+- Speak only `coreweave.sandbox.v1` (Create/Delete/Get/List, StreamExec, unary
+  StreamLogs, volumes, templates, settings bucket). Vendored beta stubs
+  (`gateway_*`, `streaming_*`, `secrets_*`) are removed.
+- Drop profiles from the public surface (`profile_ids` / `profile_names`,
+  `list_profiles` / `get_profile`, `Profile`). Place workloads with
+  `placement_mode` and runner filters; use `Sandbox.run_from_template` for CKS
+  pod-fragment templates. Remove hollow beta leftovers
+  (`profile_id`, `service_address`, `applied_ingress_mode`,
+  `applied_egress_mode`); use `service_urls` for per-service URLs.
+- Replace string network modes with typed `services=[Service(...)]` using
+  `ServiceVisibility` / `ServiceProtocol`. `NetworkOptions` is now deny-flag
+  only (`deny_egress` / `deny_ingress`), not ingress/egress mode strings.
+- Prefer named scratch volumes (`ScratchVolumeOptions`) for filesystem snapshot
+  mounts; `file_system_snapshot=` remains as a single-mount convenience.
+- List filter rename: `include_stopped` → `show_terminated`. Snapshot/stop
+  idempotency kwarg rename: `idempotency_key` → `request_id`.
+- Reject `s3_mount`, `ports`, and `max_timeout_seconds` with a loud `TypeError`
+  (use `request_timeout_seconds` for client deadlines).
+- `stop()` maps to `DeleteSandbox` under the hood; create uses a frozen
+  `request_id` for idempotency.
+
+Surfaces that were never part of the public 0.26 SDK (WIF admin, SecretStore
+admin, NetworkService, TOKEN product endpoints) remain unsupported on 1.0 until
+v1 backends implement them. Create-time `Secret` inject still works.
+
+### Features
+
+- Export `PlacementMode`, `PlacementSpillover`, `Service` /
+  `ServiceVisibility` / `ServiceProtocol`, `ScratchVolumeOptions`,
+  `ImagePullCredentials`, and `Sandbox.run_from_template`.
+- Add `placement_spillover` (`PlacementSpillover`: `strict` default,
+  `cks_then_serverless`, `serverless_then_cks`) for a one-shot CreateSandbox
+  retry on the alternate mode when the primary cannot place the request
+  (capacity, no suitable runner, runner unavailable/overloaded, or a
+  placement constraint). The primary failure reason is attached to a
+  failed spill. `serverless_then_cks` rejects `runner_ids`. Template
+  creates require `strict`.
+- `service_urls` uses `ServiceStatus.url` or `endpoint.url`. Custom
+  visibility often has no URL; those services still appear in
+  `exposed_ports`. The SDK does not invent a URL.
+- Proto generation pins protobuf runtime v26.1 via `scripts/buf.gen.python.yaml`
+  and `scripts/update-protos.sh --from-backend`.
+
+### Tests
+
+- Unit and integration suites retargeted to v1 (prod smoke: unit + full
+  integration green against production).
+
+
 ## v0.26.2 (2026-08-13)
 
 ### Bug Fixes

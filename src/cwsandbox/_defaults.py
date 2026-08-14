@@ -12,8 +12,12 @@ from typing import Any
 from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
+    PlacementMode,
+    PlacementSpillover,
     ResourceOptions,
+    ScratchVolumeOptions,
     Secret,
+    Service,
 )
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
@@ -34,11 +38,10 @@ DEFAULT_GRACEFUL_SHUTDOWN_SECONDS: float = 10.0
 # budget (graceful_shutdown_seconds), so the client deadline is the sum of both
 # (see _do_stop and the two constants below), not this value alone.
 DEFAULT_FSS_STOP_TIMEOUT_SECONDS: float = 600.0
-# Post-archive pod-delete grace the backend substitutes when a snapshot-on-stop
-# is sent with graceful_shutdown_seconds=0. Mirrors the backend's
-# defaultGraceSecondsAfterFSSnapshot so the client deadline budgets the grace
-# the server will actually apply (sending 0 does NOT mean "no grace").
-DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 30.0
+# Post-archive pod-delete grace budget for snapshot-on-stop client deadlines.
+# In v1, grace_period_seconds=0 means immediate termination (no backend
+# substitute). The client deadline sums archive + grace + slack below.
+DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS: float = 0.0
 # Extra slack added to the snapshot-on-stop client deadline on top of the two
 # server phase budgets (archive + grace). Covers the backend's gateway
 # request-context slack (~30s it waits beyond the archive budget) plus ~5s of
@@ -177,8 +180,8 @@ def _resolve_selector(
     - Else if default is truthy (non-empty), return list(default).
     - Else return None.
 
-    This captures the independent-precedence invariant used for profile_ids,
-    profile_names, and runner_ids across Sandbox and Session.
+    This captures the independent-precedence invariant used for ``runner_ids``
+    (and historically other selector lists) across Sandbox and Session.
 
     Raises:
         TypeError: If ``override`` or ``default`` is a bare string. Strings
@@ -279,25 +282,24 @@ class SandboxDefaults:
             None lets the backend control the default.
         temp_dir: Temp directory path inside the sandbox.
         tags: Tags for filtering and organizing sandboxes.
-        profile_ids: Legacy selector accepting profile IDs. Prefer
-            ``profile_names``. Resolves independently of ``profile_names``:
-            setting one explicitly does not suppress the other's default.
-            Pass an empty list to explicitly clear any default; pass None
-            (the default) to inherit any configured default.
-        profile_names: Select sandboxes by profile name. Resolves
-            independently of ``profile_ids``: both may be combined.
-            Pass an empty list to explicitly clear any default; pass None
-            (the default) to inherit any configured default.
-        runner_ids: Restrict to specific runner IDs. Pass an empty list to
+        runner_ids: Restrict to specific runner IDs (CKS). Pass an empty list to
             explicitly clear any default; pass None (the default) to inherit
-            any configured default.
+            any configured default. Incompatible with serverless placement.
+        placement_mode: ``PlacementMode`` (``serverless`` / ``cks``) or string.
+        placement_spillover: ``PlacementSpillover`` policy for a one-shot create
+            retry on the alternate mode when the primary fails with a spillable
+            capacity/placement reason. Default ``STRICT`` (no spill). Template
+            sandboxes require ``STRICT``.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
-        network: Network configuration via ``NetworkOptions``.
-        file_system_snapshot: File-system snapshot (FSS) mount configuration via
+        network: Deny-flag network options via ``NetworkOptions``.
+        services: Typed service ports (``Service``) for PUBLIC/PRIVATE/CUSTOM.
+        volumes: Named scratch volumes (``ScratchVolumeOptions``) for FSS mounts.
+        file_system_snapshot: Convenience single-mount FSS options via
             ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
-            size); an explicit ``run()`` value replaces it wholesale.
-        secrets: Secrets to inject as environment variables.
+            size); an explicit ``run()`` value replaces it wholesale. Prefer
+            ``volumes=`` for multi-volume setups.
+        secrets: Secrets to inject as environment variables at create time.
         environment_variables: Environment variables injected into the sandbox.
         annotations: Kubernetes pod annotations (key-value string pairs).
             Merged with per-sandbox annotations; explicit values override defaults.
@@ -328,11 +330,13 @@ class SandboxDefaults:
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
     temp_dir: str = DEFAULT_TEMP_DIR
     tags: tuple[str, ...] = field(default_factory=tuple)
-    profile_ids: tuple[str, ...] | None = None
-    profile_names: tuple[str, ...] | None = None
     runner_ids: tuple[str, ...] | None = None
+    placement_mode: PlacementMode | str | None = None
+    placement_spillover: PlacementSpillover | str = PlacementSpillover.STRICT
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
+    services: tuple[Service, ...] | None = None
+    volumes: tuple[ScratchVolumeOptions, ...] | None = None
     file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
@@ -345,6 +349,9 @@ class SandboxDefaults:
             self.poll_rpc_timeout_seconds,
         )
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
+        spill = self.placement_spillover
+        if isinstance(spill, str):
+            object.__setattr__(self, "placement_spillover", PlacementSpillover(spill.lower()))
 
     def merge_tags(self, additional: Iterable[str] | None) -> list[str]:
         """Combine default tags with additional tags.
@@ -386,12 +393,20 @@ class SandboxDefaults:
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
-        - ``args``, ``tags``, ``profile_ids``, ``profile_names``,
-          ``runner_ids`` lists -> tuples
+        - ``services`` list of dicts -> tuple of ``Service``
+        - ``volumes`` list of dicts -> tuple of ``ScratchVolumeOptions``
+        - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes`` lists
+          -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:
             return cls()
+        for removed in ("profile_ids", "profile_names"):
+            if removed in d:
+                raise TypeError(
+                    f"SandboxDefaults.from_dict() does not accept {removed!r}; "
+                    "profiles were removed in 1.x"
+                )
         valid = {f.name for f in fields(cls)}
         kwargs: dict[str, Any] = {k: v for k, v in d.items() if k in valid}
         # Drop None values for non-optional fields so they fall back to
@@ -426,13 +441,21 @@ class SandboxDefaults:
                 Secret(**s) if not isinstance(s, Secret) else s for s in secrets
             )
         # Coerce sequences -> tuples for tuple fields (reject bare strings)
-        for key in ("args", "tags", "profile_ids", "profile_names", "runner_ids"):
+        for key in ("args", "tags", "runner_ids"):
             val = kwargs.get(key)
             if val is None or isinstance(val, tuple):
                 continue
             if isinstance(val, str):
                 raise TypeError(f"{key} must be a sequence of strings, not a bare string")
             kwargs[key] = tuple(val)
+        services = kwargs.get("services")
+        if services is not None:
+            kwargs["services"] = tuple(Service(**s) if isinstance(s, dict) else s for s in services)
+        volumes = kwargs.get("volumes")
+        if volumes is not None:
+            kwargs["volumes"] = tuple(
+                ScratchVolumeOptions(**v) if isinstance(v, dict) else v for v in volumes
+            )
         # Coerce resources: preserve ResourceOptions, convert mappings to dicts
         res = kwargs.get("resources")
         if res is not None and not isinstance(res, ResourceOptions):

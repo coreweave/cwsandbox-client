@@ -160,7 +160,7 @@ def run_instance(
         image_key = get_epoch_image_key(instance_id, getattr(test_spec, "arch", "x86_64"))
         sandbox = session.sandbox(
             container_image=image_key,
-            max_timeout_seconds=timeout,
+            request_timeout_seconds=timeout,
             tags=[f"swebench-{run_id}", instance_id],
         )
 

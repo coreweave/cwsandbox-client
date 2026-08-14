@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 import pytest
 
 import cwsandbox
-from cwsandbox import Profile, Runner, RunnerResources
-from cwsandbox.exceptions import ProfileNotFoundError, RunnerNotFoundError
+from cwsandbox import Runner, RunnerResources
+from cwsandbox.exceptions import RunnerNotFoundError
 
 # ---------------------------------------------------------------------------
 # Module-scoped fixtures - fetched once, asserted non-empty
@@ -25,14 +25,6 @@ def all_runners() -> list[Runner]:
     runners = cwsandbox.list_runners()
     assert runners, "Backend returned no runners - environment is broken"
     return runners
-
-
-@pytest.fixture(scope="module")
-def all_profiles() -> list[Profile]:
-    """Fetch all profiles once for the module. Asserts non-empty."""
-    profiles = cwsandbox.list_profiles()
-    assert profiles, "Backend returned no profiles - environment is broken"
-    return profiles
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +52,10 @@ class TestListRunners:
         assert runner.connected_at.tzinfo is not None, "connected_at must be UTC-aware"
         assert runner.connected_at.tzinfo == UTC
         assert isinstance(runner.tags, tuple)
-        assert isinstance(runner.profile_names, tuple)
+        assert isinstance(runner.supported_gpu_types, tuple)
+        assert isinstance(runner.supported_architectures, tuple)
+        assert isinstance(runner.available_storage_classes, tuple)
+        assert isinstance(runner.supported_service_visibilities, tuple)
 
     def test_include_resources_true(self, all_runners: list[Runner]) -> None:
         runners = cwsandbox.list_runners(include_resources=True)
@@ -77,21 +72,25 @@ class TestListRunners:
         for runner in all_runners:
             assert runner.resources is None
 
-    def test_filter_nonexistent_profile(self) -> None:
-        runners = cwsandbox.list_runners(profile_name="nonexistent-profile-xyz")
-        assert runners == []
+    def test_filter_healthy_only(self) -> None:
+        runners = cwsandbox.list_runners(healthy_only=True)
+        assert runners, "No healthy runners found"
+        assert all(runner.healthy for runner in runners)
 
-    def test_filter_by_profile_name(self, all_runners: list[Runner]) -> None:
-        """Positive test: filter by a real profile name returns matching runners."""
-        # Find a runner with at least one profile
-        runner_with_profiles = next((t for t in all_runners if t.profile_names), None)
-        assert runner_with_profiles, "No runner has profile_names"
-        target_profile = runner_with_profiles.profile_names[0]
+    def test_filter_by_service_visibility(self, all_runners: list[Runner]) -> None:
+        """Filter by a typed service visibility found in live capabilities."""
+        candidate = next(
+            (runner for runner in all_runners if runner.supported_service_visibilities),
+            None,
+        )
+        if candidate is None:
+            pytest.skip("No runner advertises supported service visibilities")
+        visibility = candidate.supported_service_visibilities[0]
 
-        filtered = cwsandbox.list_runners(profile_name=target_profile)
-        assert filtered, f"Filter by profile_name={target_profile!r} returned nothing"
-        assert all(target_profile in t.profile_names for t in filtered)
-        assert runner_with_profiles.runner_id in {t.runner_id for t in filtered}
+        filtered = cwsandbox.list_runners(service_visibility=visibility)
+        assert filtered
+        assert all(visibility in runner.supported_service_visibilities for runner in filtered)
+        assert candidate.runner_id in {runner.runner_id for runner in filtered}
 
     def test_filter_by_runner_group_id(self, all_runners: list[Runner]) -> None:
         """Filter by a real runner_group_id returns matching runners."""
@@ -127,8 +126,12 @@ class TestListRunners:
 class TestGetRunner:
     def test_get_existing_runner(self, all_runners: list[Runner]) -> None:
         expected = all_runners[0]
-        runner = cwsandbox.get_runner(expected.runner_id)
+        runner = cwsandbox.get_runner(
+            expected.runner_id,
+            organization_id=expected.organization_id,
+        )
         assert runner.runner_id == expected.runner_id
+        assert runner.organization_id == expected.organization_id
         assert runner.runner_group_id == expected.runner_group_id
         assert runner.healthy == expected.healthy
 
@@ -137,143 +140,17 @@ class TestGetRunner:
         non_shared = [t for t in runners_with_resources if t.resources is not None]
         if not non_shared:
             pytest.skip("No non-shared runners with resources available")
-        runner = cwsandbox.get_runner(non_shared[0].runner_id)
+        expected = non_shared[0]
+        runner = cwsandbox.get_runner(
+            expected.runner_id,
+            organization_id=expected.organization_id,
+        )
         assert runner.resources is not None
 
-    def test_get_nonexistent_runner(self) -> None:
+    def test_get_nonexistent_runner(self, all_runners: list[Runner]) -> None:
         with pytest.raises(RunnerNotFoundError) as exc_info:
-            cwsandbox.get_runner("nonexistent-runner-id-xyz")
+            cwsandbox.get_runner(
+                "nonexistent-runner-id-xyz",
+                organization_id=all_runners[0].organization_id,
+            )
         assert exc_info.value.runner_id == "nonexistent-runner-id-xyz"
-
-
-# ---------------------------------------------------------------------------
-# list_profiles
-# ---------------------------------------------------------------------------
-
-
-class TestListProfiles:
-    def test_filter_by_egress_mode(self, all_profiles: list[Profile]) -> None:
-        """Filter profiles by an egress mode found in live data."""
-        candidate = next((r for r in all_profiles if r.egress_modes), None)
-        assert candidate, "No profile has egress_modes"
-        target_mode = candidate.egress_modes[0].name
-
-        filtered = cwsandbox.list_profiles(egress_mode=target_mode)
-        assert filtered, f"Filter by egress_mode={target_mode!r} returned nothing"
-        for r in filtered:
-            mode_names = {m.name for m in r.egress_modes}
-            assert target_mode in mode_names, (
-                f"Profile {r.profile_name} missing egress mode {target_mode!r}, has {mode_names}"
-            )
-
-    def test_returns_profiles(self, all_profiles: list[Profile]) -> None:
-        assert all(isinstance(r, Profile) for r in all_profiles)
-
-    def test_profile_fields_populated(self, all_profiles: list[Profile]) -> None:
-        profile = all_profiles[0]
-        assert profile.profile_name
-        assert profile.runner_id
-        assert isinstance(profile.supported_gpu_types, tuple)
-        assert isinstance(profile.service_exposure_modes, tuple)
-        assert isinstance(profile.egress_modes, tuple)
-
-    def test_filter_by_architecture(self, all_profiles: list[Profile]) -> None:
-        # Find a profile with architectures (scan all, not just first)
-        candidate = next((r for r in all_profiles if r.supported_architectures), None)
-        assert candidate, "No profile has supported_architectures"
-        target_arch = candidate.supported_architectures[0]
-
-        filtered = cwsandbox.list_profiles(architecture=target_arch)
-        assert filtered
-        assert all(target_arch in r.supported_architectures for r in filtered)
-
-        # Verify the candidate appears in filtered results (by identity)
-        filtered_pairs = {(r.profile_name, r.runner_id) for r in filtered}
-        assert (candidate.profile_name, candidate.runner_id) in filtered_pairs
-
-        # Verify non-matching profiles are excluded
-        non_matching = [r for r in all_profiles if target_arch not in r.supported_architectures]
-        if non_matching:
-            for r in non_matching:
-                assert (r.profile_name, r.runner_id) not in filtered_pairs
-
-    def test_filter_by_service_exposure_mode(self, all_profiles: list[Profile]) -> None:
-        """Filter profiles by a service exposure mode found in live data."""
-        candidate = next((r for r in all_profiles if r.service_exposure_modes), None)
-        assert candidate, "No profile has service_exposure_modes"
-        target_mode = candidate.service_exposure_modes[0].name
-
-        filtered = cwsandbox.list_profiles(service_exposure_mode=target_mode)
-        assert filtered, f"Filter by service_exposure_mode={target_mode!r} returned nothing"
-        for r in filtered:
-            mode_names = {m.name for m in r.service_exposure_modes}
-            assert target_mode in mode_names, (
-                f"Profile {r.profile_name} missing service exposure mode "
-                f"{target_mode!r}, has {mode_names}"
-            )
-
-    def test_filter_by_runner_id(self, all_profiles: list[Profile]) -> None:
-        """Filter profiles by a specific runner_id."""
-        target_runner_id = all_profiles[0].runner_id
-        filtered = cwsandbox.list_profiles(runner_id=target_runner_id)
-        assert filtered
-        assert all(r.runner_id == target_runner_id for r in filtered)
-
-
-# ---------------------------------------------------------------------------
-# get_profile
-# ---------------------------------------------------------------------------
-
-
-class TestGetProfile:
-    def test_get_existing_profile(self, all_profiles: list[Profile]) -> None:
-        expected = all_profiles[0]
-        profile = cwsandbox.get_profile(expected.profile_name, runner_id=expected.runner_id)
-        assert profile.profile_name == expected.profile_name
-        assert profile.runner_id == expected.runner_id
-
-    def test_get_profile_without_runner_id(self, all_profiles: list[Profile]) -> None:
-        """Without runner_id, backend returns first match sorted by runner_id."""
-        expected = all_profiles[0]
-        profile = cwsandbox.get_profile(expected.profile_name)
-        assert profile.profile_name == expected.profile_name
-        # runner_id should be populated even without specifying it
-        assert profile.runner_id
-
-    def test_get_nonexistent_profile(self) -> None:
-        with pytest.raises(ProfileNotFoundError):
-            cwsandbox.get_profile("nonexistent-profile-xyz")
-
-
-# ---------------------------------------------------------------------------
-# Cross-reference consistency
-# ---------------------------------------------------------------------------
-
-
-class TestCrossReference:
-    def test_runner_profiles_match_list_profiles(self, all_runners: list[Runner]) -> None:
-        """For each runner, list_profiles(runner_id=...) returns matching names."""
-        for runner in all_runners[:3]:
-            if not runner.profile_names:
-                continue
-            runner_profiles = cwsandbox.list_profiles(runner_id=runner.runner_id)
-            runner_profile_names = {r.profile_name for r in runner_profiles}
-            for rn in runner.profile_names:
-                assert rn in runner_profile_names, (
-                    f"Runner {runner.runner_id} advertises profile {rn!r} "
-                    f"but list_profiles(runner_id=...) returned {runner_profile_names}"
-                )
-            # Also verify all returned profiles belong to this runner
-            for r in runner_profiles:
-                assert r.runner_id == runner.runner_id
-
-    def test_profile_runner_ids_exist(
-        self, all_runners: list[Runner], all_profiles: list[Profile]
-    ) -> None:
-        """Every profile's runner_id should appear in list_runners."""
-        runner_ids = {t.runner_id for t in all_runners}
-        for profile in all_profiles[:10]:
-            assert profile.runner_id in runner_ids, (
-                f"Profile {profile.profile_name} references runner "
-                f"{profile.runner_id} which is not in list_runners"
-            )

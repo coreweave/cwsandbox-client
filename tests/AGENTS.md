@@ -51,7 +51,6 @@ uv run pytest -k "test_create"                   # By name pattern
 | `_validate_runner_ids` | session | Yes | Fails fast (pytest.UsageError) when `--cwsandbox-runner-ids` or `CWSANDBOX_TEST_RUNNER_IDS` names a runner the discovery service does not know. Zero-cost when no runner targeting is configured. |
 | `configured_runner_ids` | session | No | Returns `tuple[str, ...] \| None` resolved from `--cwsandbox-runner-ids` / `CWSANDBOX_TEST_RUNNER_IDS` (CLI wins). Consume this in tests that construct their own `SandboxDefaults` or call `Sandbox.run()` without defaults, so the runner pin still applies. |
 | `sandbox_defaults` | module | No | Returns `SandboxDefaults` with `python:3.11`, 60s lifetime, `("integration-test", <session-tag>)` tags. Inherits `runner_ids` from `configured_runner_ids` when set. |
-| `discovered_infrastructure` | module | No | Returns `(runner_id, profile_name)` for pin-targeting tests. Selects the first healthy runner with profiles from `cwsandbox.list_runners()`, honoring `configured_runner_ids` allowlist when set. Fails fast with a clear message if no candidates match. |
 
 ### Integration CLI flags (`tests/integration/conftest.py`)
 
@@ -120,16 +119,16 @@ CWSANDBOX_TEST_RUNNER_IDS=runner-a mise run test:e2e -- --cwsandbox-runner-ids=
 
 Parsing normalises the list: whitespace is stripped, empty tokens are dropped, and duplicates are collapsed preserving first-seen order. If any resolved ID is unknown to the discovery service, pytest stops immediately with `pytest.UsageError` naming the missing IDs and their source (CLI vs env). When no targeting is configured, no discovery call is made - the default path is byte-identical to pre-change.
 
-Scope: this constrains runner placement only. Profile selection remains backend-driven; `container_image`, `resources`, `tags`, `max_lifetime_seconds` are unchanged.
+Scope: this constrains runner placement only (typically with `placement_mode=CKS`). `container_image`, `resources`, `tags`, `max_lifetime_seconds` are unchanged.
 
 ### Contract for new e2e tests
 
 Any test path that may create a sandbox - directly via `Sandbox.run()`, indirectly via `Session`, or via a `@session.function()` - MUST honor the configured runner pin. To comply, either:
 
 1. Consume `sandbox_defaults` (or `sandbox_defaults.with_overrides(...)`) - the pin is inherited automatically, OR
-2. Accept the `configured_runner_ids` fixture and forward it: pass `runner_ids=list(configured_runner_ids)` to `Sandbox.run()` when non-None.
+2. Accept the `configured_runner_ids` fixture and forward it: pass `runner_ids=list(configured_runner_ids)` (and `placement_mode=CKS` when pinning) to `Sandbox.run()` when non-None.
 
-**Opt-out:** tests that are specifically validating `runner_ids` or `profile_ids` semantics (e.g., `test_sandbox_with_runway_and_runner_ids`) may opt out. Document the opt-out with an in-test comment explaining why the pin is not forwarded. Note that an explicit `runner_ids=[]` intentionally clears any default.
+**Opt-out:** tests that specifically validate runner-pin rejection or other placement edge cases may opt out. Document the opt-out with an in-test comment explaining why the pin is not forwarded. Note that an explicit `runner_ids=[]` intentionally clears any default.
 
 ## Test File Reference
 

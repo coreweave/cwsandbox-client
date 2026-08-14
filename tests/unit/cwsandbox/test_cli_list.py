@@ -31,8 +31,7 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.runner_id = "tower-1"
-        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_id = "runner-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
         mock_op_ref = MagicMock()
@@ -47,8 +46,7 @@ class TestListCommand:
         assert result.exit_code == 0
         assert "abc-123" in result.output
         assert "running" in result.output
-        assert "tower-1" in result.output
-        assert "runway-1" in result.output
+        assert "runner-1" in result.output
         assert "2026-01-15" in result.output
 
     def test_list_empty(self) -> None:
@@ -82,13 +80,11 @@ class TestListCommand:
         mock_sandbox_cls.list.assert_called_once_with(
             tags=["test", "dev"],
             status="running",
-            profile_ids=None,
-            profile_names=None,
             runner_ids=None,
         )
 
-    def test_list_with_profile_names(self) -> None:
-        """--profile-name is repeatable and reaches Sandbox.list()."""
+    def test_list_with_runner_ids(self) -> None:
+        """--runner-id is repeatable and reaches Sandbox.list()."""
         mock_op_ref = MagicMock()
         mock_op_ref.result.return_value = []
 
@@ -96,43 +92,25 @@ class TestListCommand:
             mock_sandbox_cls.list.return_value = mock_op_ref
 
             runner = CliRunner()
-            result = runner.invoke(cli, ["ls", "--profile-name", "foo", "--profile-name", "bar"])
+            result = runner.invoke(
+                cli, ["ls", "--runner-id", "runner-a", "--runner-id", "runner-b"]
+            )
 
         assert result.exit_code == 0
         mock_sandbox_cls.list.assert_called_once_with(
             tags=None,
             status=None,
-            profile_ids=None,
-            profile_names=["foo", "bar"],
-            runner_ids=None,
+            runner_ids=["runner-a", "runner-b"],
         )
 
-    def test_list_mixed_profile_id_and_name(self) -> None:
-        """Mixing --profile-id and --profile-name passes both fields through."""
-        mock_op_ref = MagicMock()
-        mock_op_ref.result.return_value = []
-
-        with patch("cwsandbox.cli.list.Sandbox") as mock_sandbox_cls:
-            mock_sandbox_cls.list.return_value = mock_op_ref
-
-            runner = CliRunner()
-            result = runner.invoke(cli, ["ls", "--profile-id", "id1", "--profile-name", "name1"])
-
-        assert result.exit_code == 0
-        mock_sandbox_cls.list.assert_called_once_with(
-            tags=None,
-            status=None,
-            profile_ids=["id1"],
-            profile_names=["name1"],
-            runner_ids=None,
-        )
-
-    def test_list_help_mentions_profile_name(self) -> None:
-        """--profile-name appears in --help output."""
+    def test_list_help_mentions_v1_filters(self) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["ls", "--help"])
         assert result.exit_code == 0
-        assert "--profile-name" in result.output
+        assert "--runner-id" in result.output
+        assert "--tag" in result.output
+        assert "--profile-id" not in result.output
+        assert "--profile-name" not in result.output
 
     def test_list_invalid_status(self) -> None:
         """cwsandbox ls rejects invalid status values."""
@@ -146,8 +124,7 @@ class TestListCommand:
         mock_sb = MagicMock()
         mock_sb.sandbox_id = "abc-123"
         mock_sb.status.value = "running"
-        mock_sb.runner_id = "tower-1"
-        mock_sb.profile_id = "runway-1"
+        mock_sb.runner_id = "runner-1"
         mock_sb.runner_group_id = "tg-1"
         mock_sb.started_at = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
 
@@ -166,8 +143,7 @@ class TestListCommand:
                 {
                     "sandbox_id": "abc-123",
                     "status": "running",
-                    "runner_id": "tower-1",
-                    "profile_id": "runway-1",
+                    "runner_id": "runner-1",
                     "runner_group_id": "tg-1",
                     "started_at": "2026-01-15T10:30:00+00:00",
                 }

@@ -16,10 +16,15 @@ from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
     ExecOutcome,
     FileSystemSnapshotOptions,
+    ImagePullCredentials,
     NetworkOptions,
     OperationRef,
+    PlacementMode,
+    PlacementSpillover,
     ResourceOptions,
+    ScratchVolumeOptions,
     Secret,
+    Service,
 )
 from cwsandbox._wandb import WandbReporter
 from cwsandbox.exceptions import SandboxError
@@ -323,19 +328,22 @@ class Session:
         args: list[str] | None = None,
         container_image: str | None = None,
         tags: list[str] | None = None,
-        profile_ids: list[str] | None = None,
-        profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
-        s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        services: list[Service] | tuple[Service, ...] | None = None,
+        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
-        max_timeout_seconds: int | None = None,
+        placement_mode: PlacementMode | str | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
+        template_id: str | None = None,
+        image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
+        request_timeout_seconds: float | None = None,
+        **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
 
@@ -347,27 +355,30 @@ class Session:
             command: Command to run in sandbox
             args: Arguments for the command
             container_image: Container image to use
-            tags: Tags for the sandbox (merged with session defaults)
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            tags: Tags for the sandbox (merged with session defaults, including
+                when ``template_id`` is set, so ``list()``/``adopt`` can find
+                the sandbox). Environment variables and annotations do not
+                merge on the template path (template-owned spec).
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``)
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
+            request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
+                Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -413,24 +424,39 @@ class Session:
 
         from cwsandbox._sandbox import Sandbox
 
+        if kwargs:
+            bad = ", ".join(sorted(kwargs))
+            raise TypeError(
+                f"session.sandbox() got unexpected keyword argument(s): {bad}. "
+                "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds were removed in 1.x"
+            )
+
+        effective_request_timeout = (
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else self._defaults.request_timeout_seconds
+        )
+
         sandbox = Sandbox(
             command=command,
             args=args,
             container_image=container_image,
             tags=tags,
-            profile_ids=profile_ids,
-            profile_names=profile_names,
             runner_ids=runner_ids,
             resources=resources,
             mounted_files=mounted_files,
-            s3_mount=s3_mount,
-            ports=ports,
             network=network,
+            services=services,
+            volumes=volumes,
             file_system_snapshot=file_system_snapshot,
-            max_timeout_seconds=max_timeout_seconds,
+            placement_mode=placement_mode,
+            placement_spillover=placement_spillover,
+            template_id=template_id,
+            image_pull_credentials=image_pull_credentials,
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
+            request_timeout_seconds=effective_request_timeout,
             defaults=self._defaults,
             _session=self,
         )
@@ -447,7 +473,7 @@ class Session:
         profile_ids: builtins.list[str] | None = None,
         profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
-        include_stopped: bool = False,
+        show_terminated: bool = False,
         adopt: bool = False,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List sandboxes, optionally adopting them into this session.
@@ -457,7 +483,7 @@ class Session:
         a previous run with the same defaults.
 
         By default, only active (non-terminal) sandboxes are returned.
-        Set ``include_stopped=True`` to widen the search to include terminal
+        Set ``show_terminated=True`` to widen the search to include terminal
         sandboxes (completed, failed, terminated).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
@@ -465,16 +491,10 @@ class Session:
         Args:
             tags: Additional tags to filter by (merged with session's default tags)
             status: Filter by status
-            profile_ids: Optional list of profile IDs for infrastructure selection
-                (defaults to session's profile_ids if set). See
-                SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). Defaults to session's
-                profile_names if set. See SandboxDefaults.profile_names for
-                semantics.
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
-            include_stopped: If True, include terminal sandboxes (completed,
+            show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
@@ -496,7 +516,7 @@ class Session:
                 running = session.list(status="running").result()
 
                 # Include stopped sandboxes for cleanup or audit
-                all_sandboxes = session.list(include_stopped=True).result()
+                all_sandboxes = session.list(show_terminated=True).result()
 
             # Async usage
             async with Session(defaults) as session:
@@ -510,7 +530,7 @@ class Session:
                 profile_ids=profile_ids,
                 profile_names=profile_names,
                 runner_ids=runner_ids,
-                include_stopped=include_stopped,
+                show_terminated=show_terminated,
                 adopt=adopt,
             )
         )
@@ -524,7 +544,7 @@ class Session:
         profile_ids: builtins.list[str] | None = None,
         profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
-        include_stopped: bool = False,
+        show_terminated: bool = False,
         adopt: bool = False,
     ) -> builtins.list[Sandbox]:
         """Internal async: List sandboxes, optionally adopting them into this session."""
@@ -532,8 +552,10 @@ class Session:
 
         merged_tags = self._defaults.merge_tags(tags)
 
-        effective_profile_ids = _resolve_selector(profile_ids, self._defaults.profile_ids)
-        effective_profile_names = _resolve_selector(profile_names, self._defaults.profile_names)
+        if profile_ids is not None or profile_names is not None:
+            raise TypeError("profile_ids/profile_names were removed in cwsandbox 1.x")
+        effective_profile_ids = None
+        effective_profile_names = None
         effective_runner_ids = _resolve_selector(runner_ids, self._defaults.runner_ids)
 
         sandboxes = await Sandbox._list_async(
@@ -542,7 +564,7 @@ class Session:
             profile_ids=effective_profile_ids,
             profile_names=effective_profile_names,
             runner_ids=effective_runner_ids,
-            include_stopped=include_stopped,
+            show_terminated=show_terminated,
             base_url=None
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
@@ -655,18 +677,19 @@ class Session:
         *,
         container_image: str | None = None,
         temp_dir: str | None = None,
-        profile_ids: builtins.list[str] | None = None,
-        profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: Sequence[dict[str, Any]] | None = None,
-        s3_mount: dict[str, Any] | None = None,
-        ports: Sequence[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        services: Sequence[Service] | None = None,
+        volumes: Sequence[ScratchVolumeOptions] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
-        max_timeout_seconds: int | None = None,
+        placement_mode: PlacementMode | str | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        request_timeout_seconds: float | None = None,
+        **kwargs: Any,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
 
@@ -679,26 +702,26 @@ class Session:
             container_image: Override session's default image for this function
             temp_dir: Override temp directory for payload/result files in sandbox.
                 Defaults to session default. Created if missing.
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
-            runner_ids: Optional list of runner IDs
+            profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
+            profile_names: Removed in 1.x; passing a value raises ``TypeError``.
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``)
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
-            network: Network configuration (NetworkOptions dataclass)
-            file_system_snapshot: File-system snapshot (FSS) mount configuration.
-                Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
-                optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
+            s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
+            ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
+            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
+                ``services=``.
+            file_system_snapshot: Convenience single-mount FSS options
+                (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
+                multi-volume setups.
+            max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
+            request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
+                Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -741,23 +764,30 @@ class Session:
                 )
 
         def decorator(f: Callable[P, R]) -> RemoteFunction[P, R]:
+            if kwargs:
+                bad = ", ".join(sorted(kwargs))
+                raise TypeError(
+                    f"session.function() got unexpected keyword argument(s): {bad}. "
+                    "profile_ids/profile_names/s3_mount/ports/max_timeout_seconds "
+                    "were removed in 1.x"
+                )
             return RemoteFunction(
                 f,
                 session=self,
                 container_image=container_image,
                 temp_dir=temp_dir or self._defaults.temp_dir,
-                profile_ids=profile_ids,
-                profile_names=profile_names,
                 runner_ids=runner_ids,
                 resources=resources,
-                mounted_files=list(mounted_files) if mounted_files else None,
-                s3_mount=s3_mount,
-                ports=list(ports) if ports else None,
+                mounted_files=list(mounted_files) if mounted_files is not None else None,
                 network=network,
+                services=list(services) if services is not None else None,
+                volumes=list(volumes) if volumes is not None else None,
                 file_system_snapshot=file_system_snapshot,
-                max_timeout_seconds=max_timeout_seconds,
+                placement_mode=placement_mode,
+                placement_spillover=placement_spillover,
                 environment_variables=environment_variables,
                 annotations=annotations,
+                request_timeout_seconds=request_timeout_seconds,
             )
 
         return decorator

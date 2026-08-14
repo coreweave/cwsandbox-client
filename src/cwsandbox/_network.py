@@ -5,11 +5,7 @@
 """gRPC transport utilities for CWSandbox SDK.
 
 Provides channel management and shared error translation for gRPC
-communication with the CWSandbox backend.
-
-Generated SDK imports:
-- from cwsandbox._proto import gateway_pb2_grpc (GatewayServiceStub)
-- from cwsandbox._proto import streaming_pb2_grpc (GatewayStreamingServiceStub)
+communication with the CWSandbox backend (v1 ``sandbox_pb2`` stubs).
 """
 
 from __future__ import annotations

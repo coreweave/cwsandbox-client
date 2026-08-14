@@ -14,7 +14,7 @@ import grpc
 import pytest
 
 from cwsandbox import Sandbox
-from cwsandbox._proto import gateway_pb2
+from cwsandbox._proto import sandbox_pb2
 from cwsandbox._sandbox import (
     SandboxStatus,
     _classify_poll_error,
@@ -102,18 +102,17 @@ def _make_sandbox(
 
 
 def _get_response(status: int, **kwargs: object) -> MagicMock:
-    """Build a mock GetSandboxResponse with the given proto status."""
+    """Build a mock Sandbox with the given proto status."""
     resp = MagicMock()
     resp.sandbox_status = status
     resp.runner_id = kwargs.get("runner_id", "")
     resp.runner_group_id = kwargs.get("runner_group_id", "")
-    resp.profile_id = kwargs.get("profile_id", "")
     resp.started_at_time = kwargs.get("started_at_time", None)
     # Mirror proto3 optional presence: HasField("exit_code") is True only
     # when an exit code is supplied. Default matches the backend contract:
     # present (0) for COMPLETED, absent for every other status (the backend
     # omits the field for non-terminal sandboxes and gateway stops).
-    default_exit_code = 0 if status == gateway_pb2.SANDBOX_STATUS_COMPLETED else None
+    default_exit_code = 0 if status == sandbox_pb2.STATE_COMPLETED else None
     exit_code = kwargs.get("exit_code", default_exit_code)
     if exit_code is None:
         resp.HasField.side_effect = lambda name: False
@@ -140,11 +139,11 @@ class TestRunningDedup:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_PENDING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         n_waiters = 5
         tasks = [asyncio.create_task(sandbox._wait_until_running_async()) for _ in range(n_waiters)]
@@ -158,7 +157,7 @@ class TestRunningDedup:
     async def test_fast_path_skips_api_call(self) -> None:
         """When status is already RUNNING, no API calls are made."""
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_running_async()
         sandbox._stub.Get.assert_not_called()
@@ -167,7 +166,7 @@ class TestRunningDedup:
     async def test_fast_path_completed_returns(self) -> None:
         """COMPLETED terminal state returns without error or API call."""
         sandbox = _make_sandbox(status=SandboxStatus.COMPLETED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_running_async()
         sandbox._stub.Get.assert_not_called()
@@ -193,7 +192,7 @@ class TestRunningDedup:
         """PAUSED state is treated as running - returns without API call."""
         sandbox = _make_sandbox()
         sandbox._state = _Running(sandbox_id="test-sandbox", status=SandboxStatus.PAUSED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_running_async()
         sandbox._stub.Get.assert_not_called()
@@ -207,11 +206,11 @@ class TestRunningDedup:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_PAUSED)
+                return _get_response(sandbox_pb2.STATE_PENDING)
+            return _get_response(sandbox_pb2.STATE_PAUSED)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -239,11 +238,11 @@ class TestRunningDedup:
             poll_round += 1
             if poll_round == 1:
                 advance.set()
-                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_PENDING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(sandbox._wait_until_running_async())
         waiter_b = asyncio.create_task(sandbox._wait_until_running_async())
@@ -268,11 +267,11 @@ class TestRunningDedup:
             call_count += 1
             if call_count <= 3:
                 await asyncio.sleep(0.05)
-                return _get_response(gateway_pb2.SANDBOX_STATUS_PENDING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_PENDING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox(timeout=60.0)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         short_waiter = asyncio.create_task(sandbox._wait_until_running_async(timeout=0.01))
         long_waiter = asyncio.create_task(sandbox._wait_until_running_async(timeout=60.0))
@@ -296,15 +295,15 @@ class TestRunningDedup:
                 poll_started.set()
                 # Block long enough for stop() to fire
                 await asyncio.sleep(10)
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
             # After stop, return terminal immediately
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         stop_response = MagicMock()
         stop_response.success = True
-        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=stop_response)
         sandbox._channel.close = AsyncMock()
 
         waiter = asyncio.create_task(sandbox._wait_until_running_async())
@@ -332,10 +331,10 @@ class TestRunningDedup:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.PERMISSION_DENIED)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         # First waiter gets the translated fatal error
         with pytest.raises(CWSandboxAuthenticationError):
@@ -361,10 +360,10 @@ class TestRunningDedup:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(sandbox._wait_until_running_async())
         waiter_b = asyncio.create_task(sandbox._wait_until_running_async())
@@ -388,10 +387,10 @@ class TestRunningDedup:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_TERMINATING)
+            return _get_response(sandbox_pb2.STATE_TERMINATING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         # TERMINATING is a stable status from _poll_until_stable's perspective,
         # so _wait_until_running_async returns (the sandbox is past the startup
@@ -419,11 +418,11 @@ class TestCompleteDedup:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         n_waiters = 5
         tasks = [
@@ -439,10 +438,10 @@ class TestCompleteDedup:
         """One waiter raises on TERMINATED, the other does not."""
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            return _get_response(gateway_pb2.SANDBOX_STATUS_TERMINATED)
+            return _get_response(sandbox_pb2.STATE_TERMINATED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         raises_waiter = asyncio.create_task(
             sandbox._wait_until_complete_async(raise_on_termination=True)
@@ -461,7 +460,7 @@ class TestCompleteDedup:
     async def test_fast_path_when_terminal(self) -> None:
         """When state is already terminal, no API calls are made."""
         sandbox = _make_sandbox(status=SandboxStatus.COMPLETED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_complete_async()
         sandbox._stub.Get.assert_not_called()
@@ -470,7 +469,7 @@ class TestCompleteDedup:
     async def test_fast_path_failed_raises(self) -> None:
         """FAILED terminal state raises SandboxFailedError without API call."""
         sandbox = _make_sandbox(status=SandboxStatus.FAILED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         with pytest.raises(SandboxFailedError):
             await sandbox._wait_until_complete_async()
@@ -480,7 +479,7 @@ class TestCompleteDedup:
     async def test_fast_path_terminated_raises(self) -> None:
         """TERMINATED terminal state raises SandboxTerminatedError by default."""
         sandbox = _make_sandbox(status=SandboxStatus.TERMINATED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         with pytest.raises(SandboxTerminatedError):
             await sandbox._wait_until_complete_async(raise_on_termination=True)
@@ -490,7 +489,7 @@ class TestCompleteDedup:
     async def test_fast_path_terminated_no_raise(self) -> None:
         """TERMINATED with raise_on_termination=False returns without error or API call."""
         sandbox = _make_sandbox(status=SandboxStatus.TERMINATED)
-        sandbox._stub.Get = AsyncMock(side_effect=AssertionError("should not be called"))
+        sandbox._stub.GetSandbox = AsyncMock(side_effect=AssertionError("should not be called"))
 
         await sandbox._wait_until_complete_async(raise_on_termination=False)
         sandbox._stub.Get.assert_not_called()
@@ -506,11 +505,11 @@ class TestCompleteDedup:
             poll_round += 1
             if poll_round == 1:
                 advance.set()
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(sandbox._wait_until_complete_async())
         waiter_b = asyncio.create_task(sandbox._wait_until_complete_async())
@@ -535,11 +534,11 @@ class TestCompleteDedup:
             call_count += 1
             if call_count <= 3:
                 await asyncio.sleep(0.05)
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING, timeout=60.0)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         short_waiter = asyncio.create_task(sandbox._wait_until_complete_async(timeout=0.01))
         long_waiter = asyncio.create_task(sandbox._wait_until_complete_async(timeout=60.0))
@@ -566,15 +565,15 @@ class TestCompleteDedup:
                     await asyncio.wait_for(stop_called.wait(), timeout=5.0)
                 except TimeoutError:
                     pass
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+                return _get_response(sandbox_pb2.STATE_COMPLETED)
             # After stop, return terminal immediately
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         stop_response = MagicMock()
         stop_response.success = True
-        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=stop_response)
         sandbox._channel.close = AsyncMock()
 
         waiter = asyncio.create_task(sandbox._wait_until_complete_async())
@@ -604,10 +603,10 @@ class TestCompleteDedup:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.PERMISSION_DENIED)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(CWSandboxAuthenticationError):
             await sandbox._wait_until_complete_async()
@@ -628,11 +627,11 @@ class TestPollRpcTimeout:
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             captured_timeouts.append(timeout)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox(timeout=300.0)
         sandbox._poll_rpc_timeout_seconds = 5.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -817,10 +816,10 @@ class TestPollWithRetry:
             attempt += 1
             if attempt <= 2:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -842,7 +841,7 @@ class TestPollWithRetry:
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 0.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxNotRunningError):
             await sandbox._wait_until_running_async()
@@ -862,7 +861,7 @@ class TestPollWithRetry:
             raise _rpc_error(grpc.StatusCode.NOT_FOUND)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxNotFoundError):
             await sandbox._wait_until_running_async()
@@ -881,7 +880,7 @@ class TestPollWithRetry:
             raise _rpc_error(grpc.StatusCode.PERMISSION_DENIED)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         # PERMISSION_DENIED is translated to CWSandboxAuthenticationError. The
         # retry classifier treats it as fatal and re-raises without retry.
@@ -945,7 +944,7 @@ class TestPollWithRetry:
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 1.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxNotRunningError):
             await sandbox._wait_until_running_async()
@@ -970,11 +969,11 @@ class TestPollWithRetry:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
             # Later invocations succeed
             call_log.append("ok")
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 0.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxNotRunningError):
             await sandbox._wait_until_running_async()
@@ -1038,12 +1037,12 @@ class TestPollRetryJitterBounds:
             attempt += 1
             if attempt <= 3:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         # Large budget so `remaining` is not the binding constraint.
         sandbox._poll_retry_budget_seconds = 300.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1140,12 +1139,12 @@ class TestPollRetryRpcTimeoutClamp:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 30.0
         sandbox._poll_rpc_timeout_seconds = 15.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1181,12 +1180,12 @@ class TestPollRetryRpcTimeoutClamp:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 5.0
         sandbox._poll_rpc_timeout_seconds = 15.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1220,12 +1219,12 @@ class TestPollRetryRpcTimeoutClamp:
             attempt += 1
             if attempt == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 5.0
         sandbox._poll_rpc_timeout_seconds = 15.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1292,11 +1291,11 @@ class TestPostStopNotFoundRetry:
             call_count += 1
             if call_count == 1:
                 raise _rpc_error(grpc.StatusCode.NOT_FOUND)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stop_owned = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async(raise_on_termination=False)
 
@@ -1323,11 +1322,11 @@ class TestPostStopNotFoundRetry:
             call_count += 1
             if call_count == 1:
                 raise _rpc_error(grpc.StatusCode.NOT_FOUND)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+            return _get_response(sandbox_pb2.STATE_FAILED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stop_owned = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxFailedError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1354,7 +1353,7 @@ class TestPostStopNotFoundRetry:
         sandbox = _make_sandbox()
         sandbox._state = pre_state
         sandbox._stop_owned = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxTerminalStateUnavailableError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1378,7 +1377,7 @@ class TestPostStopNotFoundRetry:
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         # _stop_owned defaults to False; _missing_ok_observe also False
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxNotFoundError):
             await sandbox._wait_until_complete_async()
@@ -1411,7 +1410,7 @@ class TestPostStopNotFoundRetry:
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stop_owned = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxFailedError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1441,11 +1440,11 @@ class TestPostStopNotFoundRetry:
                 get_barrier.set()
                 await second_waiter_joined.wait()
                 raise _rpc_error(grpc.StatusCode.NOT_FOUND)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._stop_owned = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(
             sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1489,13 +1488,13 @@ class TestPostStopNotFoundRetry:
             call_count += 1
             if call_count <= 2:
                 raise _rpc_error(grpc.StatusCode.NOT_FOUND)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox()
         sandbox._state = _Stopping(sandbox_id="test-sandbox")
         # _stop_owned stays False; observe-only flag gates the retry.
         sandbox._missing_ok_observe = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async(raise_on_termination=False)
 
@@ -1517,7 +1516,7 @@ class TestPostStopNotFoundRetry:
         sandbox = _make_sandbox()
         sandbox._state = _Stopping(sandbox_id="test-sandbox")
         sandbox._missing_ok_observe = True
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxTerminalStateUnavailableError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1546,16 +1545,16 @@ class TestStopThenWaitThroughRealDoStop:
             nonlocal get_calls
             get_calls += 1
             if get_calls <= 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
             if get_calls <= 3:
                 raise _rpc_error(grpc.StatusCode.NOT_FOUND)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         stop_response = MagicMock()
         stop_response.success = True
-        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=stop_response)
         sandbox._channel.close = AsyncMock()
 
         waiter = asyncio.create_task(sandbox._wait_until_complete_async(raise_on_termination=False))
@@ -1586,14 +1585,14 @@ class TestStopThenWaitThroughRealDoStop:
             nonlocal get_calls
             get_calls += 1
             if get_calls <= 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
             raise _rpc_error(grpc.StatusCode.NOT_FOUND)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         stop_response = MagicMock()
         stop_response.success = True
-        sandbox._stub.Stop = AsyncMock(return_value=stop_response)
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=stop_response)
         sandbox._channel.close = AsyncMock()
 
         waiter = asyncio.create_task(sandbox._wait_until_complete_async(raise_on_termination=False))
@@ -1648,11 +1647,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable", retry_delay=timedelta(seconds=5))
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 60.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1679,11 +1678,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable", retry_delay=timedelta(seconds=60))
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 300.0  # plenty of room
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1709,11 +1708,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable")
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 60.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1753,11 +1752,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable", retry_delay=timedelta(seconds=5))
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 2.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1782,11 +1781,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable", retry_delay=timedelta(seconds=0))
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 60.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1814,11 +1813,11 @@ class TestRetryDelayHonored:
                 exc = SandboxUnavailableError("unavailable", retry_delay=timedelta(seconds=-5))
                 exc.__cause__ = _rpc_error(grpc.StatusCode.UNAVAILABLE)
                 raise exc
-            return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+            return _get_response(sandbox_pb2.STATE_RUNNING)
 
         sandbox = _make_sandbox()
         sandbox._poll_retry_budget_seconds = 60.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 
@@ -1854,13 +1853,13 @@ class TestConcurrencyAcrossRetryAndNotFound:
             if call_count == 1:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
             if call_count == 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
             if call_count == 3:
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(
             sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -1897,7 +1896,7 @@ class TestConcurrencyAcrossRetryAndNotFound:
             raise _rpc_error(grpc.StatusCode.PERMISSION_DENIED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(sandbox._wait_until_complete_async())
         # Wait for first waiter to establish shared _complete_task.
@@ -1947,10 +1946,10 @@ class TestConcurrencyAcrossRetryAndNotFound:
             if call_count <= 3:
                 await real_sleep(0.05)
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         short_waiter = asyncio.create_task(
             sandbox._wait_until_complete_async(timeout=0.01, raise_on_termination=False)
@@ -1992,11 +1991,11 @@ class TestConcurrencyAcrossRetryAndNotFound:
             if call_count == 1:
                 first_call_started.set()
                 raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED)
+            return _get_response(sandbox_pb2.STATE_COMPLETED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
         sandbox._poll_retry_budget_seconds = 5.0
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         waiter_a = asyncio.create_task(
             sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -2044,10 +2043,10 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=7)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=7)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2063,11 +2062,11 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=3)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=3)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2086,10 +2085,10 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2107,10 +2106,10 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         sandbox._stop_owned = True
 
         # raise_on_termination=False: a stop-owned COMPLETED raises
@@ -2132,10 +2131,10 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+            return _get_response(sandbox_pb2.STATE_FAILED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxFailedError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -2157,11 +2156,11 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_FAILED)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_FAILED)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         with pytest.raises(SandboxFailedError):
             await sandbox._wait_until_complete_async(raise_on_termination=False)
@@ -2177,10 +2176,10 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
         # _is_stopping derives from the lifecycle state.
         sandbox._state = _Stopping(sandbox_id="test-sandbox")
 
@@ -2204,11 +2203,11 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
             raise _rpc_error(grpc.StatusCode.UNAVAILABLE)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2228,11 +2227,11 @@ class TestExitCodeGraceRepoll:
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
             timeouts.append(timeout)
             if len(timeouts) == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=3)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=3)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2254,13 +2253,13 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
             if call_count == 2:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_RUNNING)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=5)
+                return _get_response(sandbox_pb2.STATE_RUNNING)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=5)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2282,10 +2281,10 @@ class TestExitCodeGraceRepoll:
         monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_POLL_INTERVAL_SECONDS", 0.3)
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async(timeout=0.05)
 
@@ -2304,10 +2303,10 @@ class TestExitCodeGraceRepoll:
         monkeypatch.setattr("cwsandbox._sandbox.EXIT_CODE_GRACE_POLL_INTERVAL_SECONDS", 0.3)
 
         async def mock_get(request: object, timeout: float = 0, metadata: object = ()) -> MagicMock:
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         # COMPLETED-during-startup resolves the running wait without error.
         await sandbox._wait_until_running_async(timeout=0.05)
@@ -2331,11 +2330,11 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
             raise _rpc_error(grpc.StatusCode.NOT_FOUND)
 
         sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_complete_async()
 
@@ -2352,11 +2351,11 @@ class TestExitCodeGraceRepoll:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=None)
-            return _get_response(gateway_pb2.SANDBOX_STATUS_COMPLETED, exit_code=0)
+                return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=None)
+            return _get_response(sandbox_pb2.STATE_COMPLETED, exit_code=0)
 
         sandbox = _make_sandbox()
-        sandbox._stub.Get = mock_get
+        sandbox._stub.GetSandbox = mock_get
 
         await sandbox._wait_until_running_async()
 

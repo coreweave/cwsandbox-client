@@ -25,6 +25,7 @@ from cwsandbox import (
     Sandbox,
     SandboxDefaults,
     SandboxStatus,
+    ScratchVolumeOptions,
 )
 from cwsandbox._defaults import (
     DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS,
@@ -42,8 +43,9 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_RESTORE_FAILED,
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
+    CWSANDBOX_INVALID_REQUEST,
 )
-from cwsandbox._proto import gateway_pb2
+from cwsandbox._proto import sandbox_pb2, settings_pb2
 from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
 from cwsandbox.exceptions import (
     SandboxError,
@@ -145,10 +147,10 @@ class TestProtoConversions:
     @pytest.mark.parametrize(
         ("proto_value", "expected"),
         [
-            (gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_CREATING, FileSystemSnapshotStatus.CREATING),
-            (gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY, FileSystemSnapshotStatus.READY),
-            (gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_FAILED, FileSystemSnapshotStatus.FAILED),
-            (gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_DELETING, FileSystemSnapshotStatus.DELETING),
+            (sandbox_pb2.SNAPSHOT_STATE_CREATING, FileSystemSnapshotStatus.CREATING),
+            (sandbox_pb2.SNAPSHOT_STATE_READY, FileSystemSnapshotStatus.READY),
+            (sandbox_pb2.SNAPSHOT_STATE_FAILED, FileSystemSnapshotStatus.FAILED),
+            (sandbox_pb2.SNAPSHOT_STATE_DELETING, FileSystemSnapshotStatus.DELETING),
         ],
     )
     def test_status_from_proto(self, proto_value: int, expected: FileSystemSnapshotStatus) -> None:
@@ -159,18 +161,18 @@ class TestProtoConversions:
 
     def test_trigger_from_proto(self) -> None:
         assert (
-            sandbox_module._fss_trigger_from_proto(gateway_pb2.FILE_SYSTEM_SNAPSHOT_TRIGGER_STOP)
-            == FileSystemSnapshotTrigger.STOP
+            sandbox_module._fss_trigger_from_proto(sandbox_pb2.SNAPSHOT_TRIGGER_ON_DELETE)
+            == FileSystemSnapshotTrigger.ON_DELETE
         )
         assert (
-            sandbox_module._fss_trigger_from_proto(gateway_pb2.FILE_SYSTEM_SNAPSHOT_TRIGGER_MANUAL)
+            sandbox_module._fss_trigger_from_proto(sandbox_pb2.SNAPSHOT_TRIGGER_MANUAL)
             == FileSystemSnapshotTrigger.MANUAL
         )
 
     def test_bucket_mode_from_proto(self) -> None:
         assert (
             sandbox_module._fss_bucket_mode_from_proto(
-                gateway_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN
+                settings_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN
             )
             == FileSystemSnapshotBucketMode.BRING_YOUR_OWN
         )
@@ -178,16 +180,18 @@ class TestProtoConversions:
     def test_snapshot_from_proto(self) -> None:
         ts = timestamp_pb2.Timestamp()
         ts.FromJsonString("2026-06-07T10:00:00Z")
-        proto = gateway_pb2.FileSystemSnapshot(
+        proto = sandbox_pb2.FileSystemSnapshot(
             file_system_snapshot_id="fss-9",
-            status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
-            status_reason="",
+            state=sandbox_pb2.SNAPSHOT_STATE_READY,
+            state_reason="",
             size_bytes=4096,
             source_sandbox_id="sb-1",
-            trigger=gateway_pb2.FILE_SYSTEM_SNAPSHOT_TRIGGER_MANUAL,
-            idempotency_key="k",
+            trigger=sandbox_pb2.SNAPSHOT_TRIGGER_MANUAL,
+            request_id="k",
             object_bucket="bucket-x",
-            created_at=ts,
+            create_time=ts,
+            updated_at=ts,
+            complete_time=ts,
         )
         snap = sandbox_module._snapshot_from_proto(proto)
         assert snap.file_system_snapshot_id == "fss-9"
@@ -195,17 +199,17 @@ class TestProtoConversions:
         assert snap.size_bytes == 4096
         assert snap.source_sandbox_id == "sb-1"
         assert snap.trigger == FileSystemSnapshotTrigger.MANUAL
+        assert snap.request_id == "k"
         assert snap.object_bucket == "bucket-x"
         assert snap.created_at is not None
-        # Unset timestamps stay None.
-        assert snap.updated_at is None
-        assert snap.completed_at is None
+        assert snap.updated_at is not None
+        assert snap.completed_at is not None
 
     def test_bucket_config_from_proto(self) -> None:
-        proto = gateway_pb2.FileSystemSnapshotBucketConfig(
+        proto = settings_pb2.FileSystemSnapshotBucketConfig(
             bucket_name="my-bucket",
             region="us-east-1",
-            mode=gateway_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN,
+            mode=settings_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN,
             effective_bucket_name="my-bucket",
         )
         cfg = sandbox_module._bucket_config_from_proto(proto)
@@ -215,22 +219,26 @@ class TestProtoConversions:
         assert cfg.effective_bucket_name == "my-bucket"
 
     def test_mount_kwargs_fresh(self) -> None:
-        mount = sandbox_module._file_system_mount_kwargs(
+        volume, mount = sandbox_module._scratch_from_fss_options(
             FileSystemSnapshotOptions(mount_path="/data")
         )
-        assert mount == {"mount_path": "/data"}
+        assert volume == {"name": "workspace", "scratch": {}}
+        assert mount == {"volume": "workspace", "mount_path": "/data"}
 
     def test_mount_kwargs_restore(self) -> None:
-        mount = sandbox_module._file_system_mount_kwargs(
+        volume, mount = sandbox_module._scratch_from_fss_options(
             FileSystemSnapshotOptions(
                 mount_path="/data", size="5Gi", file_system_snapshot_id="fss-1"
             )
         )
-        assert mount == {
-            "mount_path": "/data",
-            "size": "5Gi",
-            "file_system_snapshot": {"file_system_snapshot_id": "fss-1"},
+        assert volume == {
+            "name": "workspace",
+            "scratch": {
+                "size": "5Gi",
+                "restore_from_snapshot_id": "fss-1",
+            },
         }
+        assert mount == {"volume": "workspace", "mount_path": "/data"}
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +326,7 @@ class TestSnapshotErrorMapping:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("t:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
                 return_value=mock_stub,
             ),
         ):
@@ -340,17 +348,23 @@ class TestStartWiring:
                 mount_path="/workspace", size="10Gi", file_system_snapshot_id="fss-7"
             ),
         )
-        mock_response = MagicMock()
-        mock_response.sandbox_id = "sb-1"
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
         with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
             sandbox._channel = MagicMock()
             sandbox._stub = MagicMock()
-            sandbox._stub.Start = AsyncMock(return_value=mock_response)
+            sandbox._stub.CreateSandbox = AsyncMock(return_value=mock_response)
             sandbox.start().result()
-            request = sandbox._stub.Start.call_args[0][0]
-            assert request.file_system.mount_path == "/workspace"
-            assert request.file_system.size == "10Gi"
-            assert request.file_system.file_system_snapshot.file_system_snapshot_id == "fss-7"
+            request = sandbox._stub.CreateSandbox.call_args[0][0]
+            volume = request.sandbox.spec.volumes[0]
+            assert volume.name == "workspace"
+            assert volume.scratch.size == "10Gi"
+            assert volume.scratch.restore_from_snapshot_id == "fss-7"
+            mount = request.sandbox.spec.containers[0].volume_mounts[0]
+            assert mount.volume == "workspace"
+            assert mount.mount_path == "/workspace"
 
     def test_dict_coercion(self) -> None:
         sandbox = Sandbox(
@@ -381,21 +395,131 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub  # stop() tears down _stub on completion; keep a ref.
-        mock_response = MagicMock()
-        mock_response.success = True
-        mock_response.file_system_snapshot_id = "fss-new"
-        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
-            sandbox.stop(snapshot_on_stop=True, idempotency_key="k").result()
+            sandbox.stop(snapshot_on_stop=True, request_id="k").result()
 
-        request = stub.Stop.call_args[0][0]
-        assert request.file_system_snapshot_on_stop is True
-        assert request.wait_for_ready is True
-        assert request.idempotency_key == "k"
-        # Snapshot-on-stop uses the generous FSS ceiling, not graceful shutdown.
-        assert request.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+        request = stub.DeleteSandbox.call_args[0][0]
+        assert list(request.snapshot_volumes) == ["workspace"]
+        assert request.request_id == "k"
+        assert request.allow_missing is False
         assert sandbox.file_system_snapshot_id == "fss-new"
+        stub.GetFileSystemSnapshot.assert_awaited_once()
+
+    def test_snapshot_on_stop_sends_allow_missing_when_missing_ok(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(snapshot_on_stop=True, missing_ok=True).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].allow_missing is True
+
+    def test_snapshot_on_stop_invalid_request_is_conflict(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._scratch_volume_names = ("workspace",)
+        sandbox._stub.DeleteSandbox = AsyncMock(
+            side_effect=_fss_rpc_error(CWSANDBOX_INVALID_REQUEST)
+        )
+
+        with pytest.raises(SnapshotOnStopConflictError, match="allow_missing"):
+            sandbox.stop(snapshot_on_stop=True, missing_ok=True).result()
+        assert sandbox.file_system_snapshot_id is None
+
+    def test_plain_stop_sends_allow_missing(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(missing_ok=True).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].allow_missing is True
+
+    def test_fractional_grace_ceils_to_one_second(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(graceful_shutdown_seconds=0.5).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].grace_period_seconds == 1
+
+    def test_snapshot_on_stop_retries_transient_archive_get(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            side_effect=[
+                _bare_rpc_error(grpc.StatusCode.UNAVAILABLE),
+                _ready_snapshot_proto("fss-new"),
+            ]
+        )
+
+        with (
+            patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+        assert stub.GetFileSystemSnapshot.call_count == 2
+        assert sandbox.file_system_snapshot_id == "fss-new"
+
+    def test_snapshot_on_stop_rejects_unknown_scratch_volume(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+
+        with pytest.raises(SandboxSnapshotError, match="no known scratch volumes"):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+        stub.DeleteSandbox.assert_not_called()
 
     def test_plain_stop_does_not_request_snapshot(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -405,24 +529,19 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub  # stop() tears down _stub on completion; keep a ref.
-        mock_response = MagicMock()
-        mock_response.success = True
-        mock_response.file_system_snapshot_id = ""
-        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop().result()
 
-        request = stub.Stop.call_args[0][0]
-        assert request.file_system_snapshot_on_stop is False
-        # wait_for_ready is only set when snapshotting.
-        assert request.HasField("wait_for_ready") is False
+        request = stub.DeleteSandbox.call_args[0][0]
+        assert list(request.snapshot_volumes) == []
+        assert request.request_id == ""
         assert sandbox.file_system_snapshot_id is None
 
     def test_snapshot_on_stop_deadline_covers_archive_plus_grace(self) -> None:
-        # The backend archives (max_timeout_seconds) THEN deletes the pod
-        # (graceful_shutdown_seconds). The client deadline must cover both, not
-        # just the archive — the proto archive budget stays the FSS default.
+        # The backend archives the requested volume, then applies the grace period.
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Starting(sandbox_id="sb-1")
@@ -430,25 +549,25 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
-        mock_response = MagicMock()
-        mock_response.success = True
-        mock_response.file_system_snapshot_id = "fss-new"
-        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=30).result()
 
-        request = stub.Stop.call_args[0][0]
-        assert request.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
-        assert request.graceful_shutdown_seconds == 30
-        timeout = stub.Stop.call_args.kwargs["timeout"]
+        request = stub.DeleteSandbox.call_args[0][0]
+        assert request.grace_period_seconds == 30
+        timeout = stub.DeleteSandbox.call_args.kwargs["timeout"]
         assert timeout == (
             int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS) + 30 + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
         )
 
-    def test_snapshot_on_stop_deadline_budgets_backend_grace_default_when_zero(self) -> None:
-        # Sending graceful_shutdown_seconds=0 makes the backend substitute its
-        # own grace default, so the client deadline budgets that default — not 0.
+    def test_snapshot_on_stop_deadline_budgets_zero_grace_when_zero(self) -> None:
+        # In v1, graceful_shutdown_seconds=0 means immediate termination.
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Starting(sandbox_id="sb-1")
@@ -456,16 +575,18 @@ class TestStopWiring:
         sandbox._channel.close = AsyncMock()
         sandbox._stub = MagicMock()
         stub = sandbox._stub
-        mock_response = MagicMock()
-        mock_response.success = True
-        mock_response.file_system_snapshot_id = "fss-new"
-        sandbox._stub.Stop = AsyncMock(return_value=mock_response)
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
 
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, graceful_shutdown_seconds=0).result()
 
-        assert stub.Stop.call_args[0][0].graceful_shutdown_seconds == 0
-        timeout = stub.Stop.call_args.kwargs["timeout"]
+        assert stub.DeleteSandbox.call_args[0][0].grace_period_seconds == 0
+        timeout = stub.DeleteSandbox.call_args.kwargs["timeout"]
         assert timeout == (
             int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
             + int(DEFAULT_FSS_STOP_GRACE_FALLBACK_SECONDS)
@@ -568,23 +689,25 @@ class TestSnapshotOnStopConflict:
 # ---------------------------------------------------------------------------
 
 
-def _ready_snapshot_proto(file_system_snapshot_id: str = "fss-1") -> gateway_pb2.FileSystemSnapshot:
-    return gateway_pb2.FileSystemSnapshot(
+def _ready_snapshot_proto(file_system_snapshot_id: str = "fss-1") -> sandbox_pb2.FileSystemSnapshot:
+    return sandbox_pb2.FileSystemSnapshot(
         file_system_snapshot_id=file_system_snapshot_id,
-        status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+        state=sandbox_pb2.SNAPSHOT_STATE_READY,
         source_sandbox_id="sb-1",
-        trigger=gateway_pb2.FILE_SYSTEM_SNAPSHOT_TRIGGER_MANUAL,
+        trigger=sandbox_pb2.SNAPSHOT_TRIGGER_MANUAL,
     )
 
 
 class TestSnapshotMethod:
     def test_snapshot_returns_id(self) -> None:
-        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi")],
+        )
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        create_resp = MagicMock()
-        create_resp.success = True
-        create_resp.file_system_snapshot_id = "fss-1"
+        create_resp = _ready_snapshot_proto("fss-1")
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
         sandbox._stub.GetFileSystemSnapshot = AsyncMock()
         with (
@@ -593,7 +716,7 @@ class TestSnapshotMethod:
                 sandbox, "_wait_until_running_async", new_callable=AsyncMock
             ) as wait_running,
         ):
-            snapshot_id = sandbox.snapshot(idempotency_key="k").result()
+            snapshot_id = sandbox.snapshot(request_id="k", wait_for_ready=False).result()
         # snapshot() waits for RUNNING before archiving the mount.
         wait_running.assert_awaited()
         # snapshot() returns just the ID; it does NOT fetch the full record.
@@ -601,25 +724,51 @@ class TestSnapshotMethod:
         sandbox._stub.GetFileSystemSnapshot.assert_not_called()
         create_req = sandbox._stub.CreateFileSystemSnapshot.call_args[0][0]
         assert create_req.sandbox_id == "sb-1"
-        assert create_req.wait_for_ready is True
-        assert create_req.idempotency_key == "k"
-        # wait_for_ready blocks on the archive, so the server-side ceiling is set.
-        assert create_req.max_timeout_seconds == int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
+        assert create_req.request_id == "k"
+        assert create_req.scratch_volume_name == "data"
+
+    def test_snapshot_raises_when_multiple_scratch_volumes(self) -> None:
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[
+                ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi"),
+                ScratchVolumeOptions(name="cache", mount_path="/cache", size="1Gi"),
+            ],
+        )
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            with pytest.raises(SandboxSnapshotError, match="multiple scratch volumes"):
+                sandbox.snapshot(wait_for_ready=False).result()
+        sandbox._stub.CreateFileSystemSnapshot.assert_not_called()
 
     def test_snapshot_failure_raises(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        create_resp = MagicMock()
-        create_resp.success = False
-        create_resp.error_message = "nope"
+        create_resp = sandbox_pb2.FileSystemSnapshot(
+            file_system_snapshot_id="fss-1",
+            state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+        )
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_FAILED,
+                state_reason="nope",
+            )
+        )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
         ):
             with pytest.raises(SandboxSnapshotError, match="nope"):
-                sandbox.snapshot().result()
+                sandbox.snapshot(wait_for_ready=True).result()
 
 
 class TestManagementClassmethods:
@@ -630,7 +779,7 @@ class TestManagementClassmethods:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("t:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
                 return_value=mock_stub,
             ),
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
@@ -648,25 +797,25 @@ class TestManagementClassmethods:
 
     def test_list_snapshots_with_client_side_filters(self) -> None:
         protos = [
-            gateway_pb2.FileSystemSnapshot(
+            sandbox_pb2.FileSystemSnapshot(
                 file_system_snapshot_id="a",
-                status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                state=sandbox_pb2.SNAPSHOT_STATE_READY,
                 source_sandbox_id="sb-1",
             ),
-            gateway_pb2.FileSystemSnapshot(
+            sandbox_pb2.FileSystemSnapshot(
                 file_system_snapshot_id="b",
-                status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_CREATING,
+                state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
                 source_sandbox_id="sb-1",
             ),
-            gateway_pb2.FileSystemSnapshot(
+            sandbox_pb2.FileSystemSnapshot(
                 file_system_snapshot_id="c",
-                status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                state=sandbox_pb2.SNAPSHOT_STATE_READY,
                 source_sandbox_id="sb-2",
             ),
         ]
         mock_stub = MagicMock()
         mock_stub.ListFileSystemSnapshots = AsyncMock(
-            return_value=gateway_pb2.ListFileSystemSnapshotsResponse(
+            return_value=sandbox_pb2.ListFileSystemSnapshotsResponse(
                 file_system_snapshots=protos, next_page_token=""
             )
         )
@@ -692,20 +841,20 @@ class TestManagementClassmethods:
         attempt must build a fresh request (page 1) rather than resuming at the
         last token; otherwise the already-collected first page is silently lost.
         """
-        page1 = gateway_pb2.ListFileSystemSnapshotsResponse(
+        page1 = sandbox_pb2.ListFileSystemSnapshotsResponse(
             file_system_snapshots=[
-                gateway_pb2.FileSystemSnapshot(
+                sandbox_pb2.FileSystemSnapshot(
                     file_system_snapshot_id="a",
-                    status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                    state=sandbox_pb2.SNAPSHOT_STATE_READY,
                 )
             ],
             next_page_token="tok1",
         )
-        page2 = gateway_pb2.ListFileSystemSnapshotsResponse(
+        page2 = sandbox_pb2.ListFileSystemSnapshotsResponse(
             file_system_snapshots=[
-                gateway_pb2.FileSystemSnapshot(
+                sandbox_pb2.FileSystemSnapshot(
                     file_system_snapshot_id="b",
-                    status=gateway_pb2.FILE_SYSTEM_SNAPSHOT_STATUS_READY,
+                    state=sandbox_pb2.SNAPSHOT_STATE_READY,
                 )
             ],
             next_page_token="",
@@ -739,7 +888,6 @@ class TestManagementClassmethods:
     def test_delete_snapshot_success(self) -> None:
         mock_stub = MagicMock()
         resp = MagicMock()
-        resp.success = True
         mock_stub.DeleteFileSystemSnapshot = AsyncMock(return_value=resp)
         patches = self._patch_channel(mock_stub)
         with patches[0], patches[1], patches[2], patches[3]:
@@ -811,7 +959,7 @@ class TestBucketConfig:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("t:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                "cwsandbox._sandbox.settings_pb2_grpc.SettingsServiceStub",
                 return_value=mock_stub,
             ),
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
@@ -820,8 +968,8 @@ class TestBucketConfig:
     def test_get_bucket_config(self) -> None:
         mock_stub = MagicMock()
         mock_stub.GetFileSystemSnapshotBucketConfig = AsyncMock(
-            return_value=gateway_pb2.FileSystemSnapshotBucketConfig(
-                mode=gateway_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_CW_MANAGED,
+            return_value=settings_pb2.FileSystemSnapshotBucketConfig(
+                mode=settings_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_CW_MANAGED,
                 effective_bucket_name="cw-bucket",
             )
         )
@@ -834,11 +982,11 @@ class TestBucketConfig:
 
     def test_set_bucket_config(self) -> None:
         mock_stub = MagicMock()
-        mock_stub.SetFileSystemSnapshotBucketConfig = AsyncMock(
-            return_value=gateway_pb2.FileSystemSnapshotBucketConfig(
+        mock_stub.UpdateFileSystemSnapshotBucketConfig = AsyncMock(
+            return_value=settings_pb2.FileSystemSnapshotBucketConfig(
                 bucket_name="byo",
                 region="us-east-1",
-                mode=gateway_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN,
+                mode=settings_pb2.FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN,
                 effective_bucket_name="byo",
             )
         )
@@ -846,9 +994,10 @@ class TestBucketConfig:
         with patches[0], patches[1], patches[2], patches[3]:
             cfg = Sandbox.set_snapshot_bucket_config(bucket_name="byo", region="us-east-1").result()
         assert cfg.mode == FileSystemSnapshotBucketMode.BRING_YOUR_OWN
-        req = mock_stub.SetFileSystemSnapshotBucketConfig.call_args[0][0]
-        assert req.bucket_name == "byo"
-        assert req.region == "us-east-1"
+        req = mock_stub.UpdateFileSystemSnapshotBucketConfig.call_args[0][0]
+        cfg = req.file_system_snapshot_bucket_config
+        assert cfg.bucket_name == "byo"
+        assert cfg.region == "us-east-1"
 
 
 # ---------------------------------------------------------------------------
@@ -864,9 +1013,7 @@ class TestTransientRetry:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
-        ok = MagicMock()
-        ok.success = True
-        ok.file_system_snapshot_id = "fss-1"
+        ok = _ready_snapshot_proto("fss-1")
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
             side_effect=[_bare_rpc_error(grpc.StatusCode.UNAVAILABLE), ok]
         )
@@ -875,15 +1022,15 @@ class TestTransientRetry:
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
         ):
-            snapshot_id = sandbox.snapshot().result()
+            snapshot_id = sandbox.snapshot(wait_for_ready=False).result()
 
         assert snapshot_id == "fss-1"
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 2
         # The caller passed no idempotency_key, so one was generated and the
         # retried attempt reuses it (so a committed-but-lost create dedups).
         calls = sandbox._stub.CreateFileSystemSnapshot.call_args_list
-        first_key = calls[0][0][0].idempotency_key
-        second_key = calls[1][0][0].idempotency_key
+        first_key = calls[0][0][0].request_id
+        second_key = calls[1][0][0].request_id
         assert first_key
         assert first_key == second_key
 
@@ -903,7 +1050,7 @@ class TestTransientRetry:
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep,
         ):
             with pytest.raises(SandboxError, match="requires a running sandbox"):
-                sandbox.snapshot().result()
+                sandbox.snapshot(wait_for_ready=False).result()
 
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
         sleep.assert_not_called()
@@ -922,7 +1069,7 @@ class TestTransientRetry:
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
         ):
             with pytest.raises(SnapshotNotSupportedError):
-                sandbox.snapshot().result()
+                sandbox.snapshot(wait_for_ready=False).result()
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
 
     def test_snapshot_budget_zero_disables_retry(self) -> None:
@@ -939,7 +1086,7 @@ class TestTransientRetry:
             patch("cwsandbox._sandbox.DEFAULT_FSS_RETRY_BUDGET_SECONDS", 0.0),
         ):
             with pytest.raises(SandboxUnavailableError):
-                sandbox.snapshot().result()
+                sandbox.snapshot(wait_for_ready=False).result()
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
 
     def test_snapshot_does_not_retry_deadline_exceeded(self) -> None:
@@ -958,7 +1105,7 @@ class TestTransientRetry:
             patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep,
         ):
             with pytest.raises(SandboxRequestTimeoutError):
-                sandbox.snapshot().result()
+                sandbox.snapshot(wait_for_ready=False).result()
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
         sleep.assert_not_called()
 
@@ -977,7 +1124,7 @@ class TestTransientRetry:
             patch("cwsandbox._sandbox.parse_grpc_target", return_value=("t:443", True)),
             patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
             patch(
-                "cwsandbox._sandbox.gateway_pb2_grpc.GatewayServiceStub",
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
                 return_value=mock_stub,
             ),
             patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),

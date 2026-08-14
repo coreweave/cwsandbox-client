@@ -16,6 +16,8 @@ from cwsandbox._types import (
     OperationRef,
     Process,
     ProcessResult,
+    Service,
+    ServiceVisibility,
     StreamReader,
     StreamWriter,
     TerminalResult,
@@ -112,82 +114,43 @@ class TestOperationRef:
 
 
 class TestNetworkOptions:
-    """Tests for NetworkOptions dataclass."""
+    """Tests for v1 NetworkOptions (deny flags; typed services are separate)."""
 
     def test_default_values_all_none(self) -> None:
-        """Test NetworkOptions defaults all fields to None."""
         opts = NetworkOptions()
-        assert opts.ingress_mode is None
-        assert opts.exposed_ports is None
-        assert opts.egress_mode is None
+        assert opts.deny_egress is None
+        assert opts.deny_ingress is None
 
-    def test_setting_ingress_mode_only(self) -> None:
-        """Test setting only ingress_mode."""
-        opts = NetworkOptions(ingress_mode="public")
-        assert opts.ingress_mode == "public"
-        assert opts.exposed_ports is None
-        assert opts.egress_mode is None
-
-    def test_setting_egress_mode_only(self) -> None:
-        """Test setting only egress_mode."""
-        opts = NetworkOptions(egress_mode="internet")
-        assert opts.ingress_mode is None
-        assert opts.exposed_ports is None
-        assert opts.egress_mode == "internet"
-
-    def test_setting_exposed_ports_as_tuple(self) -> None:
-        """Test setting exposed_ports as tuple preserves it."""
-        opts = NetworkOptions(exposed_ports=(8080, 443))
-        assert opts.exposed_ports == (8080, 443)
-
-    def test_exposed_ports_list_normalizes_to_tuple(self) -> None:
-        """Test exposed_ports list is normalized to tuple for immutability."""
-        opts = NetworkOptions(exposed_ports=[8080, 443])  # type: ignore[arg-type]
-        assert opts.exposed_ports == (8080, 443)
-        assert isinstance(opts.exposed_ports, tuple)
-
-    def test_empty_exposed_ports_normalizes_to_none(self) -> None:
-        """Test empty exposed_ports sequence normalizes to None."""
-        opts = NetworkOptions(exposed_ports=())
-        assert opts.exposed_ports is None
-
-        opts_list = NetworkOptions(exposed_ports=[])  # type: ignore[arg-type]
-        assert opts_list.exposed_ports is None
+    def test_deny_flags(self) -> None:
+        opts = NetworkOptions(deny_egress=True, deny_ingress=False)
+        assert opts.deny_egress is True
+        assert opts.deny_ingress is False
 
     def test_frozen_immutability(self) -> None:
-        """Test NetworkOptions is frozen (immutable)."""
-        opts = NetworkOptions(ingress_mode="public")
+        opts = NetworkOptions(deny_egress=True)
         with pytest.raises(AttributeError):
-            opts.ingress_mode = "internal"  # type: ignore[misc]
+            opts.deny_egress = False  # type: ignore[misc]
 
-    def test_equality(self) -> None:
-        """Test NetworkOptions equality comparison."""
-        opts1 = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
-        opts2 = NetworkOptions(ingress_mode="public", exposed_ports=(8080,))
-        opts3 = NetworkOptions(ingress_mode="internal", exposed_ports=(8080,))
-
+    def test_equality_and_hash(self) -> None:
+        opts1 = NetworkOptions(deny_egress=True)
+        opts2 = NetworkOptions(deny_egress=True)
+        opts3 = NetworkOptions(deny_ingress=True)
         assert opts1 == opts2
         assert opts1 != opts3
+        hash(opts1)
+        assert "NetworkOptions" in repr(opts1)
 
-    def test_all_fields_set(self) -> None:
-        """Test setting all fields together."""
-        opts = NetworkOptions(
-            ingress_mode="public",
-            exposed_ports=(8080, 443, 22),
-            egress_mode="internet",
-        )
-        assert opts.ingress_mode == "public"
-        assert opts.exposed_ports == (8080, 443, 22)
-        assert opts.egress_mode == "internet"
 
-    def test_repr_and_hash(self) -> None:
-        """Test NetworkOptions has reasonable repr and is hashable (frozen dataclass)."""
-        opts = NetworkOptions(ingress_mode="public")
-        # Should be hashable since it's frozen
-        hash(opts)
-        # Should have a reasonable repr
-        assert "NetworkOptions" in repr(opts)
-        assert "public" in repr(opts)
+class TestService:
+    """Tests for typed Service ports."""
+
+    def test_service_visibility_coercion(self) -> None:
+        svc = Service(port=8080, visibility="public")
+        assert svc.visibility == ServiceVisibility.PUBLIC
+
+    def test_invalid_port(self) -> None:
+        with pytest.raises(ValueError, match="1-65535"):
+            Service(port=0)
 
 
 class TestProcessResult:

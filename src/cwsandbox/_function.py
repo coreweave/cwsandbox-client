@@ -19,6 +19,7 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     NetworkOptions,
     OperationRef,
+    PlacementSpillover,
     ResourceOptions,
 )
 from cwsandbox.exceptions import AsyncFunctionError, SandboxExecutionError
@@ -80,18 +81,18 @@ class RemoteFunction(Generic[P, R]):
         session: Session,
         container_image: str | None = None,
         temp_dir: str = DEFAULT_TEMP_DIR,
-        profile_ids: list[str] | None = None,
-        profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
-        s3_mount: dict[str, Any] | None = None,
-        ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        services: list[Any] | None = None,
+        volumes: list[Any] | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
-        max_timeout_seconds: int | None = None,
+        placement_mode: Any | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> None:
         """Initialize RemoteFunction with function and execution configuration.
 
@@ -100,12 +101,6 @@ class RemoteFunction(Generic[P, R]):
             session: The sandbox session to use for execution
             container_image: Override container image for this function
             temp_dir: Directory for temporary payload/result files in sandbox
-            profile_ids: Optional list of profile IDs for infrastructure selection.
-                See SandboxDefaults.profile_ids for semantics. Prefer
-                ``profile_names`` when selecting by name.
-            profile_names: Optional list of profile names for infrastructure
-                selection (preferred over profile_ids). See
-                SandboxDefaults.profile_names for semantics.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -113,13 +108,10 @@ class RemoteFunction(Generic[P, R]):
                 should have ``mount_path`` (str) and ``file_content`` (bytes).
                 Note: Mounted files are read-only at runtime. To modify a file,
                 use ``sandbox.write_file()`` after the sandbox is running.
-            s3_mount: S3 bucket mount configuration
-            ports: Port mappings for the sandbox
             network: Network configuration (NetworkOptions dataclass)
             file_system_snapshot: File-system snapshot (FSS) mount configuration.
                 Accepts a FileSystemSnapshotOptions or a dict with ``mount_path``,
                 optional ``size``, and optional ``file_system_snapshot_id`` (restore on start).
-            max_timeout_seconds: Maximum timeout for sandbox operations
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -151,16 +143,19 @@ class RemoteFunction(Generic[P, R]):
         self._session = session
         self._container_image = container_image
         self._temp_dir = temp_dir
-        self._profile_ids = list(profile_ids) if profile_ids is not None else None
-        self._profile_names = list(profile_names) if profile_names is not None else None
         self._runner_ids = list(runner_ids) if runner_ids is not None else None
         self._resources = resources
         self._mounted_files = mounted_files
-        self._s3_mount = s3_mount
-        self._ports = ports
+        self._s3_mount = None
+        self._ports = None
         self._network = network
+        self._services = services
+        self._volumes = volumes
+        self._placement_mode = placement_mode
+        self._placement_spillover = placement_spillover
         self._file_system_snapshot = file_system_snapshot
-        self._max_timeout_seconds = max_timeout_seconds
+        self._max_timeout_seconds = None
+        self._request_timeout_seconds = request_timeout_seconds
         self._environment_variables = environment_variables
         self._annotations = annotations
         # Preserve function metadata
@@ -264,30 +259,32 @@ class RemoteFunction(Generic[P, R]):
         )
 
         sandbox_kwargs: dict[str, Any] = {}
-        if self._profile_ids is not None:
-            sandbox_kwargs["profile_ids"] = self._profile_ids
-        if self._profile_names is not None:
-            sandbox_kwargs["profile_names"] = self._profile_names
         if self._runner_ids is not None:
             sandbox_kwargs["runner_ids"] = self._runner_ids
         if self._resources is not None:
             sandbox_kwargs["resources"] = self._resources
         if self._mounted_files is not None:
             sandbox_kwargs["mounted_files"] = self._mounted_files
-        if self._s3_mount is not None:
-            sandbox_kwargs["s3_mount"] = self._s3_mount
         if self._ports is not None:
             sandbox_kwargs["ports"] = self._ports
         if self._network is not None:
             sandbox_kwargs["network"] = self._network
+        if self._services is not None:
+            sandbox_kwargs["services"] = self._services
+        if self._volumes is not None:
+            sandbox_kwargs["volumes"] = self._volumes
+        if self._placement_mode is not None:
+            sandbox_kwargs["placement_mode"] = self._placement_mode
+        if self._placement_spillover is not None:
+            sandbox_kwargs["placement_spillover"] = self._placement_spillover
         if self._file_system_snapshot is not None:
             sandbox_kwargs["file_system_snapshot"] = self._file_system_snapshot
-        if self._max_timeout_seconds is not None:
-            sandbox_kwargs["max_timeout_seconds"] = self._max_timeout_seconds
         if self._environment_variables is not None:
             sandbox_kwargs["environment_variables"] = self._environment_variables
         if self._annotations is not None:
             sandbox_kwargs["annotations"] = self._annotations
+        if self._request_timeout_seconds is not None:
+            sandbox_kwargs["request_timeout_seconds"] = self._request_timeout_seconds
 
         # Import here to avoid circular import
         from cwsandbox._sandbox import Sandbox

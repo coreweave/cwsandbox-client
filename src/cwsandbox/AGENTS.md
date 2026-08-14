@@ -12,15 +12,17 @@ This directory contains the cwsandbox SDK implementation.
 
 ```
 cwsandbox/
-├── __init__.py       # Public API exports, get(), wait() utilities
+├── __init__.py       # Public API exports, results()/wait() utilities
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
-├── _types.py         # OperationRef, ProcessResult, Process, StreamReader, Secret
+├── _types.py         # OperationRef, Process, Service, ScratchVolumeOptions, FSS types
 ├── _defaults.py      # SandboxDefaults configuration dataclass
+├── _discovery.py     # list_runners / get_runner (no profiles)
 ├── _auth.py          # Authentication resolution (built-in API key mode, active auth mode override)
 ├── _loop_manager.py  # Background asyncio event loop singleton
 ├── _cleanup.py       # atexit/signal handlers for graceful shutdown
+├── _proto/           # Vendored coreweave.sandbox.v1 stubs
 ├── exceptions.py     # Exception hierarchy
 └── py.typed          # PEP 561 type information marker
 ```
