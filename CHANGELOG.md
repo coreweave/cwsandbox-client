@@ -1,60 +1,99 @@
 # CHANGELOG
 
 
-## v1.0.0 (2026-08-12)
-
-Breaking cutover to the Sandbox **v1** API. Stay on **0.26.x** if you still need
-v1beta2. One package version speaks one dialect (no hybrid fallback).
-
-### Breaking Changes
-
-- Speak only `coreweave.sandbox.v1` (Create/Delete/Get/List, StreamExec, unary
-  StreamLogs, volumes, templates, settings bucket). Vendored beta stubs
-  (`gateway_*`, `streaming_*`, `secrets_*`) are removed.
-- Drop profiles from the public surface (`profile_ids` / `profile_names`,
-  `list_profiles` / `get_profile`, `Profile`). Place workloads with
-  `placement_mode` and runner filters; use `Sandbox.run_from_template` for CKS
-  pod-fragment templates. Remove hollow beta leftovers
-  (`profile_id`, `service_address`, `applied_ingress_mode`,
-  `applied_egress_mode`); use `service_urls` for per-service URLs.
-- Replace string network modes with typed `services=[Service(...)]` using
-  `ServiceVisibility` / `ServiceProtocol`. `NetworkOptions` is now deny-flag
-  only (`deny_egress` / `deny_ingress`), not ingress/egress mode strings.
-- Prefer named scratch volumes (`ScratchVolumeOptions`) for filesystem snapshot
-  mounts; `file_system_snapshot=` remains as a single-mount convenience.
-- List filter rename: `include_stopped` → `show_terminated`. Snapshot/stop
-  idempotency kwarg rename: `idempotency_key` → `request_id`.
-- Reject `s3_mount`, `ports`, and `max_timeout_seconds` with a loud `TypeError`
-  (use `request_timeout_seconds` for client deadlines).
-- `stop()` maps to `DeleteSandbox` under the hood; create uses a frozen
-  `request_id` for idempotency.
-
-Surfaces that were never part of the public 0.26 SDK (WIF admin, SecretStore
-admin, NetworkService, TOKEN product endpoints) remain unsupported on 1.0 until
-v1 backends implement them. Create-time `Secret` inject still works.
+## v0.27.0 (2026-08-14)
 
 ### Features
 
-- Export `PlacementMode`, `PlacementSpillover`, `Service` /
-  `ServiceVisibility` / `ServiceProtocol`, `ScratchVolumeOptions`,
-  `ImagePullCredentials`, and `Sandbox.run_from_template`.
-- Add `placement_spillover` (`PlacementSpillover`: `strict` default,
-  `cks_then_serverless`, `serverless_then_cks`) for a one-shot CreateSandbox
-  retry on the alternate mode when the primary cannot place the request
-  (capacity, no suitable runner, runner unavailable/overloaded, or a
-  placement constraint). The primary failure reason is attached to a
-  failed spill. `serverless_then_cks` rejects `runner_ids`. Template
-  creates require `strict`.
-- `service_urls` uses `ServiceStatus.url` or `endpoint.url`. Custom
-  visibility often has no URL; those services still appear in
-  `exposed_ports`. The SDK does not invent a URL.
-- Proto generation pins protobuf runtime v26.1 via `scripts/buf.gen.python.yaml`
-  and `scripts/update-protos.sh --from-backend`.
+- Cut over public SDK to Sandbox v1 API (1.0.0)
+  ([#146](https://github.com/coreweave/cwsandbox-client/pull/146),
+  [`fab1fb0`](https://github.com/coreweave/cwsandbox-client/commit/fab1fb06f569af1bf6231181ad986491bce0252b))
 
-### Tests
+* feat!: cut over public SDK to Sandbox v1 API (1.0.0b1)
 
-- Unit and integration suites retargeted to v1 (prod smoke: unit + full
-  integration green against production).
+Speak only coreweave.sandbox.v1 so consumers targeting the new control plane get a single dialect;
+  freeze callers that still need v1beta2 on 0.26.x.
+
+* test: close v1 coverage gaps and fix cutover typing
+
+Restore skipped FSS/StreamExec unit coverage, lock CreateSandbox request shapes for new v1 knobs,
+  and clear ruff/mypy failures blocking CI.
+
+* fix: harden v1 create, template, stop, and log contracts
+
+Address self-review blockers: sparse template overlays, mounted_files wiring, snapshot
+  wait_for_ready, log resume codes, and scratch-volume name tracking for discovered sandboxes.
+
+* chore: ship cutover as 1.0.0 (not 1.0.0b1)
+
+* docs: align AGENTS, examples, and public docs with Sandbox v1
+
+Rewrite discovery/list/network/FSS guidance for the 1.0 cutover, fix runnable examples, expose
+  service_urls, and keep deferred admin surfaces documented as unsupported (no hybrid dialect).
+
+* feat: add placement_spillover for create-time mode fallback
+
+Retry CreateSandbox once on the alternate placement mode when the primary fails with a spillable
+  capacity or placement-constraint reason.
+
+* style: format _sandbox.py for ruff check
+
+* feat!: remove hollow beta profile and network echo attrs
+
+Drop always-empty profile_id, service_address, and applied_* modes so callers use service_urls and
+  placement instead of dead beta fields.
+
+* fix: address v1 cutover review findings against live API
+
+Refresh service_urls on Get/poll, restore placement state after failed spillover, harden
+  stop/template/log-resume seams, and tighten e2e so capability gaps skip instead of masking
+  contract breaks.
+
+* style: apply ruff format to review-feedback changes
+
+* chore: retrigger CI after ruff format fix
+
+* fix: populate resource_gpu from v1 status echo
+
+The public GPU confirmation property stayed None after create/Get because the v1 echo path mapped
+  only cpu and memory.
+
+* fix: deliver stream_logs errors when the output queue is full
+
+A terminal log-stream error was dropped on QueueFull, so a slow reader could hang after draining the
+  last line. Use the same guaranteed put as read_file streaming.
+
+* test: cover stream_logs hang when the output queue is full
+
+Public StreamReader and e2e paths now assert a terminal error raises instead of blocking after a
+  slow reader fills the queue.
+
+* style: ruff format stream_logs queue-full tests
+
+* test: raise large-file sandbox memory and lifetime
+
+The 20 MiB exec-stream fallback OOMs on the shared 256Mi fixture, and both large-file tests overrun
+  the 60s default lifetime.
+
+* test: drop ill-posed stream_logs queue-full e2e
+
+A forced channel close on an idle follow stream is not a terminal error, so the test timed out
+  against production. Unit tests already cover the QueueFull delivery path.
+
+* fix: align v1 stop, logs, and spillover contracts with review
+
+Keep the spilled create request id on ambiguous attempt-2 errors, and make snapshot/stop/log-resume
+  request shapes match what the gateway accepts.
+
+* fix: type the snapshot-wait retry so mypy can check it
+
+The archive-wait retry used an untyped lambda; CI's mypy check rejected it. Use a nested coroutine
+  with an explicit return type.
+
+* fix: honor review contracts for spillover, stop, logs, and templates
+
+Spill when the primary mode cannot place a request, keep the spilled create id on ambiguous
+  failures, and fail snapshot-on-stop instead of succeeding with no archive.
 
 
 ## v0.26.2 (2026-08-13)
