@@ -450,13 +450,17 @@ async def _wait_for_snapshot_via_stub(
                 file_system_snapshot_id=snapshot_id,
             )
         get_timeout = min(remaining, DEFAULT_POLL_RPC_TIMEOUT_SECONDS)
-        snap = await _retry_transient_rpc(
-            lambda timeout=get_timeout: _get_snapshot_via_stub(
+
+        async def _get_once(timeout: float = get_timeout) -> FileSystemSnapshot:
+            return await _get_snapshot_via_stub(
                 stub,
                 snapshot_id,
                 auth_metadata=auth_metadata,
                 timeout=timeout,
-            ),
+            )
+
+        snap = await _retry_transient_rpc(
+            _get_once,
             budget_seconds=min(remaining, DEFAULT_FSS_RETRY_BUDGET_SECONDS),
             operation="Wait for file-system snapshot",
         )
