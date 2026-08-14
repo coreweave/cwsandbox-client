@@ -3155,6 +3155,8 @@ class TestSandboxAnnotations:
         )
 
         assert sandbox._annotations == {}
+        assert sandbox._file_system_snapshot_id is None
+        assert sandbox.file_system_snapshot_id is None
 
     def test_from_sandbox_info_captures_scratch_volume_names(self) -> None:
         from cwsandbox._proto import sandbox_pb2
@@ -3549,6 +3551,34 @@ class TestSandboxTimeouts:
         ):
             process = sandbox.exec(["sleep", "10"], timeout_seconds=0.1)
             with pytest.raises(SandboxTimeoutError):
+                process.result()
+
+    def test_exec_translates_non_timeout_rpc_error(self) -> None:
+        from cwsandbox.exceptions import SandboxUnavailableError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        mock_call = MockStreamCall(
+            error_on_read=MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "connection lost")
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["echo", "hi"])
+            with pytest.raises(SandboxUnavailableError):
                 process.result()
 
 
@@ -5812,6 +5842,7 @@ class TestStoppingStateTransitions:
                         port=9090,
                         name="metrics",
                         visibility=sandbox_pb2.VISIBILITY_UNSPECIFIED,
+                        endpoint=sandbox_pb2.EndpointStatus(url="https://sb.example/9090"),
                     ),
                 ],
             ),
@@ -5820,7 +5851,10 @@ class TestStoppingStateTransitions:
 
         sandbox._apply_sandbox_info(view, source="query")
 
-        assert sandbox.service_urls == ((8080, "http", "https://sb.example/8080"),)
+        assert sandbox.service_urls == (
+            (8080, "http", "https://sb.example/8080"),
+            (9090, "metrics", "https://sb.example/9090"),
+        )
         assert sandbox.exposed_ports == ((8080, "http"),)
 
     def test_stopping_to_running_rejected(self) -> None:
@@ -7117,10 +7151,9 @@ class TestStreamLogsInitWireShape:
 
 
 class TestStreamLogsReplayFiltersFirstAttemptOnly:
-    """The ``tail_lines`` / ``since_time`` / ``timestamps`` filters describe the
-    *original* replay window the caller asked for.  Re-emitting them on every
-    fresh-fallback re-init would replay the same window after each transient
-    disconnect, which the in-code docstring explicitly says should not happen.
+    """``tail_lines`` / ``since_time`` describe the original replay window.
+    Re-emitting them on a fresh-fallback re-init would replay that window.
+    ``timestamps`` is formatting, not a window, and is re-sent on fresh init.
     """
 
     @pytest.mark.asyncio
@@ -7162,9 +7195,8 @@ class TestStreamLogsReplayFiltersFirstAttemptOnly:
         assert not programmed.init_messages[1].HasField("since_time")
 
     @pytest.mark.asyncio
-    async def test_timestamps_only_on_first_attempt(self) -> None:
-        """``timestamps`` is a replay-window formatting flag: honor on first
-        init only; resume and fresh-fallback attempts must not re-emit it."""
+    async def test_timestamps_resent_on_fresh_init(self) -> None:
+        """``timestamps`` is formatting: re-send on a fresh init after session loss."""
         sandbox = _build_sandbox_for_log_stream()
         programmed = _ProgrammedStreamLogs(
             [
@@ -7178,7 +7210,8 @@ class TestStreamLogsReplayFiltersFirstAttemptOnly:
         await _drive_stream_logs(sandbox, programmed, timestamps=True)
 
         assert programmed.init_messages[0].timestamps is True
-        assert programmed.init_messages[1].timestamps is False
+        assert programmed.init_messages[1].timestamps is True
+        assert programmed.init_messages[1].resume_log_session_id == ""
 
 
 class TestStreamLogsV1Basic:
@@ -7271,6 +7304,45 @@ class TestStreamLogsV1Basic:
         assert isinstance(items[0], SandboxError)
         assert "invalid offset" in str(items[0])
         assert programmed.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_interrupted_resumes_with_kept_state(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"x\n", session_id="sess-xyz", offset=99),
+                    _error_frame("STREAM_INTERRUPTED", "restart"),
+                ],
+                [_data_frame(b"y\n", session_id="sess-xyz", offset=100), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed)
+
+        resume = programmed.init_messages[1]
+        assert resume.resume_log_session_id == "sess-xyz"
+        assert resume.resume_log_offset == 99
+        assert resume.timestamps is False
+
+    @pytest.mark.asyncio
+    async def test_follow_false_does_not_reconnect_on_stream_interrupted(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs([[_error_frame("STREAM_INTERRUPTED", "restart")]])
+        items, _ = await _drive_stream_logs(sandbox, programmed, follow=False)
+
+        assert programmed.call_count == 1
+        assert isinstance(items[0], SandboxError)
+        assert "restart" in str(items[0])
+
+    @pytest.mark.asyncio
+    async def test_follow_false_does_not_reconnect_on_fresh_reinit(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs([[_error_frame("SESSION_NOT_FOUND", "expired")]])
+        items, _ = await _drive_stream_logs(sandbox, programmed, follow=False)
+
+        assert programmed.call_count == 1
+        assert isinstance(items[0], SandboxError)
+        assert "expired" in str(items[0])
 
     @pytest.mark.asyncio
     async def test_terminal_error_delivered_when_queue_full(self) -> None:

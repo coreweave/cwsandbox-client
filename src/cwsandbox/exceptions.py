@@ -182,13 +182,13 @@ class SandboxStreamBackpressureError(SandboxExecutionError):
 
 
 class SandboxStreamTruncatedError(SandboxExecutionError):
-    """Raised when a command's output was truncated in transit, even though the
-    command ran to completion.
+    """Raised when streamed output was cut short rather than delivered whole.
 
-    The command exited normally, but not all of its output reached you: some
-    was lost on the way back. The stream is ended with this explicit error
-    rather than silently returning partial output alongside a success exit
-    code, so you can tell complete output apart from a quiet truncation.
+    On ``exec()``, the command exited normally but not all of its output
+    reached you: some was lost on the way back. On ``stream_logs()``, a
+    single log line exceeded the client's 1 MiB buffer. In both cases the
+    stream is ended with this explicit error rather than silently returning
+    partial output.
 
     Subclasses ``SandboxExecutionError`` so existing ``except
     SandboxExecutionError`` handlers still catch it; catch this type

@@ -18,17 +18,21 @@ from cwsandbox._error_info import (
     CWSANDBOX_PLACEMENT_REJECTED,
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
     CWSANDBOX_SERVERLESS_NOT_ALLOWED,
+    SPILLOVER_ELIGIBLE_REASONS,
 )
 from cwsandbox._proto import sandbox_pb2
 from cwsandbox._sandbox import (
     SandboxStatus,
+    _create_attempt_definitely_rejected,
     _is_spillover_eligible,
     _Terminal,
     _translate_rpc_error,
 )
 from cwsandbox.exceptions import (
     SandboxError,
+    SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
+    SandboxUnavailableError,
 )
 
 
@@ -120,6 +124,15 @@ def _run_with_create_side_effect(
 
 
 class TestSpilloverEligibility:
+    def test_eligible_reason_set_is_pinned(self) -> None:
+        assert SPILLOVER_ELIGIBLE_REASONS == frozenset(
+            {
+                CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+                CWSANDBOX_PLACEMENT_REJECTED,
+                CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+            }
+        )
+
     def test_capacity_reason_is_eligible(self) -> None:
         exc = _translate_rpc_error(_capacity_error())
         assert _is_spillover_eligible(exc)
@@ -312,8 +325,12 @@ class TestSpilloverCreatePath:
             with pytest.raises(SandboxResourceExhaustedError):
                 sandbox.start().result()
 
+        first_req = mock_stub.CreateSandbox.call_args_list[0].args[0]
+        second_req = mock_stub.CreateSandbox.call_args_list[1].args[0]
+        assert first_req.request_id != second_req.request_id
         assert sandbox._placement_mode == PlacementMode.CKS
         assert sandbox._runner_ids == ["runner-a"]
+        assert sandbox._create_request_id == first_req.request_id
         assert mock_stub.CreateSandbox.call_count == 2
 
         ok = _create_sandbox_response("retry-ok")
@@ -322,4 +339,52 @@ class TestSpilloverCreatePath:
         req = mock_stub.CreateSandbox.call_args.args[0]
         assert req.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_CKS
         assert list(req.sandbox.spec.runner_ids) == ["runner-a"]
+        assert req.request_id == first_req.request_id
         sandbox._state = _Terminal(sandbox_id="retry-ok", status=SandboxStatus.COMPLETED)
+
+    def test_ambiguous_spill_second_keeps_spilled_request_id(self) -> None:
+        first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
+        second = _MockRpcErrorWithDetails(
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            "maybe committed",
+        )
+        sandbox = Sandbox(
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            runner_ids=["runner-a"],
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[first, second])
+
+        async def ensure_client(sb: Sandbox) -> None:
+            sb._channel = MagicMock()
+            sb._channel.close = AsyncMock()
+            sb._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            with pytest.raises(SandboxRequestTimeoutError):
+                sandbox.start().result()
+
+        first_req = mock_stub.CreateSandbox.call_args_list[0].args[0]
+        second_req = mock_stub.CreateSandbox.call_args_list[1].args[0]
+        assert first_req.request_id != second_req.request_id
+        assert sandbox._create_request_id == second_req.request_id
+        assert sandbox._placement_mode == PlacementMode.SERVERLESS
+        assert sandbox._runner_ids is None
+
+        ok = _create_sandbox_response("retry-ok")
+        mock_stub.CreateSandbox = AsyncMock(return_value=ok)
+        sandbox.start().result()
+        req = mock_stub.CreateSandbox.call_args.args[0]
+        assert req.request_id == second_req.request_id
+        assert req.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS
+        sandbox._state = _Terminal(sandbox_id="retry-ok", status=SandboxStatus.COMPLETED)
+
+    def test_create_attempt_reject_classification(self) -> None:
+        assert _create_attempt_definitely_rejected(
+            SandboxResourceExhaustedError("full", reason=CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED)
+        )
+        assert not _create_attempt_definitely_rejected(SandboxRequestTimeoutError("late"))
+        assert not _create_attempt_definitely_rejected(SandboxUnavailableError("down"))
+        assert not _create_attempt_definitely_rejected(SandboxResourceExhaustedError("quota"))
+        assert _create_attempt_definitely_rejected(SandboxError("bad request"))

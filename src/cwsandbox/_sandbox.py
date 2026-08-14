@@ -8,6 +8,7 @@ import asyncio
 import builtins
 import contextlib
 import logging
+import math
 import os
 import random
 import shlex
@@ -137,6 +138,7 @@ from cwsandbox._types import (
     TerminalSession,
 )
 from cwsandbox.exceptions import (
+    CWSandboxAuthenticationError,
     CWSandboxError,
     SandboxCommandTimeoutError,
     SandboxError,
@@ -447,11 +449,16 @@ async def _wait_for_snapshot_via_stub(
                 f"Timed out waiting for snapshot {snapshot_id} to become ready",
                 file_system_snapshot_id=snapshot_id,
             )
-        snap = await _get_snapshot_via_stub(
-            stub,
-            snapshot_id,
-            auth_metadata=auth_metadata,
-            timeout=min(remaining, DEFAULT_POLL_RPC_TIMEOUT_SECONDS),
+        get_timeout = min(remaining, DEFAULT_POLL_RPC_TIMEOUT_SECONDS)
+        snap = await _retry_transient_rpc(
+            lambda timeout=get_timeout: _get_snapshot_via_stub(
+                stub,
+                snapshot_id,
+                auth_metadata=auth_metadata,
+                timeout=timeout,
+            ),
+            budget_seconds=min(remaining, DEFAULT_FSS_RETRY_BUDGET_SECONDS),
+            operation="Wait for file-system snapshot",
         )
         if snap.status == FileSystemSnapshotStatus.READY:
             return
@@ -874,6 +881,31 @@ def _is_spillover_eligible(exc: Exception) -> bool:
     return reason in SPILLOVER_ELIGIBLE_REASONS
 
 
+def _create_attempt_definitely_rejected(exc: Exception) -> bool:
+    """True when a CreateSandbox error means the server did not commit a sandbox.
+
+    Used after a failed spillover hop: restore the original request id and
+    placement only when a retry of ``start()`` cannot collide with a
+    sandbox the spilled attempt already created. Timeouts, unavailability,
+    and bare resource-exhaustion are ambiguous and keep the spilled id.
+    """
+    reason = getattr(exc, "reason", None)
+    if reason in SPILLOVER_ELIGIBLE_REASONS or reason in SPILLOVER_BLOCKED_REASONS:
+        return True
+    if isinstance(exc, CWSandboxAuthenticationError):
+        return True
+    if isinstance(
+        exc,
+        (
+            SandboxUnavailableError,
+            SandboxTimeoutError,
+            SandboxResourceExhaustedError,
+        ),
+    ):
+        return False
+    return isinstance(exc, SandboxError)
+
+
 _PollErrorClassification = Literal["retryable", "fatal"]
 
 
@@ -927,6 +959,9 @@ _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
 #   SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_UNAVAILABLE / RUNNER_DRAINING
 #       reconnect with a FRESH init (no resume_session_id / resume_offset)
 #       to pick up the live tail from the current head.
+#   STREAM_INTERRUPTED
+#       reconnect and RESUME (keep session_id / offset). The server still
+#       holds the session; this is emitted on routine restarts/deploys.
 #   INVALID_RESUME_OFFSET
 #       terminal, no retry — the echoed offset is corrupt and reconnecting
 #       with the same state would just reproduce the failure.
@@ -937,6 +972,7 @@ _STREAMING_REPLAY_GAP = "REPLAY_GAP"
 _STREAMING_INVALID_RESUME_OFFSET = "INVALID_RESUME_OFFSET"
 _STREAMING_RUNNER_UNAVAILABLE = "RUNNER_UNAVAILABLE"
 _STREAMING_RUNNER_DRAINING = "RUNNER_DRAINING"
+_STREAMING_INTERRUPTED = "STREAM_INTERRUPTED"
 
 # Codes that the wire contract says are transient — the client should drop
 # its resume state and reconnect with a fresh init.  Membership in this set
@@ -1799,11 +1835,16 @@ class Sandbox:
 
         Args:
             template_id: Organization-scoped template UUID.
-            *args: Optional command args override.
-            command: Optional command override.
+            *args: Optional command args override. Requires ``command`` and
+                ``container_image``.
+            command: Optional command override. Requires ``container_image``.
             defaults: Optional SandboxDefaults.
-            **kwargs: Same advanced create kwargs as ``run()`` (replace-on-presence
-                overlays onto the template).
+            **kwargs: Same advanced create kwargs as ``run()``. Container-field
+                overrides (``command``, ``args``, ``environment_variables``,
+                ``secrets``, ``resources``, ``mounted_files``, ``volumes``,
+                ``file_system_snapshot``) also require ``container_image``:
+                the API replaces the whole container list and rejects a
+                sparse patch.
 
         Returns:
             Sandbox handle (lazy-start).
@@ -1914,6 +1955,7 @@ class Sandbox:
             else ()
         )
         sandbox._service_urls = ()
+        sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
@@ -3529,11 +3571,13 @@ class Sandbox:
 
         On a spillable primary failure (and non-``STRICT`` spillover), mints a
         new ``request_id``, flips ``_placement_mode`` to the alternate, clears
-        ``runner_ids`` when spilling to serverless, and retries once. Attempt-2
-        failures restore the primary placement config before raising (so a
-        later ``start()`` retries the caller's original mode). Successful spill
-        keeps the flipped state. Attempt-2 failures raise with ``__cause__`` set
-        to the primary error.
+        ``runner_ids`` when spilling to serverless, and retries once. A
+        definite attempt-2 reject restores the primary placement and request
+        id so a later ``start()`` retries the caller's original mode. An
+        ambiguous attempt-2 error (timeout, unavailability, bare resource
+        exhaustion) keeps the spilled id and mode so a retry cannot create a
+        second sandbox. Successful spill keeps the flipped state. Attempt-2
+        failures raise with ``__cause__`` set to the primary error.
         """
         assert self._stub is not None
         assert self._create_request_id is not None
@@ -3587,9 +3631,10 @@ class Sandbox:
                     self._create_request_id = str(uuid.uuid4())
                     continue
                 if primary_error is not None:
-                    self._placement_mode = original_placement_mode
-                    self._runner_ids = original_runner_ids
-                    self._create_request_id = original_create_request_id
+                    if _create_attempt_definitely_rejected(translated):
+                        self._placement_mode = original_placement_mode
+                        self._runner_ids = original_runner_ids
+                        self._create_request_id = original_create_request_id
                     raise translated from primary_error
                 raise translated from e
         raise AssertionError("unreachable: placement spillover loop exited without return")
@@ -3932,7 +3977,12 @@ class Sandbox:
             volume.name for volume in view._sandbox.spec.volumes if volume.HasField("scratch")
         )
         status = view._sandbox.status
-        self._service_urls = tuple((s.port, s.name, s.url) for s in status.services if s.url)
+        service_urls: list[tuple[int, str, str]] = []
+        for s in status.services:
+            url = s.url or (s.endpoint.url if s.HasField("endpoint") else "")
+            if url:
+                service_urls.append((s.port, s.name, url))
+        self._service_urls = tuple(service_urls)
         if status.services:
             self._exposed_ports = tuple(
                 (s.port, s.name)
@@ -4589,16 +4639,18 @@ class Sandbox:
                 # the sum (see client_deadline below) — not max_timeout alone.
                 # A plain stop has no archive phase and stays bounded by graceful
                 # shutdown.
+                grace_seconds = (
+                    math.ceil(graceful_shutdown_seconds)
+                    if graceful_shutdown_seconds > 0
+                    else int(graceful_shutdown_seconds)
+                )
                 if snapshot_on_stop:
                     max_timeout = int(DEFAULT_FSS_STOP_TIMEOUT_SECONDS)
-                    effective_grace = int(graceful_shutdown_seconds)
                     client_deadline = (
-                        max_timeout + effective_grace + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
+                        max_timeout + grace_seconds + int(DEFAULT_FSS_STOP_CLIENT_SLACK_SECONDS)
                     )
                 else:
-                    max_timeout = int(graceful_shutdown_seconds) + int(
-                        DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
-                    )
+                    max_timeout = grace_seconds + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
                     client_deadline = max_timeout + int(DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS)
                 # The renamed proto field is file_system_snapshot_on_stop;
                 # wait_for_ready/request_id are only valid alongside it,
@@ -4613,9 +4665,12 @@ class Sandbox:
                     snapshot_volumes = list(self._scratch_volume_names)
                 request = sandbox_pb2.DeleteSandboxRequest(
                     sandbox_id=sandbox_id,
-                    grace_period_seconds=int(graceful_shutdown_seconds),
+                    grace_period_seconds=grace_seconds,
                     snapshot_volumes=snapshot_volumes,
-                    allow_missing=missing_ok,
+                    # Snapshot-on-stop + allow_missing is rejected as
+                    # INVALID_REQUEST; omit the flag so a missing sandbox
+                    # still returns NOT_FOUND for the missing_ok catch.
+                    allow_missing=bool(missing_ok) and not snapshot_on_stop,
                 )
                 if snapshot_on_stop and request_id:
                     request.request_id = request_id
@@ -4935,6 +4990,13 @@ class Sandbox:
         # Generate an idempotency key when the caller didn't supply one so a
         # retried create (after a transient failure that may have already
         # committed server-side) dedups instead of creating a second snapshot.
+        names = self._scratch_volume_names
+        if len(names) > 1:
+            raise SandboxSnapshotError(
+                "snapshot() cannot choose among multiple scratch volumes "
+                f"({', '.join(names)}); start the sandbox with a single volume",
+                file_system_snapshot_id=None,
+            )
         effective_request_id = request_id or uuid.uuid4().hex
         return await _retry_transient_rpc(
             lambda: _create_snapshot_via_stub(
@@ -4944,9 +5006,7 @@ class Sandbox:
                 wait_for_ready=wait_for_ready,
                 auth_metadata=self._auth_metadata,
                 timeout=create_timeout,
-                scratch_volume_name=(
-                    self._scratch_volume_names[0] if self._scratch_volume_names else None
-                ),
+                scratch_volume_name=names[0] if names else None,
             ),
             budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
             operation="Create file-system snapshot",
@@ -5062,14 +5122,19 @@ class Sandbox:
                 if is_resume:
                     request.resume_log_session_id = session_id
                     request.resume_log_offset = last_offset
-                elif is_first_attempt:
+                else:
+                    # Fresh init (first attempt or after SESSION_NOT_FOUND /
+                    # REPLAY_GAP / runner loss). Re-send timestamps so
+                    # formatting survives a session reset; do not re-send
+                    # tail_lines / since_time — those replay a window.
                     request.timestamps = timestamps
-                    if tail_lines is not None:
-                        request.tail_lines = tail_lines
-                    if since_time is not None:
-                        ts = timestamp_pb2.Timestamp()
-                        ts.FromDatetime(since_time)
-                        request.since_time.CopyFrom(ts)
+                    if is_first_attempt:
+                        if tail_lines is not None:
+                            request.tail_lines = tail_lines
+                        if since_time is not None:
+                            ts = timestamp_pb2.Timestamp()
+                            ts.FromDatetime(since_time)
+                            request.since_time.CopyFrom(ts)
 
                 grpc_timeout = timeout_seconds if not follow else None
                 call = stub.StreamLogs(
@@ -5084,10 +5149,16 @@ class Sandbox:
                             code = entry.error.code
                             msg = entry.error.message or code
                             if code in _STREAMING_FRESH_REINIT_CODES:
+                                if not follow:
+                                    raise SandboxError(f"Log stream error: {msg}")
                                 session_id = ""
                                 last_offset = 0
                                 line_parts = []
                                 line_parts_bytes = 0
+                                break
+                            if code == _STREAMING_INTERRUPTED:
+                                if not follow:
+                                    raise SandboxError(f"Log stream error: {msg}")
                                 break
                             if code == STREAM_TRUNCATED:
                                 raise SandboxStreamTruncatedError(msg)
@@ -5557,7 +5628,11 @@ class Sandbox:
                         )
                     )
                 else:
-                    await response_queue.put(e)
+                    await response_queue.put(
+                        _translate_rpc_error(
+                            e, sandbox_id=self._sandbox_id, operation="Execute command"
+                        )
+                    )
             except Exception as e:
                 await response_queue.put(e)
             finally:
@@ -6927,13 +7002,10 @@ class Sandbox:
         returns immediately; iteration on the StreamReader blocks until
         data arrives.
 
-        Can also retrieve historical logs from stopped sandboxes when
-        ``follow=False``.
-
         Args:
             follow: If True, continuously stream new logs (like ``tail -f``).
-                If False, stream existing logs and stop. Only running
-                sandboxes support ``follow=True``.
+                If False, stream existing logs from the running sandbox and
+                stop. Stopped sandboxes reject ``StreamLogs``.
             tail_lines: Number of most recent lines to retrieve. If None,
                 returns all available lines.
             since_time: Only return logs after this timestamp.
@@ -6961,11 +7033,6 @@ class Sandbox:
 
             # Follow mode: stream continuously
             for line in sandbox.stream_logs(follow=True):
-                print(line, end="")
-
-            # Retrieve logs from a stopped sandbox
-            sb = Sandbox.from_id("sbx-abc123").result()
-            for line in sb.stream_logs(tail_lines=50):
                 print(line, end="")
 
             # Async usage

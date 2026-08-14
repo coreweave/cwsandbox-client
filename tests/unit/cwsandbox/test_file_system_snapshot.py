@@ -407,8 +407,88 @@ class TestStopWiring:
         request = stub.DeleteSandbox.call_args[0][0]
         assert list(request.snapshot_volumes) == ["workspace"]
         assert request.request_id == "k"
+        assert request.allow_missing is False
         assert sandbox.file_system_snapshot_id == "fss-new"
         stub.GetFileSystemSnapshot.assert_awaited_once()
+
+    def test_snapshot_on_stop_omits_allow_missing_when_missing_ok(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=_ready_snapshot_proto("fss-new")
+        )
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(snapshot_on_stop=True, missing_ok=True).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].allow_missing is False
+
+    def test_plain_stop_sends_allow_missing(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(missing_ok=True).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].allow_missing is True
+
+    def test_fractional_grace_ceils_to_one_second(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        mock_response = sandbox_pb2.DeleteSandboxResponse()
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+
+        with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
+            sandbox.stop(graceful_shutdown_seconds=0.5).result()
+
+        assert stub.DeleteSandbox.call_args[0][0].grace_period_seconds == 1
+
+    def test_snapshot_on_stop_retries_transient_archive_get(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        stub = sandbox._stub
+        sandbox._scratch_volume_names = ("workspace",)
+        mock_response = sandbox_pb2.DeleteSandboxResponse(file_system_snapshot_ids=["fss-new"])
+        sandbox._stub.DeleteSandbox = AsyncMock(return_value=mock_response)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            side_effect=[
+                _bare_rpc_error(grpc.StatusCode.UNAVAILABLE),
+                _ready_snapshot_proto("fss-new"),
+            ]
+        )
+
+        with (
+            patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            sandbox.stop(snapshot_on_stop=True).result()
+
+        assert stub.GetFileSystemSnapshot.call_count == 2
+        assert sandbox.file_system_snapshot_id == "fss-new"
 
     def test_snapshot_on_stop_rejects_unknown_scratch_volume(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
@@ -629,6 +709,26 @@ class TestSnapshotMethod:
         assert create_req.sandbox_id == "sb-1"
         assert create_req.request_id == "k"
         assert create_req.scratch_volume_name == "data"
+
+    def test_snapshot_raises_when_multiple_scratch_volumes(self) -> None:
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[
+                ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi"),
+                ScratchVolumeOptions(name="cache", mount_path="/cache", size="1Gi"),
+            ],
+        )
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            with pytest.raises(SandboxSnapshotError, match="multiple scratch volumes"):
+                sandbox.snapshot(wait_for_ready=False).result()
+        sandbox._stub.CreateFileSystemSnapshot.assert_not_called()
 
     def test_snapshot_failure_raises(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
