@@ -6,7 +6,7 @@ This file provides guidance to AI coding assistants when working with code in th
 
 Python client library for CoreWeave Sandbox - a remote code execution platform. The SDK provides a sync/async hybrid API for creating, managing, and executing code in containerized sandbox environments.
 
-**API dialect:** package **1.0.x** speaks Sandbox **v1** only. Callers that still need v1beta2 must pin **`cwsandbox==0.26.x`**. There is no hybrid / dual-dialect mode in one install.
+**API dialect:** package **1.0.x+** speaks Sandbox **v1** only (prefer `cwsandbox>=1.0.0`; `0.27.0` is the same cutover under the prior 0.x tag). Callers that still need v1beta2 must pin **`cwsandbox==0.26.x`**. There is no hybrid / dual-dialect mode in one install.
 
 ## Public API and Documentation
 
