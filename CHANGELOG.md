@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.28.0 (2026-08-14)
+
+### Features
+
+- **cli**: Add get command
+  ([`44ab570`](https://github.com/coreweave/cwsandbox-client/commit/44ab570d57a0abcbd7776e20a12cdce209ff55f1))
+
+
 ## v0.27.0 (2026-08-14)
 
 ### Features
