@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.0.0 (2026-08-14)
+
+### Features
+
+- Graduate cwsandbox package version to 1.0.0
+  ([#153](https://github.com/coreweave/cwsandbox-client/pull/153),
+  [`bc74e37`](https://github.com/coreweave/cwsandbox-client/commit/bc74e377e488a7f53a8d8e1dfbcb7598b8647d66))
+
+Enable major_on_zero so the v1 API cutover ships as a true major tag. 0.27.0 remains the interim 0.x
+  publish of the same dialect.
+
+
 ## v0.28.0 (2026-08-14)
 
 ### Features
