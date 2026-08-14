@@ -528,6 +528,17 @@ class TestSessionKwargsValidation:
         # Decorator should work without raising
         assert callable(add.remote)
 
+    def test_function_empty_collections_are_not_dropped(self) -> None:
+        session = Session()
+
+        @session.function(services=[], volumes=[], mounted_files=[])
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        assert add._services == []
+        assert add._volumes == []
+        assert add._mounted_files == []
+
     def test_sandbox_forwards_request_timeout_seconds(self) -> None:
         session = Session(SandboxDefaults(request_timeout_seconds=42.0))
         sandbox = session.sandbox(request_timeout_seconds=99.0)

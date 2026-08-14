@@ -355,10 +355,14 @@ class Session:
             command: Command to run in sandbox
             args: Arguments for the command
             container_image: Container image to use
-            tags: Tags for the sandbox (merged with session defaults)
+            tags: Tags for the sandbox (merged with session defaults, including
+                when ``template_id`` is set, so ``list()``/``adopt`` can find
+                the sandbox). Environment variables and annotations do not
+                merge on the template path (template-owned spec).
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
-            runner_ids: Optional CKS runner pin
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``)
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
@@ -700,7 +704,8 @@ class Session:
                 Defaults to session default. Created if missing.
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
-            runner_ids: Optional CKS runner pin
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``)
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
@@ -773,10 +778,10 @@ class Session:
                 temp_dir=temp_dir or self._defaults.temp_dir,
                 runner_ids=runner_ids,
                 resources=resources,
-                mounted_files=list(mounted_files) if mounted_files else None,
+                mounted_files=list(mounted_files) if mounted_files is not None else None,
                 network=network,
-                services=list(services) if services else None,
-                volumes=list(volumes) if volumes else None,
+                services=list(services) if services is not None else None,
+                volumes=list(volumes) if volumes is not None else None,
                 file_system_snapshot=file_system_snapshot,
                 placement_mode=placement_mode,
                 placement_spillover=placement_spillover,

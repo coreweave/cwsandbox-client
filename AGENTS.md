@@ -73,8 +73,8 @@ Properties:
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
 - `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover
-- `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure with a spillable capacity/placement reason (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, or `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
-- `runner_ids` - CKS runner pin (rejected with serverless)
+- `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
+- `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol`
 - `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
 - `volumes` - Named scratch volumes via `ScratchVolumeOptions`

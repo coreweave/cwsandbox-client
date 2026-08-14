@@ -423,16 +423,13 @@ class SnapshotBackendThrottledError(SandboxUnavailableError):
 class SnapshotOnStopConflictError(SandboxSnapshotError):
     """Raised when ``stop(snapshot_on_stop=True)`` cannot capture a snapshot.
 
-    Unlike the other snapshot errors this is raised client-side, not mapped
-    from a backend reason. ``stop()`` coalesces concurrent callers onto a
-    single shared stop, so a snapshot-on-stop request that arrives once the
-    sandbox is already stopping, already stopped, or already has a plain
-    ``stop()`` in flight cannot be honored: that stop will tear the sandbox
-    down without archiving the mount. Rather than silently coalescing the
-    request into a stop that produces no snapshot (destroying the sandbox with
-    no archive and no error), the client raises this. Mirrors the backend's
-    ``FailedPrecondition`` for a snapshot-on-stop that arrives after the
-    sandbox has begun terminating.
+    Raised client-side when ``stop()`` coalesces onto a stop that will not
+    archive the mount (already stopping, already stopped, or a plain
+    ``stop()`` in flight). Also raised when the server rejects
+    ``allow_missing`` together with ``snapshot_volumes``
+    (``CWSANDBOX_INVALID_REQUEST``), or when ``snapshot_on_stop=True``
+    finds the sandbox already gone: those must not succeed with
+    ``file_system_snapshot_id=None``.
     """
 
 

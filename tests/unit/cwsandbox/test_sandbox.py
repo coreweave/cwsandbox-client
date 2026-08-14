@@ -486,6 +486,17 @@ class TestSandboxRun:
         assert request.overrides.ListFields() == []
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
+    def test_run_from_template_merges_default_tags(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            defaults=SandboxDefaults(tags=["session-tag"]),
+            tags=["extra"],
+        )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert list(request.overrides.tags) == ["session-tag", "extra"]
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
     def test_run_from_template_args_without_image_raises(self) -> None:
         with pytest.raises(TypeError, match="require container_image"):
             Sandbox.run_from_template("template-123", "-c", "echo ready")
@@ -3180,6 +3191,28 @@ class TestSandboxAnnotations:
 
         assert sandbox._scratch_volume_names == ("cache",)
 
+    def test_from_sandbox_info_treats_unset_source_as_scratch(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        info = sandbox_pb2.Sandbox(
+            sandbox_id="test-id",
+            spec=sandbox_pb2.SandboxSpec(
+                volumes=[
+                    sandbox_pb2.SandboxVolume(name="default-scratch"),
+                    sandbox_pb2.SandboxVolume(name="persistent", volume_id="vol-1"),
+                ]
+            ),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+
+        assert sandbox._scratch_volume_names == ("default-scratch",)
+
     def test_from_sandbox_info_default_poll_fields(self) -> None:
         """_from_sandbox_info applies poll defaults when callers omit them."""
         mock_info = MagicMock()
@@ -3465,6 +3498,29 @@ class TestSandboxStop:
 
         with pytest.raises(SandboxNotFoundError):
             sandbox.stop().result()
+
+    @pytest.mark.asyncio
+    async def test_stop_joiner_missing_ok_swallows_shared_not_found(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Starting(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        started = asyncio.Event()
+
+        async def delete(*_args: Any, **_kwargs: Any) -> None:
+            started.set()
+            await asyncio.sleep(0)
+            raise MockRpcError(grpc.StatusCode.NOT_FOUND, "Not found")
+
+        sandbox._stub.DeleteSandbox = AsyncMock(side_effect=delete)
+
+        first = asyncio.create_task(sandbox._stop_async(missing_ok=False))
+        await started.wait()
+        await sandbox._stop_async(missing_ok=True)
+        with pytest.raises(SandboxNotFoundError):
+            await first
 
     def test_stop_on_never_started_is_noop(self) -> None:
         """Test stop() on a never-started sandbox is a no-op."""
@@ -5844,6 +5900,11 @@ class TestStoppingStateTransitions:
                         visibility=sandbox_pb2.VISIBILITY_UNSPECIFIED,
                         endpoint=sandbox_pb2.EndpointStatus(url="https://sb.example/9090"),
                     ),
+                    sandbox_pb2.ServiceStatus(
+                        port=7070,
+                        name="custom",
+                        visibility=sandbox_pb2.VISIBILITY_CUSTOM,
+                    ),
                 ],
             ),
         )
@@ -5855,7 +5916,7 @@ class TestStoppingStateTransitions:
             (8080, "http", "https://sb.example/8080"),
             (9090, "metrics", "https://sb.example/9090"),
         )
-        assert sandbox.exposed_ports == ((8080, "http"),)
+        assert sandbox.exposed_ports == ((8080, "http"), (7070, "custom"))
 
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""
@@ -7032,16 +7093,15 @@ class TestStreamLogsResumeStateMachine:
 
     @pytest.mark.asyncio
     async def test_exhaustion_synthesizes_unavailable_with_cause(self) -> None:
-        """When the retry budget is exhausted, the synthesized error chains
-        the underlying gRPC AioRpcError so SREs can see the real status."""
+        """Consecutive failures without data exhaust the resume budget."""
         from cwsandbox.exceptions import SandboxUnavailableError
 
         sandbox = _build_sandbox_for_log_stream()
         rpc_error = MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "persistent flap")
         programmed = _ProgrammedStreamLogs(
             [
-                [_data_frame(b"x\n", session_id="sess-1", offset=2), rpc_error],
-                [_data_frame(b"y\n", session_id="sess-1", offset=4), rpc_error],
+                [rpc_error],
+                [rpc_error],
                 [rpc_error],
             ]
         )
@@ -7054,6 +7114,41 @@ class TestStreamLogsResumeStateMachine:
         assert sleeps == [0.5, 1.0, 2.0]
         assert max(sleeps) <= 4.0
         assert sum(sleeps) < 30.0
+
+    @pytest.mark.asyncio
+    async def test_data_resets_follow_resume_budget(self) -> None:
+        """A delivered frame resets the consecutive-failure budget."""
+        sandbox = _build_sandbox_for_log_stream()
+        rpc_error = MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap")
+        programmed = _ProgrammedStreamLogs(
+            [
+                [rpc_error],
+                [rpc_error],
+                [_data_frame(b"x\n", session_id="sess-1", offset=2), rpc_error],
+                [_data_frame(b"y\n", session_id="sess-1", offset=4), _complete_frame()],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+        assert "x\n" in items
+        assert "y\n" in items
+        assert programmed.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_interrupted_exhaustion_does_not_chain_none_cause(self) -> None:
+        from cwsandbox.exceptions import SandboxUnavailableError
+
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_error_frame("STREAM_INTERRUPTED", "restart")],
+                [_error_frame("STREAM_INTERRUPTED", "restart")],
+                [_error_frame("STREAM_INTERRUPTED", "restart")],
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+        unavailable = [item for item in items if isinstance(item, SandboxUnavailableError)]
+        assert len(unavailable) == 1
+        assert unavailable[0].__cause__ is None
 
     @pytest.mark.asyncio
     async def test_fresh_init_clears_partial_line_buffer(self) -> None:
@@ -7151,13 +7246,14 @@ class TestStreamLogsInitWireShape:
 
 
 class TestStreamLogsReplayFiltersFirstAttemptOnly:
-    """``tail_lines`` / ``since_time`` describe the original replay window.
-    Re-emitting them on a fresh-fallback re-init would replay that window.
-    ``timestamps`` is formatting, not a window, and is re-sent on fresh init.
+    """``tail_lines`` / ``since_time`` describe the original replay window
+    until any data arrives. After delivery, a fresh re-init on follow uses
+    ``since_time=now`` and omits ``tail_lines`` to avoid a full replay.
+    ``timestamps`` is formatting and is re-sent on every fresh init.
     """
 
     @pytest.mark.asyncio
-    async def test_tail_lines_only_on_first_attempt(self) -> None:
+    async def test_tail_lines_omitted_on_fresh_reinit_after_data(self) -> None:
         sandbox = _build_sandbox_for_log_stream()
         programmed = _ProgrammedStreamLogs(
             [
@@ -7172,10 +7268,11 @@ class TestStreamLogsReplayFiltersFirstAttemptOnly:
 
         assert programmed.init_messages[0].tail_lines == 100
         assert programmed.init_messages[1].tail_lines == 0
+        assert programmed.init_messages[1].HasField("since_time")
         assert programmed.init_messages[1].resume_log_session_id == ""
 
     @pytest.mark.asyncio
-    async def test_since_time_only_on_first_attempt(self) -> None:
+    async def test_since_time_advances_on_fresh_reinit_after_data(self) -> None:
         from datetime import datetime
 
         sandbox = _build_sandbox_for_log_stream()
@@ -7192,7 +7289,36 @@ class TestStreamLogsReplayFiltersFirstAttemptOnly:
         await _drive_stream_logs(sandbox, programmed, since_time=anchor)
 
         assert programmed.init_messages[0].HasField("since_time")
-        assert not programmed.init_messages[1].HasField("since_time")
+        assert programmed.init_messages[1].HasField("since_time")
+        first = programmed.init_messages[0].since_time.ToDatetime()
+        second = programmed.init_messages[1].since_time.ToDatetime()
+        if first.tzinfo is None:
+            first = first.replace(tzinfo=UTC)
+        if second.tzinfo is None:
+            second = second.replace(tzinfo=UTC)
+        assert second > first
+
+    @pytest.mark.asyncio
+    async def test_window_resent_on_fresh_reinit_before_data(self) -> None:
+        from datetime import datetime
+
+        sandbox = _build_sandbox_for_log_stream()
+        anchor = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        programmed = _ProgrammedStreamLogs(
+            [
+                [_error_frame("SESSION_NOT_FOUND", "expired")],
+                [_data_frame(b"head\n", session_id="sess-2", offset=5), _complete_frame()],
+            ]
+        )
+        await _drive_stream_logs(sandbox, programmed, tail_lines=100, since_time=anchor)
+
+        assert programmed.init_messages[0].tail_lines == 100
+        assert programmed.init_messages[1].tail_lines == 100
+        assert programmed.init_messages[0].HasField("since_time")
+        assert programmed.init_messages[1].HasField("since_time")
+        first = programmed.init_messages[0].since_time.ToDatetime()
+        second = programmed.init_messages[1].since_time.ToDatetime()
+        assert first == second
 
     @pytest.mark.asyncio
     async def test_timestamps_resent_on_fresh_init(self) -> None:
@@ -7343,6 +7469,43 @@ class TestStreamLogsV1Basic:
         assert programmed.call_count == 1
         assert isinstance(items[0], SandboxError)
         assert "expired" in str(items[0])
+
+    @pytest.mark.asyncio
+    async def test_naive_since_time_is_rejected(self) -> None:
+        from datetime import datetime
+
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs([[_complete_frame()]])
+        items, _ = await _drive_stream_logs(
+            sandbox, programmed, since_time=datetime(2026, 1, 1, 12, 0, 0)
+        )
+        assert any(isinstance(item, ValueError) for item in items)
+
+    @pytest.mark.asyncio
+    async def test_complete_lines_flush_before_line_cap(self) -> None:
+        from cwsandbox._defaults import MAX_LINE_BUFFER_BYTES
+
+        sandbox = _build_sandbox_for_log_stream()
+        chunk = (("x" * 64) + "\n") * ((MAX_LINE_BUFFER_BYTES // 65) + 4)
+        programmed = _ProgrammedStreamLogs(
+            [[_data_frame(chunk.encode("utf-8")), _complete_frame()]]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed, follow=False)
+        lines = [item for item in items if isinstance(item, str)]
+        assert len(lines) > 1
+        assert all(item.endswith("\n") for item in lines)
+        assert not any(isinstance(item, Exception) for item in items)
+
+    @pytest.mark.asyncio
+    async def test_oversized_complete_line_raises(self) -> None:
+        from cwsandbox._defaults import MAX_LINE_BUFFER_BYTES
+        from cwsandbox.exceptions import SandboxStreamTruncatedError
+
+        sandbox = _build_sandbox_for_log_stream()
+        huge = ("x" * (MAX_LINE_BUFFER_BYTES + 1)) + "\n"
+        programmed = _ProgrammedStreamLogs([[_data_frame(huge.encode("utf-8")), _complete_frame()]])
+        items, _ = await _drive_stream_logs(sandbox, programmed, follow=False)
+        assert any(isinstance(item, SandboxStreamTruncatedError) for item in items)
 
     @pytest.mark.asyncio
     async def test_terminal_error_delivered_when_queue_full(self) -> None:

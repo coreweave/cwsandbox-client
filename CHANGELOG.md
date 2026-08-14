@@ -40,8 +40,14 @@ v1 backends implement them. Create-time `Secret` inject still works.
   `ImagePullCredentials`, and `Sandbox.run_from_template`.
 - Add `placement_spillover` (`PlacementSpillover`: `strict` default,
   `cks_then_serverless`, `serverless_then_cks`) for a one-shot CreateSandbox
-  retry on the alternate mode when the primary fails with a spillable capacity
-  or placement-constraint reason. Template creates require `strict`.
+  retry on the alternate mode when the primary cannot place the request
+  (capacity, no suitable runner, runner unavailable/overloaded, or a
+  placement constraint). The primary failure reason is attached to a
+  failed spill. `serverless_then_cks` rejects `runner_ids`. Template
+  creates require `strict`.
+- `service_urls` uses `ServiceStatus.url` or `endpoint.url`. Custom
+  visibility often has no URL; those services still appear in
+  `exposed_ports`. The SDK does not invent a URL.
 - Proto generation pins protobuf runtime v26.1 via `scripts/buf.gen.python.yaml`
   and `scripts/update-protos.sh --from-backend`.
 

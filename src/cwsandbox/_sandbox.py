@@ -85,6 +85,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_QUOTA_EXCEEDED,
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
+    CWSANDBOX_INVALID_REQUEST,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
@@ -874,10 +875,10 @@ def _resolve_placement_for_spillover(
 def _is_spillover_eligible(exc: Exception) -> bool:
     """True when a CreateSandbox failure may trigger one alternate-mode retry.
 
-    Spillable only on explicit capacity / placement AIP-193 reasons in
-    ``SPILLOVER_ELIGIBLE_REASONS``. Never spills on serverless product gates,
-    auth, ``INVALID_ARGUMENT``, or bare ``RESOURCE_EXHAUSTED`` without a
-    recognized reason.
+    Spillable when the primary mode cannot satisfy the request, identified
+    by AIP-193 reasons in ``SPILLOVER_ELIGIBLE_REASONS``. Never spills on
+    serverless product gates, auth, ``INVALID_ARGUMENT``, or bare
+    ``RESOURCE_EXHAUSTED`` without a recognized reason.
     """
     reason = getattr(exc, "reason", None)
     if reason in SPILLOVER_BLOCKED_REASONS:
@@ -888,26 +889,35 @@ def _is_spillover_eligible(exc: Exception) -> bool:
 def _create_attempt_definitely_rejected(exc: Exception) -> bool:
     """True when a CreateSandbox error means the server did not commit a sandbox.
 
-    Used after a failed spillover hop: restore the original request id and
-    placement only when a retry of ``start()`` cannot collide with a
-    sandbox the spilled attempt already created. Timeouts, unavailability,
-    and bare resource-exhaustion are ambiguous and keep the spilled id.
+    Restore the original request id only for an allowlisted reject. Transport
+    failures (UNAVAILABLE, DEADLINE_EXCEEDED, INTERNAL, UNKNOWN, CANCELLED)
+    and bare ``SandboxError`` without a reason keep the spilled id so a later
+    ``start()`` retries the same create.
     """
+    if _is_spillover_eligible(exc):
+        return True
     reason = getattr(exc, "reason", None)
-    if reason in SPILLOVER_ELIGIBLE_REASONS or reason in SPILLOVER_BLOCKED_REASONS:
+    if reason in SPILLOVER_BLOCKED_REASONS:
         return True
-    if isinstance(exc, CWSandboxAuthenticationError):
+    if isinstance(exc, (CWSandboxAuthenticationError, SandboxNotFoundError)):
         return True
-    if isinstance(
-        exc,
-        (
-            SandboxUnavailableError,
-            SandboxTimeoutError,
-            SandboxResourceExhaustedError,
-        ),
-    ):
+    if isinstance(exc, (SandboxUnavailableError, SandboxTimeoutError, SandboxNotRunningError)):
         return False
-    return isinstance(exc, SandboxError)
+    if isinstance(exc, SandboxResourceExhaustedError) and reason:
+        return True
+    if isinstance(exc, SandboxError) and reason:
+        return True
+    return False
+
+
+def _volume_source_is_scratch(volume: sandbox_pb2.SandboxVolume) -> bool:
+    """True when the volume is scratch (explicit or proto3 default).
+
+    Proto3 optional oneof: an unset source serializes as scratch.
+    ``HasField("scratch")`` is false for that default, so treat
+    "not a named volume" as scratch.
+    """
+    return not volume.HasField("volume_id")
 
 
 _PollErrorClassification = Literal["retryable", "fatal"]
@@ -1405,7 +1415,8 @@ class Sandbox:
                 the backend controls the default.
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
-            runner_ids: Optional CKS runner pin (incompatible with serverless).
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``).
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
@@ -1419,8 +1430,9 @@ class Sandbox:
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict`` (no create retry). Non-strict modes retry CreateSandbox
-                once on the alternate mode for spillable capacity/placement
-                failures. Template sandboxes require ``strict``.
+                once on the alternate mode when the primary cannot place the
+                request. ``serverless_then_cks`` cannot be combined with
+                ``runner_ids``. Template sandboxes require ``strict``.
             services: Typed service ports (``Service`` list/tuple).
             volumes: Named scratch volumes (``ScratchVolumeOptions``).
             file_system_snapshot: Convenience single-mount FSS options
@@ -1448,8 +1460,9 @@ class Sandbox:
         self._session = _session
 
         from_template = template_id is not None
-        # Template creates must remain sparse: SDK defaults would otherwise
-        # replace the corresponding template fields merely by being present.
+        # Template creates stay sparse for spec-owned fields (env, annotations,
+        # command): SDK defaults would otherwise replace the template. Tags
+        # still merge so session.list()/adopt can find the sandbox after a crash.
         self._command: str | None = command if from_template else command or self._defaults.command
         self._args: list[str] | None = (
             args if args is not None else (None if from_template else list(self._defaults.args))
@@ -1485,9 +1498,7 @@ class Sandbox:
         if not from_template and self._max_lifetime_seconds is None:
             self._max_lifetime_seconds = self._defaults.max_lifetime_seconds
 
-        self._tags: list[str] | None = (
-            list(tags or []) if from_template else self._defaults.merge_tags(tags)
-        )
+        self._tags: list[str] | None = self._defaults.merge_tags(tags)
         self._environment_variables = (
             dict(environment_variables or {})
             if from_template
@@ -1570,6 +1581,13 @@ class Sandbox:
             self._placement_spillover,
             from_template=from_template,
         )
+        if self._placement_spillover == PlacementSpillover.SERVERLESS_THEN_CKS and self._runner_ids:
+            raise ValueError(
+                "placement_spillover='serverless_then_cks' cannot be combined with "
+                "runner_ids: the first create attempt is serverless, which rejects "
+                "runner pins. Use placement_spillover='cks_then_serverless' or omit "
+                "runner_ids."
+            )
         if services is not None:
             self._services = [Service(**s) if isinstance(s, dict) else s for s in services]
         elif not from_template and self._defaults.services is not None:
@@ -1731,7 +1749,8 @@ class Sandbox:
             tags: Optional tags for the sandbox
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
-            runner_ids: Optional CKS runner pin (incompatible with serverless).
+            runner_ids: Optional CKS runner pin (incompatible with serverless
+                and with ``placement_spillover='serverless_then_cks'``).
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
             mounted_files: Files to mount into the sandbox at startup. Each dict
@@ -1843,12 +1862,18 @@ class Sandbox:
                 ``container_image``.
             command: Optional command override. Requires ``container_image``.
             defaults: Optional SandboxDefaults.
-            **kwargs: Same advanced create kwargs as ``run()``. Container-field
-                overrides (``command``, ``args``, ``environment_variables``,
+            **kwargs: Same advanced create kwargs as ``run()``. Passing
+                ``container_image`` replaces the whole template container
+                (command, args, env, files, resources, name ``main``); there
+                is no fetch-and-merge. Other container-field overrides
+                (``command``, ``args``, ``environment_variables``,
                 ``secrets``, ``resources``, ``mounted_files``, ``volumes``,
                 ``file_system_snapshot``) also require ``container_image``:
                 the API replaces the whole container list and rejects a
-                sparse patch.
+                sparse patch. Session/default tags are merged and sent as a
+                replace-on-presence override so ``list()``/``adopt`` can find
+                the sandbox; environment variables and annotations are not
+                merged (template-owned).
 
         Returns:
             Sandbox handle (lazy-start).
@@ -1953,7 +1978,9 @@ class Sandbox:
         sandbox._image_pull_credentials = None
         sandbox._scratch_volume_names = (
             tuple(
-                volume.name for volume in info._sandbox.spec.volumes if volume.HasField("scratch")
+                volume.name
+                for volume in info._sandbox.spec.volumes
+                if _volume_source_is_scratch(volume)
             )
             if isinstance(info, _SandboxView)
             else ()
@@ -2888,7 +2915,12 @@ class Sandbox:
         """Per-service URLs reported by the backend once ready.
 
         Each entry is ``(port, name, url)``. Empty until the sandbox reports
-        service status (typically after RUNNING).
+        service status (typically after RUNNING). Uses ``ServiceStatus.url``,
+        falling back to ``endpoint.url`` when the top-level URL is empty.
+
+        Custom-visibility services often have no URL from the API; the SDK
+        does not invent one. Those services still appear in
+        ``exposed_ports`` when visibility is not ``UNSPECIFIED``.
         """
         return self._service_urls
 
@@ -3622,6 +3654,10 @@ class Sandbox:
                         if self._placement_spillover == PlacementSpillover.CKS_THEN_SERVERLESS
                         else PlacementMode.CKS
                     )
+                    if alternate == self._placement_mode:
+                        # Already on the alternate (later start() after an
+                        # ambiguous spill). Do not mint a new request_id.
+                        raise translated from e
                     logger.warning(
                         "CreateSandbox failed with reason %s; spilling placement_mode "
                         "%s -> %s (new request_id)",
@@ -3639,6 +3675,12 @@ class Sandbox:
                         self._placement_mode = original_placement_mode
                         self._runner_ids = original_runner_ids
                         self._create_request_id = original_create_request_id
+                    primary_reason = getattr(primary_error, "reason", None)
+                    translated.add_note(
+                        "Primary placement failed"
+                        + (f" with {primary_reason}" if primary_reason else "")
+                        + f": {primary_error}"
+                    )
                     raise translated from primary_error
                 raise translated from e
         raise AssertionError("unreachable: placement spillover loop exited without return")
@@ -3978,7 +4020,9 @@ class Sandbox:
     def _apply_status_echo(self, view: _SandboxView) -> None:
         """Refresh property echoes from a v1 Sandbox resource (create/Get/list)."""
         self._scratch_volume_names = tuple(
-            volume.name for volume in view._sandbox.spec.volumes if volume.HasField("scratch")
+            volume.name
+            for volume in view._sandbox.spec.volumes
+            if _volume_source_is_scratch(volume)
         )
         status = view._sandbox.status
         service_urls: list[tuple[int, str, str]] = []
@@ -4671,10 +4715,7 @@ class Sandbox:
                     sandbox_id=sandbox_id,
                     grace_period_seconds=grace_seconds,
                     snapshot_volumes=snapshot_volumes,
-                    # Snapshot-on-stop + allow_missing is rejected as
-                    # INVALID_REQUEST; omit the flag so a missing sandbox
-                    # still returns NOT_FOUND for the missing_ok catch.
-                    allow_missing=bool(missing_ok) and not snapshot_on_stop,
+                    allow_missing=bool(missing_ok),
                 )
                 if snapshot_on_stop and request_id:
                     request.request_id = request_id
@@ -4689,6 +4730,11 @@ class Sandbox:
                 except grpc.RpcError as e:
                     parsed = parse_error_info(e)
                     if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
+                        if snapshot_on_stop:
+                            raise SnapshotOnStopConflictError(
+                                "Cannot snapshot on stop: sandbox was not found.",
+                                file_system_snapshot_id=None,
+                            ) from e
                         logger.debug(
                             "Sandbox %s not found during stop (missing_ok=True)",
                             sandbox_id,
@@ -4706,6 +4752,19 @@ class Sandbox:
                             self._complete_task.cancel()
                             self._complete_task = None
                         return
+                    if (
+                        snapshot_on_stop
+                        and parsed is not None
+                        and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+                        and parsed.reason == CWSANDBOX_INVALID_REQUEST
+                    ):
+                        raise SnapshotOnStopConflictError(
+                            "Cannot snapshot on stop: the server rejected "
+                            "allow_missing together with snapshot_volumes "
+                            "(sandbox missing, or the combination is invalid).",
+                            file_system_snapshot_id=None,
+                            reason=parsed.reason,
+                        ) from e
                     raise _translate_rpc_error(
                         e, sandbox_id=sandbox_id, operation="Stop sandbox"
                     ) from e
@@ -4719,7 +4778,12 @@ class Sandbox:
                 response_has_sandbox = hasattr(response, "HasField") and response.HasField(
                     "sandbox"
                 )
-                if missing_ok and not response_has_sandbox:
+                if missing_ok and not response_has_sandbox and not snapshot_ids:
+                    if snapshot_on_stop:
+                        raise SnapshotOnStopConflictError(
+                            "Cannot snapshot on stop: sandbox was not found.",
+                            file_system_snapshot_id=None,
+                        )
                     self._state = _Terminal(
                         sandbox_id=sandbox_id,
                         status=SandboxStatus.TERMINATED,
@@ -4862,9 +4926,16 @@ class Sandbox:
                 self._stop_task.add_done_callback(self._on_stop_task_done)
             task = self._stop_task
 
-        # Join the shared stop task
+        # Join the shared stop task. A joiner that passed missing_ok=True
+        # can swallow NOT_FOUND from a shared task the first caller did not
+        # mark missing_ok. The reverse (first caller swallowed, joiner wanted
+        # the error) is not recoverable: the task already succeeded.
         try:
             await asyncio.shield(task)
+        except SandboxNotFoundError:
+            if missing_ok:
+                return
+            raise
         except asyncio.CancelledError:
             pass
         finally:
@@ -4922,8 +4993,12 @@ class Sandbox:
                 ``grace_period_seconds=0`` means immediate termination (no
                 backend grace substitute). The backend caps this at 300s for
                 snapshot-on-stop.
-            missing_ok: If True, suppress SandboxNotFoundError when sandbox
-                doesn't exist.
+            missing_ok: If True, suppress SandboxNotFoundError when the
+                sandbox does not exist. With ``snapshot_on_stop=True`` the
+                flag is still sent as ``allow_missing``; a missing sandbox
+                or a server reject of that combination raises
+                ``SnapshotOnStopConflictError`` rather than succeeding
+                with no archive.
             wait_for_ready: When ``snapshot_on_stop`` is True, block until the
                 snapshot reaches READY (or FAILED) before the stop completes.
                 Ignored when ``snapshot_on_stop`` is False.
@@ -5105,6 +5180,9 @@ class Sandbox:
             sandbox_id = self._sandbox_id
             assert sandbox_id is not None
 
+            if since_time is not None and since_time.tzinfo is None:
+                raise ValueError("since_time must be timezone-aware; naive datetimes are rejected")
+
             session_id = ""
             last_offset = 0
             line_parts: list[str] = []
@@ -5112,9 +5190,9 @@ class Sandbox:
             attempt = 0
             done = False
             last_transport_error: grpc.aio.AioRpcError | None = None
+            delivered_any = False
 
             while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
-                is_first_attempt = attempt == 0
                 is_resume = bool(session_id) and attempt > 0
                 channel = await self._get_or_create_streaming_channel()
                 stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -5129,16 +5207,17 @@ class Sandbox:
                 else:
                     # Fresh init (first attempt or after SESSION_NOT_FOUND /
                     # REPLAY_GAP / runner loss). Re-send timestamps so
-                    # formatting survives a session reset; do not re-send
-                    # tail_lines / since_time — those replay a window.
+                    # formatting survives a session reset. Re-send the
+                    # caller window until any data arrives; after that,
+                    # follow mode advances since_time to now to avoid
+                    # replaying hours of logs (a small gap is accepted).
                     request.timestamps = timestamps
-                    if is_first_attempt:
-                        if tail_lines is not None:
-                            request.tail_lines = tail_lines
-                        if since_time is not None:
-                            ts = timestamp_pb2.Timestamp()
-                            ts.FromDatetime(since_time)
-                            request.since_time.CopyFrom(ts)
+                    if tail_lines is not None:
+                        request.tail_lines = tail_lines
+                    if since_time is not None:
+                        ts = timestamp_pb2.Timestamp()
+                        ts.FromDatetime(since_time)
+                        request.since_time.CopyFrom(ts)
 
                 grpc_timeout = timeout_seconds if not follow else None
                 call = stub.StreamLogs(
@@ -5174,22 +5253,42 @@ class Sandbox:
                         chunk = entry.data.decode("utf-8", errors="replace")
                         if not chunk:
                             continue
+                        if follow:
+                            attempt = 0
+                            last_transport_error = None
+                        delivered_any = True
                         line_parts.append(chunk)
-                        line_parts_bytes += len(chunk.encode("utf-8", errors="replace"))
-                        if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
-                            raise SandboxStreamTruncatedError(
-                                f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                            )
                         buf = "".join(line_parts)
                         if "\n" in buf:
                             *complete, remainder = buf.split("\n")
                             for line in complete:
+                                encoded_line = (line + "\n").encode("utf-8")
+                                if len(encoded_line) > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
                                 await output_queue.put(line + "\n")
+                            remainder_bytes = len(remainder.encode("utf-8")) if remainder else 0
+                            if remainder_bytes > MAX_LINE_BUFFER_BYTES:
+                                raise SandboxStreamTruncatedError(
+                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                )
                             line_parts = [remainder] if remainder else []
-                            line_parts_bytes = len(remainder.encode("utf-8")) if remainder else 0
+                            line_parts_bytes = remainder_bytes
+                        else:
+                            line_parts_bytes = len(buf.encode("utf-8"))
+                            if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
+                                raise SandboxStreamTruncatedError(
+                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                )
                     else:
                         if line_parts:
-                            await output_queue.put("".join(line_parts))
+                            leftover = "".join(line_parts)
+                            if len(leftover.encode("utf-8")) > MAX_LINE_BUFFER_BYTES:
+                                raise SandboxStreamTruncatedError(
+                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                )
+                            await output_queue.put(leftover)
                             line_parts = []
                             line_parts_bytes = 0
                         done = True
@@ -5203,6 +5302,9 @@ class Sandbox:
 
                 if done:
                     break
+                if follow and delivered_any and not session_id:
+                    since_time = datetime.now(UTC)
+                    tail_lines = None
                 attempt += 1
                 await asyncio.sleep(
                     min(
@@ -5212,9 +5314,13 @@ class Sandbox:
                 )
 
             if not done:
+                if last_transport_error is not None:
+                    raise SandboxUnavailableError(
+                        f"Log stream for sandbox {sandbox_id} could not be resumed"
+                    ) from last_transport_error
                 raise SandboxUnavailableError(
                     f"Log stream for sandbox {sandbox_id} could not be resumed"
-                ) from last_transport_error
+                )
             inner_exit_clean = True
         except Exception as e:
             # Same guaranteed-delivery pattern as read_file streaming: a
@@ -7012,7 +7118,8 @@ class Sandbox:
                 stop. Stopped sandboxes reject ``StreamLogs``.
             tail_lines: Number of most recent lines to retrieve. If None,
                 returns all available lines.
-            since_time: Only return logs after this timestamp.
+            since_time: Only return logs after this timestamp. Must be
+                timezone-aware; naive datetimes raise ``ValueError``.
             timestamps: If True, prefix each line with an ISO 8601 timestamp
                 from the server.
             timeout_seconds: Client-side deadline for the gRPC call. Defaults

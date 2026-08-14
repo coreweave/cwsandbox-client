@@ -14,9 +14,13 @@ import pytest
 
 from cwsandbox import PlacementMode, PlacementSpillover, Sandbox
 from cwsandbox._error_info import (
+    CWSANDBOX_BACKEND_UNAVAILABLE,
+    CWSANDBOX_NO_SUITABLE_RUNNER,
     CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
     CWSANDBOX_PLACEMENT_REJECTED,
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+    CWSANDBOX_RUNNER_OVERLOADED,
+    CWSANDBOX_RUNNER_UNAVAILABLE,
     CWSANDBOX_SERVERLESS_NOT_ALLOWED,
     SPILLOVER_ELIGIBLE_REASONS,
 )
@@ -30,6 +34,7 @@ from cwsandbox._sandbox import (
 )
 from cwsandbox.exceptions import (
     SandboxError,
+    SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxUnavailableError,
@@ -130,6 +135,9 @@ class TestSpilloverEligibility:
                 CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
                 CWSANDBOX_PLACEMENT_REJECTED,
                 CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+                CWSANDBOX_NO_SUITABLE_RUNNER,
+                CWSANDBOX_RUNNER_OVERLOADED,
+                CWSANDBOX_RUNNER_UNAVAILABLE,
             }
         )
 
@@ -169,6 +177,33 @@ class TestSpilloverEligibility:
         exc = SandboxError("nope", reason="PERMISSION_DENIED")
         assert not _is_spillover_eligible(exc)
 
+    def test_no_suitable_runner_is_eligible(self) -> None:
+        exc = _translate_rpc_error(
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "no runner",
+                reason=CWSANDBOX_NO_SUITABLE_RUNNER,
+            )
+        )
+        assert _is_spillover_eligible(exc)
+
+    def test_runner_overloaded_is_eligible(self) -> None:
+        exc = _translate_rpc_error(
+            _capacity_error(CWSANDBOX_RUNNER_OVERLOADED),
+        )
+        assert _is_spillover_eligible(exc)
+
+    def test_runner_unavailable_is_eligible(self) -> None:
+        exc = _translate_rpc_error(
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.UNAVAILABLE,
+                "runner down",
+                reason=CWSANDBOX_RUNNER_UNAVAILABLE,
+            )
+        )
+        assert isinstance(exc, SandboxUnavailableError)
+        assert _is_spillover_eligible(exc)
+
 
 class TestSpilloverValidation:
     def test_cks_then_serverless_rejects_serverless_primary(self) -> None:
@@ -200,6 +235,13 @@ class TestSpilloverValidation:
     def test_serverless_then_cks_unset_mode_resolves_to_serverless(self) -> None:
         sb = Sandbox(placement_spillover=PlacementSpillover.SERVERLESS_THEN_CKS)
         assert sb._placement_mode == PlacementMode.SERVERLESS
+
+    def test_serverless_then_cks_rejects_runner_ids(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined with runner_ids"):
+            Sandbox(
+                placement_spillover=PlacementSpillover.SERVERLESS_THEN_CKS,
+                runner_ids=["runner-a"],
+            )
 
 
 class TestSpilloverCreatePath:
@@ -286,6 +328,9 @@ class TestSpilloverCreatePath:
         assert err.reason == CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED
         assert isinstance(err.__cause__, SandboxResourceExhaustedError)
         assert err.__cause__.reason == CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED
+        assert any(
+            CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED in note for note in getattr(err, "__notes__", [])
+        )
         assert stub.CreateSandbox.call_count == 2
 
     def test_bare_resource_exhausted_does_not_spill(self) -> None:
@@ -380,11 +425,54 @@ class TestSpilloverCreatePath:
         assert req.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS
         sandbox._state = _Terminal(sandbox_id="retry-ok", status=SandboxStatus.COMPLETED)
 
+    def test_later_start_same_mode_does_not_mint_new_request_id(self) -> None:
+        first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
+        second = _MockRpcErrorWithDetails(
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            "maybe committed",
+        )
+        sandbox = Sandbox(
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            runner_ids=["runner-a"],
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[first, second])
+
+        async def ensure_client(sb: Sandbox) -> None:
+            sb._channel = MagicMock()
+            sb._channel.close = AsyncMock()
+            sb._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            with pytest.raises(SandboxRequestTimeoutError):
+                sandbox.start().result()
+
+        spilled_id = sandbox._create_request_id
+        later = _capacity_error(CWSANDBOX_PLACEMENT_REJECTED)
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[later])
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            with pytest.raises(SandboxResourceExhaustedError):
+                sandbox.start().result()
+        assert mock_stub.CreateSandbox.call_count == 1
+        assert mock_stub.CreateSandbox.call_args.args[0].request_id == spilled_id
+        sandbox._state = _Terminal(sandbox_id="spill-id", status=SandboxStatus.COMPLETED)
+
     def test_create_attempt_reject_classification(self) -> None:
         assert _create_attempt_definitely_rejected(
             SandboxResourceExhaustedError("full", reason=CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED)
         )
         assert not _create_attempt_definitely_rejected(SandboxRequestTimeoutError("late"))
         assert not _create_attempt_definitely_rejected(SandboxUnavailableError("down"))
+        assert not _create_attempt_definitely_rejected(
+            SandboxUnavailableError("backend", reason=CWSANDBOX_BACKEND_UNAVAILABLE)
+        )
         assert not _create_attempt_definitely_rejected(SandboxResourceExhaustedError("quota"))
-        assert _create_attempt_definitely_rejected(SandboxError("bad request"))
+        assert not _create_attempt_definitely_rejected(SandboxError("internal"))
+        assert not _create_attempt_definitely_rejected(SandboxNotRunningError("cancelled"))
+        assert _create_attempt_definitely_rejected(
+            SandboxError("bad request", reason="CWSANDBOX_INVALID_REQUEST")
+        )
+        assert _create_attempt_definitely_rejected(
+            SandboxUnavailableError("runner down", reason=CWSANDBOX_RUNNER_UNAVAILABLE)
+        )

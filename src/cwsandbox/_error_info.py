@@ -106,9 +106,17 @@ UNAVAILABLE_REASONS: frozenset[str] = frozenset(
 )
 
 # Placement / capacity reasons used by client-side placement_spillover retry.
+# Spill when the primary mode cannot satisfy the request; the reason is
+# surfaced to the caller after the alternate-mode attempt.
 CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED = "CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED"
 CWSANDBOX_PLACEMENT_REJECTED = "CWSANDBOX_PLACEMENT_REJECTED"
 CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED = "CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED"
+CWSANDBOX_NO_SUITABLE_RUNNER = "CWSANDBOX_NO_SUITABLE_RUNNER"
+CWSANDBOX_RUNNER_OVERLOADED = "CWSANDBOX_RUNNER_OVERLOADED"
+# CWSANDBOX_RUNNER_UNAVAILABLE is defined with the unavailable reasons above.
+
+# Request-shape refusal (e.g. DeleteSandbox allow_missing + snapshot_volumes).
+CWSANDBOX_INVALID_REQUEST = "CWSANDBOX_INVALID_REQUEST"
 
 # Org / product gates that must not trigger placement spillover.
 CWSANDBOX_SERVERLESS_NOT_ALLOWED = "CWSANDBOX_SERVERLESS_NOT_ALLOWED"
@@ -120,6 +128,9 @@ SPILLOVER_ELIGIBLE_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
         CWSANDBOX_PLACEMENT_REJECTED,
         CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+        CWSANDBOX_NO_SUITABLE_RUNNER,
+        CWSANDBOX_RUNNER_OVERLOADED,
+        CWSANDBOX_RUNNER_UNAVAILABLE,
     }
 )
 

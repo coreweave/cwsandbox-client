@@ -43,6 +43,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_RESTORE_FAILED,
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
+    CWSANDBOX_INVALID_REQUEST,
 )
 from cwsandbox._proto import sandbox_pb2, settings_pb2
 from cwsandbox._sandbox import _NotStarted, _Running, _Starting, _Stopping, _Terminal
@@ -411,7 +412,7 @@ class TestStopWiring:
         assert sandbox.file_system_snapshot_id == "fss-new"
         stub.GetFileSystemSnapshot.assert_awaited_once()
 
-    def test_snapshot_on_stop_omits_allow_missing_when_missing_ok(self) -> None:
+    def test_snapshot_on_stop_sends_allow_missing_when_missing_ok(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Starting(sandbox_id="sb-1")
@@ -429,7 +430,23 @@ class TestStopWiring:
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop(snapshot_on_stop=True, missing_ok=True).result()
 
-        assert stub.DeleteSandbox.call_args[0][0].allow_missing is False
+        assert stub.DeleteSandbox.call_args[0][0].allow_missing is True
+
+    def test_snapshot_on_stop_invalid_request_is_conflict(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._channel = MagicMock()
+        sandbox._channel.close = AsyncMock()
+        sandbox._stub = MagicMock()
+        sandbox._scratch_volume_names = ("workspace",)
+        sandbox._stub.DeleteSandbox = AsyncMock(
+            side_effect=_fss_rpc_error(CWSANDBOX_INVALID_REQUEST)
+        )
+
+        with pytest.raises(SnapshotOnStopConflictError, match="allow_missing"):
+            sandbox.stop(snapshot_on_stop=True, missing_ok=True).result()
+        assert sandbox.file_system_snapshot_id is None
 
     def test_plain_stop_sends_allow_missing(self) -> None:
         sandbox = Sandbox(command="sleep", args=["infinity"])

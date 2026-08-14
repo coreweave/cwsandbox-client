@@ -129,8 +129,11 @@ class PlacementSpillover(StrEnum):
     """Client-side create retry across placement modes on capacity / constraint failure.
 
     ``placement_mode`` remains the primary (first-attempt) mode. Spillover modes
-    retry CreateSandbox once with the alternate mode when the first attempt fails
-    with a spillable AIP-193 reason. Template creates allow only ``STRICT``.
+    retry CreateSandbox once with the alternate mode when the first attempt
+    cannot place the request (capacity, no suitable runner, runner
+    unavailable/overloaded, or a placement constraint). Template creates
+    allow only ``STRICT``. ``SERVERLESS_THEN_CKS`` cannot be combined with
+    ``runner_ids``.
 
     Attributes:
         STRICT: No spill (default). Honor ``placement_mode`` only.
@@ -139,7 +142,8 @@ class PlacementSpillover(StrEnum):
             ``placement_mode=serverless`` raises ``ValueError``.
         SERVERLESS_THEN_CKS: Attempt serverless first, then CKS. Unset
             ``placement_mode`` is treated as serverless for attempt 1. Explicit
-            ``placement_mode=cks`` raises ``ValueError``.
+            ``placement_mode=cks`` or a non-empty ``runner_ids`` pin raises
+            ``ValueError``.
     """
 
     STRICT = "strict"
@@ -176,6 +180,9 @@ class Service:
         name: Optional service name.
         protocol: L4 protocol (defaults to TCP when unset).
         visibility: Who may reach this port (PUBLIC/PRIVATE/CUSTOM).
+            CUSTOM means the fleet assigns reachability; ``service_urls``
+            stays empty unless the API reports a URL. The service still
+            appears in ``exposed_ports``.
     """
 
     port: int
