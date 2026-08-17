@@ -187,35 +187,15 @@ data = await ref
 
 **`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
-**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `visibility=PUBLIC` plus `endpoint=Endpoint(kind=HTTPS, auth=OPEN)`.
+**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
 
 ```python
-from cwsandbox import (
-    Endpoint,
-    EndpointAuth,
-    EndpointKind,
-    PlacementMode,
-    Sandbox,
-    Service,
-    ServiceVisibility,
+from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox
+
+sandbox = Sandbox.run(
+    services=[Service(port=8080, visibility=ServiceVisibility.PUBLIC)],
 )
 
-sb = Sandbox.run(
-    "python3", "-m", "http.server", "8080",
-    services=[
-        Service(
-            port=8080,
-            name="web",
-            visibility=ServiceVisibility.PUBLIC,
-            endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
-        ),
-    ],
-)
-sb.wait()  # RUNNING only
-if not sb.service_urls:
-    sb.get_status()
-url = {port: u for port, _, u in sb.service_urls}[8080]
-# assigned https://8080-<id>.… — the process could still be starting
 # CKS pin
 sandbox = Sandbox.run(
     placement_mode=PlacementMode.CKS,
@@ -460,7 +440,7 @@ The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated 
 
 ### Unsupported on 1.0 (not a hybrid fallback)
 
-These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject, FSS bucket get/set, and HTTPS/OPEN endpoints still work.
+These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject and FSS bucket get/set still work.
 
 ### Backend Communication
 

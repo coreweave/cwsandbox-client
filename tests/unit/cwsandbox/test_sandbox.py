@@ -387,6 +387,7 @@ class TestSandboxRun:
         assert spec.services[0].port == 8080
         assert spec.services[0].protocol == sandbox_pb2.SERVICE_PROTOCOL_TCP
         assert spec.services[0].visibility == sandbox_pb2.VISIBILITY_PUBLIC
+        assert not spec.services[0].HasField("endpoint")
         assert spec.network.deny_egress is True
         assert spec.network.deny_ingress is False
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
@@ -404,20 +405,15 @@ class TestSandboxRun:
                     visibility=ServiceVisibility.PUBLIC,
                     endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
                 ),
-                Service(
-                    name="metrics",
-                    port=9090,
-                    visibility=ServiceVisibility.PUBLIC,
-                ),
             ],
         )
 
         request = stub.CreateSandbox.call_args.args[0]
         spec = request.sandbox.spec
+        assert len(spec.services) == 1
         assert spec.services[0].HasField("endpoint")
         assert spec.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
         assert spec.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
-        assert not spec.services[1].HasField("endpoint")
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
