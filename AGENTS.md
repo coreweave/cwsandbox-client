@@ -65,17 +65,16 @@ Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
-- `service_urls`: Tuple of `(port, name, url)` from typed services once ready (empty until reported)
+- `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
-- `service_urls` - Per-service ``(port, name, url)`` tuples once the backend reports them
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
 - `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover
 - `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
-- `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol`
+- `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
 - `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
 - `volumes` - Named scratch volumes via `ScratchVolumeOptions`
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
@@ -188,7 +187,7 @@ data = await ref
 
 **`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
-**`Service` / `ServiceVisibility` / `ServiceProtocol`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults.
+**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
 
 ```python
 from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox

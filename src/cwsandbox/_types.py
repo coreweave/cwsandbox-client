@@ -169,6 +169,41 @@ class ServiceProtocol(StrEnum):
     SCTP = "sctp"
 
 
+class EndpointKind(StrEnum):
+    """HTTPS is the only supported endpoint kind."""
+
+    HTTPS = "https"
+
+
+class EndpointAuth(StrEnum):
+    """OPEN is the only supported endpoint auth (no token required)."""
+
+    OPEN = "open"
+
+
+@dataclass(frozen=True, kw_only=True)
+class Endpoint:
+    """Public HTTPS URL for a service. Set at create time; CoreWeave terminates TLS.
+
+    ``kind`` and ``auth`` are required. Only HTTPS + OPEN is supported.
+    A URL in ``Sandbox.service_urls`` means the hostname was assigned, not
+    that the app is listening yet.
+
+    Attributes:
+        kind: ``HTTPS``.
+        auth: ``OPEN`` (no platform token required).
+    """
+
+    kind: EndpointKind | str
+    auth: EndpointAuth | str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.kind, str):
+            object.__setattr__(self, "kind", EndpointKind(self.kind.lower()))
+        if isinstance(self.auth, str):
+            object.__setattr__(self, "auth", EndpointAuth(self.auth.lower()))
+
+
 @dataclass(frozen=True, kw_only=True)
 class Service:
     """Typed service port exposed by a sandbox.
@@ -178,17 +213,22 @@ class Service:
     Attributes:
         port: Container port the workload listens on.
         name: Optional service name.
-        protocol: L4 protocol (defaults to TCP when unset).
+        protocol: L4 protocol (defaults to TCP when unset). Must be unset or
+            TCP when ``endpoint`` is set.
         visibility: Who may reach this port (PUBLIC/PRIVATE/CUSTOM).
             CUSTOM means the fleet assigns reachability; ``service_urls``
             stays empty unless the API reports a URL. The service still
-            appears in ``exposed_ports``.
+            appears in ``exposed_ports``. Must be PUBLIC when ``endpoint``
+            is set.
+        endpoint: Optional HTTPS URL (HTTPS/OPEN). Omit for a plain TCP/UDP
+            port.
     """
 
     port: int
     name: str | None = None
     protocol: ServiceProtocol | str | None = None
     visibility: ServiceVisibility | str | None = None
+    endpoint: Endpoint | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.port <= 0 or self.port > 65535:
@@ -197,6 +237,17 @@ class Service:
             object.__setattr__(self, "protocol", ServiceProtocol(self.protocol.lower()))
         if isinstance(self.visibility, str):
             object.__setattr__(self, "visibility", ServiceVisibility(self.visibility.lower()))
+        if isinstance(self.endpoint, dict):
+            object.__setattr__(self, "endpoint", Endpoint(**self.endpoint))
+        elif self.endpoint is not None and not isinstance(self.endpoint, Endpoint):
+            raise TypeError(
+                f"Service.endpoint must be Endpoint or dict, got {type(self.endpoint).__name__}"
+            )
+        if self.endpoint is not None:
+            if self.visibility != ServiceVisibility.PUBLIC:
+                raise ValueError("Service.visibility must be PUBLIC when endpoint is set")
+            if self.protocol not in (None, ServiceProtocol.UNSPECIFIED, ServiceProtocol.TCP):
+                raise ValueError("Service.protocol must be unset or TCP when endpoint is set")
 
 
 @dataclass(frozen=True, kw_only=True)
