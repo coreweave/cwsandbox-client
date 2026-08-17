@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.1.0 (2026-08-17)
+
+### Documentation
+
+- **agents**: Simplify public service example and remove HTTPS/OPEN from unsupported surfaces
+  ([`0b8b463`](https://github.com/coreweave/cwsandbox-client/commit/0b8b46357f41a01d9ac5cf518fcf33971ef39f22))
+
+### Features
+
+- Add create-time HTTPS/OPEN endpoint support for public services
+  ([`4f02240`](https://github.com/coreweave/cwsandbox-client/commit/4f02240311152b9e39a8001e7fbc191a19e02353))
+
+Wire Endpoint(HTTPS, OPEN) on PUBLIC Service into create/template mapping. service_urls is
+  assignment, not serving. Tests and AGENTS.md.
+
+
 ## v1.0.0 (2026-08-14)
 
 ### Features
