@@ -19,6 +19,9 @@ import grpc.aio
 import pytest
 
 from cwsandbox import (
+    Endpoint,
+    EndpointAuth,
+    EndpointKind,
     ImagePullCredentials,
     NetworkOptions,
     PlacementMode,
@@ -388,6 +391,57 @@ class TestSandboxRun:
         assert spec.network.deny_ingress is False
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_request_maps_https_open_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                Service(
+                    name="web",
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+                ),
+                Service(
+                    name="metrics",
+                    port=9090,
+                    visibility=ServiceVisibility.PUBLIC,
+                ),
+            ],
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        spec = request.sandbox.spec
+        assert spec.services[0].HasField("endpoint")
+        assert spec.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert spec.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert not spec.services[1].HasField("endpoint")
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                {
+                    "port": 8080,
+                    "visibility": "public",
+                    "endpoint": {"kind": "https", "auth": "open"},
+                }
+            ],
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        ep = request.sandbox.spec.services[0].endpoint
+        assert request.sandbox.spec.services[0].HasField("endpoint")
+        assert ep.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
     def test_create_request_maps_scratch_volume(self) -> None:
         sandbox, stub = self._run_with_mock_stub(
             volumes=[
@@ -495,6 +549,27 @@ class TestSandboxRun:
 
         request = stub.CreateSandboxFromTemplate.call_args.args[0]
         assert list(request.overrides.tags) == ["session-tag", "extra"]
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_maps_https_open_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            services=[
+                Service(
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+                )
+            ],
+        )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert len(request.overrides.services) == 1
+        assert request.overrides.services[0].HasField("endpoint")
+        assert request.overrides.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert request.overrides.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_template_args_without_image_raises(self) -> None:
@@ -5917,6 +5992,68 @@ class TestStoppingStateTransitions:
             (9090, "metrics", "https://sb.example/9090"),
         )
         assert sandbox.exposed_ports == ((8080, "http"), (7070, "custom"))
+
+    def test_apply_sandbox_info_populates_endpoint_url_while_creating(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Starting(sandbox_id="sb-1")
+        sandbox._service_urls = ()
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_CREATING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="https://8080-sb-1.example",
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_urls == ((8080, "web", "https://8080-sb-1.example"),)
+
+    def test_apply_sandbox_info_suppresses_endpoint_url_when_terminal(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_urls = ((8080, "web", "https://8080-sb-1.example"),)
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_COMPLETED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="",
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_urls == ()
 
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""

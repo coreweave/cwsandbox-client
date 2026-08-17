@@ -65,17 +65,16 @@ Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
-- `service_urls`: Tuple of `(port, name, url)` from typed services once ready (empty until reported)
+- `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
-- `service_urls` - Per-service ``(port, name, url)`` tuples once the backend reports them
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
 - `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover
 - `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
-- `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol`
+- `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
 - `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
 - `volumes` - Named scratch volumes via `ScratchVolumeOptions`
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
@@ -188,15 +187,35 @@ data = await ref
 
 **`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
-**`Service` / `ServiceVisibility` / `ServiceProtocol`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults.
+**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `visibility=PUBLIC` plus `endpoint=Endpoint(kind=HTTPS, auth=OPEN)`.
 
 ```python
-from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox
-
-sandbox = Sandbox.run(
-    services=[Service(port=8080, visibility=ServiceVisibility.PUBLIC)],
+from cwsandbox import (
+    Endpoint,
+    EndpointAuth,
+    EndpointKind,
+    PlacementMode,
+    Sandbox,
+    Service,
+    ServiceVisibility,
 )
 
+sb = Sandbox.run(
+    "python3", "-m", "http.server", "8080",
+    services=[
+        Service(
+            port=8080,
+            name="web",
+            visibility=ServiceVisibility.PUBLIC,
+            endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+        ),
+    ],
+)
+sb.wait()  # RUNNING only
+if not sb.service_urls:
+    sb.get_status()
+url = {port: u for port, _, u in sb.service_urls}[8080]
+# assigned https://8080-<id>.… — the process could still be starting
 # CKS pin
 sandbox = Sandbox.run(
     placement_mode=PlacementMode.CKS,
@@ -441,7 +460,7 @@ The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated 
 
 ### Unsupported on 1.0 (not a hybrid fallback)
 
-These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject and FSS bucket get/set still work.
+These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject, FSS bucket get/set, and HTTPS/OPEN endpoints still work.
 
 ### Backend Communication
 

@@ -12,11 +12,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from cwsandbox._types import (
+    Endpoint,
+    EndpointAuth,
+    EndpointKind,
     NetworkOptions,
     OperationRef,
     Process,
     ProcessResult,
     Service,
+    ServiceProtocol,
     ServiceVisibility,
     StreamReader,
     StreamWriter,
@@ -151,6 +155,80 @@ class TestService:
     def test_invalid_port(self) -> None:
         with pytest.raises(ValueError, match="1-65535"):
             Service(port=0)
+
+    def test_endpoint_required_kind_and_auth(self) -> None:
+        with pytest.raises(TypeError):
+            Endpoint()  # type: ignore[call-arg]
+        ep = Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN)
+        assert ep.kind == EndpointKind.HTTPS
+        assert ep.auth == EndpointAuth.OPEN
+
+    def test_endpoint_string_coercion(self) -> None:
+        ep = Endpoint(kind="https", auth="open")
+        assert ep.kind == EndpointKind.HTTPS
+        assert ep.auth == EndpointAuth.OPEN
+
+    def test_endpoint_unknown_auth_string(self) -> None:
+        with pytest.raises(ValueError):
+            Endpoint(kind="https", auth="token")
+
+    def test_service_endpoint_nested_dict(self) -> None:
+        svc = Service(
+            port=8080,
+            visibility="public",
+            endpoint={"kind": "https", "auth": "open"},
+        )
+        assert isinstance(svc.endpoint, Endpoint)
+        assert svc.endpoint.kind == EndpointKind.HTTPS
+        assert svc.endpoint.auth == EndpointAuth.OPEN
+
+    def test_service_endpoint_requires_public(self) -> None:
+        with pytest.raises(ValueError, match="PUBLIC"):
+            Service(
+                port=8080,
+                endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+            )
+        with pytest.raises(ValueError, match="PUBLIC"):
+            Service(
+                port=8080,
+                visibility=ServiceVisibility.PRIVATE,
+                endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+            )
+
+    def test_service_endpoint_rejects_non_tcp_protocol(self) -> None:
+        with pytest.raises(ValueError, match="TCP"):
+            Service(
+                port=8080,
+                visibility=ServiceVisibility.PUBLIC,
+                protocol=ServiceProtocol.UDP,
+                endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+            )
+        with pytest.raises(ValueError, match="TCP"):
+            Service(
+                port=8080,
+                visibility=ServiceVisibility.PUBLIC,
+                protocol="sctp",
+                endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+            )
+
+    def test_service_endpoint_allows_unset_or_tcp_protocol(self) -> None:
+        unset = Service(
+            port=8080,
+            visibility=ServiceVisibility.PUBLIC,
+            endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+        )
+        tcp = Service(
+            port=8080,
+            visibility=ServiceVisibility.PUBLIC,
+            protocol=ServiceProtocol.TCP,
+            endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+        )
+        assert unset.protocol is None
+        assert tcp.protocol == ServiceProtocol.TCP
+
+    def test_service_omitted_endpoint_stays_none(self) -> None:
+        svc = Service(port=8080, visibility=ServiceVisibility.PUBLIC)
+        assert svc.endpoint is None
 
 
 class TestProcessResult:

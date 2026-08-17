@@ -113,6 +113,9 @@ from cwsandbox._proto import (
 )
 from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
+    Endpoint,
+    EndpointAuth,
+    EndpointKind,
     ExecOutcome,
     FileSystemSnapshot,
     FileSystemSnapshotBucketConfig,
@@ -2912,11 +2915,11 @@ class Sandbox:
 
     @property
     def service_urls(self) -> tuple[tuple[int, str, str], ...]:
-        """Per-service URLs reported by the backend once ready.
+        """Per-service URLs assigned by the backend.
 
-        Each entry is ``(port, name, url)``. Empty until the sandbox reports
-        service status (typically after RUNNING). Uses ``ServiceStatus.url``,
-        falling back to ``endpoint.url`` when the top-level URL is empty.
+        Each entry is ``(port, name, url)``. A URL can appear while CREATING
+        or RUNNING. Empty until a URL is assigned, when none was requested, or
+        after the sandbox stops. Assigned is not the same as the app listening.
 
         Custom-visibility services often have no URL from the API; the SDK
         does not invent one. Those services still appear in
@@ -3839,6 +3842,24 @@ class Sandbox:
                     proto_svc.visibility = cast(
                         sandbox_pb2.Visibility,
                         sandbox_pb2.Visibility.Value(f"VISIBILITY_{visibility.name}"),
+                    )
+                endpoint = svc.endpoint
+                if isinstance(endpoint, dict):
+                    endpoint = Endpoint(**endpoint)
+                if isinstance(endpoint, Endpoint):
+                    kind = endpoint.kind
+                    auth = endpoint.auth
+                    if isinstance(kind, str):
+                        kind = EndpointKind(kind.lower())
+                    if isinstance(auth, str):
+                        auth = EndpointAuth(auth.lower())
+                    proto_svc.endpoint.kind = cast(
+                        sandbox_pb2.EndpointKind,
+                        sandbox_pb2.EndpointKind.Value(f"ENDPOINT_KIND_{kind.name}"),
+                    )
+                    proto_svc.endpoint.auth = cast(
+                        sandbox_pb2.EndpointAuth,
+                        sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
                     )
                 services.append(proto_svc)
 
