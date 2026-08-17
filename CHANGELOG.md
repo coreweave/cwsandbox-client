@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.1.1 (2026-08-17)
+
+### Bug Fixes
+
+- Surface bad request field violations
+  ([#131](https://github.com/coreweave/cwsandbox-client/pull/131),
+  [`6de34af`](https://github.com/coreweave/cwsandbox-client/commit/6de34af50bd0c5104c3505c3100c70f4db48f116))
+
+
 ## v1.1.0 (2026-08-17)
 
 ### Documentation
