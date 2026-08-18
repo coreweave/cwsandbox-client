@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.2.0 (2026-08-18)
+
+### Features
+
+- **cli**: Add delete command ([#148](https://github.com/coreweave/cwsandbox-client/pull/148),
+  [`508301f`](https://github.com/coreweave/cwsandbox-client/commit/508301f33c964bbdd32bc342a7fd0df284a78529))
+
+
 ## v1.1.1 (2026-08-17)
 
 ### Bug Fixes
