@@ -3286,6 +3286,25 @@ class TestSandboxAnnotations:
 
         assert sandbox._scratch_volume_names == ("default-scratch",)
 
+    def test_from_sandbox_info_initializes_file_fallback_state(self) -> None:
+        """Discovered sandboxes initialize file-operation fallback state."""
+        mock_info = MagicMock()
+        mock_info.sandbox_id = "test-id"
+        mock_info.sandbox_status = SandboxStatus.RUNNING.to_proto()
+        mock_info.started_at_time = None
+        mock_info.runner_id = None
+        mock_info.profile_id = None
+        mock_info.runner_group_id = None
+
+        sandbox = Sandbox._from_sandbox_info(
+            mock_info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+
+        assert sandbox._observed_file_op_cap_bytes is None
+        assert sandbox._streaming_fallback_warned is False
+
     def test_from_sandbox_info_default_poll_fields(self) -> None:
         """_from_sandbox_info applies poll defaults when callers omit them."""
         mock_info = MagicMock()

@@ -1970,6 +1970,8 @@ class Sandbox:
         sandbox._auth_metadata = ()
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
+        sandbox._observed_file_op_cap_bytes = None
+        sandbox._streaming_fallback_warned = False
         sandbox._session = None
         sandbox._defaults = SandboxDefaults()
         sandbox._start_kwargs = {}
