@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.3.0 (2026-08-18)
+
+### Features
+
+- **cli**: Add files commands ([#150](https://github.com/coreweave/cwsandbox-client/pull/150),
+  [`3555d79`](https://github.com/coreweave/cwsandbox-client/commit/3555d796bf9b1aae2ac67ceb843bd7b11758cbb3))
+
+
 ## v1.2.0 (2026-08-18)
 
 ### Features
