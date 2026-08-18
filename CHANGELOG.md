@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.4.0 (2026-08-18)
+
+### Features
+
+- **cli**: Add snapshots command group
+  ([#151](https://github.com/coreweave/cwsandbox-client/pull/151),
+  [`b9e56dc`](https://github.com/coreweave/cwsandbox-client/commit/b9e56dc472b39b7aab64af14b8eb3499b7029d2e))
+
+
 ## v1.3.0 (2026-08-18)
 
 ### Features
