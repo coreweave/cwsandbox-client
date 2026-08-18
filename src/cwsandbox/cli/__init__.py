@@ -30,6 +30,7 @@ from cwsandbox.cli.get import get_sandbox
 from cwsandbox.cli.list import list_sandboxes
 from cwsandbox.cli.logs import logs
 from cwsandbox.cli.shell import shell
+from cwsandbox.cli.snapshots import snapshots
 from cwsandbox.exceptions import CWSandboxError
 
 
@@ -60,3 +61,4 @@ cli.add_command(exec_command, "exec")
 cli.add_command(files, "files")
 cli.add_command(logs, "logs")
 cli.add_command(shell, "sh")
+cli.add_command(snapshots, "snapshots")
