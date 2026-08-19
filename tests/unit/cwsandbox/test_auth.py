@@ -6,12 +6,18 @@
 
 import pytest
 
+from cwsandbox import __version__
 from cwsandbox._auth import (
     AuthHeaders,
     _reset_auth_mode_for_testing,
     resolve_auth,
     resolve_auth_metadata,
     set_auth_mode,
+)
+from cwsandbox._client_metadata import (
+    HEADER_CWSANDBOX_CLIENT_VERSION,
+    HEADER_SANDBOX_INTEGRATION,
+    set_integration_metadata,
 )
 from cwsandbox.exceptions import CWSandboxAuthenticationError
 
@@ -206,7 +212,10 @@ class TestResolveAuthMetadata:
 
         result = resolve_auth_metadata()
 
-        assert result == (("authorization", "Bearer test-key"),)
+        assert result == (
+            ("authorization", "Bearer test-key"),
+            (HEADER_CWSANDBOX_CLIENT_VERSION, __version__),
+        )
 
     def test_returns_registered_auth_mode_metadata(
         self,
@@ -224,12 +233,50 @@ class TestResolveAuthMetadata:
         finally:
             _reset_auth_mode_for_testing()
 
-        assert result == (("x-api-key", "mode-key"),)
+        assert result == (
+            ("x-api-key", "mode-key"),
+            (HEADER_CWSANDBOX_CLIENT_VERSION, __version__),
+        )
 
-    def test_returns_empty_tuple_when_no_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test returns empty tuple when no credentials found."""
+    def test_returns_client_metadata_when_no_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test cwsandbox client metadata is sent even without auth credentials."""
         monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
 
         result = resolve_auth_metadata()
 
-        assert result == ()
+        assert result == ((HEADER_CWSANDBOX_CLIENT_VERSION, __version__),)
+
+    def test_returns_integration_metadata_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test integration metadata is included only when explicitly set."""
+        monkeypatch.setenv("CWSANDBOX_API_KEY", "test-key")
+        set_integration_metadata("harbor")
+
+        result = resolve_auth_metadata()
+
+        assert result == (
+            ("authorization", "Bearer test-key"),
+            (HEADER_CWSANDBOX_CLIENT_VERSION, __version__),
+            (HEADER_SANDBOX_INTEGRATION, "harbor"),
+        )
+
+    def test_auth_mode_metadata_can_override_integration_metadata(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test auth modes may provide their own integration metadata header."""
+        monkeypatch.delenv("CWSANDBOX_API_KEY", raising=False)
+        set_integration_metadata("client-default")
+        set_auth_mode(
+            "auth-mode-test",
+            lambda: AuthHeaders(
+                headers={HEADER_SANDBOX_INTEGRATION: "auth-integration"},
+                strategy="auth_mode",
+            ),
+        )
+
+        try:
+            result = dict(resolve_auth_metadata())
+        finally:
+            _reset_auth_mode_for_testing()
+
+        assert result[HEADER_SANDBOX_INTEGRATION] == "auth-integration"
+        assert result[HEADER_CWSANDBOX_CLIENT_VERSION] == __version__
