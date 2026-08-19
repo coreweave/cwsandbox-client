@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.5.0 (2026-08-19)
+
+### Features
+
+- **cli**: Add stop command ([#152](https://github.com/coreweave/cwsandbox-client/pull/152),
+  [`9797ff9`](https://github.com/coreweave/cwsandbox-client/commit/9797ff921dbe0a0eadce5b7fb55bda02ba7a0151))
+
+
 ## v1.4.0 (2026-08-18)
 
 ### Features
