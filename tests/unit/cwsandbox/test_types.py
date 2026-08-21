@@ -136,6 +136,24 @@ class TestEgressRule:
         with pytest.raises(ValueError, match="policy ceiling"):
             EgressRule(dns_name="*")
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "*.*.pypi.org",
+            "*pypi.org",
+            "foo.*.com",
+            "pypi.org:443",
+            "*.",
+            "*example.com",
+            "**.example.com",
+            "foo.*.example.com",
+            "-bad.example.com",
+        ],
+    )
+    def test_invalid_grammar_rejected(self, name: str) -> None:
+        with pytest.raises(ValueError, match="DNS-1123 subdomain"):
+            EgressRule(dns_name=name)
+
     def test_frozen(self) -> None:
         rule = EgressRule(dns_name="pypi.org")
         with pytest.raises(AttributeError):

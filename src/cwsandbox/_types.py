@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import re
 import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -250,6 +251,16 @@ class Service:
                 raise ValueError("Service.protocol must be unset or TCP when endpoint is set")
 
 
+# DNS-1123 subdomain, matching k8s IsDNS1123Subdomain used by the gateway.
+_DNS1123_LABEL = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+_DNS1123_SUBDOMAIN_RE = re.compile(rf"^{_DNS1123_LABEL}(?:\.{_DNS1123_LABEL})*$")
+_DNS1123_SUBDOMAIN_MAX = 253
+
+
+def _is_dns1123_subdomain(name: str) -> bool:
+    return len(name) <= _DNS1123_SUBDOMAIN_MAX and _DNS1123_SUBDOMAIN_RE.fullmatch(name) is not None
+
+
 @dataclass(frozen=True, kw_only=True)
 class EgressRule:
     """One create-time egress destination.
@@ -271,6 +282,15 @@ class EgressRule:
         if name == "*":
             raise ValueError(
                 'EgressRule.dns_name cannot be "*"; that is a policy ceiling, not a sandbox grant'
+            )
+        if name.startswith("*."):
+            valid = len(name) <= _DNS1123_SUBDOMAIN_MAX and _is_dns1123_subdomain(name[2:])
+        else:
+            valid = _is_dns1123_subdomain(name)
+        if not valid:
+            raise ValueError(
+                "EgressRule.dns_name must be a DNS-1123 subdomain or a single "
+                "leftmost wildcard (*.example.com)"
             )
         object.__setattr__(self, "dns_name", name)
 

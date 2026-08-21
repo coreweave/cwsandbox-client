@@ -2939,8 +2939,8 @@ class Sandbox:
     def dns_egress_names(self) -> tuple[str, ...]:
         """Hostnames granted at create, echoed from ``status.effective_egress``.
 
-        Empty until a create/Get/list response reports name rules, when none
-        were requested, or after the sandbox stops.
+        Empty until a create/Get/list response reports name rules, or when
+        none were requested. Terminal sandboxes keep the last echoed names.
         """
         return self._dns_egress_names
 

@@ -16,8 +16,18 @@ from __future__ import annotations
 import pytest
 
 from cwsandbox import EgressRule, NetworkOptions, Sandbox, SandboxDefaults
-from cwsandbox._error_info import CWSANDBOX_NO_SUITABLE_RUNNER
+from cwsandbox._error_info import (
+    CWSANDBOX_NO_SUITABLE_RUNNER,
+    CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+)
 from cwsandbox.exceptions import SandboxError, SandboxValidationError
+
+_SKIP_PLACEMENT_REASONS = frozenset(
+    {
+        CWSANDBOX_NO_SUITABLE_RUNNER,
+        CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+    }
+)
 
 GRANTED_EXACT = "pypi.org"
 GRANTED_WILD = "*.pypi.org"
@@ -30,8 +40,8 @@ def _skip_if_dns_egress_unavailable(exc: BaseException) -> None:
         fields = " ".join(v.field for v in exc.field_violations)
         if "dns_name" in f"{fields} {exc}".lower():
             pytest.skip(f"runner policy does not admit DNS-name egress: {exc}")
-    if isinstance(exc, SandboxError) and exc.reason == CWSANDBOX_NO_SUITABLE_RUNNER:
-        pytest.skip(f"no runner advertises DNS-name egress: {exc}")
+    if isinstance(exc, SandboxError) and exc.reason in _SKIP_PLACEMENT_REASONS:
+        pytest.skip(f"no runner can host DNS-name egress: {exc}")
 
 
 def _https_get(sandbox: Sandbox, url: str, *, timeout: float) -> int:
