@@ -67,6 +67,7 @@ Properties:
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
 - `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
+- `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
 
@@ -75,7 +76,7 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 - `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
-- `network` - `NetworkOptions` deny flags only (`deny_egress` / `deny_ingress`), or dict
+- `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) and optional create-time hostname grants (`egress=[EgressRule(dns_name=...)]`), or dict
 - `volumes` - Named scratch volumes via `ScratchVolumeOptions`
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
@@ -130,7 +131,7 @@ Fields (all optional with sensible defaults):
 - `placement_mode` - `PlacementMode` or string (`serverless` / `cks`)
 - `placement_spillover` - `PlacementSpillover` (default `strict`); see advanced kwargs above
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
-- `network` - Deny-flag `NetworkOptions`
+- `network` - Deny-flag `NetworkOptions` plus optional `egress` hostname grants
 - `services` - Tuple of typed `Service` ports
 - `volumes` - Tuple of `ScratchVolumeOptions` for named FSS mounts
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
@@ -203,7 +204,20 @@ sandbox = Sandbox.run(
 )
 ```
 
-**`NetworkOptions`** (`_types.py`): Deny-flag network options only (`deny_egress`, `deny_ingress`). Port exposure is via `services=`, not this type.
+**`NetworkOptions`** / **`EgressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`) plus create-time HTTPS hostname grants via `egress=[EgressRule(dns_name=...)]`. Exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. Names are frozen at create. Port exposure is via `services=`, not this type.
+
+```python
+from cwsandbox import EgressRule, NetworkOptions, Sandbox
+
+sandbox = Sandbox.run(
+    network=NetworkOptions(
+        egress=[
+            EgressRule(dns_name="pypi.org"),
+            EgressRule(dns_name="*.pypi.org"),
+        ],
+    ),
+)
+```
 
 **`Secret`** (`_types.py`): Frozen dataclass for injecting secrets from secret stores into sandbox environment variables. The `secrets` parameter accepts `Secret` instances or plain dicts (which are automatically converted via `Secret(**d)`).
 

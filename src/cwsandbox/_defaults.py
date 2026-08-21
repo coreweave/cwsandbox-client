@@ -292,7 +292,8 @@ class SandboxDefaults:
             sandboxes require ``STRICT``.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
-        network: Deny-flag network options via ``NetworkOptions``.
+        network: Deny-flag network options and optional create-time hostname
+            grants via ``NetworkOptions``.
         services: Typed service ports (``Service``) for PUBLIC/PRIVATE/CUSTOM.
         volumes: Named scratch volumes (``ScratchVolumeOptions``) for FSS mounts.
         file_system_snapshot: Convenience single-mount FSS options via
