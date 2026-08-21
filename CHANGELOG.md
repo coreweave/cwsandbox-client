@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.6.0 (2026-08-21)
+
+### Features
+
+- Add DNS-name HTTPS egress grants on sandbox create
+  ([#156](https://github.com/coreweave/cwsandbox-client/pull/156),
+  [`e13b68e`](https://github.com/coreweave/cwsandbox-client/commit/e13b68e22f07e9a0a4f61ade293988c6a5fcbfe8))
+
+* feat: add DNS-name HTTPS egress grants on sandbox create
+
+Callers can declare exact or one-label wildcard hostnames at create so the sandbox can reach those
+  names over HTTPS. Deny-all egress cannot be combined with a hostname list, and "*" is rejected
+  because it is a policy ceiling.
+
+* fix: enforce DNS-name grammar and skip unsatisfiable placement
+
+Reject invalid hostnames on EgressRule instead of waiting for create. Keep last-echoed names after
+  stop, and skip e2e when placement cannot satisfy a name grant.
+
+
 ## v1.5.0 (2026-08-19)
 
 ### Features
