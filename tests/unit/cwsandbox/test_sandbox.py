@@ -19,6 +19,7 @@ import grpc.aio
 import pytest
 
 from cwsandbox import (
+    EgressRule,
     Endpoint,
     EndpointAuth,
     EndpointKind,
@@ -393,6 +394,62 @@ class TestSandboxRun:
         assert spec.network.deny_egress is True
         assert spec.network.deny_ingress is False
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_dns_name_egress(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            network=NetworkOptions(
+                egress=[
+                    EgressRule(dns_name="pypi.org"),
+                    {"dns_name": "*.pypi.org"},
+                ]
+            ),
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        names = [rule.dns_name for rule in request.sandbox.spec.network.egress]
+        assert names == ["pypi.org", "*.pypi.org"]
+        assert request.sandbox.spec.network.egress[0].WhichOneof("destination") == "dns_name"
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_dns_name_egress_from_network_dict(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            network={"egress": [{"dns_name": "pypi.org"}]},
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        assert [rule.dns_name for rule in request.sandbox.spec.network.egress] == ["pypi.org"]
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_echoes_dns_egress_names_from_status(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="dns-id",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_PENDING,
+                effective_egress=[
+                    sandbox_pb2.EgressRule(dns_name="pypi.org"),
+                    sandbox_pb2.EgressRule(dns_name="*.pypi.org"),
+                ],
+            ),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                network=NetworkOptions(egress=[EgressRule(dns_name="pypi.org")]),
+            )
+
+        assert sandbox.dns_egress_names == ("pypi.org", "*.pypi.org")
+        sandbox._state = _Terminal(sandbox_id="dns-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_https_open_endpoint(self) -> None:
         from cwsandbox._proto import sandbox_pb2

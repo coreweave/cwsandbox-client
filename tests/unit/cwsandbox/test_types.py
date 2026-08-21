@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cwsandbox._types import (
+    EgressRule,
     Endpoint,
     EndpointAuth,
     EndpointKind,
@@ -117,13 +118,56 @@ class TestOperationRef:
             assert result == 42
 
 
+class TestEgressRule:
+    """Tests for create-time DNS-name egress grants."""
+
+    def test_normalizes_dns_name(self) -> None:
+        rule = EgressRule(dns_name="  PyPI.org ")
+        assert rule.dns_name == "pypi.org"
+
+    def test_wildcard_allowed(self) -> None:
+        assert EgressRule(dns_name="*.pypi.org").dns_name == "*.pypi.org"
+
+    def test_empty_rejected(self) -> None:
+        with pytest.raises(ValueError, match="cannot be empty"):
+            EgressRule(dns_name="   ")
+
+    def test_star_ceiling_rejected(self) -> None:
+        with pytest.raises(ValueError, match="policy ceiling"):
+            EgressRule(dns_name="*")
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "*.*.pypi.org",
+            "*pypi.org",
+            "foo.*.com",
+            "pypi.org:443",
+            "*.",
+            "*example.com",
+            "**.example.com",
+            "foo.*.example.com",
+            "-bad.example.com",
+        ],
+    )
+    def test_invalid_grammar_rejected(self, name: str) -> None:
+        with pytest.raises(ValueError, match="DNS-1123 subdomain"):
+            EgressRule(dns_name=name)
+
+    def test_frozen(self) -> None:
+        rule = EgressRule(dns_name="pypi.org")
+        with pytest.raises(AttributeError):
+            rule.dns_name = "example.com"  # type: ignore[misc]
+
+
 class TestNetworkOptions:
-    """Tests for v1 NetworkOptions (deny flags; typed services are separate)."""
+    """Tests for v1 NetworkOptions (deny flags and hostname grants)."""
 
     def test_default_values_all_none(self) -> None:
         opts = NetworkOptions()
         assert opts.deny_egress is None
         assert opts.deny_ingress is None
+        assert opts.egress is None
 
     def test_deny_flags(self) -> None:
         opts = NetworkOptions(deny_egress=True, deny_ingress=False)
@@ -143,6 +187,21 @@ class TestNetworkOptions:
         assert opts1 != opts3
         hash(opts1)
         assert "NetworkOptions" in repr(opts1)
+
+    def test_egress_coerces_dicts_and_lists(self) -> None:
+        opts = NetworkOptions(egress=[{"dns_name": "pypi.org"}, EgressRule(dns_name="*.pypi.org")])
+        assert opts.egress == (
+            EgressRule(dns_name="pypi.org"),
+            EgressRule(dns_name="*.pypi.org"),
+        )
+
+    def test_deny_egress_with_names_rejected(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined"):
+            NetworkOptions(deny_egress=True, egress=[EgressRule(dns_name="pypi.org")])
+
+    def test_egress_rejects_bare_string(self) -> None:
+        with pytest.raises(TypeError, match="sequence"):
+            NetworkOptions(egress="pypi.org")  # type: ignore[arg-type]
 
 
 class TestService:

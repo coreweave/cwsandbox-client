@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import re
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -250,19 +251,96 @@ class Service:
                 raise ValueError("Service.protocol must be unset or TCP when endpoint is set")
 
 
+# DNS-1123 subdomain, matching k8s IsDNS1123Subdomain used by the gateway.
+_DNS1123_LABEL = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+_DNS1123_SUBDOMAIN_RE = re.compile(rf"^{_DNS1123_LABEL}(?:\.{_DNS1123_LABEL})*$")
+_DNS1123_SUBDOMAIN_MAX = 253
+
+
+def _is_dns1123_subdomain(name: str) -> bool:
+    return len(name) <= _DNS1123_SUBDOMAIN_MAX and _DNS1123_SUBDOMAIN_RE.fullmatch(name) is not None
+
+
+@dataclass(frozen=True, kw_only=True)
+class EgressRule:
+    """One create-time egress destination.
+
+    DNS-name HTTPS grants are the supported destination on this type. Exact
+    names (``pypi.org``) or a single leftmost wildcard (``*.pypi.org``).
+    ``"*"`` is a policy ceiling, not a sandbox grant.
+
+    Attributes:
+        dns_name: Hostname to grant for HTTPS (TCP 443).
+    """
+
+    dns_name: str
+
+    def __post_init__(self) -> None:
+        name = self.dns_name.strip().lower()
+        if not name:
+            raise ValueError("EgressRule.dns_name cannot be empty")
+        if name == "*":
+            raise ValueError(
+                'EgressRule.dns_name cannot be "*"; that is a policy ceiling, not a sandbox grant'
+            )
+        if name.startswith("*."):
+            valid = len(name) <= _DNS1123_SUBDOMAIN_MAX and _is_dns1123_subdomain(name[2:])
+        else:
+            valid = _is_dns1123_subdomain(name)
+        if not valid:
+            raise ValueError(
+                "EgressRule.dns_name must be a DNS-1123 subdomain or a single "
+                "leftmost wildcard (*.example.com)"
+            )
+        object.__setattr__(self, "dns_name", name)
+
+
+def _coerce_egress_rule(value: EgressRule | Mapping[str, Any]) -> EgressRule:
+    if isinstance(value, EgressRule):
+        return value
+    if isinstance(value, Mapping):
+        return EgressRule(**value)
+    raise TypeError(f"egress entries must be EgressRule or dict, got {type(value).__name__}")
+
+
 @dataclass(frozen=True, kw_only=True)
 class NetworkOptions:
-    """Network deny flags for sandbox egress/ingress policy.
+    """Network deny flags and create-time hostname egress grants.
 
-    Port exposure uses typed ``services=``; this type only carries deny flags.
+    Port exposure uses typed ``services=``. ``egress`` lists hostnames the
+    sandbox may reach over HTTPS (TCP 443); the list is frozen at create.
 
     Attributes:
         deny_egress: When True, deny all declared egress (policy default unused).
+            Mutually exclusive with a non-empty ``egress`` list.
         deny_ingress: When True, deny CUSTOM ingress (policy default unused).
+        egress: Hostname grants (``EgressRule`` or dict). Empty/None leaves
+            the runner policy default in effect.
+
+    Examples:
+        Grant PyPI over HTTPS::
+
+            NetworkOptions(
+                egress=[
+                    EgressRule(dns_name="pypi.org"),
+                    EgressRule(dns_name="*.pypi.org"),
+                ],
+            )
     """
 
     deny_egress: bool | None = None
     deny_ingress: bool | None = None
+    egress: Sequence[EgressRule | Mapping[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.egress is None:
+            return
+        if isinstance(self.egress, (str, bytes)):
+            raise TypeError("egress must be a sequence of EgressRule or dict, not a string")
+        rules = tuple(_coerce_egress_rule(rule) for rule in self.egress)
+        object.__setattr__(self, "egress", rules)
+        if self.deny_egress is True and rules:
+            raise ValueError("NetworkOptions.deny_egress cannot be combined with egress rules")
 
 
 @dataclass(frozen=True, kw_only=True)

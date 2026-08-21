@@ -113,6 +113,7 @@ from cwsandbox._proto import (
 )
 from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
+    EgressRule,
     Endpoint,
     EndpointAuth,
     EndpointKind,
@@ -1363,6 +1364,7 @@ class Sandbox:
         runner_id: Runner ID where sandbox is running.
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
+        dns_egress_names: Hostnames granted at create (from status.effective_egress).
     """
 
     def __init__(
@@ -1428,8 +1430,9 @@ class Sandbox:
                 use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
-            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
-                ``services=``.
+            network: ``NetworkOptions`` (or dict) with deny flags and optional
+                create-time hostname grants (``egress=[EgressRule(dns_name=...)]``).
+                Port exposure uses ``services=``.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict`` (no create retry). Non-strict modes retry CreateSandbox
@@ -1531,6 +1534,7 @@ class Sandbox:
         self._image_pull_credentials: ImagePullCredentials | None = None
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
+        self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         # Use explicit resources or fall back to defaults, then normalize
         effective_resources = (
@@ -1762,8 +1766,9 @@ class Sandbox:
                 use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
-            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
-                ``services=``.
+            network: ``NetworkOptions`` (or dict) with deny flags and optional
+                create-time hostname grants (``egress=[EgressRule(dns_name=...)]``).
+                Port exposure uses ``services=``.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict``. See ``Sandbox.__init__``.
@@ -1991,6 +1996,7 @@ class Sandbox:
             else ()
         )
         sandbox._service_urls = ()
+        sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
         sandbox._observed_file_op_cap_bytes = None
@@ -2928,6 +2934,15 @@ class Sandbox:
         ``exposed_ports`` when visibility is not ``UNSPECIFIED``.
         """
         return self._service_urls
+
+    @property
+    def dns_egress_names(self) -> tuple[str, ...]:
+        """Hostnames granted at create, echoed from ``status.effective_egress``.
+
+        Empty until a create/Get/list response reports name rules, or when
+        none were requested. Terminal sandboxes keep the last echoed names.
+        """
+        return self._dns_egress_names
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
@@ -3879,6 +3894,13 @@ class Sandbox:
                 network_proto.deny_egress = network.deny_egress
             if network.deny_ingress is not None:
                 network_proto.deny_ingress = network.deny_ingress
+            for rule in network.egress or ():
+                if not isinstance(rule, EgressRule):
+                    raise TypeError(
+                        f"egress entries must be EgressRule or dict, got {type(rule).__name__}"
+                    )
+                proto_rule = network_proto.egress.add()
+                proto_rule.dns_name = rule.dns_name
 
         # Reject removed kwargs loudly.
         for removed in ("s3_mount", "max_timeout_seconds", "profile_ids", "profile_names", "ports"):
@@ -4054,6 +4076,9 @@ class Sandbox:
             if url:
                 service_urls.append((s.port, s.name, url))
         self._service_urls = tuple(service_urls)
+        self._dns_egress_names = tuple(
+            rule.dns_name for rule in status.effective_egress if rule.dns_name
+        )
         if status.services:
             self._exposed_ports = tuple(
                 (s.port, s.name)

@@ -10,6 +10,7 @@ import math
 import pytest
 
 from cwsandbox import (
+    EgressRule,
     FileSystemSnapshotOptions,
     NetworkOptions,
     ResourceOptions,
@@ -469,6 +470,16 @@ class TestSandboxDefaultsFromDict:
         assert defaults.network is not None
         assert isinstance(defaults.network, NetworkOptions)
         assert defaults.network.deny_egress is True
+
+    def test_from_dict_coerces_network_egress_dicts(self) -> None:
+        """from_dict converts nested egress dicts to EgressRule."""
+        defaults = SandboxDefaults.from_dict(
+            {
+                "network": {"egress": [{"dns_name": "pypi.org"}]},
+            }
+        )
+        assert defaults.network is not None
+        assert defaults.network.egress == (EgressRule(dns_name="pypi.org"),)
 
     def test_from_dict_coerces_secrets_dicts(self) -> None:
         """from_dict converts secret dicts to Secret objects."""

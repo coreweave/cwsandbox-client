@@ -371,8 +371,8 @@ class Session:
                 use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
-            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
-                ``services=``.
+            network: ``NetworkOptions`` (or dict) with deny flags and optional
+                create-time hostname grants. Port exposure uses ``services=``.
             file_system_snapshot: Convenience single-mount FSS options
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.
@@ -714,8 +714,8 @@ class Session:
                 use ``sandbox.write_file()`` after the sandbox is running.
             s3_mount: Removed in 1.x; passing a value raises ``TypeError``.
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
-            network: Deny-flag ``NetworkOptions`` (or dict). Port exposure uses
-                ``services=``.
+            network: ``NetworkOptions`` (or dict) with deny flags and optional
+                create-time hostname grants. Port exposure uses ``services=``.
             file_system_snapshot: Convenience single-mount FSS options
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.

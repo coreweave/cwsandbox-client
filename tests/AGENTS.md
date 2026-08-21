@@ -146,7 +146,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | `test_sandbox.py` | Sandbox class, status handling, exec, file ops |
 | `test_session.py` | Session class, sandbox management, context managers, reporter lifecycle |
 | `test_wandb.py` | WandbReporter metrics, per-sandbox tracking, lazy run detection |
-| `test_types.py` | OperationRef, ProcessResult, Process, StreamReader |
+| `test_types.py` | OperationRef, ProcessResult, Process, StreamReader, NetworkOptions, EgressRule |
 | `test_utilities.py` | cwsandbox.results(), cwsandbox.wait() utilities |
 
 ### Integration Test Files (`tests/integration/cwsandbox/`)
@@ -154,6 +154,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | File | Coverage |
 |------|----------|
 | `test_sandbox.py` | Sandbox lifecycle, file ops, exec. Uses `require_auth`. |
+| `test_dns_egress.py` | DNS-name HTTPS egress. Uses `require_auth`; skips when no runner admits names. |
 | `test_session.py` | Session management, function execution. Uses `require_auth`. |
 | `test_file_system_snapshot.py` | FSS snapshot/fork/restore/management. Uses `require_auth`; skips gracefully on `SnapshotNotSupportedError` when the org is not FSS-enabled. |
 | `test_wandb.py` | W&B metrics logging. Uses `require_auth`; live checks also need `WANDB_API_KEY`. |
