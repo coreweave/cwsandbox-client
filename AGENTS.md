@@ -80,7 +80,7 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox at startup (read-only at runtime; use `write_file()` for writable files)
-- `image_pull_credentials` - Private registry pull credentials (not with template sandboxes)
+- `image_pull_credentials` - Private registry pull credentials. On `run_from_template()`, requires `container_image` (whole-container replace); omit to keep a credential stored on the template
 - `secrets` - Create-time secret inject from secret stores as env vars, via `Secret` or dict
 - `environment_variables` - Environment variables to inject (merges with defaults)
 - `annotations` - Kubernetes pod annotations (merges with defaults, explicit keys win)
