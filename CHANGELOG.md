@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.7.0 (2026-08-24)
+
+### Features
+
+- **sandbox**: Allow pull credentials on templates
+  ([#157](https://github.com/coreweave/cwsandbox-client/pull/157),
+  [`f8bc293`](https://github.com/coreweave/cwsandbox-client/commit/f8bc293d452b742d1709eed4c5d807334e693db7))
+
+* feat(sandbox): allow pull credentials on templates
+
+CreateSandboxFromTemplate now accepts image_pull_credentials on a container overlay. A
+  credentials-only patch would replace the whole container and drop image and command, so the SDK
+  still requires container_image — the same rule as other container-field overrides.
+
+* test(sandbox): cover template pull credentials in e2e
+
+Unit tests only proved the request shape. Add live create-from-template coverage for a credential
+  stored on the template and one sent as a full container overlay, skipping when the
+  private-registry fixture is not configured.
+
+* test(sandbox): drop template pull-credential integration tests
+
+Those tests created templates over gRPC, which this client does not own and which the sandbox API
+  host does not serve.
+
+
 ## v1.6.0 (2026-08-21)
 
 ### Features
