@@ -156,7 +156,6 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | `test_sandbox.py` | Sandbox lifecycle, file ops, exec. Uses `require_auth`. |
 | `test_session.py` | Session management, function execution. Uses `require_auth`. |
 | `test_file_system_snapshot.py` | FSS snapshot/fork/restore/management. Uses `require_auth`; skips gracefully on `SnapshotNotSupportedError` when the org is not FSS-enabled. |
-| `test_image_pull_credentials.py` | Template create with `image_pull_credentials` (stored on the template, or sent as a full container overlay). Uses `require_auth`; skips unless the private-registry env vars in `.env.example` are set, or when the key cannot write templates. |
 | `test_wandb.py` | W&B metrics logging. Uses `require_auth`; live checks also need `WANDB_API_KEY`. |
 
 ## Parallel Execution
