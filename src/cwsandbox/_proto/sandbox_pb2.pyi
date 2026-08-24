@@ -246,7 +246,7 @@ class Container(_message.Message):
     def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ...) -> None: ...
 
 class PartialContainer(_message.Message):
-    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context")
+    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -266,6 +266,7 @@ class PartialContainer(_message.Message):
     WORKING_DIR_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_REQUIREMENTS_FIELD_NUMBER: _ClassVar[int]
     SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     name: str
     image: str
     command: str
@@ -278,7 +279,8 @@ class PartialContainer(_message.Message):
     working_dir: str
     resource_requirements: ResourceRequirements
     security_context: SecurityContext
-    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ...) -> None: ...
+    image_pull_credentials: ImagePullCredentials
+    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ...) -> None: ...
 
 class PartialSandboxSpec(_message.Message):
     __slots__ = ("containers", "primary_container", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "init_containers", "instance_type", "mode", "runtime_class")

@@ -649,10 +649,8 @@ class TestSandboxRun:
                 command="/bin/sh",
             )
 
-    def test_run_from_template_rejects_image_pull_credentials(self) -> None:
-        with pytest.raises(
-            TypeError, match="image_pull_credentials is not supported with template sandboxes"
-        ):
+    def test_run_from_template_image_pull_credentials_without_image_raises(self) -> None:
+        with pytest.raises(TypeError, match="require container_image"):
             Sandbox.run_from_template(
                 "template-123",
                 image_pull_credentials=ImagePullCredentials(
@@ -661,6 +659,27 @@ class TestSandboxRun:
                     name="registry-creds",
                 ),
             )
+
+    def test_run_from_template_maps_image_pull_credentials(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            container_image="ghcr.io/org/private:1",
+            image_pull_credentials=ImagePullCredentials(
+                registry="ghcr.io",
+                store="wandb",
+                name="registry-creds",
+                field="token",
+            ),
+        )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        credentials = request.overrides.containers[0].image_pull_credentials
+        assert request.overrides.containers[0].image == "ghcr.io/org/private:1"
+        assert credentials.registry == "ghcr.io"
+        assert credentials.credentials.store_name == "wandb"
+        assert credentials.credentials.path == "registry-creds"
+        assert credentials.credentials.field == "token"
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     @pytest.mark.parametrize(
         ("kwargs", "message"),

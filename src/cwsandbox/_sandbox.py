@@ -1611,8 +1611,6 @@ class Sandbox:
         if template_id is not None:
             self._template_id = template_id
         if image_pull_credentials is not None:
-            if from_template:
-                raise TypeError("image_pull_credentials is not supported with template sandboxes")
             if isinstance(image_pull_credentials, dict):
                 image_pull_credentials = ImagePullCredentials(**image_pull_credentials)
             self._image_pull_credentials = image_pull_credentials
@@ -1876,7 +1874,8 @@ class Sandbox:
                 is no fetch-and-merge. Other container-field overrides
                 (``command``, ``args``, ``environment_variables``,
                 ``secrets``, ``resources``, ``mounted_files``, ``volumes``,
-                ``file_system_snapshot``) also require ``container_image``:
+                ``file_system_snapshot``, ``image_pull_credentials``) also
+                require ``container_image``:
                 the API replaces the whole container list and rejects a
                 sparse patch. Session/default tags are merged and sent as a
                 replace-on-presence override so ``list()``/``adopt`` can find
@@ -3961,11 +3960,6 @@ class Sandbox:
         overrides_kwargs: dict[str, Any],
     ) -> sandbox_pb2.CreateSandboxFromTemplateRequest:
         """Build CreateSandboxFromTemplate with replace-on-presence overrides."""
-        if self._image_pull_credentials is not None or overrides_kwargs.get(
-            "image_pull_credentials"
-        ):
-            raise TypeError("image_pull_credentials is not supported with template sandboxes")
-
         explicit_keys = set(overrides_kwargs)
         create_req = self._build_create_request(
             request_id=request_id, start_kwargs=dict(overrides_kwargs)
@@ -3980,6 +3974,7 @@ class Sandbox:
             or bool({"volumes", "file_system_snapshot"} & explicit_keys)
             or "secrets" in explicit_keys
             or "resources" in explicit_keys
+            or self._image_pull_credentials is not None
         )
         if container_field_overrides and self._container_image is None:
             raise TypeError(
@@ -4010,6 +4005,8 @@ class Sandbox:
                 container.secret_stores.extend(source_container.secret_stores)
             if "resources" in explicit_keys and source_container.HasField("resource_requirements"):
                 container.resource_requirements.CopyFrom(source_container.resource_requirements)
+            if source_container.HasField("image_pull_credentials"):
+                container.image_pull_credentials.CopyFrom(source_container.image_pull_credentials)
         else:
             container = sandbox_pb2.PartialContainer()
 
