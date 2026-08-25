@@ -89,7 +89,7 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runner_ids=None, show_terminated=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `profile_ids` / `profile_names` raise `TypeError`.
+- `Sandbox.list(tags=None, status=None, runner_ids=None, show_terminated=False, include_stopped=None, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `include_stopped` is accepted as an alias (`wandb==0.28.2` CLI). `profile_ids` / `profile_names` raise `TypeError`.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 - `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
@@ -104,7 +104,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runner_ids=None, show_terminated=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `show_terminated=True` to include terminal sandboxes.
+- `session.list(tags=None, status=None, runner_ids=None, show_terminated=False, include_stopped=None, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `show_terminated=True` to include terminal sandboxes. `include_stopped` is accepted as an alias.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:

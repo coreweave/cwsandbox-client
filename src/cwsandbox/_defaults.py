@@ -208,6 +208,18 @@ def _merge_dicts(base: dict[str, str], additional: dict[str, str] | None) -> dic
     return merged
 
 
+def _resolve_show_terminated(show_terminated: bool, include_stopped: bool | None) -> bool:
+    """Merge the v1 list flag with the pre-1.0 ``include_stopped`` alias.
+
+    ``wandb==0.28.2`` still calls ``Sandbox.list(include_stopped=...)``. Treat
+    either flag being True as include-terminal. Omitted ``include_stopped``
+    leaves ``show_terminated`` unchanged.
+    """
+    if include_stopped is None:
+        return show_terminated
+    return show_terminated or include_stopped
+
+
 def _normalize_tags(tags: Iterable[str] | None) -> tuple[str, ...]:
     """Normalize tag sequences and reject bare strings.
 

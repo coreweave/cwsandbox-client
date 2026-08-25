@@ -10,7 +10,12 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults, _resolve_selector
+from cwsandbox._defaults import (
+    DEFAULT_BASE_URL,
+    SandboxDefaults,
+    _resolve_selector,
+    _resolve_show_terminated,
+)
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
@@ -474,6 +479,7 @@ class Session:
         profile_names: builtins.list[str] | None = None,
         runner_ids: builtins.list[str] | None = None,
         show_terminated: bool = False,
+        include_stopped: bool | None = None,
         adopt: bool = False,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List sandboxes, optionally adopting them into this session.
@@ -485,6 +491,7 @@ class Session:
         By default, only active (non-terminal) sandboxes are returned.
         Set ``show_terminated=True`` to widen the search to include terminal
         sandboxes (completed, failed, terminated).
+        ``include_stopped`` is accepted as an alias for ``show_terminated``.
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
@@ -496,6 +503,8 @@ class Session:
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
+            include_stopped: Alias for ``show_terminated``. Either flag being
+                True includes terminal sandboxes.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
 
@@ -530,7 +539,7 @@ class Session:
                 profile_ids=profile_ids,
                 profile_names=profile_names,
                 runner_ids=runner_ids,
-                show_terminated=show_terminated,
+                show_terminated=_resolve_show_terminated(show_terminated, include_stopped),
                 adopt=adopt,
             )
         )

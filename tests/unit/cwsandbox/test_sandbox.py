@@ -4090,6 +4090,50 @@ class TestSandboxList:
             assert call_args.show_terminated is False
 
     @pytest.mark.asyncio
+    async def test_list_include_stopped_alias_sets_show_terminated(self, mock_api_key: str) -> None:
+        """wandb 0.28.2 CLI still passes include_stopped=True."""
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list(include_stopped=True)
+
+            call_args = mock_stub.ListSandboxes.call_args[0][0]
+            assert call_args.show_terminated is True
+
+    @pytest.mark.asyncio
+    async def test_list_include_stopped_false_does_not_set_field(self, mock_api_key: str) -> None:
+        """wandb 0.28.2 CLI always passes include_stopped, default False."""
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list(include_stopped=False)
+
+            call_args = mock_stub.ListSandboxes.call_args[0][0]
+            assert call_args.show_terminated is False
+
+    @pytest.mark.asyncio
     async def test_list_propagates_poll_kwargs_to_returned_sandboxes(
         self, mock_api_key: str
     ) -> None:

@@ -742,6 +742,32 @@ class TestSessionList:
             assert call_args.show_terminated is True
 
     @pytest.mark.asyncio
+    async def test_list_include_stopped_alias_passes_to_sandbox_list(
+        self, mock_api_key: str
+    ) -> None:
+        """Test session.list(include_stopped=True) aliases to show_terminated."""
+        from cwsandbox._proto import sandbox_pb2
+
+        session = Session()
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await session.list(include_stopped=True)
+
+            call_args = mock_stub.ListSandboxes.call_args[0][0]
+            assert call_args.show_terminated is True
+
+    @pytest.mark.asyncio
     async def test_list_propagates_poll_defaults_to_sandboxes(self, mock_api_key: str) -> None:
         """session.list() passes the defaults' poll fields to returned Sandboxes."""
         from google.protobuf import timestamp_pb2

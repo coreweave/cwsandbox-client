@@ -68,6 +68,7 @@ from cwsandbox._defaults import (
     SandboxDefaults,
     _normalize_tags,
     _resolve_selector,
+    _resolve_show_terminated,
     _validate_poll_config,
 )
 from cwsandbox._error_info import (
@@ -2051,6 +2052,7 @@ class Sandbox:
         profile_names: list[str] | None = None,
         runner_ids: list[str] | None = None,
         show_terminated: bool = False,
+        include_stopped: bool | None = None,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
@@ -2064,6 +2066,8 @@ class Sandbox:
         By default, only active (non-terminal) sandboxes are returned.
         Set ``show_terminated=True`` to widen the search to include terminal
         sandboxes (completed, failed, terminated).
+        ``include_stopped`` is accepted as an alias for ``show_terminated``
+        (``wandb==0.28.2`` CLI still passes that name).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
@@ -2075,6 +2079,8 @@ class Sandbox:
             runner_ids: Filter by runner IDs
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
+            include_stopped: Alias for ``show_terminated``. Either flag being
+                True includes terminal sandboxes.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             timeout_seconds: Request timeout (default: 300s)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
@@ -2114,7 +2120,7 @@ class Sandbox:
                 profile_ids=profile_ids,
                 profile_names=profile_names,
                 runner_ids=runner_ids,
-                show_terminated=show_terminated,
+                show_terminated=_resolve_show_terminated(show_terminated, include_stopped),
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,

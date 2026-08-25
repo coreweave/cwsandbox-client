@@ -709,3 +709,23 @@ class TestValidatePollConfig:
         from cwsandbox._defaults import _validate_poll_config
 
         _validate_poll_config(30.0, 0.001)  # no raise, any positive finite value
+
+
+class TestResolveShowTerminated:
+    def test_omitted_alias_keeps_show_terminated(self) -> None:
+        from cwsandbox._defaults import _resolve_show_terminated
+
+        assert _resolve_show_terminated(False, None) is False
+        assert _resolve_show_terminated(True, None) is True
+
+    def test_alias_true_includes_terminated(self) -> None:
+        from cwsandbox._defaults import _resolve_show_terminated
+
+        assert _resolve_show_terminated(False, True) is True
+        assert _resolve_show_terminated(True, True) is True
+
+    def test_alias_false_does_not_override_show_terminated(self) -> None:
+        from cwsandbox._defaults import _resolve_show_terminated
+
+        assert _resolve_show_terminated(False, False) is False
+        assert _resolve_show_terminated(True, False) is True
