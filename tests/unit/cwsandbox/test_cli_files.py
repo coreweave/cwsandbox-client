@@ -49,6 +49,7 @@ class TestFilesCommand:
         mock_sandbox.read_file.assert_called_once_with(
             "/tmp/data.txt",
             timeout_seconds=None,
+            container=None,
         )
 
     def test_files_read_writes_output_file(self, tmp_path: Path) -> None:
@@ -82,6 +83,25 @@ class TestFilesCommand:
         mock_sandbox.read_file.assert_called_once_with(
             "/tmp/data.txt",
             timeout_seconds=5.0,
+            container=None,
+        )
+
+    def test_files_read_with_container(self) -> None:
+        """cwsandbox files read --container passes container to read_file."""
+        mock_sandbox = MagicMock()
+        mock_sandbox.read_file.return_value = make_operation_ref(b"ok")
+
+        with _patch_sandbox(mock_sandbox):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["files", "read", "sb-1", "/tmp/data.txt", "--container", "cache"]
+            )
+
+        assert result.exit_code == 0
+        mock_sandbox.read_file.assert_called_once_with(
+            "/tmp/data.txt",
+            timeout_seconds=None,
+            container="cache",
         )
 
     def test_files_write_uploads_local_file(self, tmp_path: Path) -> None:
@@ -103,6 +123,7 @@ class TestFilesCommand:
             "/tmp/data.txt",
             b"hello\n",
             timeout_seconds=None,
+            container=None,
         )
 
     def test_files_write_with_options(self, tmp_path: Path) -> None:
@@ -134,6 +155,38 @@ class TestFilesCommand:
             "/tmp/data.txt",
             b"hello",
             timeout_seconds=7.0,
+            container=None,
+        )
+
+    def test_files_write_with_container(self, tmp_path: Path) -> None:
+        """cwsandbox files write --container passes container to write_file."""
+        local_path = tmp_path / "data.txt"
+        local_path.write_bytes(b"hello")
+        mock_sandbox = MagicMock()
+        mock_sandbox.write_file.return_value = make_operation_ref(None)
+
+        with _patch_sandbox(mock_sandbox):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "files",
+                    "write",
+                    "sb-1",
+                    "/tmp/data.txt",
+                    str(local_path),
+                    "--container",
+                    "cache",
+                    "--quiet",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_sandbox.write_file.assert_called_once_with(
+            "/tmp/data.txt",
+            b"hello",
+            timeout_seconds=None,
+            container="cache",
         )
 
     def test_files_read_sandbox_not_found(self) -> None:

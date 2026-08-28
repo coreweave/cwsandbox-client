@@ -37,8 +37,17 @@ def files() -> None:
     default=None,
     help="Timeout in seconds.",
 )
+@click.option(
+    "--container",
+    default=None,
+    help="Container name. Omit to target the primary.",
+)
 def read_file(
-    sandbox_id: str, remote_path: str, output_path: Path | None, timeout_seconds: float | None
+    sandbox_id: str,
+    remote_path: str,
+    output_path: Path | None,
+    timeout_seconds: float | None,
+    container: str | None,
 ) -> None:
     """Read a file from a sandbox.
 
@@ -46,7 +55,11 @@ def read_file(
     REMOTE_PATH is the file path inside the sandbox.
     """
     sandbox = Sandbox.from_id(sandbox_id).result()
-    data = sandbox.read_file(remote_path, timeout_seconds=timeout_seconds).result()
+    data = sandbox.read_file(
+        remote_path,
+        timeout_seconds=timeout_seconds,
+        container=container,
+    ).result()
 
     if output_path is not None:
         output_path.write_bytes(data)
@@ -74,12 +87,18 @@ def read_file(
     help="Timeout in seconds.",
 )
 @click.option("--quiet", "-q", is_flag=True, default=False, help="Suppress success output.")
+@click.option(
+    "--container",
+    default=None,
+    help="Container name. Omit to target the primary.",
+)
 def write_file(
     sandbox_id: str,
     remote_path: str,
     local_path: Path,
     timeout_seconds: float | None,
     quiet: bool,
+    container: str | None,
 ) -> None:
     """Write a local file into a sandbox.
 
@@ -89,7 +108,12 @@ def write_file(
     """
     data = local_path.read_bytes()
     sandbox = Sandbox.from_id(sandbox_id).result()
-    sandbox.write_file(remote_path, data, timeout_seconds=timeout_seconds).result()
+    sandbox.write_file(
+        remote_path,
+        data,
+        timeout_seconds=timeout_seconds,
+        container=container,
+    ).result()
 
     if not quiet:
         click.echo(f"Wrote {len(data)} bytes to {remote_path}.")

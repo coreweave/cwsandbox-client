@@ -109,6 +109,14 @@ def _bare_rpc_error(code: grpc.StatusCode, details: str = "boom") -> grpc.RpcErr
 
 
 class TestFileSystemSnapshotOptions:
+    def test_mount_path_optional(self) -> None:
+        opts = FileSystemSnapshotOptions(size="10Gi")
+        assert opts.mount_path is None
+        scratch = opts.to_scratch_volume()
+        assert scratch.mount_path is None
+        assert scratch.name == "workspace"
+        assert scratch.size == "10Gi"
+
     def test_minimal(self) -> None:
         opts = FileSystemSnapshotOptions(mount_path="/workspace")
         assert opts.mount_path == "/workspace"

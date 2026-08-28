@@ -25,10 +25,11 @@ from cwsandbox._discovery import (
 )
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
-from cwsandbox._sandbox import Sandbox, SandboxStatus
+from cwsandbox._sandbox import ContainerStatus, Sandbox, SandboxStatus
 from cwsandbox._session import Session
 from cwsandbox._types import (
     CidrBlock,
+    Container,
     DataPlaneMode,
     EgressRule,
     Endpoint,
@@ -67,6 +68,7 @@ from cwsandbox._types import (
     TenantScope,
     TerminalResult,
     TerminalSession,
+    VolumeMount,
 )
 from cwsandbox._volume import PvcVolumeSource, Volume, VolumeLocality, VolumeState
 from cwsandbox.exceptions import (
@@ -320,6 +322,8 @@ __all__ = [
     "CWSandboxError",
     "CWSandboxValidationError",
     "CidrBlock",
+    "Container",
+    "ContainerStatus",
     "DataPlaneMode",
     "DiscoveryError",
     "DiscoveryValidationError",
@@ -405,6 +409,7 @@ __all__ = [
     "VolumeError",
     "VolumeInUseError",
     "VolumeLocality",
+    "VolumeMount",
     "VolumeNotFoundError",
     "VolumeNotReadyError",
     "VolumeNotSnapshottableError",

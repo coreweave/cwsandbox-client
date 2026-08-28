@@ -15,6 +15,7 @@ from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults, _resolve_sele
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
+    Container,
     DataPlaneMode,
     ExecOutcome,
     FileSystemSnapshotOptions,
@@ -364,6 +365,7 @@ class Session:
         request_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
         auth: AuthConfig | None = None,
+        containers: Sequence[Container | Mapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
@@ -411,6 +413,8 @@ class Session:
                 Use for non-sensitive metadata only.
             secrets: Secrets to inject as environment variables.
                 Merged with session defaults (defaults first, then this list).
+            containers: Multi-container spec. Mutually exclusive with
+                single-container kwargs. Not used by ``@session.function()``.
 
         Returns:
             An unstarted Sandbox registered with the session.
@@ -487,6 +491,7 @@ class Session:
             request_timeout_seconds=effective_request_timeout,
             data_plane_mode=data_plane_mode,
             auth=auth,
+            containers=containers,
             defaults=self._defaults,
             _session=self,
         )
