@@ -149,7 +149,7 @@ Fields (all optional with sensible defaults):
 - `volumes` - Tuple of `ScratchVolumeOptions` / `RegisteredVolumeOptions` (`mount_path` optional on scratch)
 - `runtime_class`, `security_context`, `working_dir`, `object_storage_access` - Create-spec fields shared across sandboxes
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale; `mount_path` optional)
-- `containers` - Optional `tuple[Container, ...]`. Mutually exclusive with single-container fields on `Sandbox.run()` / `session.sandbox()`. Do not set this on defaults used with `@session.function()`.
+- `containers` - Optional `tuple[Container, ...]`. Mutually exclusive with single-container fields on `Sandbox.run()` / `session.sandbox()`. `@session.function()` ignores this field and always creates a single-container sandbox.
 - `secrets` - Create-time secret inject (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
 - `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
@@ -411,7 +411,7 @@ Arguments, closures, referenced globals, and return values must be
 JSON-serializable (str, int, float, dict, list, bool, None). Non-JSON
 values surface as a `SandboxExecutionError` from inside the sandbox.
 
-`@session.function()` stays a single-container workflow. Do not put `containers` on session defaults used with the decorator.
+`@session.function()` stays a single-container workflow. Session `containers` defaults are ignored when the decorator creates a sandbox.
 
 ### Event Loop Management (`_loop_manager.py`)
 

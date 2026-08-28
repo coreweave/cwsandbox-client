@@ -108,4 +108,5 @@ def get_sandbox(sandbox_id: str, output_format: str) -> None:
             state = row.get("state") or "-"
             exit_code = row.get("exit_code")
             restarts = row.get("restart_count")
-            click.echo(f"  {name}  {state}  exit={exit_code}  restarts={restarts}")
+            extra = f"  exit={exit_code}" if exit_code is not None else ""
+            click.echo(f"  {name}  {state}{extra}  restarts={restarts}")

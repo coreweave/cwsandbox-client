@@ -1079,6 +1079,24 @@ class Secret:
             raise ValueError("Secret.env_var cannot be empty")
 
 
+def _unique_secrets_by_env_var(secrets: Sequence[Secret]) -> tuple[Secret, ...]:
+    """Keep one secret per env_var; raise if two distinct sources conflict."""
+    seen: dict[str, Secret] = {}
+    for secret in secrets:
+        env_var = secret.env_var
+        assert env_var is not None  # guaranteed by Secret.__post_init__
+        if env_var in seen and secret != seen[env_var]:
+            raise ValueError(
+                f"Conflicting secrets for env_var {env_var!r}: "
+                f"Secret(store={seen[env_var].store!r}, name={seen[env_var].name!r}, "
+                f"field={seen[env_var].field!r}) vs "
+                f"Secret(store={secret.store!r}, name={secret.name!r}, "
+                f"field={secret.field!r})"
+            )
+        seen[env_var] = secret
+    return tuple(seen.values())
+
+
 @dataclass(frozen=True, kw_only=True)
 class ResourceOptions:
     """Resource configuration for sandbox CPU, memory, and GPU.
@@ -1166,7 +1184,13 @@ class Container:
         if self.command is not None and not self.command:
             object.__setattr__(self, "command", None)
         if self.args is not None:
-            object.__setattr__(self, "args", tuple(self.args))
+            if isinstance(self.args, (str, bytes)):
+                raise TypeError("Container.args must be a sequence of strings, not a string")
+            coerced_args = tuple(self.args)
+            for i, arg in enumerate(coerced_args):
+                if not isinstance(arg, str):
+                    raise TypeError(f"Container.args[{i}] must be str, got {type(arg).__name__}")
+            object.__setattr__(self, "args", coerced_args)
         if self.environment_variables is not None:
             object.__setattr__(self, "environment_variables", dict(self.environment_variables))
         if self.working_dir is not None:
@@ -1184,7 +1208,9 @@ class Container:
             object.__setattr__(
                 self,
                 "secrets",
-                tuple(s if isinstance(s, Secret) else Secret(**s) for s in self.secrets),
+                _unique_secrets_by_env_var(
+                    tuple(s if isinstance(s, Secret) else Secret(**s) for s in self.secrets)
+                ),
             )
         if self.image_pull_credentials is not None and not isinstance(
             self.image_pull_credentials, ImagePullCredentials

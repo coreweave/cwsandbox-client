@@ -181,6 +181,7 @@ from cwsandbox._types import (
     _coerce_container,
     _coerce_object_storage_access,
     _coerce_volume_mount,
+    _unique_secrets_by_env_var,
     _validate_containers,
 )
 from cwsandbox.exceptions import (
@@ -334,13 +335,14 @@ class ContainerStatus:
     Attributes:
         name: Container name.
         state: Observed lifecycle state of this container.
-        exit_code: Exit code once the container is COMPLETED or FAILED.
+        exit_code: Exit code once the container is in a terminal state.
+            None while the container is still running.
         restart_count: Times the container has restarted.
     """
 
     name: str
     state: SandboxStatus
-    exit_code: int = 0
+    exit_code: int | None = None
     restart_count: int = 0
 
 
@@ -2003,20 +2005,7 @@ class Sandbox:
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
         ]
         if merged_secrets:
-            seen: dict[str, Secret] = {}
-            for secret in merged_secrets:
-                env_var = secret.env_var
-                assert env_var is not None  # guaranteed by Secret.__post_init__
-                if env_var in seen and secret != seen[env_var]:
-                    raise ValueError(
-                        f"Conflicting secrets for env_var {env_var!r}: "
-                        f"Secret(store={seen[env_var].store!r}, name={seen[env_var].name!r}, "
-                        f"field={seen[env_var].field!r}) vs "
-                        f"Secret(store={secret.store!r}, name={secret.name!r}, "
-                        f"field={secret.field!r})"
-                    )
-                seen[env_var] = secret
-            self._start_kwargs["secrets"] = list(seen.values())
+            self._start_kwargs["secrets"] = list(_unique_secrets_by_env_var(merged_secrets))
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: sandbox_pb2_grpc.SandboxServiceStub | None = None
@@ -4764,15 +4753,18 @@ class Sandbox:
         if echoed and not any(row.primary for row in echoed):
             echoed = (replace(echoed[0], primary=True),) + echoed[1:]
         self._spec_containers = echoed
-        self._container_statuses = tuple(
-            ContainerStatus(
-                name=row.name,
-                state=SandboxStatus.from_proto(row.state),
-                exit_code=row.exit_code,
-                restart_count=row.restart_count,
+        statuses: list[ContainerStatus] = []
+        for row in status.container_statuses:
+            state = SandboxStatus.from_proto(row.state)
+            statuses.append(
+                ContainerStatus(
+                    name=row.name,
+                    state=state,
+                    exit_code=row.exit_code if state in _TERMINAL_STATUSES else None,
+                    restart_count=row.restart_count,
+                )
             )
-            for row in status.container_statuses
-        )
+        self._container_statuses = tuple(statuses)
 
     def _container_from_proto(self, proto: sandbox_pb2.Container) -> Container:
         resources: ResourceOptions | None = None

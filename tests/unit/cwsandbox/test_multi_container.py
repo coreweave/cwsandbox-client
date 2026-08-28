@@ -18,7 +18,9 @@ from cwsandbox import (
     FileSystemSnapshotOptions,
     ResourceOptions,
     Sandbox,
+    SandboxDefaults,
     ScratchVolumeOptions,
+    Secret,
     VolumeMount,
 )
 from cwsandbox._proto import sandbox_pb2
@@ -105,6 +107,60 @@ class TestContainerValidation:
         )
         assert row.volume_mounts == (VolumeMount(volume="workspace", mount_path="/workspace"),)
 
+    def test_string_args_are_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Container.args"):
+            Container(image="busybox", args="--save")  # type: ignore[arg-type]
+
+    def test_bytes_args_are_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Container.args"):
+            Container(image="busybox", args=b"--save")  # type: ignore[arg-type]
+
+    def test_non_string_args_entries_are_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Container.args\\[1\\]"):
+            Container(image="busybox", args=["--save", 1])  # type: ignore[list-item]
+
+    def test_from_dict_string_args_are_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Container.args"):
+            SandboxDefaults.from_dict({"containers": [{"image": "busybox", "args": "--save"}]})
+
+    def test_conflicting_secrets_on_one_container_raise(self) -> None:
+        with pytest.raises(ValueError, match="Conflicting secrets for env_var 'TOKEN'"):
+            Container(
+                image="python:3.11",
+                secrets=[
+                    Secret(store="wandb", name="a", env_var="TOKEN"),
+                    Secret(store="vault", name="b", env_var="TOKEN"),
+                ],
+            )
+
+    def test_identical_secrets_on_one_container_dedupe(self) -> None:
+        secret = Secret(store="wandb", name="HF_TOKEN")
+        row = Container(image="python:3.11", secrets=[secret, secret])
+        assert row.secrets == (secret,)
+
+    def test_same_env_var_on_different_containers_is_allowed(self) -> None:
+        secret = Secret(store="wandb", name="HF_TOKEN", env_var="TOKEN")
+        sandbox = Sandbox(
+            containers=[
+                Container(
+                    image="python:3.11",
+                    name="main",
+                    primary=True,
+                    resources=_cpu(),
+                    secrets=[secret],
+                ),
+                Container(
+                    image="redis:7",
+                    name="cache",
+                    resources=_cpu(),
+                    secrets=[secret],
+                ),
+            ]
+        )
+        rows = sandbox._start_kwargs["containers"]
+        assert rows[0].secrets == (secret,)
+        assert rows[1].secrets == (secret,)
+
     def test_empty_list_raises(self) -> None:
         with pytest.raises(ValueError, match="containers cannot be empty"):
             Sandbox(containers=[])
@@ -163,6 +219,16 @@ class TestContainerValidation:
                 containers=[Container(image="python:3.11")],
                 container_image="python:3.12",
             )
+
+    def test_defaults_containers_conflict_with_container_image(self) -> None:
+        defaults = SandboxDefaults(
+            containers=[
+                Container(image="python:3.11", name="main", primary=True, resources=_cpu()),
+                Container(image="redis:7", name="cache", resources=_cpu()),
+            ]
+        )
+        with pytest.raises(TypeError, match="mutually exclusive"):
+            Sandbox(container_image="python:3.11", defaults=defaults)
 
 
 class TestCreateRequest:
@@ -416,7 +482,47 @@ class TestStatusEcho:
         assert [row.name for row in sandbox.container_statuses] == ["main", "cache"]
         assert sandbox.container_statuses[1].restart_count == 2
         assert sandbox.container_statuses[1].state == SandboxStatus.RUNNING
+        assert sandbox.container_statuses[0].exit_code is None
+        assert sandbox.container_statuses[1].exit_code is None
         assert isinstance(sandbox.container_statuses[0], ContainerStatus)
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+
+    def test_exit_code_only_for_terminal_container_status(self) -> None:
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            spec=sandbox_pb2.SandboxSpec(
+                containers=[sandbox_pb2.Container(name="main", image="python:3.11", primary=True)]
+            ),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                container_statuses=[
+                    sandbox_pb2.ContainerStatus(
+                        name="main",
+                        state=sandbox_pb2.STATE_COMPLETED,
+                        exit_code=0,
+                    ),
+                    sandbox_pb2.ContainerStatus(
+                        name="cache",
+                        state=sandbox_pb2.STATE_FAILED,
+                        exit_code=1,
+                    ),
+                    sandbox_pb2.ContainerStatus(
+                        name="helper",
+                        state=sandbox_pb2.STATE_RUNNING,
+                        exit_code=0,
+                    ),
+                ],
+            ),
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            _SandboxView(proto),
+            base_url="https://api.cwsandbox.com",
+            timeout_seconds=30.0,
+        )
+        by_name = {row.name: row for row in sandbox.container_statuses}
+        assert by_name["main"].exit_code == 0
+        assert by_name["cache"].exit_code == 1
+        assert by_name["helper"].exit_code is None
         sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
 
     def test_preserves_explicit_primary_on_helper(self) -> None:
