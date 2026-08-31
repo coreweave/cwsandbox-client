@@ -6,10 +6,10 @@
 
 Demonstrates:
 - Sandbox.run_from_template() starting a sandbox from a template with no
-  spec overrides
+  overrides at all
 - Replace-on-presence overrides: container_image replaces the whole container
-- Tags sent as an override (replacing the template's tags) so the created
-  sandboxes stay discoverable via list()
+- Tags supplied via defaults are an override too, replacing the template's
+  tags rather than merging with them
 
 Requires CWSANDBOX_TEMPLATE_ID or a template id as the first argument.
 Templates are created by an org admin (for example with
@@ -29,18 +29,13 @@ def main() -> None:
     if not template_id:
         raise SystemExit("Set CWSANDBOX_TEMPLATE_ID or pass a template id as the first argument.")
 
-    # Default container_image/command/args are ignored in template mode. Tags
-    # ARE sent, as a replace-on-presence override: the sandboxes below carry
-    # these tags instead of the template's own. Drop the tags to keep the
-    # template's.
-    defaults = SandboxDefaults(tags=("example", "run-from-template"))
-
-    # --- Start from the template with no spec overrides ---
-    # The template's image is whatever the org admin put in it, so this block
-    # assumes nothing about the binaries inside (no exec). The container,
-    # resources, services, and network all come from the template.
+    # --- Start from the template with no overrides ---
+    # Nothing but the template id: container, resources, services, network,
+    # and tags all come from the template. No exec here; the template's image
+    # is whatever the org admin put in it, so this block assumes nothing
+    # about the binaries inside.
     print("=== Start from the template ===")
-    with Sandbox.run_from_template(template_id, defaults=defaults) as sb:
+    with Sandbox.run_from_template(template_id) as sb:
         print(f"Sandbox ID: {sb.sandbox_id}")
         sb.wait()
         print(f"Status: {sb.status}")
@@ -50,7 +45,9 @@ def main() -> None:
     # container_image replaces the entire template container (command, args,
     # env, files, resources). Any container-field override -- command, args,
     # environment_variables, resources, and friends -- therefore requires
-    # container_image; the API rejects a sparse patch.
+    # container_image; the API rejects a sparse patch. Tags are an override
+    # too: this sandbox carries the tags below instead of the template's own.
+    defaults = SandboxDefaults(tags=("example", "run-from-template"))
     print("=== Replace the template container ===")
     with Sandbox.run_from_template(
         template_id,
