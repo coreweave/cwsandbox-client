@@ -302,6 +302,7 @@ def list_runners(
     """List available runners, optionally filtered.
 
     Args:
+        auth: Authentication strategy, resolved headers, or provider for this request.
         runner_group_id: Restrict results to this runner group.
         gpu_type: Only return runners that support this GPU type.
         architecture: Only return runners that support this CPU architecture.
@@ -399,6 +400,7 @@ def get_runner(
     Args:
         runner_id: Runner identifier (not globally unique alone).
         organization_id: Organization that owns the runner.
+        auth: Authentication strategy, resolved headers, or provider for this request.
 
     Returns:
         ``Runner`` with full details.

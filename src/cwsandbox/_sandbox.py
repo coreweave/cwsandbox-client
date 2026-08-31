@@ -2024,6 +2024,8 @@ class Sandbox:
 
         Args:
             defaults: Optional defaults to apply to sandboxes created via session
+            auth: Authentication strategy, resolved headers, or provider. Overrides
+                ``defaults.auth`` when provided.
 
         Returns:
             A Session instance
@@ -2197,6 +2199,7 @@ class Sandbox:
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to 0
@@ -2356,6 +2359,7 @@ class Sandbox:
         Args:
             sandbox_id: The ID of the existing sandbox
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to 0
@@ -2474,6 +2478,7 @@ class Sandbox:
         Args:
             sandbox_id: The sandbox ID to delete
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
@@ -2565,6 +2570,7 @@ class Sandbox:
         Args:
             file_system_snapshot_id: The snapshot ID to fetch.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2643,6 +2649,7 @@ class Sandbox:
             status: If set, only snapshots in this status (FileSystemSnapshotStatus
                 or its string value).
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2743,6 +2750,7 @@ class Sandbox:
         Args:
             file_system_snapshot_id: The snapshot ID to delete.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
             missing_ok: If True, suppress SnapshotNotFoundError when the snapshot
                 doesn't exist (already deleted).
@@ -2839,6 +2847,7 @@ class Sandbox:
 
         Args:
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2921,6 +2930,7 @@ class Sandbox:
                 the CoreWeave-managed bucket.
             region: Bucket region (required by some providers for BYO buckets).
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:

@@ -58,6 +58,8 @@ class Session:
               and an active wandb run exists.
             - []: Disable all reporting.
             - ["wandb"]: Explicitly enable wandb reporting.
+        auth: Authentication strategy, resolved headers, or provider. Overrides
+            ``defaults.auth`` when provided.
 
     Metrics are automatically tracked when exec() completes on any sandbox
     associated with this session. Use log_metrics(step=N) to log metrics
@@ -388,6 +390,8 @@ class Session:
             request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
                 Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
             data_plane_mode: Override the session's data-plane transport policy.
+            auth: Authentication strategy, resolved headers, or provider. Overrides
+                the session default for this sandbox.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
