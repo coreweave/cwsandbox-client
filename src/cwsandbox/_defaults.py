@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from cwsandbox._types import (
+    DataPlaneMode,
     FileSystemSnapshotOptions,
     NetworkOptions,
     PlacementMode,
@@ -305,6 +306,9 @@ class SandboxDefaults:
         annotations: Kubernetes pod annotations (key-value string pairs).
             Merged with per-sandbox annotations; explicit values override defaults.
             Use for non-sensitive metadata only.
+        data_plane_mode: Transport policy for exec, logs, and file operations.
+            ``auto`` (default) prefers direct mTLS and falls back to the gateway;
+            ``gateway`` disables direct access; ``direct`` requires it.
 
     Examples:
         ```python
@@ -342,6 +346,7 @@ class SandboxDefaults:
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
+    data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO
 
     def __post_init__(self) -> None:
         """Validate numeric poll configuration fields."""
@@ -353,6 +358,9 @@ class SandboxDefaults:
         spill = self.placement_spillover
         if isinstance(spill, str):
             object.__setattr__(self, "placement_spillover", PlacementSpillover(spill.lower()))
+        mode = self.data_plane_mode
+        if isinstance(mode, str):
+            object.__setattr__(self, "data_plane_mode", DataPlaneMode(mode.lower()))
 
     def merge_tags(self, additional: Iterable[str] | None) -> list[str]:
         """Combine default tags with additional tags.
@@ -423,6 +431,7 @@ class SandboxDefaults:
             "temp_dir",
             "tags",
             "environment_variables",
+            "data_plane_mode",
         )
         for key in _non_optional:
             if key in kwargs and kwargs[key] is None:

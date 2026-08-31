@@ -34,6 +34,9 @@ PROTO_FILES=(
     sandbox_pb2.py
     sandbox_pb2.pyi
     sandbox_pb2_grpc.py
+    sandbox_data_plane_pb2.py
+    sandbox_data_plane_pb2.pyi
+    sandbox_data_plane_pb2_grpc.py
     discovery_pb2.py
     discovery_pb2.pyi
     discovery_pb2_grpc.py

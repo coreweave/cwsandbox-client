@@ -177,6 +177,25 @@ class TestCreateChannel:
         )
         assert result is mock_channel
 
+    @patch("cwsandbox._network.grpc.aio.secure_channel")
+    def test_secure_channel_with_custom_credentials(
+        self,
+        mock_secure_channel: MagicMock,
+    ) -> None:
+        credentials = MagicMock()
+
+        create_channel("runner.example.test:9443", True, credentials=credentials)
+
+        mock_secure_channel.assert_called_once_with(
+            "runner.example.test:9443",
+            credentials,
+            options=_default_channel_options(),
+        )
+
+    def test_custom_credentials_require_secure_target(self) -> None:
+        with pytest.raises(ValueError, match="require a secure target"):
+            create_channel("localhost:50051", False, credentials=MagicMock())
+
 
 def _make_rpc_error(
     code: grpc.StatusCode,
