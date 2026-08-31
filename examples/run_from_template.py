@@ -7,7 +7,8 @@
 Demonstrates:
 - Sandbox.run_from_template() inheriting the template spec unchanged
 - Replace-on-presence overrides: container_image replaces the whole container
-- Tag merging so template sandboxes stay discoverable via list()
+- Tags sent as an override (replacing the template's tags) so the created
+  sandboxes stay discoverable via list()
 
 Requires CWSANDBOX_TEMPLATE_ID or a template id as the first argument.
 Templates are created by an org admin (for example with
@@ -27,8 +28,10 @@ def main() -> None:
     if not template_id:
         raise SystemExit("Set CWSANDBOX_TEMPLATE_ID or pass a template id as the first argument.")
 
-    # Default container_image/command/args are ignored in template mode; only
-    # tags are merged onto the created sandbox.
+    # Default container_image/command/args are ignored in template mode. Tags
+    # ARE sent, as a replace-on-presence override: the sandboxes below carry
+    # these tags instead of the template's own. Drop the tags to keep the
+    # template's.
     defaults = SandboxDefaults(tags=("example", "run-from-template"))
 
     # --- Inherit the template as-is ---
