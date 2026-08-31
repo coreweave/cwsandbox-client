@@ -10,6 +10,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
+from cwsandbox._auth import AuthConfig
 from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults, _resolve_selector
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
@@ -107,6 +108,8 @@ class Session:
         self,
         defaults: SandboxDefaults | Mapping[str, Any] | None = None,
         report_to: list[str] | None = None,
+        *,
+        auth: AuthConfig | None = None,
     ) -> None:
         if isinstance(defaults, SandboxDefaults):
             self._defaults = defaults
@@ -116,6 +119,8 @@ class Session:
             raise TypeError(
                 f"defaults must be SandboxDefaults, Mapping, or None, got {type(defaults).__name__}"
             )
+        if auth is not None:
+            self._defaults = self._defaults.with_overrides(auth=auth)
         self._sandboxes: dict[int, Sandbox] = {}
         self._closed = False
         self._loop_manager = _LoopManager.get()
@@ -345,6 +350,7 @@ class Session:
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         request_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
+        auth: AuthConfig | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
@@ -461,6 +467,7 @@ class Session:
             secrets=secrets,
             request_timeout_seconds=effective_request_timeout,
             data_plane_mode=data_plane_mode,
+            auth=auth,
             defaults=self._defaults,
             _session=self,
         )
@@ -572,6 +579,7 @@ class Session:
             base_url=None
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
+            auth=self._defaults.auth,
             timeout_seconds=self._defaults.request_timeout_seconds,
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
@@ -632,6 +640,7 @@ class Session:
             base_url=None
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
+            auth=self._defaults.auth,
             timeout_seconds=self._defaults.request_timeout_seconds,
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,

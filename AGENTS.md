@@ -124,6 +124,7 @@ with Session(defaults) as session:
 Fields (all optional with sensible defaults):
 - `container_image`, `command`, `args` - Container configuration
 - `base_url` - API endpoint (default: `https://api.cwsandbox.com`)
+- `auth` - Optional `AuthStrategy`, `AuthHeaders`, or `AuthProvider`; omitted defaults to CoreWeave API-key auth
 - `request_timeout_seconds` - Client-side HTTP timeout (default: 300.0)
 - `max_lifetime_seconds` - Server-side sandbox lifetime limit (default: None, backend controls)
 - `temp_dir` - Sandbox temp directory (default: `/tmp`)
@@ -319,11 +320,12 @@ with Sandbox.run(
 
 ### Authentication Flow
 
-`_auth.py` implements a pluggable auth mode system with a single active mode:
-1. `CWSANDBOX_API_KEY` env var - Bearer token auth (built-in default)
-2. No auth (built-in fallback)
+`_auth.py` resolves auth per Sandbox, Session, or class-level operation:
+1. Omitted auth selection defaults to CoreWeave: `CWSANDBOX_API_KEY` is sent as a Bearer token, or requests are unauthenticated when it is absent.
+2. `AuthStrategy.WANDB` explicitly delegates credential discovery to the optional W&B SDK (session, `WANDB_API_KEY`, or host-scoped `.netrc`) and sends `x-wandb-api-key`.
+3. `AuthHeaders` and `AuthProvider` support explicit custom per-instance auth.
 
-Provider integrations (e.g. `wandb.sandbox`) can replace the active mode for the current process via `set_auth_mode()`.
+The legacy process-global `set_auth_mode()` hook remains for compatibility. New integrations should pass `auth=` and must not send a W&B API key as a CoreWeave Bearer token.
 
 ### Function Execution (`_function.py`)
 

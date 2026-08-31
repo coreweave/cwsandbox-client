@@ -433,6 +433,9 @@ dev = [
     { name = "types-protobuf" },
     { name = "wandb" },
 ]
+wandb = [
+    { name = "wandb" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -454,9 +457,10 @@ requires-dist = [
     { name = "python-semantic-release", marker = "extra == 'dev'", specifier = ">=9.15.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=5,<7" },
-    { name = "wandb", marker = "extra == 'dev'", specifier = ">=0.19.0" },
+    { name = "wandb", marker = "extra == 'dev'", specifier = ">=0.24.2" },
+    { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.24.2" },
 ]
-provides-extras = ["cli", "dev"]
+provides-extras = ["cli", "wandb", "dev"]
 
 [[package]]
 name = "deprecated"

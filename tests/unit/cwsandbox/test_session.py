@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cwsandbox import Sandbox, SandboxDefaults, Secret, Session
+from cwsandbox import AuthStrategy, Sandbox, SandboxDefaults, Secret, Session
 from cwsandbox._sandbox import _Running
 from tests.unit.cwsandbox.conftest import make_operation_ref, make_process
 
@@ -23,6 +23,24 @@ class TestSessionSandbox:
         sandbox = session.sandbox(command="sleep", args=["infinity"])
 
         assert isinstance(sandbox, Sandbox)
+
+    def test_sandbox_inherits_session_auth_strategy(self) -> None:
+        session = Session(auth=AuthStrategy.WANDB)
+
+        sandbox = session.sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox._auth is AuthStrategy.WANDB
+
+    def test_sandbox_can_override_session_auth_strategy(self) -> None:
+        session = Session(auth=AuthStrategy.WANDB)
+
+        sandbox = session.sandbox(
+            command="sleep",
+            args=["infinity"],
+            auth=AuthStrategy.COREWEAVE_API_KEY,
+        )
+
+        assert sandbox._auth is AuthStrategy.COREWEAVE_API_KEY
 
     def test_sandbox_no_command_uses_shell_trap_default(self) -> None:
         """Session.sandbox() without a command falls back to the SIGTERM-trap default.

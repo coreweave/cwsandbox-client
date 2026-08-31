@@ -62,7 +62,7 @@ Set environment variables before running integration tests. A `.env` file in the
 
 ## Unit Test Patterns
 
-**Auth isolation**: The `clean_auth_env` fixture (autouse=True) clears all auth env vars before each test. Use `mock_api_key` and similar fixtures to set specific values.
+**Auth isolation**: The `clean_auth_env` fixture (autouse=True) clears all auth env vars and points `NETRC` at a missing temporary path before each test. Use `mock_api_key` and similar fixtures to set specific values. W&B `.netrc` tests must create a temporary file with a fake key and reset W&B session credentials before and after resolution; never read the developer's real `.netrc` in unit tests.
 
 **Sandbox tests**: Use sync patterns to block for results: `.result()` for both `OperationRef` (file ops, stop) and `Process` (from exec). Process inherits from OperationRef. The hybrid API tests use mocked `_LoopManager.run_async()` to control coroutine execution. Use `check=True` with exec to test `SandboxExecutionError` handling on non-zero returncodes.
 
@@ -90,10 +90,10 @@ mise run test:e2e
 
 ### Authentication
 
-Set environment variables before running tests (in priority order):
-
-1. `CWSANDBOX_API_KEY` environment variable (takes priority)
-2. `WANDB_API_KEY` only if running live W&B metrics checks in `test_wandb.py`
+CoreWeave-backed integration tests use `CWSANDBOX_API_KEY`. W&B authentication
+is explicit through `AuthStrategy.WANDB` and may resolve a W&B session,
+`WANDB_API_KEY`, or a host-scoped `.netrc` entry. `WANDB_API_KEY` is also used
+by live W&B metrics checks in `test_wandb.py`.
 
 A `.env` file in the project root is automatically loaded via python-dotenv.
 
@@ -136,7 +136,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 
 | File | Coverage |
 |------|----------|
-| `test_auth.py` | Built-in auth behavior and active auth mode overrides |
+| `test_auth.py` | CoreWeave/W&B strategies, `.netrc`, providers, and legacy mode overrides |
 | `test_cleanup.py` | atexit handlers, signal handlers, re-entrancy guard |
 | `test_defaults.py` | SandboxDefaults configuration, merge_tags, with_overrides |
 | `test_exceptions.py` | Exception hierarchy, custom attributes |

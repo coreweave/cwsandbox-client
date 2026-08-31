@@ -54,6 +54,30 @@ Active streams retain their connection, while a process-wide bounded
 idle-channel cache prevents large collections of inactive sandbox objects from
 retaining one socket per sandbox.
 
+## Authentication
+
+Authentication defaults to `AuthStrategy.COREWEAVE_API_KEY`, which reads
+`CWSANDBOX_API_KEY` and sends it as a Bearer token. The strategy argument is
+optional, so existing callers do not need to change.
+
+To use W&B credentials, install the optional integration and select it
+explicitly. Credential resolution is delegated to the W&B SDK and supports an
+active W&B session, `WANDB_API_KEY`, and the host-specific entry in `.netrc`:
+
+```bash
+pip install "cwsandbox[wandb]"
+```
+
+```python
+from cwsandbox import AuthStrategy, Sandbox
+
+with Sandbox.run(auth=AuthStrategy.WANDB) as sb:
+    ...
+```
+
+W&B authentication is sent in the `x-wandb-api-key` header; it is not treated
+as a CoreWeave Bearer token.
+
 ## Development
 
 See [DEVELOPMENT.md](https://github.com/coreweave/cwsandbox-client/blob/main/DEVELOPMENT.md) for setup and workflow.

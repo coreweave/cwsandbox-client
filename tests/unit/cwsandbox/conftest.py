@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from pathlib import Path
 from typing import TypeVar
 from unittest.mock import MagicMock
 
@@ -27,13 +28,16 @@ AUTH_ENV_VARS = (
     "CWSANDBOX_API_KEY",
     "CWSANDBOX_BASE_URL",
     "WANDB_API_KEY",
+    "WANDB_BASE_URL",
     "WANDB_ENTITY",
+    "WANDB_IDENTITY_TOKEN_FILE",
     "WANDB_PROJECT",
+    "NETRC",
 )
 
 
 @pytest.fixture(autouse=True)
-def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_auth_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Clear all auth-related env vars before each test.
 
     This runs automatically for every test (autouse=True) and ensures:
@@ -43,6 +47,8 @@ def clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for var in AUTH_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # Prevent W&B auth tests from reading a developer's real ~/.netrc.
+    monkeypatch.setenv("NETRC", str(tmp_path / "missing-netrc"))
 
 
 @pytest.fixture(autouse=True)
