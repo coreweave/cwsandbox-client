@@ -5,7 +5,8 @@
 """Create sandboxes from an organization template.
 
 Demonstrates:
-- Sandbox.run_from_template() inheriting the template spec unchanged
+- Sandbox.run_from_template() starting a sandbox from a template with no
+  spec overrides
 - Replace-on-presence overrides: container_image replaces the whole container
 - Tags sent as an override (replacing the template's tags) so the created
   sandboxes stay discoverable via list()
@@ -34,12 +35,15 @@ def main() -> None:
     # template's.
     defaults = SandboxDefaults(tags=("example", "run-from-template"))
 
-    # --- Inherit the template as-is ---
-    print("=== Inherit the template spec ===")
+    # --- Start from the template with no spec overrides ---
+    # The template's image is whatever the org admin put in it, so this block
+    # assumes nothing about the binaries inside (no exec). The container,
+    # resources, services, and network all come from the template.
+    print("=== Start from the template ===")
     with Sandbox.run_from_template(template_id, defaults=defaults) as sb:
         print(f"Sandbox ID: {sb.sandbox_id}")
-        result = sb.exec(["sh", "-c", "echo hello from the template"]).result()
-        print(f"Output: {result.stdout.strip()}")
+        sb.wait()
+        print(f"Status: {sb.status}")
 
     # --- Override the container (replace-on-presence) ---
     # Overrides replace whole fields, they are not merged: passing

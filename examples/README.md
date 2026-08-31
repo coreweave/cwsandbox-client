@@ -145,7 +145,7 @@ python examples/run_from_template.py
 ```
 
 Demonstrates:
-- Using `Sandbox.run_from_template()` to inherit a template spec unchanged
+- Using `Sandbox.run_from_template()` to start a sandbox from a template with no spec overrides
 - Replace-on-presence overrides: `container_image` replaces the whole template container
 - Why container-field overrides (`command`, `args`, `environment_variables`, ...) require `container_image`
 - Tags sent as an override (replacing the template's tags) so the created sandboxes stay discoverable via `list()`
