@@ -5,6 +5,7 @@
 """Unit tests for cwsandbox._auth module."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -170,6 +171,55 @@ class TestResolveAuth:
 
         assert auth.headers["x-wandb-api-key"] == fake_api_key
         assert auth.strategy == "wandb_api_key"
+
+    @pytest.mark.parametrize(
+        ("base_url", "expected_host"),
+        (
+            ("https://api.wandb.ai", None),
+            ("https://api.qa.wandb.ai", None),
+            ("https://API.WANDB.AI", None),
+            ("https://api.wandb.ai:443", None),
+            ("https://acme.wandb.io", "acme.wandb.io"),
+            ("https://user:password@acme.wandb.io", "acme.wandb.io"),
+            ("https://acme.wandb.io:443", "acme.wandb.io"),
+            ("https://acme.wandb.io:8443", "acme.wandb.io:8443"),
+        ),
+    )
+    def test_wandb_strategy_forwards_dedicated_host(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        base_url: str,
+        expected_host: str | None,
+    ) -> None:
+        """W&B's existing host classification drives dedicated routing metadata."""
+        pytest.importorskip("wandb")
+        from wandb.sdk import wandb_setup
+        from wandb.sdk.lib import wbauth
+
+        fake_api_key = "c" * 40
+        monkeypatch.setenv("WANDB_API_KEY", fake_api_key)
+        settings = SimpleNamespace(
+            base_url=base_url,
+            app_url=None,
+            entity=None,
+            project=None,
+        )
+        wbauth.unauthenticate_session(update_settings=False)
+
+        try:
+            with patch.object(
+                wandb_setup,
+                "singleton",
+                return_value=SimpleNamespace(settings=settings),
+            ):
+                auth = resolve_auth(AuthStrategy.WANDB)
+        finally:
+            wbauth.unauthenticate_session(update_settings=False)
+
+        if expected_host is None:
+            assert "x-wandb-host" not in auth.headers
+        else:
+            assert auth.headers["x-wandb-host"] == expected_host
 
     def test_registered_auth_mode_overrides_built_in_api_key_auth(
         self,

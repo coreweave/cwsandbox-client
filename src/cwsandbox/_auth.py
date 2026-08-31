@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, TypeAlias, runtime_checkable
+from urllib.parse import urlsplit
 
 from cwsandbox.exceptions import CWSandboxAuthenticationError
 
@@ -89,6 +90,7 @@ def _resolve_wandb_auth() -> AuthHeaders:
         import wandb
         from wandb.sdk import wandb_setup
         from wandb.sdk.lib import wbauth
+        from wandb.sdk.lib.wbauth import saas
     except ModuleNotFoundError as exc:
         if exc.name == "wandb" or (exc.name and exc.name.startswith("wandb.")):
             raise _wandb_missing_error() from None
@@ -122,6 +124,22 @@ def _resolve_wandb_auth() -> AuthHeaders:
         "x-wandb-api-key": auth.api_key,
         "x-wandb-sdk-version": wandb.__version__,
     }
+    parsed_host = urlsplit(auth.host.url)
+    hostname = parsed_host.hostname
+    if hostname is None:
+        raise CWSandboxAuthenticationError("W&B base URL must include a hostname.")
+    hostname = hostname.lower()
+    try:
+        port = parsed_host.port
+    except ValueError as exc:
+        raise CWSandboxAuthenticationError(f"W&B base URL has an invalid port: {exc}") from exc
+
+    scheme = parsed_host.scheme.lower()
+    if not saas.is_wandb_domain(f"{scheme}://{hostname}"):
+        default_port = {"http": 80, "https": 443}.get(scheme)
+        headers["x-wandb-host"] = (
+            f"{hostname}:{port}" if port is not None and port != default_port else hostname
+        )
     if settings.entity:
         headers["x-entity-id"] = settings.entity
     if settings.project:
