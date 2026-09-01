@@ -168,6 +168,36 @@ class TestEgressRule:
         with pytest.raises(AttributeError):
             rule.dns_name = "example.com"  # type: ignore[misc]
 
+    def test_dns_name_except_rejected(self) -> None:
+        with pytest.raises(ValueError, match="policy-only"):
+            EgressRule(dns_name="pypi.org", dns_name_except=["files.pypi.org"])
+
+    def test_dns_name_allows_omitted_or_443_ports(self) -> None:
+        assert EgressRule(dns_name="pypi.org").ports is None
+        assert EgressRule(dns_name="pypi.org", ports=[443]).ports == (PortRange(port=443),)
+        tcp = PortRange(port=443, protocol="TCP")
+        assert EgressRule(dns_name="pypi.org", ports=[tcp]).ports == (tcp,)
+
+    def test_dns_name_rejects_non_https_ports(self) -> None:
+        with pytest.raises(ValueError, match="TCP 443"):
+            EgressRule(dns_name="pypi.org", ports=[80])
+        with pytest.raises(ValueError, match="TCP 443"):
+            EgressRule(dns_name="pypi.org", ports=[443, 80])
+        with pytest.raises(ValueError, match="TCP 443"):
+            EgressRule(dns_name="pypi.org", ports=[PortRange(port=443, protocol="UDP")])
+
+    def test_from_proto_drops_policy_except_and_invalid_dns_ports(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._spec import egress_rule_from_proto
+
+        proto = sandbox_pb2.EgressRule(dns_name="pypi.org")
+        proto.dns_name_except.append("files.pypi.org")
+        proto.ports.add(port=80)
+        rule = egress_rule_from_proto(proto)
+        assert rule.dns_name == "pypi.org"
+        assert rule.dns_name_except is None
+        assert rule.ports is None
+
 
 class TestNetworkOptions:
     """Tests for v1 NetworkOptions (deny flags and hostname grants)."""
@@ -1324,6 +1354,16 @@ class TestObjectStorageAccess:
     def test_coerces_permission(self) -> None:
         access = ObjectStorageAccess(buckets=["a"], permission="read_write")
         assert access.permission == ObjectStoragePermission.READ_WRITE
+
+    def test_rejects_bare_string_buckets(self) -> None:
+        with pytest.raises(TypeError, match="bare string"):
+            ObjectStorageAccess(buckets="team-data")  # type: ignore[arg-type]
+
+    def test_rejects_empty_or_non_string_bucket_entries(self) -> None:
+        with pytest.raises(ValueError, match="entries cannot be empty"):
+            ObjectStorageAccess(buckets=[""])
+        with pytest.raises(TypeError, match="must be strings"):
+            ObjectStorageAccess(buckets=[1])  # type: ignore[list-item]
 
 
 class TestIngressAndExpandedEgress:

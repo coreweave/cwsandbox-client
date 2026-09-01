@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
 import pytest
 from google.rpc import error_details_pb2, status_pb2
 
-from cwsandbox import PvcVolumeSource, Volume, VolumeState
+from cwsandbox import AuthHeaders, PvcVolumeSource, Volume, VolumeState
+from cwsandbox._defaults import DEFAULT_POLL_RPC_TIMEOUT_SECONDS
 from cwsandbox._error_info import CWSANDBOX_VOLUME_IN_USE, CWSANDBOX_VOLUME_NOT_FOUND
 from cwsandbox._proto import volume_pb2
 from cwsandbox.exceptions import VolumeInUseError, VolumeNotFoundError, VolumeWaitTimeoutError
@@ -163,3 +165,114 @@ class TestVolume:
         ):
             with pytest.raises(VolumeWaitTimeoutError):
                 volume.wait_until_ready(timeout=5).result()
+
+    def test_create_forwards_auth_and_retains_it(self) -> None:
+        stub = MagicMock()
+        stub.CreateVolume = AsyncMock(return_value=_ready_proto())
+        stub.DeleteVolume = AsyncMock(return_value=_ready_proto())
+        resolved: list[tuple[object, str]] = []
+
+        def fake_resolve(auth: object = None, *, base_url: str = "") -> tuple[tuple[str, str], ...]:
+            resolved.append((auth, base_url))
+            return (("authorization", "custom"),)
+
+        headers = AuthHeaders(headers={"Authorization": "Bearer tok"}, strategy="api_key")
+        patches = _patch_volume_channel(stub)
+        with (
+            patch("cwsandbox._volume.resolve_auth_metadata", side_effect=fake_resolve),
+            patches[1],
+            patches[2],
+            patches[3],
+        ):
+            volume = Volume.create(
+                "team-data",
+                pvc=PvcVolumeSource(runner_id="runner-1", namespace="ml", claim_name="data"),
+                auth=headers,
+                base_url="https://gw.example.test",
+            ).result()
+            volume.delete().result()
+
+        assert resolved[0] == (headers, "https://gw.example.test")
+        assert resolved[1] == (headers, "https://gw.example.test")
+        assert stub.CreateVolume.call_args.kwargs["metadata"] == (("authorization", "custom"),)
+        assert stub.DeleteVolume.call_args.kwargs["metadata"] == (("authorization", "custom"),)
+
+    def test_create_provider_receives_effective_base_url(self) -> None:
+        stub = MagicMock()
+        stub.CreateVolume = AsyncMock(return_value=_ready_proto())
+
+        class Provider:
+            def __init__(self) -> None:
+                self.base_url: str | None = None
+
+            def resolve_auth(self, *, base_url: str) -> AuthHeaders:
+                self.base_url = base_url
+                return AuthHeaders(headers={"X-Test-Auth": "value"}, strategy="test")
+
+        provider = Provider()
+        patches = _patch_volume_channel(stub)
+        with patches[1], patches[2], patches[3]:
+            Volume.create(
+                "team-data",
+                pvc=PvcVolumeSource(runner_id="runner-1", namespace="ml", claim_name="data"),
+                auth=provider,
+                base_url="https://gw.example.test/",
+            ).result()
+
+        assert provider.base_url == "https://gw.example.test"
+        assert stub.CreateVolume.call_args.kwargs["metadata"] == (("x-test-auth", "value"),)
+
+    def test_wait_until_ready_caps_get_timeout_and_rejects_late_ready(self) -> None:
+        ready = _ready_proto()
+        stub = MagicMock()
+
+        async def slow_get(*args: object, **kwargs: object) -> volume_pb2.Volume:
+            await asyncio.sleep(0.2)
+            return ready
+
+        stub.GetVolume = AsyncMock(side_effect=slow_get)
+        patches = _patch_volume_channel(stub)
+        volume = Volume(volume_id="team-data")
+        with patches[0], patches[1], patches[2], patches[3]:
+            with pytest.raises(VolumeWaitTimeoutError):
+                volume.wait_until_ready(timeout=0.01).result()
+        assert stub.GetVolume.call_args.kwargs["timeout"] <= 0.01
+
+    def test_wait_until_ready_defaults_poll_rpc_timeout(self) -> None:
+        stub = MagicMock()
+        stub.GetVolume = AsyncMock(return_value=_ready_proto())
+        patches = _patch_volume_channel(stub)
+        volume = Volume(volume_id="team-data")
+        with patches[0], patches[1], patches[2], patches[3]:
+            volume.wait_until_ready(timeout=60).result()
+        assert stub.GetVolume.call_args.kwargs["timeout"] == DEFAULT_POLL_RPC_TIMEOUT_SECONDS
+
+    def test_delete_not_found_on_retry_is_success(self) -> None:
+        stub = MagicMock()
+        stub.DeleteVolume = AsyncMock(
+            side_effect=[
+                _volume_rpc_error("transient", code=grpc.StatusCode.UNAVAILABLE),
+                _volume_rpc_error(CWSANDBOX_VOLUME_NOT_FOUND, code=grpc.StatusCode.NOT_FOUND),
+            ]
+        )
+        patches = _patch_volume_channel(stub)
+        volume = Volume(volume_id="team-data")
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = volume.delete().result()
+        assert result is volume
+        assert stub.DeleteVolume.call_count == 2
+
+    def test_delete_first_not_found_raises_unless_allow_missing(self) -> None:
+        stub = MagicMock()
+        stub.DeleteVolume = AsyncMock(
+            side_effect=_volume_rpc_error(
+                CWSANDBOX_VOLUME_NOT_FOUND, code=grpc.StatusCode.NOT_FOUND
+            )
+        )
+        patches = _patch_volume_channel(stub)
+        volume = Volume(volume_id="team-data")
+        with patches[0], patches[1], patches[2], patches[3]:
+            with pytest.raises(VolumeNotFoundError):
+                volume.delete().result()
+            result = volume.delete(allow_missing=True).result()
+        assert result is volume

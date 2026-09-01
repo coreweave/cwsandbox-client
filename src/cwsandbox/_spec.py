@@ -24,6 +24,7 @@ from cwsandbox._types import (
     TenantScope,
     _coerce_security_context,
     _coerce_volume_options,
+    _is_https_443_port,
     _validate_sub_path,
 )
 
@@ -186,10 +187,10 @@ def egress_rule_to_proto(rule: EgressRule) -> sandbox_pb2.EgressRule:
 
 def egress_rule_from_proto(rule: sandbox_pb2.EgressRule) -> EgressRule:
     dest = rule.WhichOneof("destination")
-    kwargs: dict[str, Any] = {
-        "ports": _ports_from_proto(rule.ports),
-        "dns_name_except": tuple(rule.dns_name_except) or None,
-    }
+    ports = _ports_from_proto(rule.ports)
+    if dest == "dns_name" and ports and not (len(ports) == 1 and _is_https_443_port(ports[0])):
+        ports = None
+    kwargs: dict[str, Any] = {"ports": ports}
     if dest == "dns_name":
         kwargs["dns_name"] = rule.dns_name
     elif dest == "cidr":

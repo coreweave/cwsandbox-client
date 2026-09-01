@@ -450,8 +450,10 @@ class EgressRule:
         any: All destinations except platform-internal ranges.
         selector: Cluster workloads selected by pod/namespace labels.
         ports: Optional destination port filter. Empty = all ports
-            (DNS-name rules are still HTTPS/443).
-        dns_name_except: Names carved out of this ``dns_name`` rule.
+            on non-DNS rules. DNS-name grants omit ports or set
+            exactly TCP 443.
+        dns_name_except: Policy-only carve-outs. Rejected on this
+            create-time type.
     """
 
     dns_name: str | None = None
@@ -483,18 +485,16 @@ class EgressRule:
                     f"got {type(self.selector).__name__}"
                 )
             object.__setattr__(self, "selector", SelectorBlock(**self.selector))
+        ports: tuple[PortRange, ...] | None = None
         if self.ports is not None:
             if isinstance(self.ports, (str, bytes)):
                 raise TypeError("ports must be a sequence of PortRange, dict, or int")
-            object.__setattr__(self, "ports", tuple(_coerce_port_range(p) for p in self.ports))
+            ports = tuple(_coerce_port_range(p) for p in self.ports)
+            object.__setattr__(self, "ports", ports)
         if self.dns_name_except is not None:
-            object.__setattr__(
-                self,
-                "dns_name_except",
-                tuple(
-                    _normalize_dns_name(name, field="EgressRule.dns_name_except")
-                    for name in self.dns_name_except
-                ),
+            raise ValueError(
+                "EgressRule.dns_name_except is policy-only and is not valid "
+                "on a sandbox create grant"
             )
         destinations = sum(
             (
@@ -510,8 +510,29 @@ class EgressRule:
                 "EgressRule requires exactly one destination: "
                 "dns_name, cidr, tenant, any, or selector"
             )
-        if self.dns_name_except and self.dns_name is None:
-            raise ValueError("EgressRule.dns_name_except requires dns_name")
+        if self.dns_name is not None:
+            _validate_sandbox_dns_ports(ports)
+
+
+def _is_https_443_port(port: PortRange) -> bool:
+    """Return True if ``port`` is a single TCP 443 grant."""
+    if port.port != 443:
+        return False
+    if port.end_port is not None and port.end_port != 443:
+        return False
+    if port.protocol and port.protocol.upper() != "TCP":
+        return False
+    return True
+
+
+def _validate_sandbox_dns_ports(ports: Sequence[PortRange] | None) -> None:
+    if not ports:
+        return
+    if len(ports) == 1 and _is_https_443_port(ports[0]):
+        return
+    raise ValueError(
+        "EgressRule.dns_name grants only HTTPS (TCP 443); omit ports or set ports to 443"
+    )
 
 
 def _coerce_egress_rule(value: EgressRule | Mapping[str, Any]) -> EgressRule:
@@ -808,9 +829,23 @@ class ObjectStorageAccess:
     object_prefix: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "buckets", tuple(self.buckets))
-        if not self.buckets:
+        if isinstance(self.buckets, (str, bytes)):
+            raise TypeError(
+                "ObjectStorageAccess.buckets must be a sequence of non-empty "
+                "strings, not a bare string"
+            )
+        buckets = tuple(self.buckets)
+        if not buckets:
             raise ValueError("ObjectStorageAccess.buckets cannot be empty")
+        for bucket in buckets:
+            if not isinstance(bucket, str):
+                raise TypeError(
+                    "ObjectStorageAccess.buckets entries must be strings, "
+                    f"got {type(bucket).__name__}"
+                )
+            if not bucket:
+                raise ValueError("ObjectStorageAccess.buckets entries cannot be empty")
+        object.__setattr__(self, "buckets", buckets)
         if self.permission is not None:
             permission = self.permission
             if isinstance(permission, str):
