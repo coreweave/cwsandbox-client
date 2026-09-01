@@ -13,7 +13,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import grpc
 from cryptography import x509
@@ -23,19 +23,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cwsandbox._network import create_channel, parse_grpc_target
 from cwsandbox._proto import sandbox_data_plane_pb2_grpc, sandbox_pb2
 
+_DIRECT_AUTO_TIMEOUT_SECONDS = 1.0
 _DIRECT_CONNECT_TIMEOUT_SECONDS = 10.0
 _DIRECT_CREDENTIAL_RPC_TIMEOUT_SECONDS = 5.0
 _DIRECT_RETRY_COOLDOWN_SECONDS = 30.0
 _DIRECT_EXPIRY_SKEW = timedelta(seconds=30)
 _MAX_IDLE_DIRECT_CHANNELS = 64
-
-_REQUESTED_PERMISSIONS = (
-    sandbox_pb2.SANDBOX_DATA_PERMISSION_EXEC,
-    sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
-    sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_LOGS,
-    sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
-    sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
-)
 
 _FALLBACK_CONNECT_CODES = {
     grpc.StatusCode.DEADLINE_EXCEEDED,
@@ -67,6 +60,7 @@ class _CredentialBundle:
 @dataclass
 class _PoolEntry:
     channel: grpc.aio.Channel
+    readiness: asyncio.Future[None]
     active_leases: int = 0
     discard_when_idle: bool = False
 
@@ -104,29 +98,29 @@ class _DirectChannelPool:
         *,
         timeout: float,
     ) -> _DirectChannelLease:
-        created = False
         async with self._lock:
             entry = self._entries.get(bundle.cache_key)
             if entry is None:
-                entry = _PoolEntry(
-                    channel=create_channel(
-                        bundle.target,
-                        True,
-                        credentials=bundle.channel_credentials,
-                    )
+                channel = create_channel(
+                    bundle.target,
+                    True,
+                    credentials=bundle.channel_credentials,
                 )
+                entry = _PoolEntry(
+                    channel=channel,
+                    readiness=asyncio.ensure_future(channel.channel_ready()),
+                )
+                entry.readiness.add_done_callback(_consume_future_exception)
                 self._entries[bundle.cache_key] = entry
-                created = True
             entry.active_leases += 1
             self._entries.move_to_end(bundle.cache_key)
 
         lease = _DirectChannelLease(self, bundle.cache_key, entry.channel)
-        if created:
-            try:
-                await asyncio.wait_for(entry.channel.channel_ready(), timeout=timeout)
-            except BaseException:
-                await lease.release(discard=True)
-                raise
+        try:
+            await asyncio.wait_for(asyncio.shield(entry.readiness), timeout=timeout)
+        except BaseException:
+            await lease.release(discard=True)
+            raise
         return lease
 
     async def release(self, cache_key: str, *, discard: bool = False) -> None:
@@ -179,6 +173,11 @@ async def _close_channels(channels: list[grpc.aio.Channel]) -> None:
         await channel.close(grace=None)
 
 
+def _consume_future_exception(future: asyncio.Future[None]) -> None:
+    if not future.cancelled():
+        future.exception()
+
+
 _CHANNEL_POOL = _DirectChannelPool()
 
 
@@ -186,7 +185,7 @@ class DirectDataPlaneClient:
     """Lazily issues credentials and leases a direct channel for one sandbox."""
 
     def __init__(self) -> None:
-        self._credentials: _CredentialBundle | None = None
+        self._credentials: dict[int, _CredentialBundle] = {}
         self._lock = asyncio.Lock()
         self._retry_at = 0.0
 
@@ -198,14 +197,21 @@ class DirectDataPlaneClient:
         auth_metadata: tuple[tuple[str, str], ...],
         permission: int,
         request_timeout: float,
-        ignore_cooldown: bool = False,
+        strict: bool = False,
     ) -> _DirectChannelLease:
+        auto_deadline = (
+            None
+            if strict
+            else time.monotonic() + min(request_timeout, _DIRECT_AUTO_TIMEOUT_SECONDS)
+        )
         bundle = await self._ensure_credentials(
             control_stub=control_stub,
             sandbox_id=sandbox_id,
             auth_metadata=auth_metadata,
+            permission=permission,
             request_timeout=request_timeout,
-            ignore_cooldown=ignore_cooldown,
+            strict=strict,
+            deadline=auto_deadline,
         )
         if permission not in bundle.granted_permissions:
             raise DirectDataPlanePermissionUnavailable(
@@ -213,18 +219,27 @@ class DirectDataPlaneClient:
             )
 
         connect_timeout = min(request_timeout, _DIRECT_CONNECT_TIMEOUT_SECONDS)
+        if auto_deadline is not None:
+            connect_timeout = max(0.0, auto_deadline - time.monotonic())
+        if connect_timeout <= 0:
+            self._defer_retry()
+            raise DirectDataPlaneUnavailable(
+                f"Timed out connecting to the direct data-plane endpoint {bundle.target}"
+            )
         try:
-            return await _CHANNEL_POOL.acquire(bundle, timeout=connect_timeout)
+            lease = await _CHANNEL_POOL.acquire(bundle, timeout=connect_timeout)
         except TimeoutError as exc:
-            self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
+            self._defer_retry()
             raise DirectDataPlaneUnavailable(
                 f"Timed out connecting to the direct data-plane endpoint {bundle.target}"
             ) from exc
         except grpc.RpcError as exc:
-            self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
+            self._defer_retry()
             raise DirectDataPlaneUnavailable(
                 f"Could not connect to the direct data-plane endpoint {bundle.target}"
             ) from exc
+        self._retry_at = 0.0
+        return lease
 
     async def _ensure_credentials(
         self,
@@ -232,29 +247,27 @@ class DirectDataPlaneClient:
         control_stub: Any,
         sandbox_id: str,
         auth_metadata: tuple[tuple[str, str], ...],
+        permission: int,
         request_timeout: float,
-        ignore_cooldown: bool,
+        strict: bool,
+        deadline: float | None,
     ) -> _CredentialBundle:
-        now = datetime.now(UTC)
-        if (
-            self._credentials is not None
-            and self._credentials.expires_at > now + _DIRECT_EXPIRY_SKEW
-        ):
-            return self._credentials
-        if not ignore_cooldown and time.monotonic() < self._retry_at:
+        if not strict and time.monotonic() < self._retry_at:
             raise DirectDataPlaneUnavailable("Direct data-plane retry is temporarily deferred")
+        now = datetime.now(UTC)
+        credentials = self._credentials.get(permission)
+        if credentials is not None and credentials.expires_at > now + _DIRECT_EXPIRY_SKEW:
+            return credentials
 
         async with self._lock:
-            now = datetime.now(UTC)
-            if (
-                self._credentials is not None
-                and self._credentials.expires_at > now + _DIRECT_EXPIRY_SKEW
-            ):
-                return self._credentials
-            if not ignore_cooldown and time.monotonic() < self._retry_at:
+            if not strict and time.monotonic() < self._retry_at:
                 raise DirectDataPlaneUnavailable("Direct data-plane retry is temporarily deferred")
+            now = datetime.now(UTC)
+            credentials = self._credentials.get(permission)
+            if credentials is not None and credentials.expires_at > now + _DIRECT_EXPIRY_SKEW:
+                return credentials
 
-            old_cache_key = self._credentials.cache_key if self._credentials is not None else None
+            old_cache_key = credentials.cache_key if credentials is not None else None
             private_key = ec.generate_private_key(ec.SECP256R1())
             csr = (
                 x509.CertificateSigningRequestBuilder()
@@ -264,7 +277,7 @@ class DirectDataPlaneClient:
             request = sandbox_pb2.ConnectSandboxRequest(
                 sandbox_id=sandbox_id,
                 csr_der=csr.public_bytes(serialization.Encoding.DER),
-                requested_permissions=_REQUESTED_PERMISSIONS,
+                requested_permissions=[cast(sandbox_pb2.SandboxDataPermission, permission)],
             )
             retry_deadline = time.monotonic() + min(
                 request_timeout,
@@ -273,22 +286,26 @@ class DirectDataPlaneClient:
             retry_delay = 0.2
             while True:
                 try:
-                    rpc_timeout = min(
-                        request_timeout,
-                        _DIRECT_CREDENTIAL_RPC_TIMEOUT_SECONDS,
-                    )
-                    if ignore_cooldown:
+                    rpc_timeout = min(request_timeout, _DIRECT_CREDENTIAL_RPC_TIMEOUT_SECONDS)
+                    if strict:
                         rpc_timeout = min(
                             rpc_timeout,
                             max(0.1, retry_deadline - time.monotonic()),
                         )
+                    elif deadline is not None:
+                        rpc_timeout = max(0.0, deadline - time.monotonic())
+                        if rpc_timeout <= 0:
+                            self._defer_retry()
+                            raise DirectDataPlaneUnavailable(
+                                "Direct data-plane credential request timed out"
+                            )
                     pending_response = control_stub.ConnectSandbox(
                         request,
                         timeout=rpc_timeout,
                         metadata=auth_metadata,
                     )
                     if not inspect.isawaitable(pending_response):
-                        self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
+                        self._defer_retry()
                         raise DirectDataPlaneUnavailable(
                             "The API does not support direct data-plane connections"
                         )
@@ -298,32 +315,38 @@ class DirectDataPlaneClient:
                     if exc.code() not in _FALLBACK_CONNECT_CODES:
                         raise
                     if (
-                        ignore_cooldown
+                        strict
                         and exc.code() in _DIRECT_READINESS_RETRY_CODES
                         and time.monotonic() < retry_deadline
                     ):
                         await asyncio.sleep(retry_delay)
                         retry_delay = min(retry_delay * 2, 1.0)
                         continue
-                    self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
+                    self._defer_retry()
                     raise DirectDataPlaneUnavailable(
                         "The direct data-plane endpoint is not currently available"
                     ) from exc
 
-            bundle = _credential_bundle(private_key, sandbox_id, response)
-            self._credentials = bundle
-            self._retry_at = 0.0
+            try:
+                bundle = _credential_bundle(private_key, sandbox_id, response)
+            except DirectDataPlaneUnavailable:
+                self._defer_retry()
+                raise
+            self._credentials[permission] = bundle
             if old_cache_key is not None and old_cache_key != bundle.cache_key:
                 await _CHANNEL_POOL.discard(old_cache_key)
             return bundle
 
     async def close(self) -> None:
         async with self._lock:
-            credentials = self._credentials
-            self._credentials = None
+            credentials = tuple(self._credentials.values())
+            self._credentials.clear()
             self._retry_at = 0.0
-        if credentials is not None:
-            await _CHANNEL_POOL.discard(credentials.cache_key)
+        for bundle in credentials:
+            await _CHANNEL_POOL.discard(bundle.cache_key)
+
+    def _defer_retry(self) -> None:
+        self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
 
 
 def _credential_bundle(

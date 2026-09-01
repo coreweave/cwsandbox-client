@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +30,21 @@ class _FakeChannel:
     def __init__(self) -> None:
         self.channel_ready = AsyncMock()
         self.close = AsyncMock()
+
+
+def _connection_response(*permissions: int) -> sandbox_pb2.SandboxConnection:
+    expires_at = Timestamp()
+    expires_at.FromDatetime(datetime.now(UTC) + timedelta(hours=2))
+    return sandbox_pb2.SandboxConnection(
+        endpoint_uri="https://runner.example.test:9443",
+        endpoint_id="runner-1",
+        client_certificate_chain_pem=b"client certificate",
+        server_ca_bundle_pem=b"runner CA",
+        expires_at=expires_at,
+        transport=sandbox_pb2.SANDBOX_DATA_TRANSPORT_DIRECT_MTLS,
+        protocol=sandbox_pb2.SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1,
+        granted_permissions=permissions,
+    )
 
 
 def _bundle(index: int) -> _CredentialBundle:
@@ -89,25 +105,35 @@ async def test_pool_does_not_evict_active_streams() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_acquires_wait_for_shared_channel_readiness() -> None:
+    pool = _DirectChannelPool()
+    channel = _FakeChannel()
+    ready = asyncio.Event()
+
+    async def wait_until_ready() -> None:
+        await ready.wait()
+
+    channel.channel_ready.side_effect = wait_until_ready
+    with (
+        patch("cwsandbox._direct.create_channel", return_value=channel),
+        patch("cwsandbox._direct.sandbox_data_plane_pb2_grpc.SandboxDataPlaneServiceStub"),
+    ):
+        first = asyncio.create_task(pool.acquire(_bundle(0), timeout=1))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(pool.acquire(_bundle(0), timeout=1))
+        await asyncio.sleep(0)
+
+        assert not first.done()
+        assert not second.done()
+        ready.set()
+        first_lease, second_lease = await asyncio.gather(first, second)
+        await first_lease.release()
+        await second_lease.release()
+
+
+@pytest.mark.asyncio
 async def test_connect_sends_signed_csr_and_caches_credentials() -> None:
-    expires_at = Timestamp()
-    expires_at.FromDatetime(datetime.now(UTC) + timedelta(hours=2))
-    response = sandbox_pb2.SandboxConnection(
-        endpoint_uri="https://runner.example.test:9443",
-        endpoint_id="runner-1",
-        client_certificate_chain_pem=b"client certificate",
-        server_ca_bundle_pem=b"runner CA",
-        expires_at=expires_at,
-        transport=sandbox_pb2.SANDBOX_DATA_TRANSPORT_DIRECT_MTLS,
-        protocol=sandbox_pb2.SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1,
-        granted_permissions=[
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_EXEC,
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_LOGS,
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
-        ],
-    )
+    response = _connection_response(sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC)
     control_stub = MagicMock()
     control_stub.ConnectSandbox = AsyncMock(return_value=response)
     lease = MagicMock()
@@ -138,13 +164,97 @@ async def test_connect_sends_signed_csr_and_caches_credentials() -> None:
     request = control_stub.ConnectSandbox.await_args.args[0]
     assert request.sandbox_id == "sandbox-1"
     assert x509.load_der_x509_csr(request.csr_der).is_signature_valid
-    assert set(request.requested_permissions) == {
-        sandbox_pb2.SANDBOX_DATA_PERMISSION_EXEC,
-        sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
-        sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_LOGS,
-        sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
-        sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
-    }
+    assert list(request.requested_permissions) == [sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC]
+
+
+@pytest.mark.asyncio
+async def test_credentials_are_scoped_and_cached_by_permission() -> None:
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        side_effect=lambda request, **_kwargs: _connection_response(
+            request.requested_permissions[0]
+        )
+    )
+    client = DirectDataPlaneClient()
+
+    with (
+        patch("cwsandbox._direct.grpc.ssl_channel_credentials", return_value=MagicMock()),
+        patch("cwsandbox._direct._CHANNEL_POOL.acquire", AsyncMock(return_value=MagicMock())),
+    ):
+        for permission in (
+            sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
+            sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
+            sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
+        ):
+            await client.acquire(
+                control_stub=control_stub,
+                sandbox_id="sandbox-1",
+                auth_metadata=(),
+                permission=permission,
+                request_timeout=5,
+            )
+
+    assert control_stub.ConnectSandbox.await_count == 2
+    assert [
+        list(call.args[0].requested_permissions)
+        for call in control_stub.ConnectSandbox.await_args_list
+    ] == [
+        [sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE],
+        [sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_channel_failure_defers_cached_credential_retry() -> None:
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        return_value=_connection_response(sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC)
+    )
+    acquire = AsyncMock(side_effect=TimeoutError)
+    client = DirectDataPlaneClient()
+
+    with (
+        patch("cwsandbox._direct.grpc.ssl_channel_credentials", return_value=MagicMock()),
+        patch("cwsandbox._direct._CHANNEL_POOL.acquire", acquire),
+    ):
+        for _ in range(2):
+            with pytest.raises(DirectDataPlaneUnavailable):
+                await client.acquire(
+                    control_stub=control_stub,
+                    sandbox_id="sandbox-1",
+                    auth_metadata=(),
+                    permission=sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
+                    request_timeout=5,
+                )
+
+    control_stub.ConnectSandbox.assert_awaited_once()
+    acquire.assert_awaited_once()
+    assert 0 < acquire.await_args.kwargs["timeout"] <= 1
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_keeps_longer_connect_timeout() -> None:
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        return_value=_connection_response(sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC)
+    )
+    acquire = AsyncMock(return_value=MagicMock())
+    client = DirectDataPlaneClient()
+
+    with (
+        patch("cwsandbox._direct.grpc.ssl_channel_credentials", return_value=MagicMock()),
+        patch("cwsandbox._direct._CHANNEL_POOL.acquire", acquire),
+    ):
+        await client.acquire(
+            control_stub=control_stub,
+            sandbox_id="sandbox-1",
+            auth_metadata=(),
+            permission=sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
+            request_timeout=300,
+            strict=True,
+        )
+
+    assert acquire.await_args.kwargs["timeout"] == 10
 
 
 @pytest.mark.asyncio

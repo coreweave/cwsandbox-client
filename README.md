@@ -33,8 +33,8 @@ Lifecycle and management operations continue to use the CWSandbox API. The SDK
 generates the private key in memory, sends only a certificate signing request,
 and never sends API bearer credentials to the sandbox data endpoint.
 
-The default `auto` policy falls back to the API gateway when direct access is
-not available. You can require either path for validation or rollback:
+The default `auto` policy uses a short direct-connect budget, then falls back to
+the API gateway. You can require either path for validation or rollback:
 
 ```python
 from cwsandbox import DataPlaneMode, Sandbox, SandboxDefaults
@@ -49,9 +49,10 @@ with Sandbox.run(defaults=defaults) as sb:
     print(sb.exec(["echo", "gateway"]).result().stdout)
 ```
 
-Direct credentials and channels are created lazily. Active streams retain their
-connection, while a process-wide bounded idle-channel cache prevents large
-collections of inactive sandbox objects from retaining one socket per sandbox.
+Direct credentials are scoped to the requested operation and created lazily.
+Active streams retain their connection, while a process-wide bounded
+idle-channel cache prevents large collections of inactive sandbox objects from
+retaining one socket per sandbox.
 
 ## Development
 

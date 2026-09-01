@@ -5518,7 +5518,7 @@ class Sandbox:
                     auth_metadata=self._auth_metadata,
                     permission=permission,
                     request_timeout=self._request_timeout_seconds,
-                    ignore_cooldown=self._data_plane_mode == DataPlaneMode.DIRECT,
+                    strict=self._data_plane_mode == DataPlaneMode.DIRECT,
                 )
                 return _PreparedDataPlaneCall(stub=lease.stub, metadata=(), direct_lease=lease)
             except (DirectDataPlaneUnavailable, DirectDataPlanePermissionUnavailable) as exc:
