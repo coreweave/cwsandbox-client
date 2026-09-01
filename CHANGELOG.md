@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.9.0 (2026-09-01)
+
+### Bug Fixes
+
+- **client**: Harden direct connection fallback
+  ([`684b9c7`](https://github.com/coreweave/cwsandbox-client/commit/684b9c7907a8fa6c712edde3386b3bc9b4301611))
+
+- **client**: Refresh retiring direct connections
+  ([`930f556`](https://github.com/coreweave/cwsandbox-client/commit/930f556351506c269b9f382a2f6d855210249f3f))
+
+- **client**: Release direct log streams on resume
+  ([`352f0a7`](https://github.com/coreweave/cwsandbox-client/commit/352f0a7ffa6f9691ef1c812589c6d6d2fba2ba0e))
+
+Cancel and release each StreamLogs attempt before reconnecting so follow mode cannot retain idle
+  direct leases across interruptions.
+
+### Features
+
+- **client**: Add direct sandbox data connections
+  ([`f2b883e`](https://github.com/coreweave/cwsandbox-client/commit/f2b883e0a2ab9f8ec78250617679c895f6b6fc66))
+
+### Testing
+
+- **client**: Cover direct streaming file reads
+  ([`6a69ae2`](https://github.com/coreweave/cwsandbox-client/commit/6a69ae2d625c56b42fcc3b4a8f286bc95d94cba4))
+
+
 ## v1.8.0 (2026-09-01)
 
 ### Features
