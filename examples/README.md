@@ -135,6 +135,21 @@ Demonstrates:
 - Inspecting confirmed resources from the sandbox response
 - Sharing resource defaults across sandboxes via `SandboxDefaults`
 
+### Run from Template (`run_from_template.py`)
+
+Create sandboxes from an organization template:
+
+```bash
+export CWSANDBOX_TEMPLATE_ID="your-template-uuid"
+python examples/run_from_template.py
+```
+
+Demonstrates:
+- Using `Sandbox.run_from_template()` to start a sandbox from a template with no overrides at all
+- Replace-on-presence overrides: `container_image` replaces the whole template container
+- Why container-field overrides (`command`, `args`, `environment_variables`, ...) require `container_image`
+- Tags supplied via defaults are an override too, replacing the template's tags rather than merging with them
+
 ### Error Handling (`error_handling.py`)
 
 Proper error handling with the exception hierarchy:
