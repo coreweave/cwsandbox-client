@@ -1,6 +1,68 @@
 # CHANGELOG
 
 
+## v1.10.0 (2026-09-01)
+
+### Documentation
+
+- **examples**: Add run_from_template example
+  ([`c5c1322`](https://github.com/coreweave/cwsandbox-client/commit/c5c13225795ff50ab4922c84ecd9987f70b37235))
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+- **examples**: Correct tag semantics in run_from_template
+  ([`211c22f`](https://github.com/coreweave/cwsandbox-client/commit/211c22ff4d1057daa5b17e0ae9ff80c3fff21cb8))
+
+Tags supplied via defaults are sent as a replace-on-presence override and replace the template's
+  tags; they are not merged with them.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+- **examples**: Make the first block a true zero-override create
+  ([`0231e66`](https://github.com/coreweave/cwsandbox-client/commit/0231e661b3e48ee691c0d7ae6619bcbd10b4d192))
+
+Tags ride in PartialSandboxSpec.tags, so supplying defaults with tags made the no-overrides claim
+  false. The first block now passes only the template id; the tag-override demonstration moves to
+  the container override block.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+- **examples**: Make the no-override block image-agnostic
+  ([`002649b`](https://github.com/coreweave/cwsandbox-client/commit/002649b84150e81cc9b4bc96341976baaf871386))
+
+The inherited template's image is arbitrary, so the first block no longer execs (a distroless
+  template image would fail on sh); it waits for RUNNING and prints status instead. Also drops the
+  inherit unchanged phrasing, since tags are still sent as an override.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+### Features
+
+- **auth**: Add per-client auth strategies, enable W&B auth
+  ([#160](https://github.com/coreweave/cwsandbox-client/pull/160),
+  [`014dfe7`](https://github.com/coreweave/cwsandbox-client/commit/014dfe7fcd6d54226b7a0bde73ac31b30589f6c1))
+
+* feat(auth): add per-client auth strategies
+
+Authentication was process-global, preventing CoreWeave and W&B credentials from being isolated
+  between clients.
+
+Add explicit per-client strategies while preserving CoreWeave as the default and retaining the
+  legacy global hook. W&B users can reuse SDK session and netrc credentials without making wandb
+  required.
+
+* build(deps): require wandb 0.29.0
+
+Use the current W&B SDK release for native auth validation.
+
+Exempt only wandb from uv's seven-day release delay so the lockfile remains reproducible without
+  weakening the policy for other packages.
+
+* fix(auth): forward W&B dedicated host
+
+* docs(auth): document public auth parameters
+
+
 ## v1.9.0 (2026-09-01)
 
 ### Bug Fixes
