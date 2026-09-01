@@ -16,7 +16,7 @@ from typing import cast
 import grpc
 import grpc.aio
 
-from cwsandbox._auth import resolve_auth_metadata
+from cwsandbox._auth import AuthConfig, resolve_auth_metadata
 from cwsandbox._defaults import DEFAULT_BASE_URL, DEFAULT_DISCOVERY_TIMEOUT_SECONDS
 from cwsandbox._error_info import (
     CWSANDBOX_RUNNER_NOT_FOUND,
@@ -288,6 +288,7 @@ async def _list_runners_async(
 
 def list_runners(
     *,
+    auth: AuthConfig | None = None,
     runner_group_id: str | None = None,
     gpu_type: str | None = None,
     architecture: str | None = None,
@@ -301,6 +302,7 @@ def list_runners(
     """List available runners, optionally filtered.
 
     Args:
+        auth: Authentication strategy, resolved headers, or provider for this request.
         runner_group_id: Restrict results to this runner group.
         gpu_type: Only return runners that support this GPU type.
         architecture: Only return runners that support this CPU architecture.
@@ -322,7 +324,7 @@ def list_runners(
         include_resources = True
 
     base_url = os.environ.get("CWSANDBOX_BASE_URL", DEFAULT_BASE_URL)
-    metadata = resolve_auth_metadata()
+    metadata = resolve_auth_metadata(auth, base_url=base_url)
     timeout = DEFAULT_DISCOVERY_TIMEOUT_SECONDS
     view = discovery_pb2.RUNNER_VIEW_FULL if include_resources else discovery_pb2.RUNNER_VIEW_BASIC
 
@@ -385,7 +387,12 @@ async def _get_runner_async(
         await channel.close(grace=None)
 
 
-def get_runner(runner_id: str, *, organization_id: str) -> Runner:
+def get_runner(
+    runner_id: str,
+    *,
+    organization_id: str,
+    auth: AuthConfig | None = None,
+) -> Runner:
     """Get a single runner by ``(organization_id, runner_id)``.
 
     Always returns full details including resource availability when owned.
@@ -393,6 +400,7 @@ def get_runner(runner_id: str, *, organization_id: str) -> Runner:
     Args:
         runner_id: Runner identifier (not globally unique alone).
         organization_id: Organization that owns the runner.
+        auth: Authentication strategy, resolved headers, or provider for this request.
 
     Returns:
         ``Runner`` with full details.
@@ -403,7 +411,7 @@ def get_runner(runner_id: str, *, organization_id: str) -> Runner:
         raise ValueError("organization_id must not be empty")
 
     base_url = os.environ.get("CWSANDBOX_BASE_URL", DEFAULT_BASE_URL)
-    metadata = resolve_auth_metadata()
+    metadata = resolve_auth_metadata(auth, base_url=base_url)
     timeout = DEFAULT_DISCOVERY_TIMEOUT_SECONDS
 
     return (

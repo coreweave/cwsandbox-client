@@ -38,7 +38,7 @@ import grpc
 import grpc.aio
 from google.protobuf import timestamp_pb2
 
-from cwsandbox._auth import resolve_auth_metadata
+from cwsandbox._auth import AuthConfig, resolve_auth_metadata
 from cwsandbox._defaults import (
     DEFAULT_BASE_URL,
     DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS,
@@ -1453,6 +1453,7 @@ class Sandbox:
         command: str | None = None,
         args: list[str] | None = None,
         defaults: SandboxDefaults | None = None,
+        auth: AuthConfig | None = None,
         container_image: str | None = None,
         tags: list[str] | None = None,
         base_url: str | None = None,
@@ -1488,6 +1489,8 @@ class Sandbox:
             command: Optional command to run in the sandbox
             args: Optional arguments for the command
             defaults: Optional SandboxDefaults to apply
+            auth: Authentication mode or provider. Explicit values override
+                ``defaults.auth`` for this sandbox instance.
             container_image: Container image to use (default: python:3.11)
             tags: Optional tags for the sandbox
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
@@ -1547,6 +1550,7 @@ class Sandbox:
 
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
+        self._auth = auth if auth is not None else self._defaults.auth
 
         from_template = template_id is not None
         # Template creates stay sparse for spec-owned fields (env, annotations,
@@ -1729,6 +1733,7 @@ class Sandbox:
         self._channel: grpc.aio.Channel | None = None
         self._stub: sandbox_pb2_grpc.SandboxServiceStub | None = None
         self._auth_metadata: tuple[tuple[str, str], ...] = ()
+        self._auth_metadata_resolved = False
         self._streaming_channel: grpc.aio.Channel | None = None
         self._streaming_channel_lock = asyncio.Lock()
         self._sandbox_id: str | None = None
@@ -1800,6 +1805,7 @@ class Sandbox:
         *args: str,
         container_image: str | None = None,
         defaults: SandboxDefaults | None = None,
+        auth: AuthConfig | None = None,
         request_timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
@@ -1838,6 +1844,7 @@ class Sandbox:
                 If omitted, uses default command from SandboxDefaults.
             container_image: Container image to use
             defaults: Optional SandboxDefaults to apply
+            auth: Authentication mode or provider. Overrides ``defaults.auth``.
             request_timeout_seconds: Timeout for API requests (client-side)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to
@@ -1917,6 +1924,7 @@ class Sandbox:
             args=cmd_args,
             container_image=container_image,
             defaults=defaults,
+            auth=auth,
             request_timeout_seconds=request_timeout_seconds,
             poll_retry_budget_seconds=poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
@@ -2004,6 +2012,8 @@ class Sandbox:
     def session(
         cls,
         defaults: SandboxDefaults | Mapping[str, Any] | None = None,
+        *,
+        auth: AuthConfig | None = None,
     ) -> Session:
         """Create a session for managing multiple sandboxes.
 
@@ -2014,6 +2024,8 @@ class Sandbox:
 
         Args:
             defaults: Optional defaults to apply to sandboxes created via session
+            auth: Authentication strategy, resolved headers, or provider. Overrides
+                ``defaults.auth`` when provided.
 
         Returns:
             A Session instance
@@ -2032,7 +2044,7 @@ class Sandbox:
         """
         from cwsandbox._session import Session
 
-        return Session(defaults)
+        return Session(defaults, auth=auth)
 
     @classmethod
     def _from_sandbox_info(
@@ -2044,6 +2056,8 @@ class Sandbox:
         poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS,
         poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        auth: AuthConfig | None = None,
+        auth_metadata: tuple[tuple[str, str], ...] | None = None,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
         info = _as_sandbox_view(info)
@@ -2069,7 +2083,9 @@ class Sandbox:
         sandbox._annotations = {}
         sandbox._channel = None
         sandbox._stub = None
-        sandbox._auth_metadata = ()
+        sandbox._auth = auth
+        sandbox._auth_metadata = auth_metadata or ()
+        sandbox._auth_metadata_resolved = auth_metadata is not None
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
         sandbox._data_plane_mode = (
@@ -2081,7 +2097,7 @@ class Sandbox:
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
         sandbox._session = None
-        sandbox._defaults = SandboxDefaults()
+        sandbox._defaults = SandboxDefaults(auth=auth)
         sandbox._start_kwargs = {}
         sandbox._create_request_id = None
         sandbox._placement_mode = None
@@ -2157,6 +2173,7 @@ class Sandbox:
         runner_ids: list[str] | None = None,
         show_terminated: bool = False,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
@@ -2182,6 +2199,7 @@ class Sandbox:
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to 0
@@ -2223,6 +2241,7 @@ class Sandbox:
                 runner_ids=runner_ids,
                 show_terminated=show_terminated,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
                 poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
@@ -2242,6 +2261,7 @@ class Sandbox:
         runner_ids: builtins.list[str] | None = None,
         show_terminated: bool = False,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
@@ -2271,7 +2291,7 @@ class Sandbox:
         if status is not None:
             status_enum = SandboxStatus(status)
 
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
@@ -2311,6 +2331,8 @@ class Sandbox:
                     poll_retry_budget_seconds=effective_poll_retry_budget,
                     poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
                     data_plane_mode=data_plane_mode,
+                    auth=auth,
+                    auth_metadata=auth_metadata,
                 )
                 for sb in sandbox_infos
             ]
@@ -2323,6 +2345,7 @@ class Sandbox:
         sandbox_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
@@ -2336,6 +2359,7 @@ class Sandbox:
         Args:
             sandbox_id: The ID of the existing sandbox
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to 0
@@ -2368,6 +2392,7 @@ class Sandbox:
             cls._from_id_async(
                 sandbox_id,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
                 poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
@@ -2382,6 +2407,7 @@ class Sandbox:
         sandbox_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
@@ -2406,7 +2432,7 @@ class Sandbox:
         )
         _validate_poll_config(effective_poll_retry_budget, effective_poll_rpc_timeout)
 
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
@@ -2428,6 +2454,8 @@ class Sandbox:
                 poll_retry_budget_seconds=effective_poll_retry_budget,
                 poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
                 data_plane_mode=data_plane_mode,
+                auth=auth,
+                auth_metadata=auth_metadata,
             )
         finally:
             await channel.close(grace=None)
@@ -2438,6 +2466,7 @@ class Sandbox:
         sandbox_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
     ) -> OperationRef[None]:
@@ -2449,6 +2478,7 @@ class Sandbox:
         Args:
             sandbox_id: The sandbox ID to delete
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
@@ -2478,6 +2508,7 @@ class Sandbox:
             cls._delete_async(
                 sandbox_id,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
                 missing_ok=missing_ok,
             )
@@ -2490,6 +2521,7 @@ class Sandbox:
         sandbox_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
     ) -> None:
@@ -2501,7 +2533,7 @@ class Sandbox:
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
 
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
 
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
@@ -2527,6 +2559,7 @@ class Sandbox:
         file_system_snapshot_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[FileSystemSnapshot]:
         """Fetch a file-system snapshot (FSS) record by ID.
@@ -2537,6 +2570,7 @@ class Sandbox:
         Args:
             file_system_snapshot_id: The snapshot ID to fetch.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2551,7 +2585,10 @@ class Sandbox:
         """
         future = _LoopManager.get().run_async(
             cls._get_snapshot_async(
-                file_system_snapshot_id, base_url=base_url, timeout_seconds=timeout_seconds
+                file_system_snapshot_id,
+                base_url=base_url,
+                auth=auth,
+                timeout_seconds=timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -2562,6 +2599,7 @@ class Sandbox:
         file_system_snapshot_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> FileSystemSnapshot:
         """Internal async: fetch a snapshot record by ID."""
@@ -2571,7 +2609,7 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
         stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -2596,6 +2634,7 @@ class Sandbox:
         source_sandbox_id: str | None = None,
         status: FileSystemSnapshotStatus | str | None = None,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[builtins.list[FileSystemSnapshot]]:
         """List file-system snapshots (FSS) for the organization.
@@ -2610,6 +2649,7 @@ class Sandbox:
             status: If set, only snapshots in this status (FileSystemSnapshotStatus
                 or its string value).
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2629,6 +2669,7 @@ class Sandbox:
                 source_sandbox_id=source_sandbox_id,
                 status=status,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
             )
         )
@@ -2641,6 +2682,7 @@ class Sandbox:
         source_sandbox_id: str | None = None,
         status: FileSystemSnapshotStatus | str | None = None,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> builtins.list[FileSystemSnapshot]:
         """Internal async: list snapshots with optional client-side filters."""
@@ -2652,7 +2694,7 @@ class Sandbox:
         )
         status_filter = FileSystemSnapshotStatus(status) if status is not None else None
 
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
         stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -2697,6 +2739,7 @@ class Sandbox:
         file_system_snapshot_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
     ) -> OperationRef[None]:
@@ -2707,6 +2750,7 @@ class Sandbox:
         Args:
             file_system_snapshot_id: The snapshot ID to delete.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
             missing_ok: If True, suppress SnapshotNotFoundError when the snapshot
                 doesn't exist (already deleted).
@@ -2725,6 +2769,7 @@ class Sandbox:
             cls._delete_snapshot_async(
                 file_system_snapshot_id,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
                 missing_ok=missing_ok,
             )
@@ -2737,6 +2782,7 @@ class Sandbox:
         file_system_snapshot_id: str,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
     ) -> None:
@@ -2747,7 +2793,7 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
         stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -2794,12 +2840,14 @@ class Sandbox:
         cls,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[FileSystemSnapshotBucketConfig]:
         """Fetch the organization's FSS object-storage bucket configuration.
 
         Args:
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2813,7 +2861,9 @@ class Sandbox:
         """
         future = _LoopManager.get().run_async(
             cls._get_snapshot_bucket_config_async(
-                base_url=base_url, timeout_seconds=timeout_seconds
+                base_url=base_url,
+                auth=auth,
+                timeout_seconds=timeout_seconds,
             )
         )
         return OperationRef(future)
@@ -2823,6 +2873,7 @@ class Sandbox:
         cls,
         *,
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> FileSystemSnapshotBucketConfig:
         """Internal async: fetch the org's FSS bucket configuration."""
@@ -2832,7 +2883,7 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
         stub = settings_pb2_grpc.SettingsServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -2865,6 +2916,7 @@ class Sandbox:
         bucket_name: str,
         region: str = "",
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> OperationRef[FileSystemSnapshotBucketConfig]:
         """Set the organization's FSS object-storage bucket configuration.
@@ -2878,6 +2930,7 @@ class Sandbox:
                 the CoreWeave-managed bucket.
             region: Bucket region (required by some providers for BYO buckets).
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default).
+            auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s).
 
         Returns:
@@ -2899,6 +2952,7 @@ class Sandbox:
                 bucket_name=bucket_name,
                 region=region,
                 base_url=base_url,
+                auth=auth,
                 timeout_seconds=timeout_seconds,
             )
         )
@@ -2911,6 +2965,7 @@ class Sandbox:
         bucket_name: str,
         region: str = "",
         base_url: str | None = None,
+        auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> FileSystemSnapshotBucketConfig:
         """Internal async: set the org's FSS bucket configuration."""
@@ -2920,7 +2975,7 @@ class Sandbox:
         timeout = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
         target, is_secure = parse_grpc_target(effective_base_url)
         channel = create_channel(target, is_secure)
         stub = settings_pb2_grpc.SettingsServiceStub(channel)  # type: ignore[no-untyped-call]
@@ -3458,13 +3513,18 @@ class Sandbox:
         if self._channel is not None:
             return
 
-        auth_metadata = resolve_auth_metadata()
+        auth_metadata = (
+            self._auth_metadata
+            if self._auth_metadata_resolved
+            else resolve_auth_metadata(self._auth, base_url=self._base_url)
+        )
         target, is_secure = parse_grpc_target(self._base_url)
         channel = create_channel(target, is_secure)
         stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
         self._channel = channel
         self._stub = stub
         self._auth_metadata = auth_metadata
+        self._auth_metadata_resolved = True
         logger.debug("Initialized gRPC channel for %s", self._base_url)
 
     async def _get_or_create_streaming_channel(self) -> grpc.aio.Channel:

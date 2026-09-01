@@ -19,6 +19,8 @@ import grpc.aio
 import pytest
 
 from cwsandbox import (
+    AuthHeaders,
+    AuthStrategy,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -1301,13 +1303,53 @@ class TestSandboxAuth:
             mock_resolve.return_value = (("authorization", "Bearer test-api-key"),)
             await sandbox._ensure_client()
 
-            mock_resolve.assert_called_once()
+            mock_resolve.assert_called_once_with(None, base_url=sandbox._base_url)
             mock_create_channel.assert_called_once()
             # Verify no interceptors arg passed to create_channel
             call_args = mock_create_channel.call_args
             assert len(call_args[0]) == 2  # only target, is_secure
             assert sandbox._auth_metadata == (("authorization", "Bearer test-api-key"),)
             mock_stub_class.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_auth_provider_is_scoped_to_each_sandbox(self) -> None:
+        """Two sandboxes can resolve different auth without global state."""
+
+        class Provider:
+            def __init__(self, value: str) -> None:
+                self.value = value
+                self.base_urls: list[str] = []
+
+            def resolve_auth(self, *, base_url: str) -> AuthHeaders:
+                self.base_urls.append(base_url)
+                return AuthHeaders(
+                    headers={"X-Test-Auth": self.value},
+                    strategy="test",
+                )
+
+        first_provider = Provider("first")
+        second_provider = Provider("second")
+        first = Sandbox(command="sleep", args=["infinity"], auth=first_provider)
+        second = Sandbox(command="sleep", args=["infinity"], auth=second_provider)
+
+        with (
+            patch("cwsandbox._sandbox.create_channel"),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub"),
+        ):
+            await first._ensure_client()
+            await second._ensure_client()
+
+        assert first._auth_metadata == (("x-test-auth", "first"),)
+        assert second._auth_metadata == (("x-test-auth", "second"),)
+        assert first_provider.base_urls == [first._base_url]
+        assert second_provider.base_urls == [second._base_url]
+
+    def test_default_auth_strategy_is_coreweave(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        assert sandbox._auth is None
+        assert SandboxDefaults().auth is None
+        assert AuthStrategy.COREWEAVE_API_KEY.value == "coreweave_api_key"
 
     @pytest.mark.asyncio
     async def test_auth_metadata_passed_to_start_rpc(self, mock_api_key: str) -> None:

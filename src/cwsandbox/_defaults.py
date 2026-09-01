@@ -9,6 +9,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
+from cwsandbox._auth import AuthConfig
 from cwsandbox._types import (
     DataPlaneMode,
     FileSystemSnapshotOptions,
@@ -268,6 +269,10 @@ class SandboxDefaults:
         command: Entrypoint command to run.
         args: Arguments passed to the command.
         base_url: CWSandbox API endpoint URL.
+        auth: Authentication selection. Accepts an ``AuthStrategy``, resolved
+            ``AuthHeaders``, or an ``AuthProvider``. ``None`` preserves a
+            legacy process-global override when installed and otherwise uses
+            ``AuthStrategy.COREWEAVE_API_KEY``.
         request_timeout_seconds: Client-side HTTP timeout in seconds for most
             RPCs. Poll Get RPCs use ``poll_rpc_timeout_seconds`` instead.
         poll_retry_budget_seconds: Wall-clock budget per retry burst (one trip
@@ -329,6 +334,7 @@ class SandboxDefaults:
     command: str = DEFAULT_COMMAND
     args: tuple[str, ...] = DEFAULT_ARGS
     base_url: str = DEFAULT_BASE_URL
+    auth: AuthConfig | None = None
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS
     poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS

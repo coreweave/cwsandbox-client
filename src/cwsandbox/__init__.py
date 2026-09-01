@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 # Import cleanup module to install atexit and signal handlers
 from cwsandbox import _cleanup as _cleanup  # noqa: F401
-from cwsandbox._auth import AuthHeaders, set_auth_mode
+from cwsandbox._auth import AuthConfig, AuthHeaders, AuthProvider, AuthStrategy, set_auth_mode
 from cwsandbox._defaults import SandboxDefaults
 from cwsandbox._discovery import (
     Runner,
@@ -288,7 +288,10 @@ async def _wait_async(
 
 __all__ = [
     "__version__",
+    "AuthConfig",
     "AuthHeaders",
+    "AuthStrategy",
+    "AuthProvider",
     "AsyncFunctionError",
     "CWSandboxAuthenticationError",
     "CWSandboxError",

@@ -19,7 +19,7 @@ cwsandbox/
 ├── _types.py         # OperationRef, Process, Service, Endpoint, HttpsEndpointStatus, EgressRule, ScratchVolumeOptions, FSS types
 ├── _defaults.py      # SandboxDefaults configuration dataclass
 ├── _discovery.py     # list_runners / get_runner (no profiles)
-├── _auth.py          # Authentication resolution (built-in API key mode, active auth mode override)
+├── _auth.py          # Per-instance CoreWeave/W&B auth resolution plus legacy mode override
 ├── _loop_manager.py  # Background asyncio event loop singleton
 ├── _cleanup.py       # atexit/signal handlers for graceful shutdown
 ├── _proto/           # Vendored coreweave.sandbox.v1 stubs
