@@ -353,3 +353,51 @@ async def test_gateway_mode_never_requests_direct_credentials() -> None:
         await sandbox._prepare_streaming_call()
 
     sandbox._direct_data_plane.acquire.assert_not_awaited()
+
+
+class _FakeLogCall:
+    def __init__(self, frames: list[object]) -> None:
+        self._frames = frames
+        self._index = 0
+        self.cancel = MagicMock()
+        self.add_done_callback = MagicMock()
+
+    def __aiter__(self) -> _FakeLogCall:
+        return self
+
+    async def __anext__(self) -> object:
+        if self._index >= len(self._frames):
+            raise StopAsyncIteration
+        frame = self._frames[self._index]
+        self._index += 1
+        return frame
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_resume_cancels_and_releases_direct_lease() -> None:
+    """Follow resume must tear down the prior direct call before reconnecting."""
+    sandbox = _running_sandbox(DataPlaneMode.AUTO)
+    interrupt = sandbox_pb2.LogEntry(
+        error=sandbox_pb2.LogStreamError(code="STREAM_INTERRUPTED", message="restart")
+    )
+    complete = sandbox_pb2.LogEntry(data=b"ok\n", log_session_id="s1", next_log_offset=3)
+    calls = [_FakeLogCall([interrupt]), _FakeLogCall([complete])]
+    stub = MagicMock()
+    stub.StreamLogs = MagicMock(side_effect=calls)
+    lease = MagicMock(stub=stub)
+    lease.release = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(return_value=lease)
+
+    output_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        patch("cwsandbox._sandbox.asyncio.sleep", AsyncMock()),
+    ):
+        await sandbox._stream_logs_async(output_queue, follow=True)
+
+    assert calls[0].cancel.call_count == 1
+    assert calls[1].cancel.call_count == 1
+    assert lease.release.await_count == 2
+    assert sandbox._direct_data_plane.acquire.await_count == 2

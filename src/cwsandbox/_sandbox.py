@@ -5383,78 +5383,82 @@ class Sandbox:
                 prepared.release_when_done(call)
 
                 try:
-                    async for entry in call:
-                        if entry.HasField("error") and entry.error.code:
-                            code = entry.error.code
-                            msg = entry.error.message or code
-                            if code in _STREAMING_FRESH_REINIT_CODES:
-                                if not follow:
-                                    raise SandboxError(f"Log stream error: {msg}")
-                                session_id = ""
-                                last_offset = 0
-                                line_parts = []
-                                line_parts_bytes = 0
-                                break
-                            if code == _STREAMING_INTERRUPTED:
-                                if not follow:
-                                    raise SandboxError(f"Log stream error: {msg}")
-                                break
-                            if code == STREAM_TRUNCATED:
-                                raise SandboxStreamTruncatedError(msg)
-                            raise SandboxError(f"Log stream error: {msg}")
-                        if entry.log_session_id:
-                            session_id = entry.log_session_id
-                        if entry.next_log_offset:
-                            last_offset = int(entry.next_log_offset)
-                        chunk = entry.data.decode("utf-8", errors="replace")
-                        if not chunk:
-                            continue
-                        if follow:
-                            attempt = 0
-                            last_transport_error = None
-                        delivered_any = True
-                        line_parts.append(chunk)
-                        buf = "".join(line_parts)
-                        if "\n" in buf:
-                            *complete, remainder = buf.split("\n")
-                            for line in complete:
-                                encoded_line = (line + "\n").encode("utf-8")
-                                if len(encoded_line) > MAX_LINE_BUFFER_BYTES:
+                    try:
+                        async for entry in call:
+                            if entry.HasField("error") and entry.error.code:
+                                code = entry.error.code
+                                msg = entry.error.message or code
+                                if code in _STREAMING_FRESH_REINIT_CODES:
+                                    if not follow:
+                                        raise SandboxError(f"Log stream error: {msg}")
+                                    session_id = ""
+                                    last_offset = 0
+                                    line_parts = []
+                                    line_parts_bytes = 0
+                                    break
+                                if code == _STREAMING_INTERRUPTED:
+                                    if not follow:
+                                        raise SandboxError(f"Log stream error: {msg}")
+                                    break
+                                if code == STREAM_TRUNCATED:
+                                    raise SandboxStreamTruncatedError(msg)
+                                raise SandboxError(f"Log stream error: {msg}")
+                            if entry.log_session_id:
+                                session_id = entry.log_session_id
+                            if entry.next_log_offset:
+                                last_offset = int(entry.next_log_offset)
+                            chunk = entry.data.decode("utf-8", errors="replace")
+                            if not chunk:
+                                continue
+                            if follow:
+                                attempt = 0
+                                last_transport_error = None
+                            delivered_any = True
+                            line_parts.append(chunk)
+                            buf = "".join(line_parts)
+                            if "\n" in buf:
+                                *complete, remainder = buf.split("\n")
+                                for line in complete:
+                                    encoded_line = (line + "\n").encode("utf-8")
+                                    if len(encoded_line) > MAX_LINE_BUFFER_BYTES:
+                                        raise SandboxStreamTruncatedError(
+                                            f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                        )
+                                    await output_queue.put(line + "\n")
+                                remainder_bytes = len(remainder.encode("utf-8")) if remainder else 0
+                                if remainder_bytes > MAX_LINE_BUFFER_BYTES:
                                     raise SandboxStreamTruncatedError(
                                         f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
                                     )
-                                await output_queue.put(line + "\n")
-                            remainder_bytes = len(remainder.encode("utf-8")) if remainder else 0
-                            if remainder_bytes > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                            line_parts = [remainder] if remainder else []
-                            line_parts_bytes = remainder_bytes
+                                line_parts = [remainder] if remainder else []
+                                line_parts_bytes = remainder_bytes
+                            else:
+                                line_parts_bytes = len(buf.encode("utf-8"))
+                                if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
                         else:
-                            line_parts_bytes = len(buf.encode("utf-8"))
-                            if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                    else:
-                        if line_parts:
-                            leftover = "".join(line_parts)
-                            if len(leftover.encode("utf-8")) > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                            await output_queue.put(leftover)
-                            line_parts = []
-                            line_parts_bytes = 0
-                        done = True
-                        continue
-                except grpc.aio.AioRpcError as exc:
-                    last_transport_error = exc
-                    if not (_is_resumable_transport_error(exc) and follow):
-                        raise _translate_rpc_error(
-                            exc, sandbox_id=sandbox_id, operation="Stream logs"
-                        ) from exc
+                            if line_parts:
+                                leftover = "".join(line_parts)
+                                if len(leftover.encode("utf-8")) > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
+                                await output_queue.put(leftover)
+                                line_parts = []
+                                line_parts_bytes = 0
+                            done = True
+                    except grpc.aio.AioRpcError as exc:
+                        last_transport_error = exc
+                        if not (_is_resumable_transport_error(exc) and follow):
+                            raise _translate_rpc_error(
+                                exc, sandbox_id=sandbox_id, operation="Stream logs"
+                            ) from exc
+                finally:
+                    with contextlib.suppress(Exception):
+                        call.cancel()
+                    await prepared.release()
 
                 if done:
                     break
