@@ -69,6 +69,10 @@ def test_direct_data_plane(sandbox_defaults: SandboxDefaults) -> None:
         sandbox.write_file("/tmp/direct-data-plane", b"direct-file").result()
         assert sandbox.read_file("/tmp/direct-data-plane").result() == b"direct-file"
 
+        payload = bytes(range(256)) * 4096
+        sandbox.write_file("/tmp/direct-data-plane-stream", payload).result()
+        assert b"".join(sandbox.read_file_streaming("/tmp/direct-data-plane-stream")) == payload
+
         assert any("direct-log" in line for line in sandbox.stream_logs())
 
 
