@@ -152,6 +152,26 @@ class PlacementSpillover(StrEnum):
     SERVERLESS_THEN_CKS = "serverless_then_cks"
 
 
+class DataPlaneMode(StrEnum):
+    """Transport policy for sandbox data operations.
+
+    Lifecycle and management operations always use the CoreWeave Sandbox API.
+    This policy applies only to exec, logs, and file operations after a sandbox
+    is running.
+
+    Attributes:
+        AUTO: Prefer a sandbox-scoped direct mTLS connection and transparently
+            use the API gateway when direct access is unavailable.
+        GATEWAY: Always route data operations through the API gateway.
+        DIRECT: Require the direct mTLS connection and surface an error when it
+            cannot be established.
+    """
+
+    AUTO = "auto"
+    GATEWAY = "gateway"
+    DIRECT = "direct"
+
+
 class ServiceVisibility(StrEnum):
     """Reachability intent for a typed sandbox service port."""
 

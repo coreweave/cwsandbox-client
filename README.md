@@ -26,6 +26,34 @@ async with Sandbox.run("sleep", "infinity") as sb:
     print(result.stdout)  # 4
 ```
 
+## Sandbox data connections
+
+Exec, log, and file operations prefer a sandbox-scoped direct mTLS connection.
+Lifecycle and management operations continue to use the CWSandbox API. The SDK
+generates the private key in memory, sends only a certificate signing request,
+and never sends API bearer credentials to the sandbox data endpoint.
+
+The default `auto` policy uses a short direct-connect budget, then falls back to
+the API gateway. You can require either path for validation or rollback:
+
+```python
+from cwsandbox import DataPlaneMode, Sandbox, SandboxDefaults
+
+# Fail instead of falling back, useful when validating direct connectivity.
+with Sandbox.run(data_plane_mode=DataPlaneMode.DIRECT) as sb:
+    print(sb.exec(["echo", "direct"]).result().stdout)
+
+# Disable direct access for a group of sandboxes.
+defaults = SandboxDefaults(data_plane_mode=DataPlaneMode.GATEWAY)
+with Sandbox.run(defaults=defaults) as sb:
+    print(sb.exec(["echo", "gateway"]).result().stdout)
+```
+
+Direct credentials are scoped to the requested operation and created lazily.
+Active streams retain their connection, while a process-wide bounded
+idle-channel cache prevents large collections of inactive sandbox objects from
+retaining one socket per sandbox.
+
 ## Development
 
 See [DEVELOPMENT.md](https://github.com/coreweave/cwsandbox-client/blob/main/DEVELOPMENT.md) for setup and workflow.

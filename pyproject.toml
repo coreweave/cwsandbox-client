@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+    "cryptography>=42.0.0",
     "googleapis-common-protos>=1.63.0",
     "protobuf>=5,<7",
     "grpcio>=1.78.0",

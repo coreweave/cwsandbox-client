@@ -10,6 +10,7 @@ import math
 import pytest
 
 from cwsandbox import (
+    DataPlaneMode,
     EgressRule,
     FileSystemSnapshotOptions,
     NetworkOptions,
@@ -45,6 +46,7 @@ class TestSandboxDefaults:
 
         # Tags should default to empty tuple (immutable)
         assert defaults.tags == ()
+        assert defaults.data_plane_mode == DataPlaneMode.AUTO
 
         # Profile/runner IDs should default to None (no filtering)
         assert defaults.placement_mode is None

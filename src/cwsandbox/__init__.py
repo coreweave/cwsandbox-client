@@ -28,6 +28,7 @@ from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._sandbox import Sandbox, SandboxStatus
 from cwsandbox._session import Session
 from cwsandbox._types import (
+    DataPlaneMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -292,6 +293,7 @@ __all__ = [
     "CWSandboxAuthenticationError",
     "CWSandboxError",
     "CWSandboxValidationError",
+    "DataPlaneMode",
     "DiscoveryError",
     "DiscoveryValidationError",
     "EgressRule",

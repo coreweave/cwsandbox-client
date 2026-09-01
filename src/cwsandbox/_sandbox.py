@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
+import inspect
 import logging
 import math
 import os
@@ -70,7 +71,13 @@ from cwsandbox._defaults import (
     _resolve_selector,
     _validate_poll_config,
 )
+from cwsandbox._direct import (
+    DirectDataPlaneClient,
+    DirectDataPlanePermissionUnavailable,
+    DirectDataPlaneUnavailable,
+)
 from cwsandbox._error_info import (
+    CWSANDBOX_BACKEND_UNAVAILABLE,
     CWSANDBOX_COMMAND_TIMEOUT,
     CWSANDBOX_ERROR_DOMAIN,
     CWSANDBOX_FILE_IO_FAILED,
@@ -86,6 +93,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_INVALID_REQUEST,
+    CWSANDBOX_RUNNER_SHARD_RETIRING,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
@@ -113,6 +121,7 @@ from cwsandbox._proto import (
 )
 from cwsandbox._resources import normalize_resources
 from cwsandbox._types import (
+    DataPlaneMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -179,6 +188,52 @@ if TYPE_CHECKING:
     from cwsandbox._session import Session
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PreparedDataPlaneCall:
+    """A data-plane stub plus the metadata and optional direct-channel lease."""
+
+    stub: Any
+    metadata: tuple[tuple[str, str], ...]
+    direct_lease: Any | None = None
+    _released: bool = False
+
+    async def release(self, *, discard: bool = False) -> None:
+        if self._released:
+            return
+        self._released = True
+        if self.direct_lease is not None:
+            await self.direct_lease.release(discard=discard)
+
+    @property
+    def is_direct(self) -> bool:
+        return self.direct_lease is not None
+
+    async def discard(self) -> None:
+        if self.direct_lease is not None:
+            await self.direct_lease.discard()
+
+    def release_when_done(self, call: Any) -> None:
+        """Hold a direct channel until a streaming RPC reaches a terminal state."""
+
+        if self.direct_lease is None:
+            return
+
+        async def _release(done_call: Any) -> None:
+            discard = False
+            try:
+                code = done_call.code()
+                if inspect.isawaitable(code):
+                    code = await code
+                discard = code == grpc.StatusCode.UNAVAILABLE
+            except Exception:
+                pass
+            if discard:
+                await self.discard()
+            await self.release(discard=discard)
+
+        call.add_done_callback(lambda done_call: asyncio.create_task(_release(done_call)))
 
 
 class SandboxStatus(StrEnum):
@@ -660,6 +715,30 @@ def _translate_snapshot_reason(
             retry_delay=retry_delay,
         )
     return None
+
+
+def _is_runner_shard_retiring_error(error: grpc.RpcError) -> bool:
+    parsed = parse_error_info(error)
+    return (
+        parsed is not None
+        and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+        and parsed.reason == CWSANDBOX_RUNNER_SHARD_RETIRING
+    )
+
+
+def _is_unavailable_rpc_error(error: grpc.RpcError) -> bool:
+    return error.code() == grpc.StatusCode.UNAVAILABLE
+
+
+def _is_log_session_wrong_shard_error(error: grpc.RpcError) -> bool:
+    parsed = parse_error_info(error)
+    return (
+        parsed is not None
+        and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+        and parsed.reason == CWSANDBOX_BACKEND_UNAVAILABLE
+        and bool(parsed.metadata.get("owner_shard_id"))
+        and bool(parsed.metadata.get("local_shard_id"))
+    )
 
 
 def _translate_rpc_error(
@@ -1400,6 +1479,7 @@ class Sandbox:
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -1454,6 +1534,8 @@ class Sandbox:
                 Use for non-sensitive metadata only.
             secrets: Secrets to inject as environment variables at create time.
                 Merged with defaults (defaults first, then this list).
+            data_plane_mode: Transport policy for exec, logs, and file operations.
+                Defaults to ``SandboxDefaults.data_plane_mode``.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -1487,6 +1569,15 @@ class Sandbox:
             if request_timeout_seconds is not None
             else self._defaults.request_timeout_seconds
         )
+        effective_data_plane_mode = (
+            data_plane_mode if data_plane_mode is not None else self._defaults.data_plane_mode
+        )
+        self._data_plane_mode = (
+            DataPlaneMode(effective_data_plane_mode.lower())
+            if isinstance(effective_data_plane_mode, str)
+            else effective_data_plane_mode
+        )
+        self._direct_data_plane = DirectDataPlaneClient()
         self._poll_retry_budget_seconds = (
             poll_retry_budget_seconds
             if poll_retry_budget_seconds is not None
@@ -1733,6 +1824,7 @@ class Sandbox:
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -1786,6 +1878,8 @@ class Sandbox:
                 Use for non-sensitive metadata only.
             secrets: Secrets to inject as environment variables at create time.
                 Merged with defaults (defaults first, then this list).
+            data_plane_mode: Transport policy for exec, logs, and file operations.
+                ``auto`` prefers direct mTLS with gateway fallback.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -1847,6 +1941,7 @@ class Sandbox:
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
+            data_plane_mode=data_plane_mode,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
@@ -1948,6 +2043,7 @@ class Sandbox:
         timeout_seconds: float,
         poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS,
         poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
         info = _as_sandbox_view(info)
@@ -1976,6 +2072,12 @@ class Sandbox:
         sandbox._auth_metadata = ()
         sandbox._streaming_channel = None
         sandbox._streaming_channel_lock = asyncio.Lock()
+        sandbox._data_plane_mode = (
+            DataPlaneMode(data_plane_mode.lower())
+            if isinstance(data_plane_mode, str)
+            else data_plane_mode
+        )
+        sandbox._direct_data_plane = DirectDataPlaneClient()
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
         sandbox._session = None
@@ -2058,6 +2160,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List existing sandboxes with optional filters.
 
@@ -2086,6 +2189,7 @@ class Sandbox:
             poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
                 (default: 15s). Separate from ``timeout_seconds``. Applied to
                 returned Sandbox instances.
+            data_plane_mode: Transport policy applied to returned sandboxes.
 
         Returns:
             OperationRef[list[Sandbox]]: Use .result() to block for results,
@@ -2122,6 +2226,7 @@ class Sandbox:
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
                 poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+                data_plane_mode=data_plane_mode,
             )
         )
         return OperationRef(future)
@@ -2140,6 +2245,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
         normalized_tags = _normalize_tags(tags)
@@ -2204,6 +2310,7 @@ class Sandbox:
                     timeout_seconds=timeout,
                     poll_retry_budget_seconds=effective_poll_retry_budget,
                     poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
+                    data_plane_mode=data_plane_mode,
                 )
                 for sb in sandbox_infos
             ]
@@ -2219,6 +2326,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> OperationRef[Sandbox]:
         """Attach to an existing sandbox by ID.
 
@@ -2235,6 +2343,7 @@ class Sandbox:
             poll_rpc_timeout_seconds: Per-call timeout for poll Get RPCs
                 (default: 15s). Separate from ``timeout_seconds``. Applied to
                 the returned Sandbox instance.
+            data_plane_mode: Transport policy applied to the returned sandbox.
 
         Returns:
             OperationRef[Sandbox]: Use .result() to block for the Sandbox instance,
@@ -2262,6 +2371,7 @@ class Sandbox:
                 timeout_seconds=timeout_seconds,
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
                 poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+                data_plane_mode=data_plane_mode,
             )
         )
         return OperationRef(future)
@@ -2275,6 +2385,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> Sandbox:
         """Internal async: Attach to an existing sandbox by ID."""
         effective_base_url = (
@@ -2316,6 +2427,7 @@ class Sandbox:
                 timeout_seconds=timeout,
                 poll_retry_budget_seconds=effective_poll_retry_budget,
                 poll_rpc_timeout_seconds=effective_poll_rpc_timeout,
+                data_plane_mode=data_plane_mode,
             )
         finally:
             await channel.close(grace=None)
@@ -3232,6 +3344,7 @@ class Sandbox:
         """
         if self._session is not None:
             self._session._deregister_sandbox(self)
+        await self._direct_data_plane.close()
         if self._streaming_channel is not None:
             await self._streaming_channel.close(grace=None)
             self._streaming_channel = None
@@ -3727,6 +3840,7 @@ class Sandbox:
             image=self._container_image,
             command=self._command,
             args=list(self._args or []),
+            primary=True,
         )
         if self._environment_variables:
             container.environment_variables.update(self._environment_variables)
@@ -5022,6 +5136,7 @@ class Sandbox:
             if self._stop_owned and self._session is not None:
                 self._session._deregister_sandbox(self)
             # Close channels to release resources
+            await self._direct_data_plane.close()
             if self._streaming_channel is not None:
                 await self._streaming_channel.close(grace=None)
                 self._streaming_channel = None
@@ -5254,8 +5369,6 @@ class Sandbox:
             if not self._is_done and not self._is_stopping:
                 await self._wait_until_running_async()
 
-            await self._ensure_client()
-            auth_metadata = self._auth_metadata
             sandbox_id = self._sandbox_id
             assert sandbox_id is not None
 
@@ -5273,8 +5386,12 @@ class Sandbox:
 
             while not done and attempt < STREAMING_RESUME_MAX_ATTEMPTS:
                 is_resume = bool(session_id) and attempt > 0
-                channel = await self._get_or_create_streaming_channel()
-                stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
+                prepared = await self._prepare_data_plane_call(
+                    sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_LOGS,
+                    streaming=True,
+                    allow_terminal=True,
+                )
+                stub = prepared.stub
 
                 request = sandbox_pb2.StreamLogsRequest(
                     sandbox_id=sandbox_id,
@@ -5299,85 +5416,104 @@ class Sandbox:
                         request.since_time.CopyFrom(ts)
 
                 grpc_timeout = timeout_seconds if not follow else None
-                call = stub.StreamLogs(
-                    request,
-                    metadata=auth_metadata,
-                    **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
-                )
+                try:
+                    call = stub.StreamLogs(
+                        request,
+                        metadata=prepared.metadata,
+                        **({"timeout": grpc_timeout} if grpc_timeout is not None else {}),
+                    )
+                except BaseException:
+                    await prepared.release(discard=True)
+                    raise
+                prepared.release_when_done(call)
 
                 try:
-                    async for entry in call:
-                        if entry.HasField("error") and entry.error.code:
-                            code = entry.error.code
-                            msg = entry.error.message or code
-                            if code in _STREAMING_FRESH_REINIT_CODES:
-                                if not follow:
-                                    raise SandboxError(f"Log stream error: {msg}")
+                    try:
+                        async for entry in call:
+                            if entry.HasField("error") and entry.error.code:
+                                code = entry.error.code
+                                msg = entry.error.message or code
+                                if code in _STREAMING_FRESH_REINIT_CODES:
+                                    if not follow:
+                                        raise SandboxError(f"Log stream error: {msg}")
+                                    session_id = ""
+                                    last_offset = 0
+                                    line_parts = []
+                                    line_parts_bytes = 0
+                                    break
+                                if code == _STREAMING_INTERRUPTED:
+                                    if not follow:
+                                        raise SandboxError(f"Log stream error: {msg}")
+                                    break
+                                if code == STREAM_TRUNCATED:
+                                    raise SandboxStreamTruncatedError(msg)
+                                raise SandboxError(f"Log stream error: {msg}")
+                            if entry.log_session_id:
+                                session_id = entry.log_session_id
+                            if entry.next_log_offset:
+                                last_offset = int(entry.next_log_offset)
+                            chunk = entry.data.decode("utf-8", errors="replace")
+                            if not chunk:
+                                continue
+                            if follow:
+                                attempt = 0
+                                last_transport_error = None
+                            delivered_any = True
+                            line_parts.append(chunk)
+                            buf = "".join(line_parts)
+                            if "\n" in buf:
+                                *complete, remainder = buf.split("\n")
+                                for line in complete:
+                                    encoded_line = (line + "\n").encode("utf-8")
+                                    if len(encoded_line) > MAX_LINE_BUFFER_BYTES:
+                                        raise SandboxStreamTruncatedError(
+                                            f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                        )
+                                    await output_queue.put(line + "\n")
+                                remainder_bytes = len(remainder.encode("utf-8")) if remainder else 0
+                                if remainder_bytes > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
+                                line_parts = [remainder] if remainder else []
+                                line_parts_bytes = remainder_bytes
+                            else:
+                                line_parts_bytes = len(buf.encode("utf-8"))
+                                if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
+                        else:
+                            if line_parts:
+                                leftover = "".join(line_parts)
+                                if len(leftover.encode("utf-8")) > MAX_LINE_BUFFER_BYTES:
+                                    raise SandboxStreamTruncatedError(
+                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
+                                    )
+                                await output_queue.put(leftover)
+                                line_parts = []
+                                line_parts_bytes = 0
+                            done = True
+                    except grpc.aio.AioRpcError as exc:
+                        last_transport_error = exc
+                        direct_unavailable = prepared.is_direct and _is_unavailable_rpc_error(exc)
+                        if direct_unavailable:
+                            await prepared.discard()
+                            if is_resume and _is_log_session_wrong_shard_error(exc):
                                 session_id = ""
                                 last_offset = 0
                                 line_parts = []
                                 line_parts_bytes = 0
-                                break
-                            if code == _STREAMING_INTERRUPTED:
-                                if not follow:
-                                    raise SandboxError(f"Log stream error: {msg}")
-                                break
-                            if code == STREAM_TRUNCATED:
-                                raise SandboxStreamTruncatedError(msg)
-                            raise SandboxError(f"Log stream error: {msg}")
-                        if entry.log_session_id:
-                            session_id = entry.log_session_id
-                        if entry.next_log_offset:
-                            last_offset = int(entry.next_log_offset)
-                        chunk = entry.data.decode("utf-8", errors="replace")
-                        if not chunk:
-                            continue
-                        if follow:
-                            attempt = 0
-                            last_transport_error = None
-                        delivered_any = True
-                        line_parts.append(chunk)
-                        buf = "".join(line_parts)
-                        if "\n" in buf:
-                            *complete, remainder = buf.split("\n")
-                            for line in complete:
-                                encoded_line = (line + "\n").encode("utf-8")
-                                if len(encoded_line) > MAX_LINE_BUFFER_BYTES:
-                                    raise SandboxStreamTruncatedError(
-                                        f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                    )
-                                await output_queue.put(line + "\n")
-                            remainder_bytes = len(remainder.encode("utf-8")) if remainder else 0
-                            if remainder_bytes > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                            line_parts = [remainder] if remainder else []
-                            line_parts_bytes = remainder_bytes
-                        else:
-                            line_parts_bytes = len(buf.encode("utf-8"))
-                            if line_parts_bytes > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                    else:
-                        if line_parts:
-                            leftover = "".join(line_parts)
-                            if len(leftover.encode("utf-8")) > MAX_LINE_BUFFER_BYTES:
-                                raise SandboxStreamTruncatedError(
-                                    f"Log line exceeded {MAX_LINE_BUFFER_BYTES} bytes"
-                                )
-                            await output_queue.put(leftover)
-                            line_parts = []
-                            line_parts_bytes = 0
-                        done = True
-                        continue
-                except grpc.aio.AioRpcError as exc:
-                    last_transport_error = exc
-                    if not (_is_resumable_transport_error(exc) and follow):
-                        raise _translate_rpc_error(
-                            exc, sandbox_id=sandbox_id, operation="Stream logs"
-                        ) from exc
+                        if prepared.is_direct and _is_runner_shard_retiring_error(exc):
+                            pass
+                        elif not (_is_resumable_transport_error(exc) and follow):
+                            raise _translate_rpc_error(
+                                exc, sandbox_id=sandbox_id, operation="Stream logs"
+                            ) from exc
+                finally:
+                    with contextlib.suppress(Exception):
+                        call.cancel()
+                    await prepared.release()
 
                 if done:
                     break
@@ -5414,19 +5550,67 @@ class Sandbox:
             if inner_exit_clean:
                 await output_queue.put(None)
 
-    async def _prepare_streaming_call(
+    async def _prepare_data_plane_call(
         self,
-    ) -> sandbox_pb2_grpc.SandboxServiceStub:
-        """Shared StreamExec preamble: ensure running, return a stub."""
+        permission: int,
+        *,
+        streaming: bool,
+        allow_terminal: bool = False,
+    ) -> _PreparedDataPlaneCall:
+        """Select direct mTLS or the gateway for one sandbox data operation."""
         await self._ensure_started_async()
-        if self._is_done or self._is_stopping:
+        if (self._is_done or self._is_stopping) and not allow_terminal:
             raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
         if self._sandbox_id is None:
             raise SandboxNotRunningError("No sandbox is running")
-        await self._wait_until_running_async()
+        if not self._is_done and not self._is_stopping:
+            await self._wait_until_running_async()
         await self._ensure_client()
-        channel = await self._get_or_create_streaming_channel()
-        return sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
+        assert self._stub is not None
+        assert self._sandbox_id is not None
+
+        if self._data_plane_mode != DataPlaneMode.GATEWAY:
+            try:
+                lease = await self._direct_data_plane.acquire(
+                    control_stub=self._stub,
+                    sandbox_id=self._sandbox_id,
+                    auth_metadata=self._auth_metadata,
+                    permission=permission,
+                    request_timeout=self._request_timeout_seconds,
+                    strict=self._data_plane_mode == DataPlaneMode.DIRECT,
+                )
+                return _PreparedDataPlaneCall(stub=lease.stub, metadata=(), direct_lease=lease)
+            except (DirectDataPlaneUnavailable, DirectDataPlanePermissionUnavailable) as exc:
+                if self._data_plane_mode == DataPlaneMode.DIRECT:
+                    raise SandboxUnavailableError(
+                        f"Direct data-plane access is unavailable for sandbox {self._sandbox_id}: "
+                        f"{exc}"
+                    ) from exc
+                logger.debug(
+                    "Direct data-plane access unavailable for sandbox %s; using gateway: %s",
+                    self._sandbox_id,
+                    exc,
+                )
+            except grpc.RpcError as exc:
+                raise _translate_rpc_error(
+                    exc,
+                    sandbox_id=self._sandbox_id,
+                    operation="Connect to sandbox data plane",
+                ) from exc
+
+        if streaming:
+            channel = await self._get_or_create_streaming_channel()
+            stub: Any = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
+        else:
+            stub = self._stub
+        return _PreparedDataPlaneCall(stub=stub, metadata=self._auth_metadata)
+
+    async def _prepare_streaming_call(self) -> _PreparedDataPlaneCall:
+        """Shared StreamExec preamble and transport selection."""
+        return await self._prepare_data_plane_call(
+            sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
+            streaming=True,
+        )
 
     async def _exec_streaming_tty_async(
         self,
@@ -5452,9 +5636,11 @@ class Sandbox:
         if not command:
             raise ValueError("Command cannot be empty")
 
+        prepared: _PreparedDataPlaneCall | None = None
         try:
-            stub = await self._prepare_streaming_call()
-            auth_metadata = self._auth_metadata
+            prepared = await self._prepare_streaming_call()
+            stub = prepared.stub
+            auth_metadata = prepared.metadata
             # Narrow for closure capture: _prepare_streaming_call() raised if
             # _sandbox_id was None, but mypy cannot propagate that narrowing
             # into the request_generator closure below.
@@ -5567,6 +5753,7 @@ class Sandbox:
                 timeout=None,
                 metadata=auth_metadata,
             )
+            prepared.release_when_done(call)
 
             # Bounded queue propagates backpressure to gRPC reads — when the
             # consumer is slow, collect_responses() blocks on put(), stopping
@@ -5657,6 +5844,9 @@ class Sandbox:
             except asyncio.QueueFull:
                 asyncio.create_task(output_queue.put(exc))
             raise
+        finally:
+            if prepared is not None:
+                await prepared.release()
 
     async def _exec_streaming_async(
         self,
@@ -5684,8 +5874,9 @@ class Sandbox:
         if not command:
             raise ValueError("Command cannot be empty")
 
-        stub = await self._prepare_streaming_call()
-        auth_metadata = self._auth_metadata
+        prepared = await self._prepare_streaming_call()
+        stub = prepared.stub
+        auth_metadata = prepared.metadata
         # Narrow for closure capture: _prepare_streaming_call() raised if
         # _sandbox_id was None, but mypy cannot propagate that narrowing
         # into the request_generator closure below.
@@ -5784,13 +5975,18 @@ class Sandbox:
         call_timeout = (
             timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
         )
-        call: grpc.aio.StreamStreamCall[
-            sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
-        ] = stub.StreamExec(
-            request_iterator=request_generator(),
-            timeout=call_timeout,
-            metadata=auth_metadata,
-        )
+        try:
+            call: grpc.aio.StreamStreamCall[
+                sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
+            ] = stub.StreamExec(
+                request_iterator=request_generator(),
+                timeout=call_timeout,
+                metadata=auth_metadata,
+            )
+        except BaseException:
+            await prepared.release(discard=True)
+            raise
+        prepared.release_when_done(call)
 
         # Queue decouples stream iteration from our processing.
         # Without this, processing suspends the stream and can cause issues.
@@ -6120,6 +6316,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         operation: str,
         filepath: str | None = None,
+        _retry_retiring: bool = True,
     ) -> tuple[int, bytes, bytes]:
         """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
@@ -6127,11 +6324,13 @@ class Sandbox:
         keep handshake/timeout/error-translation in sync between the two.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        deadline = time.monotonic() + timeout if timeout is not None else None
 
         if not command:
             raise ValueError("Command cannot be empty")
 
-        stub = await self._prepare_streaming_call()
+        prepared = await self._prepare_streaming_call()
+        stub = prepared.stub
         # Narrow for closure capture: _prepare_streaming_call() raised if
         # _sandbox_id was None, but mypy cannot propagate that narrowing
         # into the request_generator closure below.
@@ -6184,29 +6383,36 @@ class Sandbox:
                     chunk = buf[i : i + STDIN_CHUNK_SIZE]
                     yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
             else:
-                # AsyncIterable[bytes] — caller controls chunk size; each
-                # yielded chunk is passed through unmodified so the caller
-                # never materializes the full payload in memory.
                 async for chunk in stdin:
                     if shutdown_event.is_set():
                         return
                     if not chunk:
                         continue
-                    yield sandbox_pb2.ExecStreamRequest(stdin=_coerce_bytes_chunk(chunk))
+                    data = _coerce_bytes_chunk(chunk)
+                    for i in range(0, len(data), STDIN_CHUNK_SIZE):
+                        if shutdown_event.is_set():
+                            return
+                        yield sandbox_pb2.ExecStreamRequest(stdin=data[i : i + STDIN_CHUNK_SIZE])
 
             yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
         call_timeout = (
             timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
         )
-        call: grpc.aio.StreamStreamCall[
-            sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
-        ] = stub.StreamExec(
-            request_iterator=request_generator(),
-            timeout=call_timeout,
-            metadata=self._auth_metadata,
-        )
+        try:
+            call: grpc.aio.StreamStreamCall[
+                sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
+            ] = stub.StreamExec(
+                request_iterator=request_generator(),
+                timeout=call_timeout,
+                metadata=prepared.metadata,
+            )
+        except BaseException:
+            await prepared.release(discard=True)
+            raise
+        prepared.release_when_done(call)
 
+        retiring_error: grpc.RpcError | None = None
         try:
             async for response in call:
                 if response.HasField("ready"):
@@ -6241,17 +6447,42 @@ class Sandbox:
             # by cancelling the receiver side.
             if request_error is not None:
                 raise request_error from e
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation=operation,
-                filepath=filepath,
-            ) from e
+            if prepared.is_direct and _is_unavailable_rpc_error(e):
+                await prepared.discard()
+            replayable_stdin = stdin is None or isinstance(stdin, bytes)
+            if (
+                prepared.is_direct
+                and _retry_retiring
+                and replayable_stdin
+                and _is_runner_shard_retiring_error(e)
+            ):
+                retiring_error = e
+            else:
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation=operation,
+                    filepath=filepath,
+                ) from e
         finally:
             ready_event.set()
             shutdown_event.set()
             with contextlib.suppress(Exception):
                 call.cancel()
+
+        if retiring_error is not None:
+            await prepared.release(discard=True)
+            retry_timeout = self._remaining_budget(deadline)
+            if retry_timeout is not None and retry_timeout <= 0:
+                raise SandboxTimeoutError(f"{operation} timed out") from retiring_error
+            return await self._exec_streaming_binary_async(
+                command,
+                stdin=stdin,
+                timeout_seconds=retry_timeout,
+                operation=operation,
+                filepath=filepath,
+                _retry_retiring=False,
+            )
 
         if request_error is not None:
             raise request_error
@@ -6269,25 +6500,36 @@ class Sandbox:
         )
 
     async def _read_file_unary_async(self, filepath: str, timeout: float) -> bytes:
-        assert self._stub is not None
         request = sandbox_pb2.ReadFileRequest(
             sandbox_id=self._sandbox_id,
             path=filepath,
         )
-
-        try:
-            response = await self._stub.ReadFile(
-                request, timeout=timeout, metadata=self._auth_metadata
+        for attempt in range(2):
+            prepared = await self._prepare_data_plane_call(
+                sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
+                streaming=False,
             )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Read file",
-                filepath=filepath,
-            ) from e
-
-        return bytes(response.content)
+            discard = False
+            try:
+                response = await prepared.stub.ReadFile(
+                    request, timeout=timeout, metadata=prepared.metadata
+                )
+                return bytes(response.content)
+            except grpc.RpcError as e:
+                discard = prepared.is_direct and _is_unavailable_rpc_error(e)
+                if discard:
+                    await prepared.discard()
+                if prepared.is_direct and attempt == 0 and _is_runner_shard_retiring_error(e):
+                    continue
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation="Read file",
+                    filepath=filepath,
+                ) from e
+            finally:
+                await prepared.release(discard=discard)
+        raise AssertionError("unreachable")
 
     async def _read_file_via_exec_streaming(
         self, filepath: str, timeout: float, *, expected_size: int | None = None
@@ -6553,22 +6795,38 @@ class Sandbox:
         contents: bytes,
         timeout: float,
     ) -> None:
-        assert self._stub is not None
         request = sandbox_pb2.WriteFileRequest(
             sandbox_id=self._sandbox_id,
             path=filepath,
             content=contents,
         )
-
-        try:
-            await self._stub.WriteFile(request, timeout=timeout, metadata=self._auth_metadata)
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Write file",
-                filepath=filepath,
-            ) from e
+        for attempt in range(2):
+            prepared = await self._prepare_data_plane_call(
+                sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
+                streaming=False,
+            )
+            discard = False
+            try:
+                await prepared.stub.WriteFile(
+                    request,
+                    timeout=timeout,
+                    metadata=prepared.metadata,
+                )
+                return
+            except grpc.RpcError as e:
+                discard = prepared.is_direct and _is_unavailable_rpc_error(e)
+                if discard:
+                    await prepared.discard()
+                if prepared.is_direct and attempt == 0 and _is_runner_shard_retiring_error(e):
+                    continue
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation="Write file",
+                    filepath=filepath,
+                ) from e
+            finally:
+                await prepared.release(discard=discard)
 
     async def _write_file_via_exec_streaming(
         self,
@@ -6923,8 +7181,8 @@ class Sandbox:
         Args:
             filepath: Absolute path inside the sandbox.
             source: Payload as ``bytes``, a sync ``Iterable[bytes]``, or an
-                ``AsyncIterable[bytes]``. Each yielded chunk is sent as-is;
-                ``bytes`` input is sliced into 1 MiB chunks internally.
+                ``AsyncIterable[bytes]``. Input is split into frame-safe chunks
+                before transmission.
                 Yielded items must be ``bytes``, ``bytearray``, or
                 ``memoryview``; anything else raises ``TypeError``.
             timeout_seconds: Wall-clock timeout for the streaming write.
@@ -6959,6 +7217,7 @@ class Sandbox:
         filepath: str,
         output_queue: asyncio.Queue[bytes | Exception | None],
         timeout: float,
+        _retry_retiring: bool = True,
     ) -> None:
         try:
             # Absolute wall-clock deadline for the whole operation (stat + read),
@@ -6971,8 +7230,6 @@ class Sandbox:
             if self._sandbox_id is None:
                 raise SandboxNotRunningError("No sandbox is running")
             await self._wait_until_running_async()
-            await self._ensure_client()
-            stub = await self._prepare_streaming_call()
             # Capture into a local so the inner closure has a non-Optional binding.
             # Subsequent awaits invalidate mypy's narrowing of self._sandbox_id.
             assert self._sandbox_id is not None
@@ -6985,6 +7242,9 @@ class Sandbox:
             # stat draws from the operation's remaining budget, capped short
             # because it is an O(1) metadata lookup.
             expected_size = await self._stat_file_size_async(filepath, self._stat_budget(deadline))
+
+            prepared = await self._prepare_streaming_call()
+            stub = prepared.stub
 
             stderr_buf = bytearray()
             stderr_cap = STREAMING_READ_STDERR_CAP_BYTES
@@ -7012,13 +7272,19 @@ class Sandbox:
                 if read_budget is not None
                 else None
             )
-            call: grpc.aio.StreamStreamCall[
-                sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
-            ] = stub.StreamExec(
-                request_iterator=request_generator(),
-                timeout=call_timeout,
-                metadata=self._auth_metadata,
-            )
+            try:
+                call: grpc.aio.StreamStreamCall[
+                    sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
+                ] = stub.StreamExec(
+                    request_iterator=request_generator(),
+                    timeout=call_timeout,
+                    metadata=prepared.metadata,
+                )
+            except BaseException:
+                await prepared.release(discard=True)
+                raise
+            prepared.release_when_done(call)
+            retry_retiring = False
             try:
                 async for response in call:
                     if response.HasField("output"):
@@ -7036,9 +7302,34 @@ class Sandbox:
                         break
                     elif response.HasField("error"):
                         raise _exec_stream_error(response.error.message, response.error.code)
+            except grpc.RpcError as exc:
+                if prepared.is_direct and _is_unavailable_rpc_error(exc):
+                    await prepared.discard()
+                if prepared.is_direct and _retry_retiring and _is_runner_shard_retiring_error(exc):
+                    retry_retiring = True
+                else:
+                    raise _translate_rpc_error(
+                        exc,
+                        sandbox_id=self._sandbox_id,
+                        operation="read_file_streaming",
+                        filepath=filepath,
+                    ) from exc
             finally:
                 with contextlib.suppress(Exception):
                     call.cancel()
+
+            if retry_retiring:
+                await prepared.release(discard=True)
+                retry_budget = self._remaining_budget(deadline)
+                if retry_budget is None or retry_budget > 0:
+                    await self._read_file_streaming_async(
+                        filepath,
+                        output_queue,
+                        timeout if retry_budget is None else retry_budget,
+                        _retry_retiring=False,
+                    )
+                    return
+                raise SandboxTimeoutError(f"Timed out reading file '{filepath}'")
 
             if exit_code is None:
                 raise SandboxFileError(

@@ -77,22 +77,28 @@ def _default_channel_options() -> tuple[tuple[str, int], ...]:
 def create_channel(
     target: str,
     is_secure: bool,
+    *,
+    credentials: grpc.ChannelCredentials | None = None,
 ) -> grpc.aio.Channel:
     """Create a gRPC async channel.
 
     Args:
         target: gRPC target in "host:port" format
         is_secure: If True, use TLS; if False, use insecure channel
+        credentials: Optional TLS credentials. When omitted, secure channels
+            use the system trust store. Custom credentials require
+            ``is_secure=True``.
 
     Returns:
         An async gRPC channel
     """
     options = _default_channel_options()
     if is_secure:
-        credentials = grpc.ssl_channel_credentials()
-        return grpc.aio.secure_channel(target, credentials, options=options)
-    else:
-        return grpc.aio.insecure_channel(target, options=options)
+        channel_credentials = credentials or grpc.ssl_channel_credentials()
+        return grpc.aio.secure_channel(target, channel_credentials, options=options)
+    if credentials is not None:
+        raise ValueError("Custom channel credentials require a secure target")
+    return grpc.aio.insecure_channel(target, options=options)
 
 
 def translate_grpc_error(

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
 from cwsandbox._defaults import DEFAULT_TEMP_DIR
 from cwsandbox._types import (
+    DataPlaneMode,
     FileSystemSnapshotOptions,
     NetworkOptions,
     OperationRef,
@@ -93,6 +94,7 @@ class RemoteFunction(Generic[P, R]):
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         request_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
     ) -> None:
         """Initialize RemoteFunction with function and execution configuration.
 
@@ -118,6 +120,7 @@ class RemoteFunction(Generic[P, R]):
             annotations: Kubernetes pod annotations for the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive metadata only.
+            data_plane_mode: Override the session's data-plane transport policy.
         """
         unwrapped = fn
         while hasattr(unwrapped, "__wrapped__"):
@@ -156,6 +159,7 @@ class RemoteFunction(Generic[P, R]):
         self._file_system_snapshot = file_system_snapshot
         self._max_timeout_seconds = None
         self._request_timeout_seconds = request_timeout_seconds
+        self._data_plane_mode = data_plane_mode
         self._environment_variables = environment_variables
         self._annotations = annotations
         # Preserve function metadata
@@ -285,6 +289,8 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["annotations"] = self._annotations
         if self._request_timeout_seconds is not None:
             sandbox_kwargs["request_timeout_seconds"] = self._request_timeout_seconds
+        if self._data_plane_mode is not None:
+            sandbox_kwargs["data_plane_mode"] = self._data_plane_mode
 
         # Import here to avoid circular import
         from cwsandbox._sandbox import Sandbox

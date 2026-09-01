@@ -9,6 +9,7 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 """
 
 import asyncio
+import os
 import time
 import uuid
 from unittest.mock import patch
@@ -18,6 +19,7 @@ import pytest
 from grpc.aio import UnaryStreamCall
 
 from cwsandbox import (
+    DataPlaneMode,
     NetworkOptions,
     PlacementMode,
     ResourceOptions,
@@ -45,6 +47,33 @@ def test_sandbox_lifecycle(sandbox_defaults: SandboxDefaults) -> None:
 
         assert result.returncode == 0
         assert result.stdout.strip() == "hello"
+
+
+def test_direct_data_plane(sandbox_defaults: SandboxDefaults) -> None:
+    """Opt-in end-to-end coverage for strict direct mTLS data operations."""
+    if os.environ.get("CWSANDBOX_TEST_DIRECT_DATA_PLANE") != "1":
+        pytest.skip("set CWSANDBOX_TEST_DIRECT_DATA_PLANE=1 to require direct connectivity")
+
+    defaults = sandbox_defaults.with_overrides(data_plane_mode=DataPlaneMode.DIRECT)
+    with Sandbox.run(
+        "/bin/sh",
+        "-c",
+        'echo "direct-log"; trap "exit 0" TERM INT; sleep infinity & wait',
+        defaults=defaults,
+    ) as sandbox:
+        sandbox.wait()
+
+        result = sandbox.exec(["printf", "%s", "direct-exec"]).result()
+        assert result.stdout == "direct-exec"
+
+        sandbox.write_file("/tmp/direct-data-plane", b"direct-file").result()
+        assert sandbox.read_file("/tmp/direct-data-plane").result() == b"direct-file"
+
+        payload = bytes(range(256)) * 4096
+        sandbox.write_file("/tmp/direct-data-plane-stream", payload).result()
+        assert b"".join(sandbox.read_file_streaming("/tmp/direct-data-plane-stream")) == payload
+
+        assert any("direct-log" in line for line in sandbox.stream_logs())
 
 
 def test_wait_until_complete_latency_guard(sandbox_defaults: SandboxDefaults) -> None:

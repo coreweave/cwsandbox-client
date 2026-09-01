@@ -14,6 +14,7 @@ from cwsandbox._defaults import DEFAULT_BASE_URL, SandboxDefaults, _resolve_sele
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
+    DataPlaneMode,
     ExecOutcome,
     FileSystemSnapshotOptions,
     ImagePullCredentials,
@@ -343,6 +344,7 @@ class Session:
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         request_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
@@ -379,6 +381,7 @@ class Session:
             max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
                 Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
+            data_plane_mode: Override the session's data-plane transport policy.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -457,6 +460,7 @@ class Session:
             annotations=annotations,
             secrets=secrets,
             request_timeout_seconds=effective_request_timeout,
+            data_plane_mode=data_plane_mode,
             defaults=self._defaults,
             _session=self,
         )
@@ -571,6 +575,7 @@ class Session:
             timeout_seconds=self._defaults.request_timeout_seconds,
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
+            data_plane_mode=self._defaults.data_plane_mode,
         )
 
         if adopt:
@@ -630,6 +635,7 @@ class Session:
             timeout_seconds=self._defaults.request_timeout_seconds,
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
+            data_plane_mode=self._defaults.data_plane_mode,
         )
 
         if adopt:
@@ -689,6 +695,7 @@ class Session:
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         request_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
         **kwargs: Any,
     ) -> Callable[[Callable[P, R]], RemoteFunction[P, R]]:
         """Decorator to execute a Python function in a sandbox.
@@ -722,6 +729,7 @@ class Session:
             max_timeout_seconds: Removed in 1.x; use ``request_timeout_seconds``.
             request_timeout_seconds: Client-side HTTP timeout for sandbox RPCs.
                 Defaults to the session's ``SandboxDefaults.request_timeout_seconds``.
+            data_plane_mode: Override the session's data-plane transport policy.
             environment_variables: Environment variables to inject into the sandbox.
                 Merges with and overrides matching keys from the session defaults.
                 Use for non-sensitive config only.
@@ -788,6 +796,7 @@ class Session:
                 environment_variables=environment_variables,
                 annotations=annotations,
                 request_timeout_seconds=request_timeout_seconds,
+                data_plane_mode=data_plane_mode,
             )
 
         return decorator
