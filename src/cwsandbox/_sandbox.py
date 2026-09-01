@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
+import inspect
 import logging
 import math
 import os
@@ -76,6 +77,7 @@ from cwsandbox._direct import (
     DirectDataPlaneUnavailable,
 )
 from cwsandbox._error_info import (
+    CWSANDBOX_BACKEND_UNAVAILABLE,
     CWSANDBOX_COMMAND_TIMEOUT,
     CWSANDBOX_ERROR_DOMAIN,
     CWSANDBOX_FILE_IO_FAILED,
@@ -91,6 +93,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_INVALID_REQUEST,
+    CWSANDBOX_RUNNER_SHARD_RETIRING,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
@@ -203,16 +206,34 @@ class _PreparedDataPlaneCall:
         if self.direct_lease is not None:
             await self.direct_lease.release(discard=discard)
 
+    @property
+    def is_direct(self) -> bool:
+        return self.direct_lease is not None
+
+    async def discard(self) -> None:
+        if self.direct_lease is not None:
+            await self.direct_lease.discard()
+
     def release_when_done(self, call: Any) -> None:
         """Hold a direct channel until a streaming RPC reaches a terminal state."""
 
         if self.direct_lease is None:
             return
 
-        def _release(_: Any) -> None:
-            asyncio.create_task(self.release())
+        async def _release(done_call: Any) -> None:
+            discard = False
+            try:
+                code = done_call.code()
+                if inspect.isawaitable(code):
+                    code = await code
+                discard = code == grpc.StatusCode.UNAVAILABLE
+            except Exception:
+                pass
+            if discard:
+                await self.discard()
+            await self.release(discard=discard)
 
-        call.add_done_callback(_release)
+        call.add_done_callback(lambda done_call: asyncio.create_task(_release(done_call)))
 
 
 class SandboxStatus(StrEnum):
@@ -694,6 +715,30 @@ def _translate_snapshot_reason(
             retry_delay=retry_delay,
         )
     return None
+
+
+def _is_runner_shard_retiring_error(error: grpc.RpcError) -> bool:
+    parsed = parse_error_info(error)
+    return (
+        parsed is not None
+        and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+        and parsed.reason == CWSANDBOX_RUNNER_SHARD_RETIRING
+    )
+
+
+def _is_unavailable_rpc_error(error: grpc.RpcError) -> bool:
+    return error.code() == grpc.StatusCode.UNAVAILABLE
+
+
+def _is_log_session_wrong_shard_error(error: grpc.RpcError) -> bool:
+    parsed = parse_error_info(error)
+    return (
+        parsed is not None
+        and parsed.domain == CWSANDBOX_ERROR_DOMAIN
+        and parsed.reason == CWSANDBOX_BACKEND_UNAVAILABLE
+        and bool(parsed.metadata.get("owner_shard_id"))
+        and bool(parsed.metadata.get("local_shard_id"))
+    )
 
 
 def _translate_rpc_error(
@@ -5451,7 +5496,17 @@ class Sandbox:
                             done = True
                     except grpc.aio.AioRpcError as exc:
                         last_transport_error = exc
-                        if not (_is_resumable_transport_error(exc) and follow):
+                        direct_unavailable = prepared.is_direct and _is_unavailable_rpc_error(exc)
+                        if direct_unavailable:
+                            await prepared.discard()
+                            if is_resume and _is_log_session_wrong_shard_error(exc):
+                                session_id = ""
+                                last_offset = 0
+                                line_parts = []
+                                line_parts_bytes = 0
+                        if prepared.is_direct and _is_runner_shard_retiring_error(exc):
+                            pass
+                        elif not (_is_resumable_transport_error(exc) and follow):
                             raise _translate_rpc_error(
                                 exc, sandbox_id=sandbox_id, operation="Stream logs"
                             ) from exc
@@ -6261,6 +6316,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         operation: str,
         filepath: str | None = None,
+        _retry_retiring: bool = True,
     ) -> tuple[int, bytes, bytes]:
         """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
@@ -6268,6 +6324,7 @@ class Sandbox:
         keep handshake/timeout/error-translation in sync between the two.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        deadline = time.monotonic() + timeout if timeout is not None else None
 
         if not command:
             raise ValueError("Command cannot be empty")
@@ -6326,15 +6383,16 @@ class Sandbox:
                     chunk = buf[i : i + STDIN_CHUNK_SIZE]
                     yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
             else:
-                # AsyncIterable[bytes] — caller controls chunk size; each
-                # yielded chunk is passed through unmodified so the caller
-                # never materializes the full payload in memory.
                 async for chunk in stdin:
                     if shutdown_event.is_set():
                         return
                     if not chunk:
                         continue
-                    yield sandbox_pb2.ExecStreamRequest(stdin=_coerce_bytes_chunk(chunk))
+                    data = _coerce_bytes_chunk(chunk)
+                    for i in range(0, len(data), STDIN_CHUNK_SIZE):
+                        if shutdown_event.is_set():
+                            return
+                        yield sandbox_pb2.ExecStreamRequest(stdin=data[i : i + STDIN_CHUNK_SIZE])
 
             yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
@@ -6354,6 +6412,7 @@ class Sandbox:
             raise
         prepared.release_when_done(call)
 
+        retiring_error: grpc.RpcError | None = None
         try:
             async for response in call:
                 if response.HasField("ready"):
@@ -6388,17 +6447,42 @@ class Sandbox:
             # by cancelling the receiver side.
             if request_error is not None:
                 raise request_error from e
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation=operation,
-                filepath=filepath,
-            ) from e
+            if prepared.is_direct and _is_unavailable_rpc_error(e):
+                await prepared.discard()
+            replayable_stdin = stdin is None or isinstance(stdin, bytes)
+            if (
+                prepared.is_direct
+                and _retry_retiring
+                and replayable_stdin
+                and _is_runner_shard_retiring_error(e)
+            ):
+                retiring_error = e
+            else:
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation=operation,
+                    filepath=filepath,
+                ) from e
         finally:
             ready_event.set()
             shutdown_event.set()
             with contextlib.suppress(Exception):
                 call.cancel()
+
+        if retiring_error is not None:
+            await prepared.release(discard=True)
+            retry_timeout = self._remaining_budget(deadline)
+            if retry_timeout is not None and retry_timeout <= 0:
+                raise SandboxTimeoutError(f"{operation} timed out") from retiring_error
+            return await self._exec_streaming_binary_async(
+                command,
+                stdin=stdin,
+                timeout_seconds=retry_timeout,
+                operation=operation,
+                filepath=filepath,
+                _retry_retiring=False,
+            )
 
         if request_error is not None:
             raise request_error
@@ -6420,26 +6504,32 @@ class Sandbox:
             sandbox_id=self._sandbox_id,
             path=filepath,
         )
-        prepared = await self._prepare_data_plane_call(
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
-            streaming=False,
-        )
-
-        try:
-            response = await prepared.stub.ReadFile(
-                request, timeout=timeout, metadata=prepared.metadata
+        for attempt in range(2):
+            prepared = await self._prepare_data_plane_call(
+                sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
+                streaming=False,
             )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Read file",
-                filepath=filepath,
-            ) from e
-        finally:
-            await prepared.release()
-
-        return bytes(response.content)
+            discard = False
+            try:
+                response = await prepared.stub.ReadFile(
+                    request, timeout=timeout, metadata=prepared.metadata
+                )
+                return bytes(response.content)
+            except grpc.RpcError as e:
+                discard = prepared.is_direct and _is_unavailable_rpc_error(e)
+                if discard:
+                    await prepared.discard()
+                if prepared.is_direct and attempt == 0 and _is_runner_shard_retiring_error(e):
+                    continue
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation="Read file",
+                    filepath=filepath,
+                ) from e
+            finally:
+                await prepared.release(discard=discard)
+        raise AssertionError("unreachable")
 
     async def _read_file_via_exec_streaming(
         self, filepath: str, timeout: float, *, expected_size: int | None = None
@@ -6710,26 +6800,33 @@ class Sandbox:
             path=filepath,
             content=contents,
         )
-        prepared = await self._prepare_data_plane_call(
-            sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
-            streaming=False,
-        )
-
-        try:
-            await prepared.stub.WriteFile(
-                request,
-                timeout=timeout,
-                metadata=prepared.metadata,
+        for attempt in range(2):
+            prepared = await self._prepare_data_plane_call(
+                sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
+                streaming=False,
             )
-        except grpc.RpcError as e:
-            raise _translate_rpc_error(
-                e,
-                sandbox_id=self._sandbox_id,
-                operation="Write file",
-                filepath=filepath,
-            ) from e
-        finally:
-            await prepared.release()
+            discard = False
+            try:
+                await prepared.stub.WriteFile(
+                    request,
+                    timeout=timeout,
+                    metadata=prepared.metadata,
+                )
+                return
+            except grpc.RpcError as e:
+                discard = prepared.is_direct and _is_unavailable_rpc_error(e)
+                if discard:
+                    await prepared.discard()
+                if prepared.is_direct and attempt == 0 and _is_runner_shard_retiring_error(e):
+                    continue
+                raise _translate_rpc_error(
+                    e,
+                    sandbox_id=self._sandbox_id,
+                    operation="Write file",
+                    filepath=filepath,
+                ) from e
+            finally:
+                await prepared.release(discard=discard)
 
     async def _write_file_via_exec_streaming(
         self,
@@ -7084,8 +7181,8 @@ class Sandbox:
         Args:
             filepath: Absolute path inside the sandbox.
             source: Payload as ``bytes``, a sync ``Iterable[bytes]``, or an
-                ``AsyncIterable[bytes]``. Each yielded chunk is sent as-is;
-                ``bytes`` input is sliced into 1 MiB chunks internally.
+                ``AsyncIterable[bytes]``. Input is split into frame-safe chunks
+                before transmission.
                 Yielded items must be ``bytes``, ``bytearray``, or
                 ``memoryview``; anything else raises ``TypeError``.
             timeout_seconds: Wall-clock timeout for the streaming write.
@@ -7120,6 +7217,7 @@ class Sandbox:
         filepath: str,
         output_queue: asyncio.Queue[bytes | Exception | None],
         timeout: float,
+        _retry_retiring: bool = True,
     ) -> None:
         try:
             # Absolute wall-clock deadline for the whole operation (stat + read),
@@ -7186,6 +7284,7 @@ class Sandbox:
                 await prepared.release(discard=True)
                 raise
             prepared.release_when_done(call)
+            retry_retiring = False
             try:
                 async for response in call:
                     if response.HasField("output"):
@@ -7203,9 +7302,34 @@ class Sandbox:
                         break
                     elif response.HasField("error"):
                         raise _exec_stream_error(response.error.message, response.error.code)
+            except grpc.RpcError as exc:
+                if prepared.is_direct and _is_unavailable_rpc_error(exc):
+                    await prepared.discard()
+                if prepared.is_direct and _retry_retiring and _is_runner_shard_retiring_error(exc):
+                    retry_retiring = True
+                else:
+                    raise _translate_rpc_error(
+                        exc,
+                        sandbox_id=self._sandbox_id,
+                        operation="read_file_streaming",
+                        filepath=filepath,
+                    ) from exc
             finally:
                 with contextlib.suppress(Exception):
                     call.cancel()
+
+            if retry_retiring:
+                await prepared.release(discard=True)
+                retry_budget = self._remaining_budget(deadline)
+                if retry_budget is None or retry_budget > 0:
+                    await self._read_file_streaming_async(
+                        filepath,
+                        output_queue,
+                        timeout if retry_budget is None else retry_budget,
+                        _retry_retiring=False,
+                    )
+                    return
+                raise SandboxTimeoutError(f"Timed out reading file '{filepath}'")
 
             if exit_code is None:
                 raise SandboxFileError(

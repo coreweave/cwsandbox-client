@@ -63,6 +63,7 @@ class _PoolEntry:
     readiness: asyncio.Future[None]
     active_leases: int = 0
     discard_when_idle: bool = False
+    closed: bool = False
 
 
 class _DirectChannelLease:
@@ -70,18 +71,24 @@ class _DirectChannelLease:
         self,
         pool: _DirectChannelPool,
         cache_key: str,
-        channel: grpc.aio.Channel,
+        entry: _PoolEntry,
     ) -> None:
         self._pool = pool
         self._cache_key = cache_key
+        self._entry = entry
         self._released = False
-        self.stub = sandbox_data_plane_pb2_grpc.SandboxDataPlaneServiceStub(channel)  # type: ignore[no-untyped-call]
+        self.stub = sandbox_data_plane_pb2_grpc.SandboxDataPlaneServiceStub(entry.channel)  # type: ignore[no-untyped-call]
 
     async def release(self, *, discard: bool = False) -> None:
         if self._released:
             return
         self._released = True
-        await self._pool.release(self._cache_key, discard=discard)
+        await self._pool.release(self._cache_key, self._entry, discard=discard)
+
+    async def discard(self) -> None:
+        """Remove this channel from the reusable pool, even after release."""
+
+        await self._pool.discard(self._cache_key, self._entry)
 
 
 class _DirectChannelPool:
@@ -115,7 +122,7 @@ class _DirectChannelPool:
             entry.active_leases += 1
             self._entries.move_to_end(bundle.cache_key)
 
-        lease = _DirectChannelLease(self, bundle.cache_key, entry.channel)
+        lease = _DirectChannelLease(self, bundle.cache_key, entry)
         try:
             await asyncio.wait_for(asyncio.shield(entry.readiness), timeout=timeout)
         except BaseException:
@@ -123,31 +130,42 @@ class _DirectChannelPool:
             raise
         return lease
 
-    async def release(self, cache_key: str, *, discard: bool = False) -> None:
+    async def release(
+        self,
+        cache_key: str,
+        entry: _PoolEntry,
+        *,
+        discard: bool = False,
+    ) -> None:
         to_close: list[grpc.aio.Channel] = []
         async with self._lock:
-            entry = self._entries.get(cache_key)
-            if entry is None:
-                return
             entry.active_leases = max(0, entry.active_leases - 1)
             entry.discard_when_idle = entry.discard_when_idle or discard
-            self._entries.move_to_end(cache_key)
-            if entry.active_leases == 0 and entry.discard_when_idle:
+            if discard and self._entries.get(cache_key) is entry:
                 self._entries.pop(cache_key, None)
-                to_close.append(entry.channel)
+            elif self._entries.get(cache_key) is entry:
+                self._entries.move_to_end(cache_key)
+            if entry.active_leases == 0 and entry.discard_when_idle:
+                if self._entries.get(cache_key) is entry:
+                    self._entries.pop(cache_key, None)
+                if not entry.closed:
+                    entry.closed = True
+                    to_close.append(entry.channel)
             to_close.extend(self._evict_idle_locked())
         await _close_channels(to_close)
 
-    async def discard(self, cache_key: str) -> None:
+    async def discard(self, cache_key: str, entry: _PoolEntry | None = None) -> None:
         to_close: list[grpc.aio.Channel] = []
         async with self._lock:
-            entry = self._entries.get(cache_key)
+            if entry is None:
+                entry = self._entries.get(cache_key)
             if entry is None:
                 return
-            if entry.active_leases:
-                entry.discard_when_idle = True
-            else:
+            entry.discard_when_idle = True
+            if self._entries.get(cache_key) is entry:
                 self._entries.pop(cache_key, None)
+            if entry.active_leases == 0 and not entry.closed:
+                entry.closed = True
                 to_close.append(entry.channel)
         await _close_channels(to_close)
 
@@ -163,6 +181,7 @@ class _DirectChannelPool:
             if entry.active_leases:
                 continue
             self._entries.pop(cache_key, None)
+            entry.closed = True
             evicted.append(entry.channel)
             idle_count -= 1
         return evicted

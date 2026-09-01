@@ -1938,6 +1938,55 @@ class TestSandboxFileOperationFallback:
         assert init_commands == [["/bin/sh", "-c", "cat >/tmp/test"]]
         assert "base64" not in " ".join(init_commands[0])
 
+    def test_binary_stream_exec_rechunks_async_source(self) -> None:
+        from cwsandbox._defaults import STDIN_CHUNK_SIZE
+        from cwsandbox._proto import sandbox_pb2 as streaming_pb2
+
+        sandbox = self._setup_running_sandbox()
+        payload = b"x" * (STDIN_CHUNK_SIZE + 7)
+        stdin_chunks: list[bytes] = []
+        close_event = asyncio.Event()
+
+        async def source() -> AsyncIterator[bytes]:
+            yield payload
+
+        def on_write(request: Any) -> None:
+            if request.HasField("stdin"):
+                stdin_chunks.append(bytes(request.stdin))
+            elif request.HasField("close"):
+                close_event.set()
+
+        async def response_generator() -> AsyncIterator[Any]:
+            yield streaming_pb2.ExecStreamResponse(ready=streaming_pb2.ExecStreamReady())
+            await asyncio.wait_for(close_event.wait(), timeout=5.0)
+            yield streaming_pb2.ExecStreamResponse(exit=streaming_pb2.ExecStreamExit(exit_code=0))
+
+        mock_call = MockBidirectionalStreamCall(
+            response_generator=response_generator,
+            on_write=on_write,
+        )
+        mock_channel, mock_stub = create_mock_channel_and_stub_bidirectional(mock_call)
+        sandbox._streaming_channel = mock_channel
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch(
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            sandbox._loop_manager.run_sync(
+                sandbox._exec_streaming_binary_async(
+                    ["/bin/sh", "-c", "cat >/tmp/test"],
+                    stdin=source(),
+                    timeout_seconds=5.0,
+                    operation="Write file",
+                )
+            )
+
+        assert b"".join(stdin_chunks) == payload
+        assert [len(chunk) for chunk in stdin_chunks] == [STDIN_CHUNK_SIZE, 7]
+
     def test_read_fallback_nonzero_maps_to_file_error(self) -> None:
         sandbox = self._setup_running_sandbox()
 

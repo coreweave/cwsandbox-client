@@ -10,9 +10,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import grpc
 import pytest
 from cryptography import x509
+from google.protobuf import any_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
+from google.rpc import error_details_pb2, status_pb2
 
 from cwsandbox._direct import (
     DirectDataPlaneClient,
@@ -30,6 +33,36 @@ class _FakeChannel:
     def __init__(self) -> None:
         self.channel_ready = AsyncMock()
         self.close = AsyncMock()
+
+
+class _DirectRpcError(grpc.RpcError):
+    def __init__(
+        self,
+        *,
+        reason: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__()
+        self._trailing: list[tuple[str, bytes]] = []
+        if reason is not None:
+            info = error_details_pb2.ErrorInfo(
+                reason=reason,
+                domain="cwsandbox.com",
+                metadata=metadata or {},
+            )
+            detail = any_pb2.Any()
+            detail.Pack(info)
+            status = status_pb2.Status(code=14, message="runner unavailable", details=[detail])
+            self._trailing.append(("grpc-status-details-bin", status.SerializeToString()))
+
+    def code(self) -> grpc.StatusCode:
+        return grpc.StatusCode.UNAVAILABLE
+
+    def details(self) -> str:
+        return "runner unavailable"
+
+    def trailing_metadata(self) -> list[tuple[str, bytes]]:
+        return self._trailing
 
 
 def _connection_response(*permissions: int) -> sandbox_pb2.SandboxConnection:
@@ -102,6 +135,31 @@ async def test_pool_does_not_evict_active_streams() -> None:
         assert "sandbox-0" in pool._entries
         assert channels[0].close.await_count == 0
         await active.release()
+
+
+@pytest.mark.asyncio
+async def test_discarded_active_channel_is_not_reused() -> None:
+    pool = _DirectChannelPool()
+    channels: list[_FakeChannel] = []
+
+    def make_channel(*_args: object, **_kwargs: object) -> _FakeChannel:
+        channel = _FakeChannel()
+        channels.append(channel)
+        return channel
+
+    with (
+        patch("cwsandbox._direct.create_channel", side_effect=make_channel),
+        patch("cwsandbox._direct.sandbox_data_plane_pb2_grpc.SandboxDataPlaneServiceStub"),
+    ):
+        stale = await pool.acquire(_bundle(0), timeout=1)
+        await stale.discard()
+        replacement = await pool.acquire(_bundle(0), timeout=1)
+
+        assert len(channels) == 2
+        assert channels[0].close.await_count == 0
+        await replacement.release()
+        await stale.release()
+        channels[0].close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -336,6 +394,73 @@ async def test_direct_mode_does_not_fall_back() -> None:
         pytest.raises(SandboxUnavailableError, match="Direct data-plane access is unavailable"),
     ):
         await sandbox._prepare_streaming_call()
+
+
+@pytest.mark.asyncio
+async def test_retiring_direct_unary_discards_channel_and_retries_once() -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    first_stub = MagicMock()
+    first_stub.ReadFile = AsyncMock(
+        side_effect=_DirectRpcError(reason="CWSANDBOX_RUNNER_SHARD_RETIRING")
+    )
+    second_stub = MagicMock()
+    second_stub.ReadFile = AsyncMock(return_value=sandbox_pb2.ReadFileResponse(content=b"ok"))
+    first_lease = MagicMock(stub=first_stub)
+    first_lease.release = AsyncMock()
+    first_lease.discard = AsyncMock()
+    second_lease = MagicMock(stub=second_stub)
+    second_lease.release = AsyncMock()
+    second_lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(side_effect=[first_lease, second_lease])
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+    ):
+        content = await sandbox._read_file_unary_async("/tmp/file", 5)
+
+    assert content == b"ok"
+    assert sandbox._direct_data_plane.acquire.await_count == 2
+    first_lease.discard.assert_awaited_once()
+    first_lease.release.assert_awaited_once_with(discard=True)
+    second_lease.release.assert_awaited_once_with(discard=False)
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_direct_unavailable_is_not_replayed() -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    stub = MagicMock()
+    stub.WriteFile = AsyncMock(side_effect=_DirectRpcError())
+    lease = MagicMock(stub=stub)
+    lease.release = AsyncMock()
+    lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(return_value=lease)
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        pytest.raises(SandboxUnavailableError),
+    ):
+        await sandbox._write_file_unary_async("/tmp/file", b"payload", 5)
+
+    sandbox._direct_data_plane.acquire.assert_awaited_once()
+    lease.discard.assert_awaited_once()
+    lease.release.assert_awaited_once_with(discard=True)
+
+
+def test_log_wrong_shard_detection_requires_structured_owner_metadata() -> None:
+    from cwsandbox._sandbox import _is_log_session_wrong_shard_error
+
+    wrong_shard = _DirectRpcError(
+        reason="CWSANDBOX_BACKEND_UNAVAILABLE",
+        metadata={"local_shard_id": "shard-2", "owner_shard_id": "shard-1"},
+    )
+    generic = _DirectRpcError(reason="CWSANDBOX_BACKEND_UNAVAILABLE")
+
+    assert _is_log_session_wrong_shard_error(wrong_shard)
+    assert not _is_log_session_wrong_shard_error(generic)
 
 
 @pytest.mark.asyncio
