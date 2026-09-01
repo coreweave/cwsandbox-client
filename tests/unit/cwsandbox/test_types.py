@@ -221,6 +221,7 @@ class TestService:
         ep = Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN)
         assert ep.kind == EndpointKind.HTTPS
         assert ep.auth == EndpointAuth.OPEN
+        assert ep.request_timeout_seconds is None
 
     def test_endpoint_string_coercion(self) -> None:
         ep = Endpoint(kind="https", auth="open")
@@ -240,6 +241,40 @@ class TestService:
         assert isinstance(svc.endpoint, Endpoint)
         assert svc.endpoint.kind == EndpointKind.HTTPS
         assert svc.endpoint.auth == EndpointAuth.OPEN
+        assert svc.endpoint.request_timeout_seconds is None
+
+    def test_service_endpoint_nested_dict_with_timeout(self) -> None:
+        svc = Service(
+            port=8080,
+            visibility="public",
+            endpoint={
+                "kind": "https",
+                "auth": "open",
+                "request_timeout_seconds": 120,
+            },
+        )
+        assert isinstance(svc.endpoint, Endpoint)
+        assert svc.endpoint.request_timeout_seconds == 120
+
+    def test_endpoint_request_timeout_seconds_allows_int(self) -> None:
+        zero = Endpoint(kind="https", auth="open", request_timeout_seconds=0)
+        typical = Endpoint(kind="https", auth="open", request_timeout_seconds=120)
+        # Range is enforced by the API; the client must not reject a later bump.
+        below_current_min = Endpoint(kind="https", auth="open", request_timeout_seconds=14)
+        above_current_max = Endpoint(kind="https", auth="open", request_timeout_seconds=901)
+        assert zero.request_timeout_seconds == 0
+        assert typical.request_timeout_seconds == 120
+        assert below_current_min.request_timeout_seconds == 14
+        assert above_current_max.request_timeout_seconds == 901
+
+    @pytest.mark.parametrize("bad_value", [15.0, "120", True])
+    def test_endpoint_request_timeout_seconds_rejects_non_int(self, bad_value: object) -> None:
+        with pytest.raises(TypeError, match="request_timeout_seconds"):
+            Endpoint(
+                kind="https",
+                auth="open",
+                request_timeout_seconds=bad_value,  # type: ignore[arg-type]
+            )
 
     def test_service_endpoint_requires_public(self) -> None:
         with pytest.raises(ValueError, match="PUBLIC"):

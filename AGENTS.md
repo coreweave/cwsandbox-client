@@ -66,6 +66,7 @@ Properties:
 - `status_updated_at`: When status was last fetched
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
 - `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
+- `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
@@ -188,7 +189,7 @@ data = await ref
 
 **`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
-**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
+**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint` / `HttpsEndpointStatus`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Optional `Endpoint.request_timeout_seconds` is the server-side HTTPS request clock (504 while the sandbox stays alive). The SDK only checks that the value is an `int`. It is not `Sandbox.run(request_timeout_seconds=...)` (client RPC deadline). Omit/`0` is the platform default (15s on serverless). The server accepts `0` or `[15, 900]`. On create-from-template, `0` is replace-on-presence and does not clear a template timeout back to the platform default. Applied timeout is echoed on `Sandbox.service_endpoints`. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
 
 ```python
 from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox

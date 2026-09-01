@@ -23,6 +23,7 @@ from cwsandbox import (
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    HttpsEndpointStatus,
     ImagePullCredentials,
     NetworkOptions,
     PlacementMode,
@@ -473,6 +474,7 @@ class TestSandboxRun:
         assert spec.services[0].HasField("endpoint")
         assert spec.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
         assert spec.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert spec.services[0].endpoint.request_timeout_seconds == 0
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
@@ -495,6 +497,59 @@ class TestSandboxRun:
         assert request.sandbox.spec.services[0].HasField("endpoint")
         assert ep.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
         assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert ep.request_timeout_seconds == 0
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_https_request_timeout_seconds(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            request_timeout_seconds=45,
+            services=[
+                Service(
+                    name="web",
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(
+                        kind=EndpointKind.HTTPS,
+                        auth=EndpointAuth.OPEN,
+                        request_timeout_seconds=120,
+                    ),
+                ),
+            ],
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        ep = request.sandbox.spec.services[0].endpoint
+        assert ep.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert ep.request_timeout_seconds == 120
+        assert stub.CreateSandbox.call_args.kwargs["timeout"] == 45
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_https_request_timeout_seconds_from_nested_dict(
+        self,
+    ) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                {
+                    "port": 8080,
+                    "visibility": "public",
+                    "endpoint": {
+                        "kind": "https",
+                        "auth": "open",
+                        "request_timeout_seconds": 120,
+                    },
+                }
+            ],
+        )
+
+        ep = stub.CreateSandbox.call_args.args[0].sandbox.spec.services[0].endpoint
+        assert ep.request_timeout_seconds == 120
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_scratch_volume(self) -> None:
@@ -591,7 +646,6 @@ class TestSandboxRun:
 
         request = stub.CreateSandboxFromTemplate.call_args.args[0]
         assert list(request.overrides.containers) == []
-        assert request.overrides.primary_container == ""
         assert request.overrides.ListFields() == []
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
@@ -625,6 +679,34 @@ class TestSandboxRun:
         assert request.overrides.services[0].HasField("endpoint")
         assert request.overrides.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
         assert request.overrides.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert request.overrides.services[0].endpoint.request_timeout_seconds == 0
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_maps_https_request_timeout_seconds(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            request_timeout_seconds=45,
+            services=[
+                Service(
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(
+                        kind=EndpointKind.HTTPS,
+                        auth=EndpointAuth.OPEN,
+                        request_timeout_seconds=120,
+                    ),
+                )
+            ],
+        )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        ep = request.overrides.services[0].endpoint
+        assert ep.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert ep.request_timeout_seconds == 120
+        assert stub.CreateSandboxFromTemplate.call_args.kwargs["timeout"] == 45
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_template_args_without_image_raises(self) -> None:
@@ -6180,6 +6262,130 @@ class TestStoppingStateTransitions:
         sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
 
         assert sandbox.service_urls == ()
+
+    def test_apply_sandbox_info_echoes_https_endpoint_status(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="https://8080-sb-1.example",
+                            request_timeout_seconds=120,
+                        ),
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=9090,
+                        name="ready",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="https://9090-sb-1.example",
+                            request_timeout_seconds=15,
+                        ),
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=7070,
+                        name="plain",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                            url="8443-sb-1.example:443",
+                        ),
+                    ),
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_endpoints == (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="https://8080-sb-1.example",
+                request_timeout_seconds=120,
+            ),
+            HttpsEndpointStatus(
+                port=9090,
+                name="ready",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="https://9090-sb-1.example",
+                request_timeout_seconds=15,
+            ),
+        )
+
+    def test_apply_sandbox_info_keeps_https_timeout_when_url_suppressed(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_endpoints = (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="https://8080-sb-1.example",
+                request_timeout_seconds=120,
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_COMPLETED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="",
+                            request_timeout_seconds=120,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_urls == ()
+        assert sandbox.service_endpoints == (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="",
+                request_timeout_seconds=120,
+            ),
+        )
 
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""

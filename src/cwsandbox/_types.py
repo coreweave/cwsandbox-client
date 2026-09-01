@@ -190,19 +190,64 @@ class Endpoint:
     A URL in ``Sandbox.service_urls`` means the hostname was assigned, not
     that the app is listening yet.
 
+    ``request_timeout_seconds`` is the server-side HTTPS request clock on
+    this product endpoint (504 while the sandbox stays alive). It is not
+    ``Sandbox.run(request_timeout_seconds=...)``, which is the client RPC
+    deadline. This client only requires an ``int`` (or ``None``).
+
     Attributes:
         kind: ``HTTPS``.
         auth: ``OPEN`` (no platform token required).
+        request_timeout_seconds: Seconds before the platform closes an
+            in-flight HTTPS request. ``None`` or ``0`` selects the
+            platform default (15s on serverless). The server accepts
+            ``0`` or ``[15, 900]``. On create-from-template, ``0`` is
+            replace-on-presence and does not clear a template timeout
+            back to the platform default.
     """
 
     kind: EndpointKind | str
     auth: EndpointAuth | str
+    request_timeout_seconds: int | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.kind, str):
             object.__setattr__(self, "kind", EndpointKind(self.kind.lower()))
         if isinstance(self.auth, str):
             object.__setattr__(self, "auth", EndpointAuth(self.auth.lower()))
+        timeout = self.request_timeout_seconds
+        if timeout is None:
+            return
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            raise TypeError(
+                "Endpoint.request_timeout_seconds must be an int or None, "
+                f"got {type(timeout).__name__}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class HttpsEndpointStatus:
+    """Applied HTTPS product endpoint echoed on ``Sandbox.service_endpoints``.
+
+    ``request_timeout_seconds`` is the effective server-side clock (15 when
+    create omitted or sent ``0``). ``url`` is empty when the API suppresses
+    it (terminal sandboxes). This is not ``Sandbox.run(request_timeout_seconds=...)``.
+
+    Attributes:
+        port: Container port for this service.
+        name: Service name from status (may be empty).
+        kind: ``HTTPS``.
+        auth: ``OPEN``.
+        url: Assigned HTTPS URL, or empty when suppressed.
+        request_timeout_seconds: Applied HTTPS request timeout in seconds.
+    """
+
+    port: int
+    name: str
+    kind: EndpointKind
+    auth: EndpointAuth
+    url: str
+    request_timeout_seconds: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -221,8 +266,8 @@ class Service:
             stays empty unless the API reports a URL. The service still
             appears in ``exposed_ports``. Must be PUBLIC when ``endpoint``
             is set.
-        endpoint: Optional HTTPS URL (HTTPS/OPEN). Omit for a plain TCP/UDP
-            port.
+        endpoint: Optional HTTPS URL (HTTPS/OPEN, optional
+            ``request_timeout_seconds``). Omit for a plain TCP/UDP port.
     """
 
     port: int

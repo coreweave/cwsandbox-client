@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Features
+
+- **sandbox**: Add `request_timeout_seconds` on HTTPS `Endpoint`
+
+Optional per-endpoint server-side HTTPS request timeout. This is not
+`Sandbox.run(request_timeout_seconds=...)`, which is the client RPC
+deadline. The SDK only checks that the value is an `int`.
+
+Omit/`0` keeps the platform default (15s on serverless). The server
+accepts `0` or `[15, 900]`. On create-from-template, `0` is
+replace-on-presence and does not clear a template timeout back to the
+platform default.
+
+Applied timeout is echoed on `Sandbox.service_endpoints` as
+`HttpsEndpointStatus`.
+
+Vendored v1 stubs are refreshed from the CoreWeave Sandbox API.
+`SandboxSpec.primary_container` is reserved. The SDK sends one container,
+so `Container.primary` is omitted (the backend treats a lone container as
+primary).
+
+
 ## v1.7.0 (2026-08-24)
 
 ### Features
