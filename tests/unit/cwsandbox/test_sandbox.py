@@ -347,6 +347,7 @@ class TestSandboxRun:
     """Tests for Sandbox.run factory method."""
 
     @staticmethod
+    @staticmethod
     def _run_with_mock_stub(*args: str, **kwargs: Any) -> tuple[Sandbox, MagicMock]:
         mock_stub = MagicMock()
         mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response("matrix-id"))
