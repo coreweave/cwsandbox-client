@@ -20,10 +20,11 @@ from google.api import annotations_pb2 as google_dot_api_dot_annotations__pb2
 from google.api import field_behavior_pb2 as google_dot_api_dot_field__behavior__pb2
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 from google.protobuf import field_mask_pb2 as google_dot_protobuf_dot_field__mask__pb2
+from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n+coreweave/sandbox/v1/sandbox_template.proto\x12\x14\x63oreweave.sandbox.v1\x1a\"coreweave/sandbox/v1/sandbox.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe2\x03\n\x0fSandboxTemplate\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x03R\x11sandboxTemplateId\x12&\n\x0c\x64isplay_name\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x0b\x64isplayName\x12\x41\n\x04spec\x18\x03 \x01(\x0b\x32(.coreweave.sandbox.v1.PartialSandboxSpecB\x03\xe0\x41\x01R\x04spec\x12\x1f\n\x08revision\x18\x04 \x01(\x03\x42\x03\xe0\x41\x03R\x08revision\x12@\n\x0b\x63reate_time\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\ncreateTime\x12@\n\x0bupdate_time\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\nupdateTime\x12@\n\x0b\x64\x65lete_time\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\ndeleteTime\x12)\n\x0e\x63reate_user_id\x18\x08 \x01(\tB\x03\xe0\x41\x03R\x0c\x63reateUserId\x12\x1d\n\x07\x64\x65leted\x18\t \x01(\x08\x42\x03\xe0\x41\x03R\x07\x64\x65leted\"\x99\x01\n\x1c\x43reateSandboxTemplateRequest\x12U\n\x10sandbox_template\x18\x01 \x01(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateB\x03\xe0\x41\x02R\x0fsandboxTemplate\x12\"\n\nrequest_id\x18\x02 \x01(\tB\x03\xe0\x41\x01R\trequestId\"x\n\x19GetSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId\x12&\n\x0cshow_deleted\x18\x02 \x01(\x08\x42\x03\xe0\x41\x01R\x0bshowDeleted\"\x8b\x01\n\x1bListSandboxTemplatesRequest\x12 \n\tpage_size\x18\x01 \x01(\x05\x42\x03\xe0\x41\x01R\x08pageSize\x12\"\n\npage_token\x18\x02 \x01(\tB\x03\xe0\x41\x01R\tpageToken\x12&\n\x0cshow_deleted\x18\x03 \x01(\x08\x42\x03\xe0\x41\x01R\x0bshowDeleted\"\x9a\x01\n\x1cListSandboxTemplatesResponse\x12R\n\x11sandbox_templates\x18\x01 \x03(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateR\x10sandboxTemplates\x12&\n\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xec\x01\n\x1cUpdateSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId\x12U\n\x10sandbox_template\x18\x02 \x01(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateB\x03\xe0\x41\x02R\x0fsandboxTemplate\x12@\n\x0bupdate_mask\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.FieldMaskB\x03\xe0\x41\x01R\nupdateMask\"S\n\x1c\x44\x65leteSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId2\xd3\x06\n\x16SandboxTemplateService\x12\xa2\x01\n\x15\x43reateSandboxTemplate\x12\x32.coreweave.sandbox.v1.CreateSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\".\x82\xd3\xe4\x93\x02(\"\x14/v1/sandboxTemplates:\x10sandbox_template\x12\xa0\x01\n\x12GetSandboxTemplate\x12/.coreweave.sandbox.v1.GetSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\"2\x82\xd3\xe4\x93\x02,\x12*/v1/sandboxTemplates/{sandbox_template_id}\x12\x9b\x01\n\x14ListSandboxTemplates\x12\x31.coreweave.sandbox.v1.ListSandboxTemplatesRequest\x1a\x32.coreweave.sandbox.v1.ListSandboxTemplatesResponse\"\x1c\x82\xd3\xe4\x93\x02\x16\x12\x14/v1/sandboxTemplates\x12\xb8\x01\n\x15UpdateSandboxTemplate\x12\x32.coreweave.sandbox.v1.UpdateSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\"D\x82\xd3\xe4\x93\x02>2*/v1/sandboxTemplates/{sandbox_template_id}:\x10sandbox_template\x12\x97\x01\n\x15\x44\x65leteSandboxTemplate\x12\x32.coreweave.sandbox.v1.DeleteSandboxTemplateRequest\x1a\x16.google.protobuf.Empty\"2\x82\xd3\xe4\x93\x02,**/v1/sandboxTemplates/{sandbox_template_id}BAZ?github.com/coreweave/sandbox/api/coreweave/sandbox/v1;sandboxv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n+coreweave/sandbox/v1/sandbox_template.proto\x12\x14\x63oreweave.sandbox.v1\x1a\"coreweave/sandbox/v1/sandbox.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a google/protobuf/field_mask.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xca\x04\n\x0fSandboxTemplate\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x03R\x11sandboxTemplateId\x12&\n\x0c\x64isplay_name\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x0b\x64isplayName\x12\x41\n\x04spec\x18\x03 \x01(\x0b\x32(.coreweave.sandbox.v1.PartialSandboxSpecB\x03\xe0\x41\x01R\x04spec\x12\x1f\n\x08revision\x18\x04 \x01(\x03\x42\x03\xe0\x41\x03R\x08revision\x12@\n\x0b\x63reate_time\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\ncreateTime\x12@\n\x0bupdate_time\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\nupdateTime\x12@\n\x0b\x64\x65lete_time\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x03R\ndeleteTime\x12)\n\x0e\x63reate_user_id\x18\x08 \x01(\tB\x03\xe0\x41\x03R\x0c\x63reateUserId\x12\x1d\n\x07\x64\x65leted\x18\t \x01(\x08\x42\x03\xe0\x41\x03R\x07\x64\x65leted\x12>\n\x0b\x61ttachments\x18\n \x01(\x0b\x32\x17.google.protobuf.StructB\x03\xe0\x41\x01R\x0b\x61ttachments\x12&\n\x0crequires_cks\x18\x0b \x01(\x08\x42\x03\xe0\x41\x03R\x0brequiresCks\"\x99\x01\n\x1c\x43reateSandboxTemplateRequest\x12U\n\x10sandbox_template\x18\x01 \x01(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateB\x03\xe0\x41\x02R\x0fsandboxTemplate\x12\"\n\nrequest_id\x18\x02 \x01(\tB\x03\xe0\x41\x01R\trequestId\"x\n\x19GetSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId\x12&\n\x0cshow_deleted\x18\x02 \x01(\x08\x42\x03\xe0\x41\x01R\x0bshowDeleted\"\x8b\x01\n\x1bListSandboxTemplatesRequest\x12 \n\tpage_size\x18\x01 \x01(\x05\x42\x03\xe0\x41\x01R\x08pageSize\x12\"\n\npage_token\x18\x02 \x01(\tB\x03\xe0\x41\x01R\tpageToken\x12&\n\x0cshow_deleted\x18\x03 \x01(\x08\x42\x03\xe0\x41\x01R\x0bshowDeleted\"\x9a\x01\n\x1cListSandboxTemplatesResponse\x12R\n\x11sandbox_templates\x18\x01 \x03(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateR\x10sandboxTemplates\x12&\n\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xec\x01\n\x1cUpdateSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId\x12U\n\x10sandbox_template\x18\x02 \x01(\x0b\x32%.coreweave.sandbox.v1.SandboxTemplateB\x03\xe0\x41\x02R\x0fsandboxTemplate\x12@\n\x0bupdate_mask\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.FieldMaskB\x03\xe0\x41\x01R\nupdateMask\"S\n\x1c\x44\x65leteSandboxTemplateRequest\x12\x33\n\x13sandbox_template_id\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x11sandboxTemplateId2\xd3\x06\n\x16SandboxTemplateService\x12\xa2\x01\n\x15\x43reateSandboxTemplate\x12\x32.coreweave.sandbox.v1.CreateSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\".\x82\xd3\xe4\x93\x02(\"\x14/v1/sandboxTemplates:\x10sandbox_template\x12\xa0\x01\n\x12GetSandboxTemplate\x12/.coreweave.sandbox.v1.GetSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\"2\x82\xd3\xe4\x93\x02,\x12*/v1/sandboxTemplates/{sandbox_template_id}\x12\x9b\x01\n\x14ListSandboxTemplates\x12\x31.coreweave.sandbox.v1.ListSandboxTemplatesRequest\x1a\x32.coreweave.sandbox.v1.ListSandboxTemplatesResponse\"\x1c\x82\xd3\xe4\x93\x02\x16\x12\x14/v1/sandboxTemplates\x12\xb8\x01\n\x15UpdateSandboxTemplate\x12\x32.coreweave.sandbox.v1.UpdateSandboxTemplateRequest\x1a%.coreweave.sandbox.v1.SandboxTemplate\"D\x82\xd3\xe4\x93\x02>2*/v1/sandboxTemplates/{sandbox_template_id}:\x10sandbox_template\x12\x97\x01\n\x15\x44\x65leteSandboxTemplate\x12\x32.coreweave.sandbox.v1.DeleteSandboxTemplateRequest\x1a\x16.google.protobuf.Empty\"2\x82\xd3\xe4\x93\x02,**/v1/sandboxTemplates/{sandbox_template_id}BAZ?github.com/coreweave/sandbox/api/coreweave/sandbox/v1;sandboxv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -49,6 +50,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SANDBOXTEMPLATE'].fields_by_name['create_user_id']._serialized_options = b'\340A\003'
   _globals['_SANDBOXTEMPLATE'].fields_by_name['deleted']._loaded_options = None
   _globals['_SANDBOXTEMPLATE'].fields_by_name['deleted']._serialized_options = b'\340A\003'
+  _globals['_SANDBOXTEMPLATE'].fields_by_name['attachments']._loaded_options = None
+  _globals['_SANDBOXTEMPLATE'].fields_by_name['attachments']._serialized_options = b'\340A\001'
+  _globals['_SANDBOXTEMPLATE'].fields_by_name['requires_cks']._loaded_options = None
+  _globals['_SANDBOXTEMPLATE'].fields_by_name['requires_cks']._serialized_options = b'\340A\003'
   _globals['_CREATESANDBOXTEMPLATEREQUEST'].fields_by_name['sandbox_template']._loaded_options = None
   _globals['_CREATESANDBOXTEMPLATEREQUEST'].fields_by_name['sandbox_template']._serialized_options = b'\340A\002'
   _globals['_CREATESANDBOXTEMPLATEREQUEST'].fields_by_name['request_id']._loaded_options = None
@@ -81,20 +86,20 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SANDBOXTEMPLATESERVICE'].methods_by_name['UpdateSandboxTemplate']._serialized_options = b'\202\323\344\223\002>2*/v1/sandboxTemplates/{sandbox_template_id}:\020sandbox_template'
   _globals['_SANDBOXTEMPLATESERVICE'].methods_by_name['DeleteSandboxTemplate']._loaded_options = None
   _globals['_SANDBOXTEMPLATESERVICE'].methods_by_name['DeleteSandboxTemplate']._serialized_options = b'\202\323\344\223\002,**/v1/sandboxTemplates/{sandbox_template_id}'
-  _globals['_SANDBOXTEMPLATE']._serialized_start=265
-  _globals['_SANDBOXTEMPLATE']._serialized_end=747
-  _globals['_CREATESANDBOXTEMPLATEREQUEST']._serialized_start=750
-  _globals['_CREATESANDBOXTEMPLATEREQUEST']._serialized_end=903
-  _globals['_GETSANDBOXTEMPLATEREQUEST']._serialized_start=905
-  _globals['_GETSANDBOXTEMPLATEREQUEST']._serialized_end=1025
-  _globals['_LISTSANDBOXTEMPLATESREQUEST']._serialized_start=1028
-  _globals['_LISTSANDBOXTEMPLATESREQUEST']._serialized_end=1167
-  _globals['_LISTSANDBOXTEMPLATESRESPONSE']._serialized_start=1170
-  _globals['_LISTSANDBOXTEMPLATESRESPONSE']._serialized_end=1324
-  _globals['_UPDATESANDBOXTEMPLATEREQUEST']._serialized_start=1327
-  _globals['_UPDATESANDBOXTEMPLATEREQUEST']._serialized_end=1563
-  _globals['_DELETESANDBOXTEMPLATEREQUEST']._serialized_start=1565
-  _globals['_DELETESANDBOXTEMPLATEREQUEST']._serialized_end=1648
-  _globals['_SANDBOXTEMPLATESERVICE']._serialized_start=1651
-  _globals['_SANDBOXTEMPLATESERVICE']._serialized_end=2502
+  _globals['_SANDBOXTEMPLATE']._serialized_start=295
+  _globals['_SANDBOXTEMPLATE']._serialized_end=881
+  _globals['_CREATESANDBOXTEMPLATEREQUEST']._serialized_start=884
+  _globals['_CREATESANDBOXTEMPLATEREQUEST']._serialized_end=1037
+  _globals['_GETSANDBOXTEMPLATEREQUEST']._serialized_start=1039
+  _globals['_GETSANDBOXTEMPLATEREQUEST']._serialized_end=1159
+  _globals['_LISTSANDBOXTEMPLATESREQUEST']._serialized_start=1162
+  _globals['_LISTSANDBOXTEMPLATESREQUEST']._serialized_end=1301
+  _globals['_LISTSANDBOXTEMPLATESRESPONSE']._serialized_start=1304
+  _globals['_LISTSANDBOXTEMPLATESRESPONSE']._serialized_end=1458
+  _globals['_UPDATESANDBOXTEMPLATEREQUEST']._serialized_start=1461
+  _globals['_UPDATESANDBOXTEMPLATEREQUEST']._serialized_end=1697
+  _globals['_DELETESANDBOXTEMPLATEREQUEST']._serialized_start=1699
+  _globals['_DELETESANDBOXTEMPLATEREQUEST']._serialized_end=1782
+  _globals['_SANDBOXTEMPLATESERVICE']._serialized_start=1785
+  _globals['_SANDBOXTEMPLATESERVICE']._serialized_end=2636
 # @@protoc_insertion_point(module_scope)

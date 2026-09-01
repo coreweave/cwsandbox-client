@@ -124,6 +124,7 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     FileSystemSnapshotStatus,
     FileSystemSnapshotTrigger,
+    HttpsEndpointStatus,
     ImagePullCredentials,
     NetworkOptions,
     OperationRef,
@@ -1534,6 +1535,7 @@ class Sandbox:
         self._image_pull_credentials: ImagePullCredentials | None = None
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
+        self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         # Use explicit resources or fall back to defaults, then normalize
@@ -1995,6 +1997,7 @@ class Sandbox:
             else ()
         )
         sandbox._service_urls = ()
+        sandbox._service_endpoints = ()
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
@@ -2933,6 +2936,17 @@ class Sandbox:
         ``exposed_ports`` when visibility is not ``UNSPECIFIED``.
         """
         return self._service_urls
+
+    @property
+    def service_endpoints(self) -> tuple[HttpsEndpointStatus, ...]:
+        """HTTPS product endpoints echoed from create, Get, or list.
+
+        Each entry includes the applied ``request_timeout_seconds`` (15 when
+        create omitted or sent ``0``). ``url`` can be empty after the API
+        suppresses it on a terminal sandbox; the timeout remains. Empty when
+        no HTTPS product endpoint was requested or the response omitted one.
+        """
+        return self._service_endpoints
 
     @property
     def dns_egress_names(self) -> tuple[str, ...]:
@@ -3877,6 +3891,10 @@ class Sandbox:
                         sandbox_pb2.EndpointAuth,
                         sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
                     )
+                    if endpoint.request_timeout_seconds:
+                        proto_svc.endpoint.request_timeout_seconds = (
+                            endpoint.request_timeout_seconds
+                        )
                 services.append(proto_svc)
 
         network = start_kwargs.pop("network", None)
@@ -3927,7 +3945,6 @@ class Sandbox:
 
         spec = sandbox_pb2.SandboxSpec(
             containers=[container],
-            primary_container="main",
             volumes=volumes,
             services=services,
             tags=list(self._tags or []),
@@ -4068,11 +4085,28 @@ class Sandbox:
         )
         status = view._sandbox.status
         service_urls: list[tuple[int, str, str]] = []
+        service_endpoints: list[HttpsEndpointStatus] = []
         for s in status.services:
             url = s.url or (s.endpoint.url if s.HasField("endpoint") else "")
             if url:
                 service_urls.append((s.port, s.name, url))
+            if (
+                s.HasField("endpoint")
+                and s.endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+                and s.endpoint.request_timeout_seconds > 0
+            ):
+                service_endpoints.append(
+                    HttpsEndpointStatus(
+                        port=s.port,
+                        name=s.name,
+                        kind=EndpointKind.HTTPS,
+                        auth=EndpointAuth.OPEN,
+                        url=s.endpoint.url,
+                        request_timeout_seconds=s.endpoint.request_timeout_seconds,
+                    )
+                )
         self._service_urls = tuple(service_urls)
+        self._service_endpoints = tuple(service_endpoints)
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )

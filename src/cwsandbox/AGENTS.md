@@ -16,7 +16,7 @@ cwsandbox/
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
-├── _types.py         # OperationRef, Process, Service, EgressRule, ScratchVolumeOptions, FSS types
+├── _types.py         # OperationRef, Process, Service, Endpoint, HttpsEndpointStatus, EgressRule, ScratchVolumeOptions, FSS types
 ├── _defaults.py      # SandboxDefaults configuration dataclass
 ├── _discovery.py     # list_runners / get_runner (no profiles)
 ├── _auth.py          # Authentication resolution (built-in API key mode, active auth mode override)

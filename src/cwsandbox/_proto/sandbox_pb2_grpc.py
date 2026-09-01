@@ -47,6 +47,11 @@ class SandboxServiceStub(object):
                 request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesRequest.SerializeToString,
                 response_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesResponse.FromString,
                 )
+        self.ConnectSandbox = channel.unary_unary(
+                '/coreweave.sandbox.v1.SandboxService/ConnectSandbox',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.ConnectSandboxRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.SandboxConnection.FromString,
+                )
         self.Exec = channel.unary_unary(
                 '/coreweave.sandbox.v1.SandboxService/Exec',
                 request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.ExecRequest.SerializeToString,
@@ -157,6 +162,15 @@ class SandboxServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ConnectSandbox(self, request, context):
+        """ConnectSandbox issues short-lived client credentials and returns
+        the direct data-plane endpoint for a running sandbox. The client generates
+        and retains the private key; this method accepts only its signed CSR.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Exec(self, request, context):
         """Exec runs a command to completion in a container and returns buffered
         output. Use StreamExec for interactive or large-output commands.
@@ -258,6 +272,11 @@ def add_SandboxServiceServicer_to_server(servicer, server):
                     servicer.PurgeSandboxes,
                     request_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesRequest.FromString,
                     response_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesResponse.SerializeToString,
+            ),
+            'ConnectSandbox': grpc.unary_unary_rpc_method_handler(
+                    servicer.ConnectSandbox,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.ConnectSandboxRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.SandboxConnection.SerializeToString,
             ),
             'Exec': grpc.unary_unary_rpc_method_handler(
                     servicer.Exec,
@@ -413,6 +432,23 @@ class SandboxService(object):
         return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SandboxService/PurgeSandboxes',
             coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesRequest.SerializeToString,
             coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.PurgeSandboxesResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ConnectSandbox(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SandboxService/ConnectSandbox',
+            coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.ConnectSandboxRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.SandboxConnection.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 

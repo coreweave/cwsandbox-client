@@ -88,6 +88,25 @@ class SnapshotTrigger(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SNAPSHOT_TRIGGER_UNSPECIFIED: _ClassVar[SnapshotTrigger]
     SNAPSHOT_TRIGGER_MANUAL: _ClassVar[SnapshotTrigger]
     SNAPSHOT_TRIGGER_ON_DELETE: _ClassVar[SnapshotTrigger]
+
+class SandboxDataPermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SANDBOX_DATA_PERMISSION_UNSPECIFIED: _ClassVar[SandboxDataPermission]
+    SANDBOX_DATA_PERMISSION_EXEC: _ClassVar[SandboxDataPermission]
+    SANDBOX_DATA_PERMISSION_STREAM_EXEC: _ClassVar[SandboxDataPermission]
+    SANDBOX_DATA_PERMISSION_STREAM_LOGS: _ClassVar[SandboxDataPermission]
+    SANDBOX_DATA_PERMISSION_WRITE_FILE: _ClassVar[SandboxDataPermission]
+    SANDBOX_DATA_PERMISSION_READ_FILE: _ClassVar[SandboxDataPermission]
+
+class SandboxDataTransport(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SANDBOX_DATA_TRANSPORT_UNSPECIFIED: _ClassVar[SandboxDataTransport]
+    SANDBOX_DATA_TRANSPORT_DIRECT_MTLS: _ClassVar[SandboxDataTransport]
+
+class SandboxDataProtocol(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SANDBOX_DATA_PROTOCOL_UNSPECIFIED: _ClassVar[SandboxDataProtocol]
+    SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1: _ClassVar[SandboxDataProtocol]
 SANDBOX_MODE_UNSPECIFIED: SandboxMode
 SANDBOX_MODE_SERVERLESS: SandboxMode
 SANDBOX_MODE_CKS: SandboxMode
@@ -132,6 +151,16 @@ SNAPSHOT_STATE_DELETING: SnapshotState
 SNAPSHOT_TRIGGER_UNSPECIFIED: SnapshotTrigger
 SNAPSHOT_TRIGGER_MANUAL: SnapshotTrigger
 SNAPSHOT_TRIGGER_ON_DELETE: SnapshotTrigger
+SANDBOX_DATA_PERMISSION_UNSPECIFIED: SandboxDataPermission
+SANDBOX_DATA_PERMISSION_EXEC: SandboxDataPermission
+SANDBOX_DATA_PERMISSION_STREAM_EXEC: SandboxDataPermission
+SANDBOX_DATA_PERMISSION_STREAM_LOGS: SandboxDataPermission
+SANDBOX_DATA_PERMISSION_WRITE_FILE: SandboxDataPermission
+SANDBOX_DATA_PERMISSION_READ_FILE: SandboxDataPermission
+SANDBOX_DATA_TRANSPORT_UNSPECIFIED: SandboxDataTransport
+SANDBOX_DATA_TRANSPORT_DIRECT_MTLS: SandboxDataTransport
+SANDBOX_DATA_PROTOCOL_UNSPECIFIED: SandboxDataProtocol
+SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1: SandboxDataProtocol
 
 class Sandbox(_message.Message):
     __slots__ = ("sandbox_id", "spec", "status", "source_template_id", "source_template_revision")
@@ -148,7 +177,7 @@ class Sandbox(_message.Message):
     def __init__(self, sandbox_id: _Optional[str] = ..., spec: _Optional[_Union[SandboxSpec, _Mapping]] = ..., status: _Optional[_Union[SandboxStatus, _Mapping]] = ..., source_template_id: _Optional[str] = ..., source_template_revision: _Optional[int] = ...) -> None: ...
 
 class SandboxSpec(_message.Message):
-    __slots__ = ("containers", "primary_container", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "init_containers", "instance_type", "mode", "runtime_class")
+    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
     class AnnotationsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -157,7 +186,6 @@ class SandboxSpec(_message.Message):
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     CONTAINERS_FIELD_NUMBER: _ClassVar[int]
-    PRIMARY_CONTAINER_FIELD_NUMBER: _ClassVar[int]
     VOLUMES_FIELD_NUMBER: _ClassVar[int]
     SERVICES_FIELD_NUMBER: _ClassVar[int]
     MAX_LIFETIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -167,12 +195,10 @@ class SandboxSpec(_message.Message):
     RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     NETWORK_FIELD_NUMBER: _ClassVar[int]
     ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
-    INIT_CONTAINERS_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_TYPE_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_CLASS_FIELD_NUMBER: _ClassVar[int]
     containers: _containers.RepeatedCompositeFieldContainer[Container]
-    primary_container: str
     volumes: _containers.RepeatedCompositeFieldContainer[SandboxVolume]
     services: _containers.RepeatedCompositeFieldContainer[Service]
     max_lifetime_seconds: int
@@ -182,11 +208,10 @@ class SandboxSpec(_message.Message):
     runner_ids: _containers.RepeatedScalarFieldContainer[str]
     network: NetworkOptions
     annotations: _containers.ScalarMap[str, str]
-    init_containers: _containers.RepeatedCompositeFieldContainer[Container]
     instance_type: str
     mode: SandboxMode
     runtime_class: str
-    def __init__(self, containers: _Optional[_Iterable[_Union[Container, _Mapping]]] = ..., primary_container: _Optional[str] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., init_containers: _Optional[_Iterable[_Union[Container, _Mapping]]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
+    def __init__(self, containers: _Optional[_Iterable[_Union[Container, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
 
 class SecurityContext(_message.Message):
     __slots__ = ("run_as_user", "run_as_group", "privileged", "allow_privilege_escalation", "read_only_root_filesystem", "capabilities_add", "capabilities_drop", "seccomp_profile")
@@ -209,7 +234,7 @@ class SecurityContext(_message.Message):
     def __init__(self, run_as_user: _Optional[int] = ..., run_as_group: _Optional[int] = ..., privileged: bool = ..., allow_privilege_escalation: bool = ..., read_only_root_filesystem: bool = ..., capabilities_add: _Optional[_Iterable[str]] = ..., capabilities_drop: _Optional[_Iterable[str]] = ..., seccomp_profile: _Optional[str] = ...) -> None: ...
 
 class Container(_message.Message):
-    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials")
+    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -230,6 +255,7 @@ class Container(_message.Message):
     RESOURCE_REQUIREMENTS_FIELD_NUMBER: _ClassVar[int]
     SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
+    PRIMARY_FIELD_NUMBER: _ClassVar[int]
     name: str
     image: str
     command: str
@@ -243,10 +269,11 @@ class Container(_message.Message):
     resource_requirements: ResourceRequirements
     security_context: SecurityContext
     image_pull_credentials: ImagePullCredentials
-    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ...) -> None: ...
+    primary: bool
+    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ...) -> None: ...
 
 class PartialContainer(_message.Message):
-    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials")
+    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -267,6 +294,7 @@ class PartialContainer(_message.Message):
     RESOURCE_REQUIREMENTS_FIELD_NUMBER: _ClassVar[int]
     SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
+    PRIMARY_FIELD_NUMBER: _ClassVar[int]
     name: str
     image: str
     command: str
@@ -280,10 +308,11 @@ class PartialContainer(_message.Message):
     resource_requirements: ResourceRequirements
     security_context: SecurityContext
     image_pull_credentials: ImagePullCredentials
-    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ...) -> None: ...
+    primary: bool
+    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ...) -> None: ...
 
 class PartialSandboxSpec(_message.Message):
-    __slots__ = ("containers", "primary_container", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "init_containers", "instance_type", "mode", "runtime_class")
+    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
     class AnnotationsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -292,7 +321,6 @@ class PartialSandboxSpec(_message.Message):
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     CONTAINERS_FIELD_NUMBER: _ClassVar[int]
-    PRIMARY_CONTAINER_FIELD_NUMBER: _ClassVar[int]
     VOLUMES_FIELD_NUMBER: _ClassVar[int]
     SERVICES_FIELD_NUMBER: _ClassVar[int]
     MAX_LIFETIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -302,12 +330,10 @@ class PartialSandboxSpec(_message.Message):
     RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     NETWORK_FIELD_NUMBER: _ClassVar[int]
     ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
-    INIT_CONTAINERS_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_TYPE_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_CLASS_FIELD_NUMBER: _ClassVar[int]
     containers: _containers.RepeatedCompositeFieldContainer[PartialContainer]
-    primary_container: str
     volumes: _containers.RepeatedCompositeFieldContainer[SandboxVolume]
     services: _containers.RepeatedCompositeFieldContainer[Service]
     max_lifetime_seconds: int
@@ -317,11 +343,10 @@ class PartialSandboxSpec(_message.Message):
     runner_ids: _containers.RepeatedScalarFieldContainer[str]
     network: NetworkOptions
     annotations: _containers.ScalarMap[str, str]
-    init_containers: _containers.RepeatedCompositeFieldContainer[PartialContainer]
     instance_type: str
     mode: SandboxMode
     runtime_class: str
-    def __init__(self, containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., primary_container: _Optional[str] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., init_containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
+    def __init__(self, containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
 
 class SandboxStatus(_message.Message):
     __slots__ = ("state", "state_reason", "create_time", "start_time", "end_time", "services", "resource_usage", "exit_code", "effective_resources", "effective_max_lifetime_seconds", "container_statuses", "runner_id", "runner_group_id", "effective_ingress", "effective_egress", "effective_resource_requirements", "attached_volume_ids", "effective_runtime_class")
@@ -418,12 +443,14 @@ class Service(_message.Message):
     def __init__(self, port: _Optional[int] = ..., name: _Optional[str] = ..., protocol: _Optional[_Union[ServiceProtocol, str]] = ..., visibility: _Optional[_Union[Visibility, str]] = ..., endpoint: _Optional[_Union[EndpointSpec, _Mapping]] = ...) -> None: ...
 
 class EndpointSpec(_message.Message):
-    __slots__ = ("kind", "auth")
+    __slots__ = ("kind", "auth", "request_timeout_seconds")
     KIND_FIELD_NUMBER: _ClassVar[int]
     AUTH_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
     kind: EndpointKind
     auth: EndpointAuth
-    def __init__(self, kind: _Optional[_Union[EndpointKind, str]] = ..., auth: _Optional[_Union[EndpointAuth, str]] = ...) -> None: ...
+    request_timeout_seconds: int
+    def __init__(self, kind: _Optional[_Union[EndpointKind, str]] = ..., auth: _Optional[_Union[EndpointAuth, str]] = ..., request_timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class ServiceStatus(_message.Message):
     __slots__ = ("port", "name", "protocol", "visibility", "endpoint", "url")
@@ -442,14 +469,18 @@ class ServiceStatus(_message.Message):
     def __init__(self, port: _Optional[int] = ..., name: _Optional[str] = ..., protocol: _Optional[_Union[ServiceProtocol, str]] = ..., visibility: _Optional[_Union[Visibility, str]] = ..., endpoint: _Optional[_Union[EndpointStatus, _Mapping]] = ..., url: _Optional[str] = ...) -> None: ...
 
 class EndpointStatus(_message.Message):
-    __slots__ = ("kind", "auth", "url")
+    __slots__ = ("kind", "auth", "url", "request_timeout_seconds", "address")
     KIND_FIELD_NUMBER: _ClassVar[int]
     AUTH_FIELD_NUMBER: _ClassVar[int]
     URL_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    ADDRESS_FIELD_NUMBER: _ClassVar[int]
     kind: EndpointKind
     auth: EndpointAuth
     url: str
-    def __init__(self, kind: _Optional[_Union[EndpointKind, str]] = ..., auth: _Optional[_Union[EndpointAuth, str]] = ..., url: _Optional[str] = ...) -> None: ...
+    request_timeout_seconds: int
+    address: str
+    def __init__(self, kind: _Optional[_Union[EndpointKind, str]] = ..., auth: _Optional[_Union[EndpointAuth, str]] = ..., url: _Optional[str] = ..., request_timeout_seconds: _Optional[int] = ..., address: _Optional[str] = ...) -> None: ...
 
 class NetworkOptions(_message.Message):
     __slots__ = ("ingress", "egress", "deny_egress", "deny_ingress")
@@ -464,20 +495,22 @@ class NetworkOptions(_message.Message):
     def __init__(self, ingress: _Optional[_Iterable[_Union[IngressRule, _Mapping]]] = ..., egress: _Optional[_Iterable[_Union[EgressRule, _Mapping]]] = ..., deny_egress: bool = ..., deny_ingress: bool = ...) -> None: ...
 
 class EgressRule(_message.Message):
-    __slots__ = ("cidr", "dns_name", "tenant", "any", "selector", "ports")
+    __slots__ = ("cidr", "dns_name", "tenant", "any", "selector", "ports", "dns_name_except")
     CIDR_FIELD_NUMBER: _ClassVar[int]
     DNS_NAME_FIELD_NUMBER: _ClassVar[int]
     TENANT_FIELD_NUMBER: _ClassVar[int]
     ANY_FIELD_NUMBER: _ClassVar[int]
     SELECTOR_FIELD_NUMBER: _ClassVar[int]
     PORTS_FIELD_NUMBER: _ClassVar[int]
+    DNS_NAME_EXCEPT_FIELD_NUMBER: _ClassVar[int]
     cidr: CidrBlock
     dns_name: str
     tenant: TenantScope
     any: bool
     selector: SelectorBlock
     ports: _containers.RepeatedCompositeFieldContainer[PortRange]
-    def __init__(self, cidr: _Optional[_Union[CidrBlock, _Mapping]] = ..., dns_name: _Optional[str] = ..., tenant: _Optional[_Union[TenantScope, str]] = ..., any: bool = ..., selector: _Optional[_Union[SelectorBlock, _Mapping]] = ..., ports: _Optional[_Iterable[_Union[PortRange, _Mapping]]] = ...) -> None: ...
+    dns_name_except: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, cidr: _Optional[_Union[CidrBlock, _Mapping]] = ..., dns_name: _Optional[str] = ..., tenant: _Optional[_Union[TenantScope, str]] = ..., any: bool = ..., selector: _Optional[_Union[SelectorBlock, _Mapping]] = ..., ports: _Optional[_Iterable[_Union[PortRange, _Mapping]]] = ..., dns_name_except: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class IngressRule(_message.Message):
     __slots__ = ("cidr", "tenant", "any", "ports")
@@ -1001,3 +1034,33 @@ class DeleteFileSystemSnapshotRequest(_message.Message):
     file_system_snapshot_id: str
     allow_missing: bool
     def __init__(self, file_system_snapshot_id: _Optional[str] = ..., allow_missing: bool = ...) -> None: ...
+
+class ConnectSandboxRequest(_message.Message):
+    __slots__ = ("sandbox_id", "csr_der", "requested_permissions")
+    SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
+    CSR_DER_FIELD_NUMBER: _ClassVar[int]
+    REQUESTED_PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+    sandbox_id: str
+    csr_der: bytes
+    requested_permissions: _containers.RepeatedScalarFieldContainer[SandboxDataPermission]
+    def __init__(self, sandbox_id: _Optional[str] = ..., csr_der: _Optional[bytes] = ..., requested_permissions: _Optional[_Iterable[_Union[SandboxDataPermission, str]]] = ...) -> None: ...
+
+class SandboxConnection(_message.Message):
+    __slots__ = ("endpoint_uri", "client_certificate_chain_pem", "server_ca_bundle_pem", "expires_at", "endpoint_id", "transport", "protocol", "granted_permissions")
+    ENDPOINT_URI_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_CERTIFICATE_CHAIN_PEM_FIELD_NUMBER: _ClassVar[int]
+    SERVER_CA_BUNDLE_PEM_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    ENDPOINT_ID_FIELD_NUMBER: _ClassVar[int]
+    TRANSPORT_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+    endpoint_uri: str
+    client_certificate_chain_pem: bytes
+    server_ca_bundle_pem: bytes
+    expires_at: _timestamp_pb2.Timestamp
+    endpoint_id: str
+    transport: SandboxDataTransport
+    protocol: SandboxDataProtocol
+    granted_permissions: _containers.RepeatedScalarFieldContainer[SandboxDataPermission]
+    def __init__(self, endpoint_uri: _Optional[str] = ..., client_certificate_chain_pem: _Optional[bytes] = ..., server_ca_bundle_pem: _Optional[bytes] = ..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., endpoint_id: _Optional[str] = ..., transport: _Optional[_Union[SandboxDataTransport, str]] = ..., protocol: _Optional[_Union[SandboxDataProtocol, str]] = ..., granted_permissions: _Optional[_Iterable[_Union[SandboxDataPermission, str]]] = ...) -> None: ...
