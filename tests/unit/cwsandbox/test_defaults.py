@@ -462,6 +462,37 @@ class TestSandboxDefaultsFromDict:
         assert isinstance(defaults.volumes[0], ScratchVolumeOptions)
         assert defaults.volumes[0].mount_path == "/workspace"
 
+    def test_from_dict_coerces_registered_volume_and_security_context(self) -> None:
+        from cwsandbox._types import (
+            ObjectStorageAccess,
+            RegisteredVolumeOptions,
+            SecurityContext,
+        )
+
+        defaults = SandboxDefaults.from_dict(
+            {
+                "runtime_class": "gvisor",
+                "working_dir": "/app",
+                "security_context": {"privileged": True},
+                "object_storage_access": {"buckets": ["b1"], "permission": "read"},
+                "volumes": [
+                    {
+                        "name": "data",
+                        "volume_id": "vol-1",
+                        "mount_path": "/data",
+                    }
+                ],
+            }
+        )
+        assert defaults.runtime_class == "gvisor"
+        assert defaults.working_dir == "/app"
+        assert isinstance(defaults.security_context, SecurityContext)
+        assert defaults.security_context.privileged is True
+        assert isinstance(defaults.object_storage_access, ObjectStorageAccess)
+        assert defaults.object_storage_access.buckets == ("b1",)
+        assert isinstance(defaults.volumes[0], RegisteredVolumeOptions)
+        assert defaults.volumes[0].volume_id == "vol-1"
+
     def test_from_dict_coerces_network_dict(self) -> None:
         """from_dict converts network dict to NetworkOptions."""
         defaults = SandboxDefaults.from_dict(

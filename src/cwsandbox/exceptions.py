@@ -466,6 +466,122 @@ class SnapshotOnStopConflictError(SandboxSnapshotError):
     """
 
 
+class VolumeError(SandboxError):
+    """Base exception for registered Volume operation failures.
+
+    Raised by ``Volume`` CRUD and by create/list when a registered volume
+    is referenced. Also used directly for terminal internal failures.
+
+    Attributes:
+        volume_id: The volume ID involved, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        volume_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.volume_id = volume_id
+
+
+class VolumeNotFoundError(VolumeError):
+    """Raised when a volume ID is unknown, deleted, or owned by another org.
+
+    Emitted for ``CWSANDBOX_VOLUME_NOT_FOUND``.
+    """
+
+
+class VolumeNotReadyError(VolumeError):
+    """Raised when a volume is not READY for the requested operation.
+
+    Emitted for ``CWSANDBOX_VOLUME_NOT_READY``.
+    """
+
+
+class VolumePlacementConflictError(VolumeError):
+    """Raised when attached volumes pin incompatible runners.
+
+    Emitted for ``CWSANDBOX_VOLUME_PLACEMENT_CONFLICT``.
+    """
+
+
+class VolumeTypeNotSupportedError(VolumeError):
+    """Raised when the requested volume source is not available for the org.
+
+    Emitted for ``CWSANDBOX_VOLUME_TYPE_NOT_SUPPORTED``.
+    """
+
+
+class VolumeNotSnapshottableError(VolumeError):
+    """Raised when a volume source cannot be snapshotted.
+
+    Emitted for ``CWSANDBOX_VOLUME_NOT_SNAPSHOTTABLE``.
+    """
+
+
+class VolumeRunnerIneligibleError(VolumeError):
+    """Raised when the volume's runner cannot host the requested sandbox.
+
+    Emitted for ``CWSANDBOX_VOLUME_RUNNER_INELIGIBLE``.
+    """
+
+
+class VolumeBackendNotFoundError(VolumeError):
+    """Raised when the volume's backing store (e.g. PVC) cannot be found.
+
+    Emitted for ``CWSANDBOX_VOLUME_BACKEND_NOT_FOUND``.
+    """
+
+
+class VolumeInUseError(VolumeError):
+    """Raised when DeleteVolume is blocked by attached sandboxes.
+
+    Emitted for ``CWSANDBOX_VOLUME_IN_USE``.
+    """
+
+
+class VolumeQuotaExceededError(VolumeError):
+    """Raised when the organization's volume quota is exhausted.
+
+    Emitted for ``CWSANDBOX_VOLUME_QUOTA_EXCEEDED``.
+    """
+
+
+class VolumeWaitTimeoutError(SandboxTimeoutError):
+    """Raised when ``wait_until_ready`` exceeded its budget before READY.
+
+    The volume may still complete server-side; poll with ``Volume.get()``.
+
+    Attributes:
+        volume_id: Volume ID that was still pending, or None.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        volume_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.volume_id = volume_id
+
+
+class VolumeRunnerUnavailableError(VolumeError, SandboxUnavailableError):
+    """Raised when the volume's runner is transiently unavailable.
+
+    Emitted for ``CWSANDBOX_VOLUME_RUNNER_UNAVAILABLE``. Inherits the
+    retryable contract of ``SandboxUnavailableError``.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 

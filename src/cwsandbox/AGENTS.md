@@ -17,6 +17,8 @@ cwsandbox/
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
 ├── _types.py         # OperationRef, Process, Service, Endpoint, HttpsEndpointStatus, EgressRule, ScratchVolumeOptions, FSS types
+├── _spec.py          # Create-spec converters (security context, volumes, network, OSA)
+├── _volume.py        # Registered Volume CRUD
 ├── _defaults.py      # SandboxDefaults configuration dataclass
 ├── _discovery.py     # list_runners / get_runner (no profiles)
 ├── _auth.py          # Per-instance CoreWeave/W&B auth resolution plus legacy mode override

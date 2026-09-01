@@ -12,17 +12,26 @@ from unittest.mock import MagicMock
 import pytest
 
 from cwsandbox._types import (
+    CidrBlock,
     EgressRule,
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    IngressRule,
     NetworkOptions,
+    ObjectStorageAccess,
+    ObjectStoragePermission,
     OperationRef,
+    PortRange,
     Process,
     ProcessResult,
+    RegisteredVolumeOptions,
+    ScratchVolumeOptions,
+    SecurityContext,
     Service,
     ServiceProtocol,
     ServiceVisibility,
+    StorageMedium,
     StreamReader,
     StreamWriter,
     TerminalResult,
@@ -1255,3 +1264,82 @@ class TestTerminalSession:
 
             with pytest.raises(ValueError, match="async session error"):
                 await session
+
+
+class TestSecurityContext:
+    def test_validates_and_coerces(self) -> None:
+        ctx = SecurityContext(
+            run_as_user=1000,
+            privileged=True,
+            capabilities_add=["SYS_PTRACE"],
+        )
+        assert ctx.run_as_user == 1000
+        assert ctx.privileged is True
+        assert ctx.capabilities_add == ("SYS_PTRACE",)
+
+    def test_rejects_negative_uid(self) -> None:
+        with pytest.raises(ValueError, match="unsigned"):
+            SecurityContext(run_as_user=-1)
+
+
+class TestRegisteredVolumeOptions:
+    def test_validates_sub_path(self) -> None:
+        vol = RegisteredVolumeOptions(
+            name="data",
+            volume_id="vol-1",
+            mount_path="/data",
+            sub_path="runs/1",
+        )
+        assert vol.sub_path == "runs/1"
+
+    def test_rejects_absolute_sub_path(self) -> None:
+        with pytest.raises(ValueError, match="relative"):
+            RegisteredVolumeOptions(
+                name="data",
+                volume_id="vol-1",
+                mount_path="/data",
+                sub_path="/abs",
+            )
+
+
+class TestScratchVolumeOptionsExtras:
+    def test_medium_and_sub_path(self) -> None:
+        vol = ScratchVolumeOptions(
+            name="tmp",
+            mount_path="/tmp/vol",
+            medium="memory",
+            sub_path="nested",
+            read_only=True,
+        )
+        assert vol.medium == StorageMedium.MEMORY
+        assert vol.sub_path == "nested"
+        assert vol.read_only is True
+
+
+class TestObjectStorageAccess:
+    def test_requires_buckets(self) -> None:
+        with pytest.raises(ValueError, match="buckets"):
+            ObjectStorageAccess()
+
+    def test_coerces_permission(self) -> None:
+        access = ObjectStorageAccess(buckets=["a"], permission="read_write")
+        assert access.permission == ObjectStoragePermission.READ_WRITE
+
+
+class TestIngressAndExpandedEgress:
+    def test_egress_cidr_and_any(self) -> None:
+        rule = EgressRule(cidr="10.0.0.0/8", ports=[443])
+        assert rule.cidr == CidrBlock(cidr="10.0.0.0/8")
+        assert rule.ports == (PortRange(port=443),)
+
+    def test_egress_requires_one_destination(self) -> None:
+        with pytest.raises(ValueError, match="exactly one destination"):
+            EgressRule()
+
+    def test_ingress_any(self) -> None:
+        rule = IngressRule(any=True)
+        assert rule.any is True
+
+    def test_network_ingress_coerces_dicts(self) -> None:
+        opts = NetworkOptions(ingress=[{"any": True}])
+        assert opts.ingress == (IngressRule(any=True),)

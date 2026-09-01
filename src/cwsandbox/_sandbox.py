@@ -95,6 +95,16 @@ from cwsandbox._error_info import (
     CWSANDBOX_INVALID_REQUEST,
     CWSANDBOX_RUNNER_SHARD_RETIRING,
     CWSANDBOX_SANDBOX_NOT_FOUND,
+    CWSANDBOX_VOLUME_BACKEND_NOT_FOUND,
+    CWSANDBOX_VOLUME_IN_USE,
+    CWSANDBOX_VOLUME_NOT_FOUND,
+    CWSANDBOX_VOLUME_NOT_READY,
+    CWSANDBOX_VOLUME_NOT_SNAPSHOTTABLE,
+    CWSANDBOX_VOLUME_PLACEMENT_CONFLICT,
+    CWSANDBOX_VOLUME_QUOTA_EXCEEDED,
+    CWSANDBOX_VOLUME_RUNNER_INELIGIBLE,
+    CWSANDBOX_VOLUME_RUNNER_UNAVAILABLE,
+    CWSANDBOX_VOLUME_TYPE_NOT_SUPPORTED,
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
     SNAPSHOT_TRANSIENT_REASONS,
@@ -120,6 +130,17 @@ from cwsandbox._proto import (
     settings_pb2_grpc,
 )
 from cwsandbox._resources import normalize_resources
+from cwsandbox._spec import (
+    coerce_security_context,
+    egress_rule_from_proto,
+    ingress_rule_from_proto,
+    network_to_proto,
+    object_storage_to_proto,
+    scratch_volume_to_proto,
+    security_context_to_proto,
+    volume_mount_to_proto,
+    volumes_to_proto,
+)
 from cwsandbox._types import (
     DataPlaneMode,
     EgressRule,
@@ -135,15 +156,19 @@ from cwsandbox._types import (
     FileSystemSnapshotTrigger,
     HttpsEndpointStatus,
     ImagePullCredentials,
+    IngressRule,
     NetworkOptions,
+    ObjectStorageAccess,
     OperationRef,
     PlacementMode,
     PlacementSpillover,
     Process,
     ProcessResult,
+    RegisteredVolumeOptions,
     ResourceOptions,
     ScratchVolumeOptions,
     Secret,
+    SecurityContext,
     Service,
     ServiceProtocol,
     ServiceVisibility,
@@ -151,6 +176,7 @@ from cwsandbox._types import (
     StreamWriter,
     TerminalResult,
     TerminalSession,
+    _coerce_object_storage_access,
 )
 from cwsandbox.exceptions import (
     CWSandboxAuthenticationError,
@@ -180,6 +206,17 @@ from cwsandbox.exceptions import (
     SnapshotQuotaExceededError,
     SnapshotSizeExceededError,
     SnapshotWaitTimeoutError,
+    VolumeBackendNotFoundError,
+    VolumeError,
+    VolumeInUseError,
+    VolumeNotFoundError,
+    VolumeNotReadyError,
+    VolumeNotSnapshottableError,
+    VolumePlacementConflictError,
+    VolumeQuotaExceededError,
+    VolumeRunnerIneligibleError,
+    VolumeRunnerUnavailableError,
+    VolumeTypeNotSupportedError,
 )
 
 if TYPE_CHECKING:
@@ -717,6 +754,47 @@ def _translate_snapshot_reason(
     return None
 
 
+def _translate_volume_reason(
+    reason: str,
+    *,
+    details: str,
+    operation: str,
+    volume_id: str | None,
+    metadata: Mapping[str, str] | None,
+    retry_delay: timedelta | None,
+) -> CWSandboxError | None:
+    """Map a trusted ``CWSANDBOX_VOLUME_*`` reason to a typed exception."""
+    volume_classes: dict[str, type[VolumeError]] = {
+        CWSANDBOX_VOLUME_NOT_FOUND: VolumeNotFoundError,
+        CWSANDBOX_VOLUME_NOT_READY: VolumeNotReadyError,
+        CWSANDBOX_VOLUME_PLACEMENT_CONFLICT: VolumePlacementConflictError,
+        CWSANDBOX_VOLUME_TYPE_NOT_SUPPORTED: VolumeTypeNotSupportedError,
+        CWSANDBOX_VOLUME_NOT_SNAPSHOTTABLE: VolumeNotSnapshottableError,
+        CWSANDBOX_VOLUME_RUNNER_INELIGIBLE: VolumeRunnerIneligibleError,
+        CWSANDBOX_VOLUME_BACKEND_NOT_FOUND: VolumeBackendNotFoundError,
+        CWSANDBOX_VOLUME_IN_USE: VolumeInUseError,
+        CWSANDBOX_VOLUME_QUOTA_EXCEEDED: VolumeQuotaExceededError,
+    }
+    cls = volume_classes.get(reason)
+    if cls is not None:
+        return cls(
+            f"{operation} failed ({reason}): {details}",
+            volume_id=volume_id,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    if reason == CWSANDBOX_VOLUME_RUNNER_UNAVAILABLE:
+        return VolumeRunnerUnavailableError(
+            f"{operation} failed ({reason}): {details}",
+            volume_id=volume_id,
+            reason=reason,
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+    return None
+
+
 def _is_runner_shard_retiring_error(error: grpc.RpcError) -> bool:
     parsed = parse_error_info(error)
     return (
@@ -748,6 +826,7 @@ def _translate_rpc_error(
     operation: str = "operation",
     filepath: str | None = None,
     file_system_snapshot_id: str | None = None,
+    volume_id: str | None = None,
 ) -> CWSandboxError:
     """Translate gRPC RpcError to appropriate CWSandbox exception.
 
@@ -845,6 +924,16 @@ def _translate_rpc_error(
         )
         if snapshot_exc is not None:
             return snapshot_exc
+        volume_exc = _translate_volume_reason(
+            reason,
+            details=details,
+            operation=operation,
+            volume_id=volume_id or (parsed_metadata.get("volume_id") if parsed_metadata else None),
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+        if volume_exc is not None:
+            return volume_exc
 
     if code == grpc.StatusCode.NOT_FOUND:
         # An FSS operation carries a snapshot ID, not a sandbox ID. Map a bare
@@ -855,6 +944,14 @@ def _translate_rpc_error(
             return SnapshotNotFoundError(
                 f"File-system snapshot '{file_system_snapshot_id}' not found",
                 file_system_snapshot_id=file_system_snapshot_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if volume_id is not None:
+            return VolumeNotFoundError(
+                f"Volume '{volume_id}' not found",
+                volume_id=volume_id,
                 reason=reason,
                 metadata=metadata,
                 retry_delay=retry_delay,
@@ -1002,6 +1099,24 @@ def _volume_source_is_scratch(volume: sandbox_pb2.SandboxVolume) -> bool:
     "not a named volume" as scratch.
     """
     return not volume.HasField("volume_id")
+
+
+def _scratch_names_from_volumes(volumes: Sequence[Any]) -> tuple[str, ...]:
+    """Collect scratch volume names; skip registered-volume mounts."""
+    names: list[str] = []
+    for vol in volumes:
+        if isinstance(vol, RegisteredVolumeOptions):
+            continue
+        if isinstance(vol, ScratchVolumeOptions):
+            names.append(vol.name)
+            continue
+        if isinstance(vol, Mapping):
+            if "volume_id" in vol:
+                continue
+            name = vol.get("name", "")
+            if name:
+                names.append(str(name))
+    return tuple(names)
 
 
 _PollErrorClassification = Literal["retryable", "fatal"]
@@ -1474,9 +1589,17 @@ class Sandbox:
         placement_mode: PlacementMode | str | None = None,
         placement_spillover: PlacementSpillover | str | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
-        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
+        volumes: (
+            list[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any]]
+            | tuple[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any], ...]
+            | None
+        ) = None,
         template_id: str | None = None,
         image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
+        runtime_class: str | None = None,
+        security_context: SecurityContext | dict[str, Any] | None = None,
+        working_dir: str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
@@ -1524,7 +1647,12 @@ class Sandbox:
                 request. ``serverless_then_cks`` cannot be combined with
                 ``runner_ids``. Template sandboxes require ``strict``.
             services: Typed service ports (``Service`` list/tuple).
-            volumes: Named scratch volumes (``ScratchVolumeOptions``).
+            volumes: Scratch or registered volumes (``ScratchVolumeOptions``,
+                ``RegisteredVolumeOptions``, or a ``volume_id`` dict).
+            runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
+            security_context: In-guest privilege for the primary container.
+            working_dir: Working directory for the primary container command.
+            object_storage_access: Temporary object-storage credentials.
             file_system_snapshot: Convenience single-mount FSS options
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups. Requires the organization to be enabled for FSS.
@@ -1628,6 +1756,14 @@ class Sandbox:
         self._services: list[Service] | None = None
         self._template_id: str | None = None
         self._image_pull_credentials: ImagePullCredentials | None = None
+        self._runtime_class: str | None = None
+        self._security_context: SecurityContext | None = None
+        self._working_dir: str | None = None
+        self._object_storage_access: ObjectStorageAccess | None = None
+        self._effective_runtime_class: str | None = None
+        self._attached_volume_ids: tuple[str, ...] = ()
+        self._effective_egress: tuple[EgressRule, ...] = ()
+        self._effective_ingress: tuple[IngressRule, ...] = ()
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
@@ -1698,19 +1834,38 @@ class Sandbox:
             self._services = list(self._defaults.services)
         if volumes is not None:
             self._start_kwargs["volumes"] = list(volumes)
-            self._scratch_volume_names = tuple(
-                v.name if isinstance(v, ScratchVolumeOptions) else v.get("name", "")
-                for v in volumes
-            )
+            self._scratch_volume_names = _scratch_names_from_volumes(volumes)
         elif not from_template and self._defaults.volumes is not None:
             self._start_kwargs["volumes"] = list(self._defaults.volumes)
-            self._scratch_volume_names = tuple(v.name for v in self._defaults.volumes)
+            self._scratch_volume_names = _scratch_names_from_volumes(self._defaults.volumes)
         if template_id is not None:
             self._template_id = template_id
         if image_pull_credentials is not None:
             if isinstance(image_pull_credentials, dict):
                 image_pull_credentials = ImagePullCredentials(**image_pull_credentials)
             self._image_pull_credentials = image_pull_credentials
+        effective_runtime_class = (
+            runtime_class
+            if runtime_class is not None or from_template
+            else self._defaults.runtime_class
+        )
+        self._runtime_class = effective_runtime_class or None
+        effective_security_context = (
+            security_context
+            if security_context is not None or from_template
+            else self._defaults.security_context
+        )
+        self._security_context = coerce_security_context(effective_security_context)
+        effective_working_dir = (
+            working_dir if working_dir is not None or from_template else self._defaults.working_dir
+        )
+        self._working_dir = effective_working_dir or None
+        effective_osa = (
+            object_storage_access
+            if object_storage_access is not None or from_template
+            else self._defaults.object_storage_access
+        )
+        self._object_storage_access = _coerce_object_storage_access(effective_osa)
         merged_secrets = ([] if from_template else list(self._defaults.secrets or ())) + [
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
         ]
@@ -1824,9 +1979,17 @@ class Sandbox:
         placement_mode: PlacementMode | str | None = None,
         placement_spillover: PlacementSpillover | str | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
-        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
+        volumes: (
+            list[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any]]
+            | tuple[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any], ...]
+            | None
+        ) = None,
         template_id: str | None = None,
         image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
+        runtime_class: str | None = None,
+        security_context: SecurityContext | dict[str, Any] | None = None,
+        working_dir: str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
@@ -1872,7 +2035,12 @@ class Sandbox:
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict``. See ``Sandbox.__init__``.
             services: Typed service ports (``Service`` list/tuple).
-            volumes: Named scratch volumes (``ScratchVolumeOptions``).
+            volumes: Scratch or registered volumes (``ScratchVolumeOptions``,
+                ``RegisteredVolumeOptions``, or a ``volume_id`` dict).
+            runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
+            security_context: In-guest privilege for the primary container.
+            working_dir: Working directory for the primary container command.
+            object_storage_access: Temporary object-storage credentials.
             file_system_snapshot: Convenience single-mount FSS options
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.
@@ -1946,6 +2114,10 @@ class Sandbox:
             volumes=volumes,
             template_id=template_id,
             image_pull_credentials=image_pull_credentials,
+            runtime_class=runtime_class,
+            security_context=security_context,
+            working_dir=working_dir,
+            object_storage_access=object_storage_access,
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
@@ -1979,7 +2151,8 @@ class Sandbox:
                 is no fetch-and-merge. Other container-field overrides
                 (``command``, ``args``, ``environment_variables``,
                 ``secrets``, ``resources``, ``mounted_files``, ``volumes``,
-                ``file_system_snapshot``, ``image_pull_credentials``) also
+                ``file_system_snapshot``, ``image_pull_credentials``,
+                ``security_context``, ``working_dir``) also
                 require ``container_image``:
                 the API replaces the whole container list and rejects a
                 sparse patch. Session/default tags are merged and sent as a
@@ -2105,6 +2278,14 @@ class Sandbox:
         sandbox._services = None
         sandbox._template_id = None
         sandbox._image_pull_credentials = None
+        sandbox._runtime_class = None
+        sandbox._security_context = None
+        sandbox._working_dir = None
+        sandbox._object_storage_access = None
+        sandbox._effective_runtime_class = None
+        sandbox._attached_volume_ids = ()
+        sandbox._effective_egress = ()
+        sandbox._effective_ingress = ()
         sandbox._scratch_volume_names = (
             tuple(
                 volume.name
@@ -2178,6 +2359,7 @@ class Sandbox:
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List existing sandboxes with optional filters.
 
@@ -2196,6 +2378,7 @@ class Sandbox:
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs
+            volume_ids: Filter to sandboxes attached to these registered Volume IDs
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
@@ -2246,6 +2429,7 @@ class Sandbox:
                 poll_retry_budget_seconds=poll_retry_budget_seconds,
                 poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
                 data_plane_mode=data_plane_mode,
+                volume_ids=volume_ids,
             )
         )
         return OperationRef(future)
@@ -2266,6 +2450,7 @@ class Sandbox:
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
         normalized_tags = _normalize_tags(tags)
@@ -2307,6 +2492,8 @@ class Sandbox:
                 raise TypeError("profile_ids/profile_names were removed in cwsandbox 1.x")
             if runner_ids is not None:
                 request_kwargs["runner_ids"] = runner_ids
+            if volume_ids:
+                request_kwargs["volume_ids"] = list(volume_ids)
 
             if show_terminated:
                 request_kwargs["show_terminated"] = True
@@ -3123,6 +3310,26 @@ class Sandbox:
         none were requested. Terminal sandboxes keep the last echoed names.
         """
         return self._dns_egress_names
+
+    @property
+    def effective_runtime_class(self) -> str | None:
+        """Runtime class applied by the backend, echoed from status."""
+        return self._effective_runtime_class
+
+    @property
+    def attached_volume_ids(self) -> tuple[str, ...]:
+        """Registered Volume IDs attached to this sandbox, echoed from status."""
+        return self._attached_volume_ids
+
+    @property
+    def effective_egress(self) -> tuple[EgressRule, ...]:
+        """Effective egress rules echoed from ``status.effective_egress``."""
+        return self._effective_egress
+
+    @property
+    def effective_ingress(self) -> tuple[IngressRule, ...]:
+        """Effective ingress rules echoed from ``status.effective_ingress``."""
+        return self._effective_ingress
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
@@ -3947,6 +4154,11 @@ class Sandbox:
                 )
             )
 
+        if self._working_dir:
+            container.working_dir = self._working_dir
+        if self._security_context is not None:
+            container.security_context.CopyFrom(security_context_to_proto(self._security_context))
+
         mounted_files = start_kwargs.pop("mounted_files", None)
         if mounted_files:
             entries = (
@@ -3968,47 +4180,21 @@ class Sandbox:
 
         volumes_arg = start_kwargs.pop("volumes", None)
         if volumes_arg:
-            for vol in volumes_arg:
-                if isinstance(vol, ScratchVolumeOptions):
-                    scratch: dict[str, Any] = {}
-                    if vol.size:
-                        scratch["size"] = vol.size
-                    if vol.restore_from_snapshot_id:
-                        scratch["restore_from_snapshot_id"] = vol.restore_from_snapshot_id
-                    volumes.append(sandbox_pb2.SandboxVolume(name=vol.name, scratch=scratch))
-                    mounts.append(
-                        sandbox_pb2.VolumeMount(volume=vol.name, mount_path=vol.mount_path)
-                    )
-                elif isinstance(vol, dict) and "volume_id" in vol:
-                    volumes.append(
-                        sandbox_pb2.SandboxVolume(name=vol["name"], volume_id=vol["volume_id"])
-                    )
-                    if vol.get("mount_path"):
-                        mounts.append(
-                            sandbox_pb2.VolumeMount(
-                                volume=vol["name"], mount_path=vol["mount_path"]
-                            )
-                        )
-                else:
-                    raise TypeError(
-                        "volumes entries must be ScratchVolumeOptions or "
-                        f"dict with volume_id, got {type(vol).__name__}"
-                    )
+            volumes, mounts, scratch_names = volumes_to_proto(list(volumes_arg))
+            self._scratch_volume_names = scratch_names
 
         fss_opts = start_kwargs.pop("file_system_snapshot", None)
         if fss_opts is not None:
             if not isinstance(fss_opts, FileSystemSnapshotOptions):
                 fss_opts = FileSystemSnapshotOptions(**fss_opts)
             scratch_opts = fss_opts.to_scratch_volume()
-            scratch_kw: dict[str, Any] = {}
-            if scratch_opts.size:
-                scratch_kw["size"] = scratch_opts.size
-            if scratch_opts.restore_from_snapshot_id:
-                scratch_kw["restore_from_snapshot_id"] = scratch_opts.restore_from_snapshot_id
-            volumes.append(sandbox_pb2.SandboxVolume(name=scratch_opts.name, scratch=scratch_kw))
+            volumes.append(scratch_volume_to_proto(scratch_opts))
             mounts.append(
-                sandbox_pb2.VolumeMount(
-                    volume=scratch_opts.name, mount_path=scratch_opts.mount_path
+                volume_mount_to_proto(
+                    scratch_opts.name,
+                    scratch_opts.mount_path,
+                    sub_path=scratch_opts.sub_path,
+                    read_only=scratch_opts.read_only,
                 )
             )
             self._scratch_volume_names = tuple(
@@ -4080,18 +4266,7 @@ class Sandbox:
                 raise TypeError(
                     f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
                 )
-            network_proto = sandbox_pb2.NetworkOptions()
-            if network.deny_egress is not None:
-                network_proto.deny_egress = network.deny_egress
-            if network.deny_ingress is not None:
-                network_proto.deny_ingress = network.deny_ingress
-            for rule in network.egress or ():
-                if not isinstance(rule, EgressRule):
-                    raise TypeError(
-                        f"egress entries must be EgressRule or dict, got {type(rule).__name__}"
-                    )
-                proto_rule = network_proto.egress.add()
-                proto_rule.dns_name = rule.dns_name
+            network_proto = network_to_proto(network)
 
         # Reject removed kwargs loudly.
         for removed in ("s3_mount", "max_timeout_seconds", "profile_ids", "profile_names", "ports"):
@@ -4132,6 +4307,12 @@ class Sandbox:
             spec.annotations.update(self._annotations)
         if network_proto is not None:
             spec.network.CopyFrom(network_proto)
+        if self._runtime_class:
+            spec.runtime_class = self._runtime_class
+        if self._object_storage_access is not None:
+            spec.object_storage_access.CopyFrom(
+                object_storage_to_proto(self._object_storage_access)
+            )
 
         # Ignore unknown leftover keys that were consumed above; warn on leftovers.
         start_kwargs.pop("ports", None)
@@ -4166,6 +4347,8 @@ class Sandbox:
             or "secrets" in explicit_keys
             or "resources" in explicit_keys
             or self._image_pull_credentials is not None
+            or self._security_context is not None
+            or self._working_dir is not None
         )
         if container_field_overrides and self._container_image is None:
             raise TypeError(
@@ -4198,6 +4381,12 @@ class Sandbox:
                 container.resource_requirements.CopyFrom(source_container.resource_requirements)
             if source_container.HasField("image_pull_credentials"):
                 container.image_pull_credentials.CopyFrom(source_container.image_pull_credentials)
+            if self._working_dir:
+                container.working_dir = self._working_dir
+            if self._security_context is not None:
+                container.security_context.CopyFrom(
+                    security_context_to_proto(self._security_context)
+                )
         else:
             container = sandbox_pb2.PartialContainer()
 
@@ -4220,6 +4409,10 @@ class Sandbox:
             overrides.mode = spec.mode
         if "network" in explicit_keys and spec.HasField("network"):
             overrides.network.CopyFrom(spec.network)
+        if self._runtime_class:
+            overrides.runtime_class = self._runtime_class
+        if self._object_storage_access is not None:
+            overrides.object_storage_access.CopyFrom(spec.object_storage_access)
         return sandbox_pb2.CreateSandboxFromTemplateRequest(
             template_id=template_id,
             overrides=overrides,
@@ -4284,6 +4477,22 @@ class Sandbox:
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )
+        self._effective_runtime_class = status.effective_runtime_class or None
+        self._attached_volume_ids = tuple(status.attached_volume_ids)
+        egress_rules: list[EgressRule] = []
+        for egress_proto in status.effective_egress:
+            try:
+                egress_rules.append(egress_rule_from_proto(egress_proto))
+            except ValueError:
+                continue
+        self._effective_egress = tuple(egress_rules)
+        ingress_rules: list[IngressRule] = []
+        for ingress_proto in status.effective_ingress:
+            try:
+                ingress_rules.append(ingress_rule_from_proto(ingress_proto))
+            except ValueError:
+                continue
+        self._effective_ingress = tuple(ingress_rules)
         if status.services:
             self._exposed_ports = tuple(
                 (s.port, s.name)

@@ -69,6 +69,9 @@ Properties:
 - `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
+- `effective_egress` / `effective_ingress`: Full echoed rule sets from status
+- `effective_runtime_class`: Runtime class applied by the backend
+- `attached_volume_ids`: Registered Volume IDs attached to the sandbox
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
 
@@ -77,8 +80,12 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 - `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
-- `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) and optional create-time hostname grants (`egress=[EgressRule(dns_name=...)]`), or dict
-- `volumes` - Named scratch volumes via `ScratchVolumeOptions`
+- `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) plus create-time `egress` / `ingress` grants (`EgressRule` / `IngressRule`), or dict
+- `volumes` - Scratch (`ScratchVolumeOptions`) or registered (`RegisteredVolumeOptions`) volumes
+- `runtime_class` - Optional runtime-class pin (e.g. `"gvisor"`), clamped by policy
+- `security_context` - In-guest privilege for the primary container (`SecurityContext` or dict)
+- `working_dir` - Working directory for the primary container command
+- `object_storage_access` - Temporary object-storage credentials (`ObjectStorageAccess` or dict)
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox at startup (read-only at runtime; use `write_file()` for writable files)
@@ -90,7 +97,8 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 
 Class methods:
 - `Sandbox.session(defaults)`: Create a `Session` for managing multiple sandboxes (sync)
-- `Sandbox.list(tags=None, status=None, runner_ids=None, show_terminated=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `profile_ids` / `profile_names` raise `TypeError`.
+- `Sandbox.list(tags=None, status=None, runner_ids=None, volume_ids=None, show_terminated=False, ...)`: Query existing sandboxes, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `volume_ids` filters to sandboxes attached to those registered Volumes. `profile_ids` / `profile_names` raise `TypeError`.
+- `Volume.create` / `Volume.get` / `Volume.list` / `volume.update` / `volume.delete` / `volume.validate` / `volume.wait_until_ready`: Registered Volume CRUD (`_volume.py`). Create returns immediately in `VALIDATING`; poll with `wait_until_ready()`. Mount with `RegisteredVolumeOptions` on `Sandbox.run(volumes=...)`.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes.
 - `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
@@ -105,7 +113,7 @@ Key methods:
 - `session.function()` - decorator for remote function execution
 - `session.adopt(sandbox)` - register an existing Sandbox (from `Sandbox.list()` or `Sandbox.from_id()`) for cleanup when session closes
 - `session.close()` - return `OperationRef[None]` for cleanup
-- `session.list(tags=None, status=None, runner_ids=None, show_terminated=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `show_terminated=True` to include terminal sandboxes.
+- `session.list(tags=None, status=None, runner_ids=None, volume_ids=None, show_terminated=False, adopt=False)` - find sandboxes matching session tags, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. Set `show_terminated=True` to include terminal sandboxes.
 - `session.from_id(sandbox_id, adopt=True)` - attach to existing sandbox by ID, return `OperationRef[Sandbox]`
 
 Properties:
@@ -133,9 +141,10 @@ Fields (all optional with sensible defaults):
 - `placement_mode` - `PlacementMode` or string (`serverless` / `cks`)
 - `placement_spillover` - `PlacementSpillover` (default `strict`); see advanced kwargs above
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
-- `network` - Deny-flag `NetworkOptions` plus optional `egress` hostname grants
+- `network` - Deny-flag `NetworkOptions` plus optional `egress` / `ingress` grants
 - `services` - Tuple of typed `Service` ports
-- `volumes` - Tuple of `ScratchVolumeOptions` for named FSS mounts
+- `volumes` - Tuple of `ScratchVolumeOptions` / `RegisteredVolumeOptions`
+- `runtime_class`, `security_context`, `working_dir`, `object_storage_access` - Create-spec fields shared across sandboxes
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
 - `secrets` - Create-time secret inject (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
@@ -206,7 +215,7 @@ sandbox = Sandbox.run(
 )
 ```
 
-**`NetworkOptions`** / **`EgressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`) plus create-time HTTPS hostname grants via `egress=[EgressRule(dns_name=...)]`. Exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. Names are frozen at create. Port exposure is via `services=`, not this type.
+**`NetworkOptions`** / **`EgressRule`** / **`IngressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`) plus create-time grants via `egress` and `ingress`. `EgressRule` requires exactly one destination (`dns_name`, `cidr`, `tenant`, `any`, or `selector`). DNS names are HTTPS (TCP 443) grants: exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. `IngressRule` requires exactly one source (`cidr`, `tenant`, or `any`) and applies to CUSTOM-visibility ports. Port exposure is via `services=`, not this type.
 
 ```python
 from cwsandbox import EgressRule, NetworkOptions, Sandbox
@@ -285,7 +294,10 @@ sandbox = Sandbox.run(
 
 **File System Snapshots (FSS)** (`_types.py`): A configured scratch volume can be snapshotted (on request or on stop) and restored into new sandboxes. FSS is gated per-organization on the backend; orgs that are not enabled get `SnapshotNotSupportedError`.
 
-- **`ScratchVolumeOptions`**: Named volume mount. Fields: `name`, `mount_path` (absolute), optional `size`, optional `restore_from_snapshot_id`. Prefer `volumes=` for multi-volume setups.
+- **`ScratchVolumeOptions`**: Named scratch mount. Fields: `name`, `mount_path` (absolute), optional `size`, `restore_from_snapshot_id`, `medium` (`disk`/`memory`), `sub_path`, `read_only`. Prefer `volumes=` for multi-volume setups.
+- **`RegisteredVolumeOptions`**: Mount a registered Volume. Fields: `name`, `volume_id`, `mount_path`, optional `sub_path`, `read_only`.
+- **`SecurityContext`**: In-guest privilege (run-as, privileged, capabilities, seccomp). Host-reaching knobs are policy-only.
+- **`ObjectStorageAccess`**: Temporary object-storage credentials (`buckets`, optional `permission`, `object_prefix`).
 - **`FileSystemSnapshotOptions`**: Convenience single-mount wrapper (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Maps to a scratch volume via `to_scratch_volume()`.
 - **`FileSystemSnapshot`**: Frozen record from `get_snapshot()` / `list_snapshots()` (`snapshot()` returns only the ID). Fields include `file_system_snapshot_id`, `status`, `status_reason`, `size_bytes`, `source_sandbox_id`, `trigger`, `request_id`, `object_bucket`, `source_volume_name`, timestamps.
 - **`FileSystemSnapshotStatus`**: StrEnum — `UNSPECIFIED`, `CREATING`, `READY`, `FAILED`, `DELETING`.
@@ -522,7 +534,8 @@ CWSandboxError
 │   ├── SandboxTimeoutError
 │   │   ├── SandboxRequestTimeoutError   # gRPC request deadline (DEADLINE_EXCEEDED)
 │   │   ├── SandboxCommandTimeoutError   # user command exceeded its timeout (AIP-193 CWSANDBOX_COMMAND_TIMEOUT)
-│   │   └── SnapshotWaitTimeoutError     # wait_for_ready budget exceeded (CWSANDBOX_FSS_WAIT_TIMEOUT)
+│   │   ├── SnapshotWaitTimeoutError     # wait_for_ready budget exceeded (CWSANDBOX_FSS_WAIT_TIMEOUT)
+│   │   └── VolumeWaitTimeoutError       # Volume.wait_until_ready budget exceeded
 │   ├── SandboxResourceExhaustedError    # backend resource pressure (gRPC RESOURCE_EXHAUSTED)
 │   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
 │   ├── SandboxTerminatedError
@@ -537,6 +550,17 @@ CWSandboxError
 │       ├── SnapshotSizeExceededError    # CWSANDBOX_FSS_SIZE_EXCEEDED
 │       ├── SnapshotQuotaExceededError   # CWSANDBOX_FSS_QUOTA_EXCEEDED
 │       └── SnapshotBucketMismatchError  # CWSANDBOX_FSS_BUCKET_MISMATCH (reversible)
+│   └── VolumeError                      # registered Volume failures; .volume_id attribute
+│       ├── VolumeNotFoundError
+│       ├── VolumeNotReadyError
+│       ├── VolumePlacementConflictError
+│       ├── VolumeTypeNotSupportedError
+│       ├── VolumeNotSnapshottableError
+│       ├── VolumeRunnerIneligibleError
+│       ├── VolumeBackendNotFoundError
+│       ├── VolumeInUseError
+│       └── VolumeQuotaExceededError
+│       # VolumeRunnerUnavailableError also subclasses SandboxUnavailableError (retryable)
 ├── DiscoveryError
 │   └── RunnerNotFoundError              # .runner_id attribute
 └── FunctionError

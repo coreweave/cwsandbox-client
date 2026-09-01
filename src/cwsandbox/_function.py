@@ -19,9 +19,11 @@ from cwsandbox._types import (
     DataPlaneMode,
     FileSystemSnapshotOptions,
     NetworkOptions,
+    ObjectStorageAccess,
     OperationRef,
     PlacementSpillover,
     ResourceOptions,
+    SecurityContext,
 )
 from cwsandbox.exceptions import AsyncFunctionError, SandboxExecutionError
 
@@ -91,6 +93,10 @@ class RemoteFunction(Generic[P, R]):
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         placement_mode: Any | None = None,
         placement_spillover: PlacementSpillover | str | None = None,
+        runtime_class: str | None = None,
+        security_context: SecurityContext | dict[str, Any] | None = None,
+        working_dir: str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         request_timeout_seconds: float | None = None,
@@ -157,6 +163,10 @@ class RemoteFunction(Generic[P, R]):
         self._placement_mode = placement_mode
         self._placement_spillover = placement_spillover
         self._file_system_snapshot = file_system_snapshot
+        self._runtime_class = runtime_class
+        self._security_context = security_context
+        self._working_dir = working_dir
+        self._object_storage_access = object_storage_access
         self._max_timeout_seconds = None
         self._request_timeout_seconds = request_timeout_seconds
         self._data_plane_mode = data_plane_mode
@@ -283,6 +293,14 @@ class RemoteFunction(Generic[P, R]):
             sandbox_kwargs["placement_spillover"] = self._placement_spillover
         if self._file_system_snapshot is not None:
             sandbox_kwargs["file_system_snapshot"] = self._file_system_snapshot
+        if self._runtime_class is not None:
+            sandbox_kwargs["runtime_class"] = self._runtime_class
+        if self._security_context is not None:
+            sandbox_kwargs["security_context"] = self._security_context
+        if self._working_dir is not None:
+            sandbox_kwargs["working_dir"] = self._working_dir
+        if self._object_storage_access is not None:
+            sandbox_kwargs["object_storage_access"] = self._object_storage_access
         if self._environment_variables is not None:
             sandbox_kwargs["environment_variables"] = self._environment_variables
         if self._annotations is not None:

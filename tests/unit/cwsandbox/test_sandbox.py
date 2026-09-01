@@ -21,21 +21,28 @@ import pytest
 from cwsandbox import (
     AuthHeaders,
     AuthStrategy,
+    CidrBlock,
     EgressRule,
     Endpoint,
     EndpointAuth,
     EndpointKind,
     HttpsEndpointStatus,
     ImagePullCredentials,
+    IngressRule,
     NetworkOptions,
+    ObjectStorageAccess,
+    ObjectStoragePermission,
     PlacementMode,
+    RegisteredVolumeOptions,
     Sandbox,
     SandboxDefaults,
     ScratchVolumeOptions,
     Secret,
+    SecurityContext,
     Service,
     ServiceProtocol,
     ServiceVisibility,
+    StorageMedium,
 )
 from cwsandbox._sandbox import (
     SandboxStatus,
@@ -576,6 +583,162 @@ class TestSandboxRun:
         assert mount.mount_path == "/cache"
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_request_maps_scratch_volume_medium_sub_path_and_read_only(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            volumes=[
+                ScratchVolumeOptions(
+                    name="tmp",
+                    mount_path="/tmp/vol",
+                    medium=StorageMedium.MEMORY,
+                    sub_path="nested/dir",
+                    read_only=True,
+                )
+            ]
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        volume = request.sandbox.spec.volumes[0]
+        mount = request.sandbox.spec.containers[0].volume_mounts[0]
+        assert volume.scratch.medium == sandbox_pb2.STORAGE_MEDIUM_MEMORY
+        assert mount.sub_path == "nested/dir"
+        assert mount.read_only is True
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_registered_volume(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            volumes=[
+                RegisteredVolumeOptions(
+                    name="data",
+                    volume_id="vol-123",
+                    mount_path="/data",
+                    sub_path="runs/1",
+                    read_only=True,
+                )
+            ]
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        volume = request.sandbox.spec.volumes[0]
+        mount = request.sandbox.spec.containers[0].volume_mounts[0]
+        assert volume.name == "data"
+        assert volume.volume_id == "vol-123"
+        assert mount.sub_path == "runs/1"
+        assert mount.read_only is True
+        assert sandbox._scratch_volume_names == ()
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_runtime_class_security_context_working_dir_osa(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            runtime_class="gvisor",
+            working_dir="/app",
+            security_context=SecurityContext(
+                privileged=True,
+                run_as_user=1000,
+                capabilities_add=["SYS_PTRACE"],
+            ),
+            object_storage_access=ObjectStorageAccess(
+                buckets=["bucket-a"],
+                permission=ObjectStoragePermission.READ,
+                object_prefix="prefix/",
+            ),
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        spec = request.sandbox.spec
+        container = spec.containers[0]
+        assert spec.runtime_class == "gvisor"
+        assert container.working_dir == "/app"
+        assert container.security_context.privileged is True
+        assert container.security_context.run_as_user == 1000
+        assert list(container.security_context.capabilities_add) == ["SYS_PTRACE"]
+        assert list(spec.object_storage_access.buckets) == ["bucket-a"]
+        assert spec.object_storage_access.permission == sandbox_pb2.OBJECT_STORAGE_PERMISSION_READ
+        assert spec.object_storage_access.object_prefix == "prefix/"
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_full_egress_and_ingress(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            network=NetworkOptions(
+                egress=[
+                    EgressRule(dns_name="pypi.org"),
+                    EgressRule(cidr=CidrBlock(cidr="10.0.0.0/8", except_cidrs=["10.1.0.0/16"])),
+                    EgressRule(any=True, ports=[443]),
+                ],
+                ingress=[IngressRule(cidr="192.168.0.0/16", ports=[8080])],
+            )
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        net = request.sandbox.spec.network
+        assert net.egress[0].dns_name == "pypi.org"
+        assert net.egress[1].cidr.cidr == "10.0.0.0/8"
+        assert list(getattr(net.egress[1].cidr, "except")) == ["10.1.0.0/16"]
+        assert net.egress[2].any is True
+        assert net.egress[2].ports[0].port == 443
+        assert net.ingress[0].cidr.cidr == "192.168.0.0/16"
+        assert net.ingress[0].ports[0].port == 8080
+        assert sandbox_pb2.TENANT_SCOPE_UNSPECIFIED is not None
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_uses_defaults_for_runtime_class_and_security_context(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            defaults=SandboxDefaults(
+                runtime_class="gvisor",
+                security_context=SecurityContext(privileged=True),
+                working_dir="/work",
+            )
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        assert request.sandbox.spec.runtime_class == "gvisor"
+        assert request.sandbox.spec.containers[0].security_context.privileged is True
+        assert request.sandbox.spec.containers[0].working_dir == "/work"
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_echoes_runtime_class_volumes_and_network_status(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="echo-id",
+            spec=sandbox_pb2.SandboxSpec(
+                volumes=[sandbox_pb2.SandboxVolume(name="data", volume_id="vol-1")]
+            ),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_PENDING,
+                effective_runtime_class="gvisor",
+                attached_volume_ids=["vol-1"],
+                effective_egress=[
+                    sandbox_pb2.EgressRule(dns_name="pypi.org"),
+                    sandbox_pb2.EgressRule(any=True),
+                ],
+                effective_ingress=[sandbox_pb2.IngressRule(any=True)],
+            ),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(runtime_class="gvisor")
+
+        assert sandbox.effective_runtime_class == "gvisor"
+        assert sandbox.attached_volume_ids == ("vol-1",)
+        assert sandbox.dns_egress_names == ("pypi.org",)
+        assert sandbox.effective_egress[0].dns_name == "pypi.org"
+        assert sandbox.effective_egress[1].any is True
+        assert sandbox.effective_ingress[0].any is True
+        sandbox._state = _Terminal(sandbox_id="echo-id", status=SandboxStatus.COMPLETED)
+
     def test_create_request_maps_image_pull_credentials(self) -> None:
         sandbox, stub = self._run_with_mock_stub(
             image_pull_credentials=ImagePullCredentials(
@@ -743,6 +906,24 @@ class TestSandboxRun:
                     name="registry-creds",
                 ),
             )
+
+    def test_run_from_template_security_context_without_image_raises(self) -> None:
+        with pytest.raises(TypeError, match="require container_image"):
+            Sandbox.run_from_template(
+                "template-123",
+                security_context=SecurityContext(privileged=True),
+            )
+
+    def test_run_from_template_maps_runtime_class_without_image(self) -> None:
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            runtime_class="gvisor",
+        )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert request.overrides.runtime_class == "gvisor"
+        assert not request.overrides.containers
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_template_maps_image_pull_credentials(self) -> None:
         sandbox, stub = self._run_with_mock_stub(
@@ -4239,6 +4420,27 @@ class TestSandboxList:
 
             call_args = mock_stub.ListSandboxes.call_args[0][0]
             assert call_args.show_terminated is True
+
+    @pytest.mark.asyncio
+    async def test_list_volume_ids_passes_field(self, mock_api_key: str) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await Sandbox.list(volume_ids=["vol-1", "vol-2"])
+
+            call_args = mock_stub.ListSandboxes.call_args[0][0]
+            assert list(call_args.volume_ids) == ["vol-1", "vol-2"]
 
     @pytest.mark.asyncio
     async def test_list_show_terminated_default_false(self, mock_api_key: str) -> None:
