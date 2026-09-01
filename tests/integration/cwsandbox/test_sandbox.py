@@ -25,6 +25,7 @@ from cwsandbox import (
     ResourceOptions,
     Sandbox,
     SandboxDefaults,
+    ScratchVolumeOptions,
     Service,
     ServiceVisibility,
     Session,
@@ -583,6 +584,72 @@ def test_sandbox_environment_variables(sandbox_defaults: SandboxDefaults) -> Non
             assert lines[1] == "debug"
             # Task-specific environment variables are added
             assert lines[2] == "resnet50"
+
+
+def _required_runtime_class(sandbox_defaults: SandboxDefaults) -> str:
+    """Runtime class the live fleet is required to admit.
+
+    ``CWSANDBOX_TEST_RUNTIME_CLASS`` wins. Otherwise an unpinned create's
+    ``effective_runtime_class`` is the pin. Empty echo fails the environment.
+    """
+    pinned = os.environ.get("CWSANDBOX_TEST_RUNTIME_CLASS", "").strip()
+    if pinned:
+        return pinned
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        sandbox.wait()
+        admitted = sandbox.effective_runtime_class
+    assert admitted, (
+        "Fleet did not echo an effective_runtime_class; "
+        "set CWSANDBOX_TEST_RUNTIME_CLASS to a policy-admitted class"
+    )
+    return admitted
+
+
+def test_sandbox_working_dir(sandbox_defaults: SandboxDefaults) -> None:
+    """Create-time working_dir is the process cwd."""
+    with Sandbox.run(
+        "sleep",
+        "infinity",
+        defaults=sandbox_defaults,
+        working_dir="/tmp",
+    ) as sandbox:
+        sandbox.wait()
+        result = sandbox.exec(["pwd"]).result()
+        assert result.returncode == 0
+        assert result.stdout.strip() == "/tmp"
+
+
+def test_sandbox_scratch_volume(sandbox_defaults: SandboxDefaults) -> None:
+    """Scratch EmptyDir is mounted and writable."""
+    with Sandbox.run(
+        "sleep",
+        "infinity",
+        defaults=sandbox_defaults,
+        volumes=[
+            ScratchVolumeOptions(name="scratch", mount_path="/data", size="1Gi"),
+        ],
+    ) as sandbox:
+        sandbox.wait()
+        written = sandbox.exec(
+            ["sh", "-c", "printf 'scratch-ok' > /data/probe && cat /data/probe"]
+        ).result()
+        assert written.returncode == 0
+        assert written.stdout.strip() == "scratch-ok"
+        assert sandbox.read_file("/data/probe").result() == b"scratch-ok"
+
+
+def test_sandbox_runtime_class(sandbox_defaults: SandboxDefaults) -> None:
+    """Create-time runtime_class is echoed as effective_runtime_class."""
+    runtime_class = _required_runtime_class(sandbox_defaults)
+    with Sandbox.run(
+        "sleep",
+        "infinity",
+        defaults=sandbox_defaults,
+        runtime_class=runtime_class,
+    ) as sandbox:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox.effective_runtime_class == runtime_class
 
 
 def test_function_environment_variables(sandbox_defaults: SandboxDefaults) -> None:
