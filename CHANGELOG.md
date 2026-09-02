@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.11.0 (2026-09-02)
+
+### Features
+
+- Expose create-spec fields and volume CRUD
+  ([#164](https://github.com/coreweave/cwsandbox-client/pull/164),
+  [`b25ced7`](https://github.com/coreweave/cwsandbox-client/commit/b25ced739334eac2b70f215c0a0410fbe9370ada))
+
+* feat: expose create-spec fields and volume CRUD
+
+CreateSandbox already accepted runtime class, in-guest security context, working dir, registered
+  volumes, object-storage access, and full network rules. Sandbox.run() never sent them, so callers
+  had to stuff protobuf by hand.
+
+Wire those fields through run, session, and defaults, echo the matching status, and add
+  VolumeService CRUD so registered volumes can be managed from this client.
+
+* fix: thread volume auth and tighten create-spec checks
+
+Volume CRUD now keeps explicit credentials, bounds readiness polls by the remaining wait, and treats
+  delete NOT_FOUND after a lost success as done. Create-time DNS grants and object-storage buckets
+  fail locally instead of at the Gateway.
+
+* test: cover working_dir, scratch, and runtime_class live
+
+Prove the new create-spec fields against a real Gateway: cwd, a writable scratch mount, and an
+  explicit runtime_class pin echoed on the sandbox.
+
+* fix: honor explicit zero timeout on volume instance methods
+
+update, delete, and validate used `timeout_seconds or handle default`, so an explicit 0 was dropped.
+  Match the rest of the client and keep 0.
+
+* fix: treat zero volume timeout as unset
+
+0 and None both mean no override. Use the handle timeout or the client default instead of sending a
+  zero gRPC deadline.
+
+
 ## v1.10.0 (2026-09-01)
 
 ### Documentation
