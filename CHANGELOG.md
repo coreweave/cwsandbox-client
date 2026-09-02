@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.12.0 (2026-09-02)
+
+### Features
+
+- Add multi-container support ([#159](https://github.com/coreweave/cwsandbox-client/pull/159),
+  [`841b77b`](https://github.com/coreweave/cwsandbox-client/commit/841b77bed58688a2d304f81e16130fdf3f11ab3b))
+
+* feat: add multi-container create and named targeting
+
+Callers can pass more than one container on create, share volumes by mount, and name a container on
+  exec, files, logs, and shell. Empty container still targets the primary.
+
+* fix: keep remote functions single-container and tighten container validation
+
+Session containers= defaults no longer leak into @session.function(). Reject string Container.args,
+  check per-container secret env_var conflicts, and treat proto3 exit_code=0 as absent until the
+  container is terminal.
+
+* test: restore staticmethod on create-request helper
+
+After stacking on the create-spec branch, the helper must not bind the test instance as a
+  Sandbox.run() command argument.
+
+* fix: echo observed containers without create-time name checks
+
+Get/list/poll was reconstructing Container() and re-running reserved-name and working_dir
+  validators, which can fail the whole list when the server echoes platform sidecars. Document that
+  containers= replaces leftover single-container SandboxDefaults instead of merging them.
+
+
 ## v1.11.0 (2026-09-02)
 
 ### Features
