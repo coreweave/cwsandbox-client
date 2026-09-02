@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.12.2 (2026-09-02)
+
+### Bug Fixes
+
+- **sandbox**: Read known-size write fallback without waiting for stdin EOF
+  ([#167](https://github.com/coreweave/cwsandbox-client/pull/167),
+  [`e123536`](https://github.com/coreweave/cwsandbox-client/commit/e123536f0cc8fcab12adad163378b64860079bbd))
+
+The exec-stream write fallback already knows the payload length. Waiting for EOF via cat hangs when
+  kubelet drops CLOSE, and the runner then aborts with STDIN_CLOSE_GRACE_EXPIRED.
+
+
 ## v1.12.1 (2026-09-02)
 
 ### Bug Fixes
