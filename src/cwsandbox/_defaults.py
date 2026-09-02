@@ -312,8 +312,10 @@ class SandboxDefaults:
         volumes: Scratch or registered volumes (``ScratchVolumeOptions`` or
             ``RegisteredVolumeOptions``).
         runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
-        security_context: In-guest privilege for the primary container.
-        working_dir: Working directory for the primary container command.
+        security_context: In-guest privilege for the single-container path.
+            Not applied when ``containers=`` or ``defaults.containers`` is used.
+        working_dir: Working directory for the single-container path.
+            Not applied when a container list is used.
         object_storage_access: Temporary object-storage credentials.
         file_system_snapshot: Convenience single-mount FSS options via
             ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
@@ -321,8 +323,13 @@ class SandboxDefaults:
             ``volumes=`` for multi-volume setups.
         containers: Optional multi-container spec (``Container``). Mutually
             exclusive with single-container fields on ``Sandbox.run()``.
-        secrets: Secrets to inject as environment variables at create time.
-        environment_variables: Environment variables injected into the sandbox.
+            When this list is used, ``secrets``, ``environment_variables``,
+            ``security_context``, and ``working_dir`` on these defaults
+            are not applied; set them on each ``Container``.
+        secrets: Secrets for the single-container path. Not applied when
+            ``containers=`` or ``defaults.containers`` is used.
+        environment_variables: Environment variables for the single-container
+            path. Not applied when a container list is used.
         annotations: Kubernetes pod annotations (key-value string pairs).
             Merged with per-sandbox annotations; explicit values override defaults.
             Use for non-sensitive metadata only.

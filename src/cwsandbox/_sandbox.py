@@ -1748,7 +1748,10 @@ class Sandbox:
             containers: Multi-container spec. Mutually exclusive with
                 ``container_image``, ``command``/``args``, ``resources``,
                 ``mounted_files``, ``secrets``, ``image_pull_credentials``,
-                and ``environment_variables``.
+                ``environment_variables``, ``security_context``, and
+                ``working_dir``. This list replaces those single-container
+                fields, including the same names on ``SandboxDefaults``.
+                Put secrets, env, and working_dir on each ``Container``.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -2181,7 +2184,11 @@ class Sandbox:
             containers: Multi-container spec. Mutually exclusive with
                 positional command/args and with ``container_image``,
                 ``resources``, ``mounted_files``, ``secrets``,
-                ``image_pull_credentials``, and ``environment_variables``.
+                ``image_pull_credentials``, ``environment_variables``,
+                ``security_context``, and ``working_dir``. This list
+                replaces those single-container fields, including the
+                same names on ``SandboxDefaults``. Put secrets, env,
+                and working_dir on each ``Container``.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -4816,7 +4823,7 @@ class Sandbox:
                 name=creds.credentials.path,
                 field=creds.credentials.field,
             )
-        return Container(
+        return Container._from_observed(
             image=proto.image,
             name=proto.name or None,
             command=proto.command or None,

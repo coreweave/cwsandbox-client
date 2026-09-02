@@ -525,6 +525,32 @@ class TestStatusEcho:
         assert by_name["helper"].exit_code is None
         sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
 
+    def test_echo_keeps_platform_names_and_root_working_dir(self) -> None:
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            spec=sandbox_pb2.SandboxSpec(
+                containers=[
+                    sandbox_pb2.Container(
+                        name="dns-egress",
+                        image="platform/dns-egress:1",
+                        working_dir="/",
+                    ),
+                    sandbox_pb2.Container(name="Main", image="python:3.11"),
+                ]
+            ),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            _SandboxView(proto),
+            base_url="https://api.cwsandbox.com",
+            timeout_seconds=30.0,
+        )
+        assert [row.name for row in sandbox.containers] == ["dns-egress", "Main"]
+        assert sandbox.containers[0].working_dir == "/"
+        assert sandbox.containers[0].primary is True
+        assert sandbox.containers[1].primary is False
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+
     def test_preserves_explicit_primary_on_helper(self) -> None:
         proto = sandbox_pb2.Sandbox(
             sandbox_id="sb-1",

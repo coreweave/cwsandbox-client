@@ -414,7 +414,10 @@ class Session:
             secrets: Secrets to inject as environment variables.
                 Merged with session defaults (defaults first, then this list).
             containers: Multi-container spec. Mutually exclusive with
-                single-container kwargs. Not used by ``@session.function()``.
+                single-container kwargs. Replaces session
+                ``defaults.secrets``, ``environment_variables``,
+                ``security_context``, and ``working_dir``; put those on
+                each ``Container``. Not used by ``@session.function()``.
 
         Returns:
             An unstarted Sandbox registered with the session.

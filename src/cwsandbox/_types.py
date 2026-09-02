@@ -1134,7 +1134,9 @@ class Container:
     Pass a list to ``Sandbox.run(containers=[...])``. That form is mutually
     exclusive with the single-container kwargs (``container_image``,
     ``command``/``args``, ``resources``, ``mounted_files``, ``secrets``,
-    ``image_pull_credentials``, ``environment_variables``).
+    ``image_pull_credentials``, ``environment_variables``,
+    ``security_context``, ``working_dir``) and does not inherit those
+    same fields from ``SandboxDefaults``.
 
     One container: ``primary`` may be omitted or False (that row is primary).
     More than one: exactly one row must set ``primary=True``, and every row
@@ -1172,14 +1174,17 @@ class Container:
     working_dir: str | None = None
     image_pull_credentials: ImagePullCredentials | Mapping[str, Any] | None = None
     primary: bool = False
+    # Status echo only. Create-time name/cwd/image checks do not apply to
+    # server-authored rows (reserved platform sidecars, working_dir="/").
+    _observed: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not self.image:
+        if not self.image and not self._observed:
             raise ValueError("Container.image cannot be empty")
         if self.name is not None:
             if not self.name:
                 object.__setattr__(self, "name", None)
-            else:
+            elif not self._observed:
                 _validate_container_name(self.name)
         if self.command is not None and not self.command:
             object.__setattr__(self, "command", None)
@@ -1196,7 +1201,7 @@ class Container:
         if self.working_dir is not None:
             if not self.working_dir:
                 object.__setattr__(self, "working_dir", None)
-            else:
+            elif not self._observed:
                 _validate_absolute_mount_path(self.working_dir, field="Container.working_dir")
         if self.volume_mounts is not None:
             object.__setattr__(
@@ -1222,6 +1227,15 @@ class Container:
             )
         if self.mounted_files is not None:
             object.__setattr__(self, "mounted_files", tuple(self.mounted_files))
+
+    @classmethod
+    def _from_observed(cls, **kwargs: Any) -> Container:
+        """Build a Container from a Get/list spec echo.
+
+        Skips reserved-name, DNS-1123, working_dir, and empty-image checks.
+        ``replace()`` keeps ``_observed`` so inferred ``primary`` stays valid.
+        """
+        return cls(_observed=True, **kwargs)
 
 
 def _coerce_container(value: Container | Mapping[str, Any]) -> Container:
