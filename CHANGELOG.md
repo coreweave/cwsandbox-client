@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.12.1 (2026-09-02)
+
+### Bug Fixes
+
+- **auth**: Redact SandboxDefaults credentials from repr
+  ([#166](https://github.com/coreweave/cwsandbox-client/pull/166),
+  [`c3ef162`](https://github.com/coreweave/cwsandbox-client/commit/c3ef162d2e69aeac1812c5bd386e9ac5383ed477))
+
+
 ## v1.12.0 (2026-09-02)
 
 ### Features
