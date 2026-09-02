@@ -10,6 +10,7 @@ import math
 import pytest
 
 from cwsandbox import (
+    AuthHeaders,
     DataPlaneMode,
     EgressRule,
     FileSystemSnapshotOptions,
@@ -76,6 +77,24 @@ class TestSandboxDefaults:
 
         with pytest.raises(dataclasses.FrozenInstanceError):
             defaults.container_image = "python:3.12"  # type: ignore[misc]
+
+    def test_repr_redacts_auth_credentials(self) -> None:
+        """Test repr does not expose resolved authentication credentials."""
+        sentinels = ("bearer-credential-sentinel", "wandb-credential-sentinel")
+        defaults = SandboxDefaults(
+            auth=AuthHeaders(
+                headers={
+                    "Authorization": f"Bearer {sentinels[0]}",
+                    "x-wandb-api-key": sentinels[1],
+                },
+                strategy="custom",
+            )
+        )
+
+        rendered = repr(defaults)
+
+        assert "auth=" not in rendered
+        assert all(sentinel not in rendered for sentinel in sentinels)
 
     def test_merge_tags_empty_base(self) -> None:
         """Test merge_tags with no default tags."""

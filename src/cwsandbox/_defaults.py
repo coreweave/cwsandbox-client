@@ -356,7 +356,7 @@ class SandboxDefaults:
     command: str = DEFAULT_COMMAND
     args: tuple[str, ...] = DEFAULT_ARGS
     base_url: str = DEFAULT_BASE_URL
-    auth: AuthConfig | None = None
+    auth: AuthConfig | None = field(default=None, repr=False)
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS
     poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS
