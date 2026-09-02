@@ -207,6 +207,8 @@ def test_sandbox_large_file_exec_fallback(sandbox_defaults: SandboxDefaults) -> 
         self: Sandbox,
         filepath: str,
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> bytes:
         raise SandboxResourceExhaustedError(
             "Read file resource exhausted: CLIENT: Received message larger than max"
@@ -590,7 +592,8 @@ def _required_runtime_class(sandbox_defaults: SandboxDefaults) -> str:
     """Runtime class the live fleet is required to admit.
 
     ``CWSANDBOX_TEST_RUNTIME_CLASS`` wins. Otherwise an unpinned create's
-    ``effective_runtime_class`` is the pin. Empty echo fails the environment.
+    named ``effective_runtime_class`` is the pin. Empty echo fails the
+    environment; the node-default sentinel skips explicit pin coverage.
     """
     pinned = os.environ.get("CWSANDBOX_TEST_RUNTIME_CLASS", "").strip()
     if pinned:
@@ -602,6 +605,11 @@ def _required_runtime_class(sandbox_defaults: SandboxDefaults) -> str:
         "Fleet did not echo an effective_runtime_class; "
         "set CWSANDBOX_TEST_RUNTIME_CLASS to a policy-admitted class"
     )
+    if admitted == "<node-default>":
+        pytest.skip(
+            "fleet uses the node-default runtime; set CWSANDBOX_TEST_RUNTIME_CLASS "
+            "to exercise an explicit runtime class"
+        )
     return admitted
 
 
