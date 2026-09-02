@@ -7465,10 +7465,13 @@ class Sandbox:
         *,
         container: str | None = None,
     ) -> None:
+        # Counted read: do not wait for stdin EOF. Kubelet does not reliably
+        # deliver CLOSE, and the runner's stdin-close watchdog then aborts a
+        # silent `cat` with STDIN_CLOSE_GRACE_EXPIRED.
         script = (
             "path=$1\n"
             "expected=$2\n"
-            'if ! cat > "$path"; then\n'
+            'if ! head -c "$expected" > "$path"; then\n'
             '  printf "%s\\n" "Failed to write input stream to $path" >&2\n'
             "  exit 1\n"
             "fi\n"
@@ -7504,10 +7507,11 @@ class Sandbox:
             # would send the caller debugging the network instead of their code.
             raise
         except Exception as e:
-            # The exec-stream write does direct-cat-to-target (no temp file +
-            # rename), so any interruption — gRPC timeout, transport error,
-            # mid-stream cancel — may leave a partially written file. Surface
-            # that to callers so they can decide whether to retry vs delete.
+            # The exec-stream write writes directly to the target (no temp
+            # file + rename), so any interruption — gRPC timeout, transport
+            # error, mid-stream cancel — may leave a partially written file.
+            # Surface that to callers so they can decide whether to retry vs
+            # delete.
             raise SandboxFileError(
                 f"Failed to write file '{filepath}' via exec-stream fallback. "
                 f"The target may be partial or truncated. Upstream error: {e!r}",

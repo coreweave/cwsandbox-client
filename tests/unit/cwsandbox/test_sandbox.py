@@ -2347,6 +2347,30 @@ class TestSandboxFileOperationFallback:
         assert exc_info.value.filepath == "/tmp/out.bin"
         assert "partial or truncated" in str(exc_info.value)
 
+    def test_write_fallback_reads_expected_bytes_without_waiting_for_eof(self) -> None:
+        """The fallback already knows the payload size, so it must not use
+        ``cat`` (which blocks until stdin EOF). Kubelet CLOSE is unreliable
+        and a silent waiter is aborted by STDIN_CLOSE_GRACE_EXPIRED."""
+        sandbox = self._setup_running_sandbox()
+        payload = b"counted-write"
+
+        with patch.object(
+            sandbox,
+            "_exec_streaming_binary_async",
+            new_callable=AsyncMock,
+            return_value=(0, b"", b""),
+        ) as exec_binary:
+            sandbox._loop_manager.run_sync(
+                sandbox._write_file_via_exec_streaming("/tmp/out.bin", payload, 5.0)
+            )
+
+        command = exec_binary.await_args.args[0]
+        script = command[2]
+        assert command[:3] == ["/bin/sh", "-c", script]
+        assert command[3:] == ["cwsandbox-write-file", "/tmp/out.bin", str(len(payload))]
+        assert "head -c" in script
+        assert "cat >" not in script
+
 
 class TestSandboxFileTooLarge:
     """write_file / read_file dispatch around CWSANDBOX_FILE_TOO_LARGE.
