@@ -326,38 +326,213 @@ def _is_dns1123_subdomain(name: str) -> bool:
     return len(name) <= _DNS1123_SUBDOMAIN_MAX and _DNS1123_SUBDOMAIN_RE.fullmatch(name) is not None
 
 
+class TenantScope(StrEnum):
+    """Relational selector for other sandboxes."""
+
+    UNSPECIFIED = "unspecified"
+    SAME_USER = "same_user"
+    SAME_ORG = "same_org"
+    SANDBOX_NETWORK = "sandbox_network"
+
+
+class StorageMedium(StrEnum):
+    """Backing store for a scratch volume."""
+
+    UNSPECIFIED = "unspecified"
+    DISK = "disk"
+    MEMORY = "memory"
+
+
+class ObjectStoragePermission(StrEnum):
+    """Permission for minted object-storage credentials."""
+
+    UNSPECIFIED = "unspecified"
+    READ = "read"
+    READ_WRITE = "read_write"
+
+
+@dataclass(frozen=True, kw_only=True)
+class CidrBlock:
+    """An IP range with optional carved-out sub-ranges."""
+
+    cidr: str
+    except_cidrs: Sequence[str] = ()
+
+    def __post_init__(self) -> None:
+        if not self.cidr:
+            raise ValueError("CidrBlock.cidr cannot be empty")
+        object.__setattr__(self, "except_cidrs", tuple(self.except_cidrs))
+
+
+@dataclass(frozen=True, kw_only=True)
+class SelectorBlock:
+    """Label selector for cluster workloads (matchLabels only)."""
+
+    pod_labels: Mapping[str, str]
+    namespace_labels: Mapping[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.pod_labels:
+            raise ValueError("SelectorBlock.pod_labels must contain at least one label")
+        object.__setattr__(self, "pod_labels", dict(self.pod_labels))
+        if self.namespace_labels is not None:
+            object.__setattr__(self, "namespace_labels", dict(self.namespace_labels))
+
+
+@dataclass(frozen=True, kw_only=True)
+class PortRange:
+    """A single port or inclusive port range."""
+
+    port: int
+    end_port: int | None = None
+    protocol: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.port <= 0 or self.port > 65535:
+            raise ValueError(f"PortRange.port must be 1-65535, got {self.port}")
+        if self.end_port is not None and (self.end_port < self.port or self.end_port > 65535):
+            raise ValueError(f"PortRange.end_port must be {self.port}-65535, got {self.end_port}")
+
+
+def _normalize_dns_name(name: str, *, field: str, allow_star: bool = False) -> str:
+    name = name.strip().lower()
+    if not name:
+        raise ValueError(f"{field} cannot be empty")
+    if name == "*":
+        if allow_star:
+            return name
+        raise ValueError(f'{field} cannot be "*"; that is a policy ceiling, not a sandbox grant')
+    if name.startswith("*."):
+        valid = len(name) <= _DNS1123_SUBDOMAIN_MAX and _is_dns1123_subdomain(name[2:])
+    else:
+        valid = _is_dns1123_subdomain(name)
+    if not valid:
+        raise ValueError(
+            f"{field} must be a DNS-1123 subdomain or a single leftmost wildcard (*.example.com)"
+        )
+    return name
+
+
+def _coerce_cidr(value: CidrBlock | Mapping[str, Any] | str) -> CidrBlock:
+    if isinstance(value, CidrBlock):
+        return value
+    if isinstance(value, str):
+        return CidrBlock(cidr=value)
+    if isinstance(value, Mapping):
+        except_cidrs = value.get("except_cidrs", value.get("except", ()))
+        return CidrBlock(cidr=value["cidr"], except_cidrs=except_cidrs)
+    raise TypeError(f"cidr must be CidrBlock, dict, or str, got {type(value).__name__}")
+
+
+def _coerce_port_range(value: PortRange | Mapping[str, Any] | int) -> PortRange:
+    if isinstance(value, PortRange):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return PortRange(port=value)
+    if isinstance(value, Mapping):
+        return PortRange(**value)
+    raise TypeError(f"ports entries must be PortRange, dict, or int, got {type(value).__name__}")
+
+
 @dataclass(frozen=True, kw_only=True)
 class EgressRule:
     """One create-time egress destination.
 
-    DNS-name HTTPS grants are the supported destination on this type. Exact
+    Exactly one destination must be set: ``dns_name``, ``cidr``, ``tenant``,
+    ``any``, or ``selector``. DNS names are HTTPS (TCP 443) grants. Exact
     names (``pypi.org``) or a single leftmost wildcard (``*.pypi.org``).
     ``"*"`` is a policy ceiling, not a sandbox grant.
 
     Attributes:
         dns_name: Hostname to grant for HTTPS (TCP 443).
+        cidr: IP range (``CidrBlock``, dict, or CIDR string).
+        tenant: Other sandboxes selected relationally.
+        any: All destinations except platform-internal ranges.
+        selector: Cluster workloads selected by pod/namespace labels.
+        ports: Optional destination port filter. Empty = all ports
+            on non-DNS rules. DNS-name grants omit ports or set
+            exactly TCP 443.
+        dns_name_except: Policy-only carve-outs. Rejected on this
+            create-time type.
     """
 
-    dns_name: str
+    dns_name: str | None = None
+    cidr: CidrBlock | Mapping[str, Any] | str | None = None
+    tenant: TenantScope | str | None = None
+    any: bool = False
+    selector: SelectorBlock | Mapping[str, Any] | None = None
+    ports: Sequence[PortRange | Mapping[str, Any] | int] | None = None
+    dns_name_except: Sequence[str] | None = None
 
     def __post_init__(self) -> None:
-        name = self.dns_name.strip().lower()
-        if not name:
-            raise ValueError("EgressRule.dns_name cannot be empty")
-        if name == "*":
-            raise ValueError(
-                'EgressRule.dns_name cannot be "*"; that is a policy ceiling, not a sandbox grant'
+        if self.dns_name is not None:
+            object.__setattr__(
+                self,
+                "dns_name",
+                _normalize_dns_name(self.dns_name, field="EgressRule.dns_name"),
             )
-        if name.startswith("*."):
-            valid = len(name) <= _DNS1123_SUBDOMAIN_MAX and _is_dns1123_subdomain(name[2:])
-        else:
-            valid = _is_dns1123_subdomain(name)
-        if not valid:
+        if self.cidr is not None:
+            object.__setattr__(self, "cidr", _coerce_cidr(self.cidr))
+        if self.tenant is not None:
+            tenant = self.tenant
+            if isinstance(tenant, str):
+                tenant = TenantScope(tenant.lower())
+            object.__setattr__(self, "tenant", tenant)
+        if self.selector is not None and not isinstance(self.selector, SelectorBlock):
+            if not isinstance(self.selector, Mapping):
+                raise TypeError(
+                    "EgressRule.selector must be SelectorBlock or dict, "
+                    f"got {type(self.selector).__name__}"
+                )
+            object.__setattr__(self, "selector", SelectorBlock(**self.selector))
+        ports: tuple[PortRange, ...] | None = None
+        if self.ports is not None:
+            if isinstance(self.ports, (str, bytes)):
+                raise TypeError("ports must be a sequence of PortRange, dict, or int")
+            ports = tuple(_coerce_port_range(p) for p in self.ports)
+            object.__setattr__(self, "ports", ports)
+        if self.dns_name_except is not None:
             raise ValueError(
-                "EgressRule.dns_name must be a DNS-1123 subdomain or a single "
-                "leftmost wildcard (*.example.com)"
+                "EgressRule.dns_name_except is policy-only and is not valid "
+                "on a sandbox create grant"
             )
-        object.__setattr__(self, "dns_name", name)
+        destinations = sum(
+            (
+                self.dns_name is not None,
+                self.cidr is not None,
+                self.tenant is not None,
+                self.any is True,
+                self.selector is not None,
+            )
+        )
+        if destinations != 1:
+            raise ValueError(
+                "EgressRule requires exactly one destination: "
+                "dns_name, cidr, tenant, any, or selector"
+            )
+        if self.dns_name is not None:
+            _validate_sandbox_dns_ports(ports)
+
+
+def _is_https_443_port(port: PortRange) -> bool:
+    """Return True if ``port`` is a single TCP 443 grant."""
+    if port.port != 443:
+        return False
+    if port.end_port is not None and port.end_port != 443:
+        return False
+    if port.protocol and port.protocol.upper() != "TCP":
+        return False
+    return True
+
+
+def _validate_sandbox_dns_ports(ports: Sequence[PortRange] | None) -> None:
+    if not ports:
+        return
+    if len(ports) == 1 and _is_https_443_port(ports[0]):
+        return
+    raise ValueError(
+        "EgressRule.dns_name grants only HTTPS (TCP 443); omit ports or set ports to 443"
+    )
 
 
 def _coerce_egress_rule(value: EgressRule | Mapping[str, Any]) -> EgressRule:
@@ -369,18 +544,62 @@ def _coerce_egress_rule(value: EgressRule | Mapping[str, Any]) -> EgressRule:
 
 
 @dataclass(frozen=True, kw_only=True)
-class NetworkOptions:
-    """Network deny flags and create-time hostname egress grants.
+class IngressRule:
+    """One create-time CUSTOM-port ingress source.
 
-    Port exposure uses typed ``services=``. ``egress`` lists hostnames the
-    sandbox may reach over HTTPS (TCP 443); the list is frozen at create.
+    Exactly one source must be set: ``cidr``, ``tenant``, or ``any``.
+
+    Attributes:
+        cidr: Source IP range.
+        tenant: Other sandboxes selected relationally.
+        any: Any source, including the public internet.
+        ports: Optional port filter. Empty = all CUSTOM-visibility ports.
+    """
+
+    cidr: CidrBlock | Mapping[str, Any] | str | None = None
+    tenant: TenantScope | str | None = None
+    any: bool = False
+    ports: Sequence[PortRange | Mapping[str, Any] | int] | None = None
+
+    def __post_init__(self) -> None:
+        if self.cidr is not None:
+            object.__setattr__(self, "cidr", _coerce_cidr(self.cidr))
+        if self.tenant is not None:
+            tenant = self.tenant
+            if isinstance(tenant, str):
+                tenant = TenantScope(tenant.lower())
+            object.__setattr__(self, "tenant", tenant)
+        if self.ports is not None:
+            if isinstance(self.ports, (str, bytes)):
+                raise TypeError("ports must be a sequence of PortRange, dict, or int")
+            object.__setattr__(self, "ports", tuple(_coerce_port_range(p) for p in self.ports))
+        sources = sum((self.cidr is not None, self.tenant is not None, self.any is True))
+        if sources != 1:
+            raise ValueError("IngressRule requires exactly one source: cidr, tenant, or any")
+
+
+def _coerce_ingress_rule(value: IngressRule | Mapping[str, Any]) -> IngressRule:
+    if isinstance(value, IngressRule):
+        return value
+    if isinstance(value, Mapping):
+        return IngressRule(**value)
+    raise TypeError(f"ingress entries must be IngressRule or dict, got {type(value).__name__}")
+
+
+@dataclass(frozen=True, kw_only=True)
+class NetworkOptions:
+    """Network deny flags and create-time ingress/egress grants.
+
+    Port exposure uses typed ``services=``. ``egress`` and ``ingress`` are
+    allow-only rule sets over default-deny; empty/None leaves the runner
+    policy default in effect.
 
     Attributes:
         deny_egress: When True, deny all declared egress (policy default unused).
             Mutually exclusive with a non-empty ``egress`` list.
         deny_ingress: When True, deny CUSTOM ingress (policy default unused).
-        egress: Hostname grants (``EgressRule`` or dict). Empty/None leaves
-            the runner policy default in effect.
+        egress: Egress grants (``EgressRule`` or dict).
+        ingress: CUSTOM-port ingress sources (``IngressRule`` or dict).
 
     Examples:
         Grant PyPI over HTTPS::
@@ -396,16 +615,64 @@ class NetworkOptions:
     deny_egress: bool | None = None
     deny_ingress: bool | None = None
     egress: Sequence[EgressRule | Mapping[str, Any]] | None = None
+    ingress: Sequence[IngressRule | Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
-        if self.egress is None:
-            return
-        if isinstance(self.egress, (str, bytes)):
-            raise TypeError("egress must be a sequence of EgressRule or dict, not a string")
-        rules = tuple(_coerce_egress_rule(rule) for rule in self.egress)
-        object.__setattr__(self, "egress", rules)
-        if self.deny_egress is True and rules:
-            raise ValueError("NetworkOptions.deny_egress cannot be combined with egress rules")
+        if self.egress is not None:
+            if isinstance(self.egress, (str, bytes)):
+                raise TypeError("egress must be a sequence of EgressRule or dict, not a string")
+            rules = tuple(_coerce_egress_rule(rule) for rule in self.egress)
+            object.__setattr__(self, "egress", rules)
+            if self.deny_egress is True and rules:
+                raise ValueError("NetworkOptions.deny_egress cannot be combined with egress rules")
+        if self.ingress is not None:
+            if isinstance(self.ingress, (str, bytes)):
+                raise TypeError("ingress must be a sequence of IngressRule or dict, not a string")
+            object.__setattr__(
+                self, "ingress", tuple(_coerce_ingress_rule(rule) for rule in self.ingress)
+            )
+
+
+def _validate_sub_path(value: str | None, *, field: str) -> str | None:
+    """Validate a VolumeMount.sub_path: relative and canonical, or None."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string or None, got {type(value).__name__}")
+    parts = value.split("/")
+    if value.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"{field} must be relative and canonical (no '.' / '..'), got {value!r}")
+    return value
+
+
+def _validate_optional_uid(value: int | None, *, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} must be an int or None, got {type(value).__name__}")
+    if value < 0 or value > 0xFFFFFFFF:
+        raise ValueError(f"{field} must be an unsigned 32-bit integer, got {value}")
+    return value
+
+
+def _validate_optional_bool(value: bool | None, *, field: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise TypeError(f"{field} must be a bool or None, got {type(value).__name__}")
+    return value
+
+
+def _coerce_string_sequence(value: Sequence[str] | None, *, field: str) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise TypeError(f"{field} must be a sequence of strings, not a string")
+    items = tuple(value)
+    for item in items:
+        if not isinstance(item, str):
+            raise TypeError(f"{field} must contain only strings")
+    return items
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -417,12 +684,19 @@ class ScratchVolumeOptions:
         mount_path: Absolute path to mount into the primary container.
         size: Volume size (e.g. ``"10Gi"``). None uses the platform default.
         restore_from_snapshot_id: When set, restore this snapshot at create.
+        medium: Backing store. Unset uses disk. ``MEMORY`` is tmpfs and
+            counts against container memory.
+        sub_path: Relative path inside the volume to mount instead of its root.
+        read_only: Mount the volume read-only.
     """
 
     name: str
     mount_path: str
     size: str | None = None
     restore_from_snapshot_id: str | None = None
+    medium: StorageMedium | str | None = None
+    sub_path: str | None = None
+    read_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -439,6 +713,80 @@ class ScratchVolumeOptions:
             object.__setattr__(self, "size", None)
         if self.restore_from_snapshot_id is not None and not self.restore_from_snapshot_id:
             object.__setattr__(self, "restore_from_snapshot_id", None)
+        if self.medium is not None:
+            medium = self.medium
+            if isinstance(medium, str):
+                medium = StorageMedium(medium.lower())
+            object.__setattr__(self, "medium", medium)
+        object.__setattr__(
+            self,
+            "sub_path",
+            _validate_sub_path(self.sub_path, field="ScratchVolumeOptions.sub_path"),
+        )
+        if not isinstance(self.read_only, bool):
+            raise TypeError(
+                "ScratchVolumeOptions.read_only must be a bool, "
+                f"got {type(self.read_only).__name__}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RegisteredVolumeOptions:
+    """Mount a registered Volume into the sandbox.
+
+    Attributes:
+        name: Volume name within the sandbox (referenced by the mount).
+        volume_id: Registered Volume ID.
+        mount_path: Absolute path to mount into the primary container.
+        sub_path: Relative path inside the volume to mount instead of its root.
+            Combined with any volume-level prefix set at registration.
+        read_only: Mount the volume read-only.
+    """
+
+    name: str
+    volume_id: str
+    mount_path: str
+    sub_path: str | None = None
+    read_only: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("RegisteredVolumeOptions.name cannot be empty")
+        if not self.volume_id:
+            raise ValueError("RegisteredVolumeOptions.volume_id cannot be empty")
+        if not self.mount_path:
+            raise ValueError("RegisteredVolumeOptions.mount_path cannot be empty")
+        if not self.mount_path.startswith("/"):
+            raise ValueError(
+                f"RegisteredVolumeOptions.mount_path must be absolute, got: {self.mount_path!r}"
+            )
+        if self.mount_path == "/":
+            raise ValueError("RegisteredVolumeOptions.mount_path cannot be '/'")
+        object.__setattr__(
+            self,
+            "sub_path",
+            _validate_sub_path(self.sub_path, field="RegisteredVolumeOptions.sub_path"),
+        )
+        if not isinstance(self.read_only, bool):
+            raise TypeError(
+                "RegisteredVolumeOptions.read_only must be a bool, "
+                f"got {type(self.read_only).__name__}"
+            )
+
+
+def _coerce_volume_options(
+    vol: ScratchVolumeOptions | RegisteredVolumeOptions | Mapping[str, Any],
+) -> ScratchVolumeOptions | RegisteredVolumeOptions:
+    if isinstance(vol, (ScratchVolumeOptions, RegisteredVolumeOptions)):
+        return vol
+    if isinstance(vol, Mapping):
+        if "volume_id" in vol:
+            return RegisteredVolumeOptions(**vol)
+        return ScratchVolumeOptions(**vol)
+    raise TypeError(
+        "volumes entries must be ScratchVolumeOptions, RegisteredVolumeOptions, "
+        f"or dict, got {type(vol).__name__}"
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -464,6 +812,156 @@ class ImagePullCredentials:
             raise ValueError("ImagePullCredentials.store cannot be empty")
         if not self.name:
             raise ValueError("ImagePullCredentials.name cannot be empty")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ObjectStorageAccess:
+    """Temporary object-storage credentials injected into every user container.
+
+    Attributes:
+        buckets: Bucket names the minted credential may access.
+        permission: ``READ`` or ``READ_WRITE``. Unset uses the platform default.
+        object_prefix: Optional key prefix that scopes the credential.
+    """
+
+    buckets: Sequence[str] = ()
+    permission: ObjectStoragePermission | str | None = None
+    object_prefix: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.buckets, (str, bytes)):
+            raise TypeError(
+                "ObjectStorageAccess.buckets must be a sequence of non-empty "
+                "strings, not a bare string"
+            )
+        buckets = tuple(self.buckets)
+        if not buckets:
+            raise ValueError("ObjectStorageAccess.buckets cannot be empty")
+        for bucket in buckets:
+            if not isinstance(bucket, str):
+                raise TypeError(
+                    "ObjectStorageAccess.buckets entries must be strings, "
+                    f"got {type(bucket).__name__}"
+                )
+            if not bucket:
+                raise ValueError("ObjectStorageAccess.buckets entries cannot be empty")
+        object.__setattr__(self, "buckets", buckets)
+        if self.permission is not None:
+            permission = self.permission
+            if isinstance(permission, str):
+                permission = ObjectStoragePermission(permission.lower())
+            object.__setattr__(self, "permission", permission)
+        if self.object_prefix is not None and not self.object_prefix:
+            object.__setattr__(self, "object_prefix", None)
+
+
+def _coerce_object_storage_access(
+    value: ObjectStorageAccess | Mapping[str, Any] | None,
+) -> ObjectStorageAccess | None:
+    if value is None:
+        return None
+    if isinstance(value, ObjectStorageAccess):
+        return value
+    if isinstance(value, Mapping):
+        return ObjectStorageAccess(**value)
+    raise TypeError(
+        "object_storage_access must be ObjectStorageAccess, dict, or None, "
+        f"got {type(value).__name__}"
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SecurityContext:
+    """In-guest container privilege, clamped by the runner policy.
+
+    Host-reaching settings (host network, host PID, hostPath) are not
+    expressible here. ``privileged``, capabilities, run-as, and seccomp
+    apply inside the sandbox isolation boundary.
+
+    Attributes:
+        run_as_user: UID for the entrypoint. Unset uses the image user.
+        run_as_group: GID for the entrypoint. Unset uses the image group.
+        privileged: Run privileged inside the isolation boundary.
+        allow_privilege_escalation: Allow a process to gain more privileges
+            than its parent.
+        read_only_root_filesystem: Mount the container root filesystem read-only.
+        capabilities_add: Linux capabilities to add (e.g. ``"SYS_PTRACE"``).
+        capabilities_drop: Linux capabilities to drop.
+        seccomp_profile: ``"RuntimeDefault"`` or ``"Unconfined"``.
+    """
+
+    run_as_user: int | None = None
+    run_as_group: int | None = None
+    privileged: bool | None = None
+    allow_privilege_escalation: bool | None = None
+    read_only_root_filesystem: bool | None = None
+    capabilities_add: Sequence[str] | None = None
+    capabilities_drop: Sequence[str] | None = None
+    seccomp_profile: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "run_as_user",
+            _validate_optional_uid(self.run_as_user, field="SecurityContext.run_as_user"),
+        )
+        object.__setattr__(
+            self,
+            "run_as_group",
+            _validate_optional_uid(self.run_as_group, field="SecurityContext.run_as_group"),
+        )
+        object.__setattr__(
+            self,
+            "privileged",
+            _validate_optional_bool(self.privileged, field="SecurityContext.privileged"),
+        )
+        object.__setattr__(
+            self,
+            "allow_privilege_escalation",
+            _validate_optional_bool(
+                self.allow_privilege_escalation,
+                field="SecurityContext.allow_privilege_escalation",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "read_only_root_filesystem",
+            _validate_optional_bool(
+                self.read_only_root_filesystem,
+                field="SecurityContext.read_only_root_filesystem",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "capabilities_add",
+            _coerce_string_sequence(
+                self.capabilities_add, field="SecurityContext.capabilities_add"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "capabilities_drop",
+            _coerce_string_sequence(
+                self.capabilities_drop, field="SecurityContext.capabilities_drop"
+            ),
+        )
+        profile = self.seccomp_profile
+        if profile is not None and not profile:
+            object.__setattr__(self, "seccomp_profile", None)
+
+
+def _coerce_security_context(
+    value: SecurityContext | Mapping[str, Any] | None,
+) -> SecurityContext | None:
+    if value is None:
+        return None
+    if isinstance(value, SecurityContext):
+        return value
+    if isinstance(value, Mapping):
+        return SecurityContext(**value)
+    raise TypeError(
+        f"security_context must be SecurityContext, dict, or None, got {type(value).__name__}"
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

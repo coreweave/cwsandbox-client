@@ -20,12 +20,15 @@ from cwsandbox._types import (
     FileSystemSnapshotOptions,
     ImagePullCredentials,
     NetworkOptions,
+    ObjectStorageAccess,
     OperationRef,
     PlacementMode,
     PlacementSpillover,
+    RegisteredVolumeOptions,
     ResourceOptions,
     ScratchVolumeOptions,
     Secret,
+    SecurityContext,
     Service,
 )
 from cwsandbox._wandb import WandbReporter
@@ -341,12 +344,20 @@ class Session:
         mounted_files: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
-        volumes: list[ScratchVolumeOptions] | tuple[ScratchVolumeOptions, ...] | None = None,
+        volumes: (
+            list[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any]]
+            | tuple[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any], ...]
+            | None
+        ) = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         placement_mode: PlacementMode | str | None = None,
         placement_spillover: PlacementSpillover | str | None = None,
         template_id: str | None = None,
         image_pull_credentials: ImagePullCredentials | dict[str, Any] | None = None,
+        runtime_class: str | None = None,
+        security_context: SecurityContext | dict[str, Any] | None = None,
+        working_dir: str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
@@ -466,6 +477,10 @@ class Session:
             placement_spillover=placement_spillover,
             template_id=template_id,
             image_pull_credentials=image_pull_credentials,
+            runtime_class=runtime_class,
+            security_context=security_context,
+            working_dir=working_dir,
+            object_storage_access=object_storage_access,
             environment_variables=environment_variables,
             annotations=annotations,
             secrets=secrets,
@@ -490,6 +505,7 @@ class Session:
         runner_ids: builtins.list[str] | None = None,
         show_terminated: bool = False,
         adopt: bool = False,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
     ) -> OperationRef[builtins.list[Sandbox]]:
         """List sandboxes, optionally adopting them into this session.
 
@@ -509,6 +525,7 @@ class Session:
             profile_ids: Removed in 1.x; passing a value raises ``TypeError``.
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
+            volume_ids: Filter to sandboxes attached to these registered Volume IDs
             show_terminated: If True, include terminal sandboxes (completed,
                 failed, terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
@@ -547,6 +564,7 @@ class Session:
                 runner_ids=runner_ids,
                 show_terminated=show_terminated,
                 adopt=adopt,
+                volume_ids=volume_ids,
             )
         )
         return OperationRef(future)
@@ -561,6 +579,7 @@ class Session:
         runner_ids: builtins.list[str] | None = None,
         show_terminated: bool = False,
         adopt: bool = False,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List sandboxes, optionally adopting them into this session."""
         from cwsandbox._sandbox import Sandbox
@@ -580,6 +599,7 @@ class Session:
             profile_names=effective_profile_names,
             runner_ids=effective_runner_ids,
             show_terminated=show_terminated,
+            volume_ids=volume_ids,
             base_url=None
             if self._defaults.base_url == DEFAULT_BASE_URL
             else self._defaults.base_url,
@@ -701,10 +721,16 @@ class Session:
         mounted_files: Sequence[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
         services: Sequence[Service] | None = None,
-        volumes: Sequence[ScratchVolumeOptions] | None = None,
+        volumes: (
+            Sequence[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any]] | None
+        ) = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         placement_mode: PlacementMode | str | None = None,
         placement_spillover: PlacementSpillover | str | None = None,
+        runtime_class: str | None = None,
+        security_context: SecurityContext | dict[str, Any] | None = None,
+        working_dir: str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
         environment_variables: dict[str, str] | None = None,
         annotations: dict[str, str] | None = None,
         request_timeout_seconds: float | None = None,
@@ -806,6 +832,10 @@ class Session:
                 file_system_snapshot=file_system_snapshot,
                 placement_mode=placement_mode,
                 placement_spillover=placement_spillover,
+                runtime_class=runtime_class,
+                security_context=security_context,
+                working_dir=working_dir,
+                object_storage_access=object_storage_access,
                 environment_variables=environment_variables,
                 annotations=annotations,
                 request_timeout_seconds=request_timeout_seconds,

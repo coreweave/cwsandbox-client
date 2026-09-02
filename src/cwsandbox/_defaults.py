@@ -14,12 +14,18 @@ from cwsandbox._types import (
     DataPlaneMode,
     FileSystemSnapshotOptions,
     NetworkOptions,
+    ObjectStorageAccess,
     PlacementMode,
     PlacementSpillover,
+    RegisteredVolumeOptions,
     ResourceOptions,
     ScratchVolumeOptions,
     Secret,
+    SecurityContext,
     Service,
+    _coerce_object_storage_access,
+    _coerce_security_context,
+    _coerce_volume_options,
 )
 
 DEFAULT_CONTAINER_IMAGE: str = "python:3.11"
@@ -301,7 +307,12 @@ class SandboxDefaults:
         network: Deny-flag network options and optional create-time hostname
             grants via ``NetworkOptions``.
         services: Typed service ports (``Service``) for PUBLIC/PRIVATE/CUSTOM.
-        volumes: Named scratch volumes (``ScratchVolumeOptions``) for FSS mounts.
+        volumes: Scratch or registered volumes (``ScratchVolumeOptions`` or
+            ``RegisteredVolumeOptions``).
+        runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
+        security_context: In-guest privilege for the primary container.
+        working_dir: Working directory for the primary container command.
+        object_storage_access: Temporary object-storage credentials.
         file_system_snapshot: Convenience single-mount FSS options via
             ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
             size); an explicit ``run()`` value replaces it wholesale. Prefer
@@ -347,7 +358,11 @@ class SandboxDefaults:
     resources: ResourceOptions | dict[str, Any] | None = None
     network: NetworkOptions | None = None
     services: tuple[Service, ...] | None = None
-    volumes: tuple[ScratchVolumeOptions, ...] | None = None
+    volumes: tuple[ScratchVolumeOptions | RegisteredVolumeOptions, ...] | None = None
+    runtime_class: str | None = None
+    security_context: SecurityContext | dict[str, Any] | None = None
+    working_dir: str | None = None
+    object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None
     file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
@@ -409,7 +424,9 @@ class SandboxDefaults:
         - ``network`` dict -> ``NetworkOptions``
         - ``secrets`` list of dicts -> tuple of ``Secret``
         - ``services`` list of dicts -> tuple of ``Service``
-        - ``volumes`` list of dicts -> tuple of ``ScratchVolumeOptions``
+        - ``volumes`` list of dicts -> tuple of scratch/registered volume options
+        - ``security_context`` dict -> ``SecurityContext``
+        - ``object_storage_access`` dict -> ``ObjectStorageAccess``
         - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes`` lists
           -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
@@ -469,9 +486,11 @@ class SandboxDefaults:
             kwargs["services"] = tuple(Service(**s) if isinstance(s, dict) else s for s in services)
         volumes = kwargs.get("volumes")
         if volumes is not None:
-            kwargs["volumes"] = tuple(
-                ScratchVolumeOptions(**v) if isinstance(v, dict) else v for v in volumes
-            )
+            kwargs["volumes"] = tuple(_coerce_volume_options(v) for v in volumes)
+        kwargs["security_context"] = _coerce_security_context(kwargs.get("security_context"))
+        kwargs["object_storage_access"] = _coerce_object_storage_access(
+            kwargs.get("object_storage_access")
+        )
         # Coerce resources: preserve ResourceOptions, convert mappings to dicts
         res = kwargs.get("resources")
         if res is not None and not isinstance(res, ResourceOptions):
