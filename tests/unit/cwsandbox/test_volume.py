@@ -262,6 +262,27 @@ class TestVolume:
         assert result is volume
         assert stub.DeleteVolume.call_count == 2
 
+    @pytest.mark.parametrize(
+        ("method", "kwargs", "stub_attr"),
+        [
+            ("update", {"description": "shared"}, "UpdateVolume"),
+            ("delete", {}, "DeleteVolume"),
+            ("validate", {}, "ValidateVolume"),
+        ],
+    )
+    def test_instance_methods_honor_explicit_zero_timeout(
+        self, method: str, kwargs: dict[str, str], stub_attr: str
+    ) -> None:
+        stub = MagicMock()
+        stub.UpdateVolume = AsyncMock(return_value=_ready_proto())
+        stub.DeleteVolume = AsyncMock(return_value=_ready_proto())
+        stub.ValidateVolume = AsyncMock(return_value=_ready_proto())
+        patches = _patch_volume_channel(stub)
+        volume = Volume(volume_id="team-data", timeout_seconds=300.0)
+        with patches[0], patches[1], patches[2], patches[3]:
+            getattr(volume, method)(timeout_seconds=0, **kwargs).result()
+        assert getattr(stub, stub_attr).call_args.kwargs["timeout"] == 0
+
     def test_delete_first_not_found_raises_unless_allow_missing(self) -> None:
         stub = MagicMock()
         stub.DeleteVolume = AsyncMock(

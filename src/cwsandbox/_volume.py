@@ -367,7 +367,9 @@ class Volume:
         )
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = timeout_seconds or self._timeout_seconds
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
+        )
         response = await _call_volume_rpc(
             "UpdateVolume",
             request,
@@ -423,7 +425,9 @@ class Volume:
         )
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = timeout_seconds or self._timeout_seconds
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
+        )
         response = await _call_volume_rpc(
             "DeleteVolume",
             request,
@@ -469,7 +473,9 @@ class Volume:
         request = volume_pb2.ValidateVolumeRequest(volume_id=self.volume_id)
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = timeout_seconds or self._timeout_seconds
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
+        )
         response = await _call_volume_rpc(
             "ValidateVolume",
             request,
