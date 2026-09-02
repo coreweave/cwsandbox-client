@@ -270,7 +270,7 @@ class TestVolume:
             ("validate", {}, "ValidateVolume"),
         ],
     )
-    def test_instance_methods_honor_explicit_zero_timeout(
+    def test_instance_methods_zero_timeout_uses_handle_default(
         self, method: str, kwargs: dict[str, str], stub_attr: str
     ) -> None:
         stub = MagicMock()
@@ -278,10 +278,12 @@ class TestVolume:
         stub.DeleteVolume = AsyncMock(return_value=_ready_proto())
         stub.ValidateVolume = AsyncMock(return_value=_ready_proto())
         patches = _patch_volume_channel(stub)
-        volume = Volume(volume_id="team-data", timeout_seconds=300.0)
+        volume = Volume(volume_id="team-data", timeout_seconds=60.0)
         with patches[0], patches[1], patches[2], patches[3]:
             getattr(volume, method)(timeout_seconds=0, **kwargs).result()
-        assert getattr(stub, stub_attr).call_args.kwargs["timeout"] == 0
+            assert getattr(stub, stub_attr).call_args.kwargs["timeout"] == 60.0
+            getattr(volume, method)(timeout_seconds=12, **kwargs).result()
+            assert getattr(stub, stub_attr).call_args.kwargs["timeout"] == 12
 
     def test_delete_first_not_found_raises_unless_allow_missing(self) -> None:
         stub = MagicMock()

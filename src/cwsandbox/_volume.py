@@ -367,9 +367,7 @@ class Volume:
         )
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = (
-            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
-        )
+        effective_timeout = timeout_seconds or self._timeout_seconds
         response = await _call_volume_rpc(
             "UpdateVolume",
             request,
@@ -425,9 +423,7 @@ class Volume:
         )
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = (
-            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
-        )
+        effective_timeout = timeout_seconds or self._timeout_seconds
         response = await _call_volume_rpc(
             "DeleteVolume",
             request,
@@ -473,9 +469,7 @@ class Volume:
         request = volume_pb2.ValidateVolumeRequest(volume_id=self.volume_id)
         effective_auth = auth if auth is not None else self._auth
         effective_base_url = base_url or self._base_url
-        effective_timeout = (
-            timeout_seconds if timeout_seconds is not None else self._timeout_seconds
-        )
+        effective_timeout = timeout_seconds or self._timeout_seconds
         response = await _call_volume_rpc(
             "ValidateVolume",
             request,
@@ -524,9 +518,7 @@ class Volume:
         if not (timeout > 0):
             raise ValueError(f"timeout must be positive, got {timeout!r}")
         deadline = _monotonic() + timeout
-        poll_rpc_timeout = (
-            timeout_seconds if timeout_seconds is not None else DEFAULT_POLL_RPC_TIMEOUT_SECONDS
-        )
+        poll_rpc_timeout = timeout_seconds or DEFAULT_POLL_RPC_TIMEOUT_SECONDS
         effective_base_url = base_url or self._base_url
         effective_auth = auth if auth is not None else self._auth
 
@@ -664,7 +656,7 @@ async def _call_volume_rpc(
     effective_base_url = (
         base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
     ).rstrip("/")
-    timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+    timeout = timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
     retry_budget = (
         retry_budget_seconds
         if retry_budget_seconds is not None
@@ -715,7 +707,7 @@ async def _list_volume_rpc(
     effective_base_url = (
         base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
     ).rstrip("/")
-    timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_REQUEST_TIMEOUT_SECONDS
+    timeout = timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
     auth_metadata = resolve_auth_metadata(auth, base_url=effective_base_url)
     target, is_secure = parse_grpc_target(effective_base_url)
     channel = create_channel(target, is_secure)
