@@ -440,6 +440,23 @@ class TestSandboxDefaultsFromDict:
         with pytest.raises(TypeError, match="profile_names"):
             SandboxDefaults.from_dict({"profile_names": ["default"]})
 
+    def test_from_dict_coerces_containers_dicts(self) -> None:
+        from cwsandbox import Container
+
+        defaults = SandboxDefaults.from_dict(
+            {
+                "containers": [
+                    {"image": "python:3.11", "name": "main", "primary": True},
+                    {"image": "redis:7", "name": "cache"},
+                ]
+            }
+        )
+        assert defaults.containers is not None
+        assert len(defaults.containers) == 2
+        assert isinstance(defaults.containers[0], Container)
+        assert defaults.containers[0].name == "main"
+        assert defaults.containers[1].image == "redis:7"
+
     def test_from_dict_coerces_services_and_volumes_dicts(self) -> None:
         from cwsandbox._types import ScratchVolumeOptions, Service
 

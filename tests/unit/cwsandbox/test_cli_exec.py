@@ -53,6 +53,7 @@ class TestExecCommand:
             ["echo", "hello"],
             cwd=None,
             timeout_seconds=None,
+            container=None,
         )
 
     def test_exec_nonzero_returncode(self) -> None:
@@ -79,6 +80,7 @@ class TestExecCommand:
             ["ls"],
             cwd="/app",
             timeout_seconds=None,
+            container=None,
         )
 
     def test_exec_with_timeout(self) -> None:
@@ -97,6 +99,26 @@ class TestExecCommand:
             ["sleep", "10"],
             cwd=None,
             timeout_seconds=30.0,
+            container=None,
+        )
+
+    def test_exec_with_container(self) -> None:
+        """cwsandbox exec --container passes container to sandbox.exec."""
+        process = make_process(command=["echo", "hi"])
+
+        with _patch_sandbox(process) as mock_cls:
+            mock_sandbox = mock_cls.from_id.return_value.result()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["exec", "test-sandbox-id", "--container", "cache", "echo", "hi"]
+            )
+
+        assert result.exit_code == 0
+        mock_sandbox.exec.assert_called_once_with(
+            ["echo", "hi"],
+            cwd=None,
+            timeout_seconds=None,
+            container="cache",
         )
 
     def test_exec_concurrent_stdout_stderr(self) -> None:

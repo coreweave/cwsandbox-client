@@ -62,6 +62,25 @@ class TestLogsCommand:
             tail_lines=None,
             since_time=None,
             timestamps=False,
+            container=None,
+        )
+
+    def test_logs_with_container(self) -> None:
+        """cwsandbox logs --container passes container to stream_logs."""
+        mock_sandbox = MagicMock()
+        mock_sandbox.stream_logs.return_value = _MockStreamReader([])
+
+        with _patch_sandbox(mock_sandbox):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["logs", "test-sandbox-id", "--container", "cache"])
+
+        assert result.exit_code == 0
+        mock_sandbox.stream_logs.assert_called_once_with(
+            follow=False,
+            tail_lines=None,
+            since_time=None,
+            timestamps=False,
+            container="cache",
         )
 
     def test_logs_follow_flag(self) -> None:
@@ -79,6 +98,7 @@ class TestLogsCommand:
             tail_lines=None,
             since_time=None,
             timestamps=False,
+            container=None,
         )
 
     def test_logs_with_options(self) -> None:
@@ -96,6 +116,7 @@ class TestLogsCommand:
             tail_lines=50,
             since_time=None,
             timestamps=True,
+            container=None,
         )
 
     def test_logs_since_option(self) -> None:

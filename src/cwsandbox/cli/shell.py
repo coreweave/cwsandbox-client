@@ -43,7 +43,12 @@ def _validate_cmd(ctx: click.Context, param: click.Parameter, value: str) -> str
     callback=_validate_cmd,
     help="Command to run (default: /bin/bash). Accepts full command strings.",
 )
-def shell(sandbox_id: str, cmd: str) -> None:
+@click.option(
+    "--container",
+    default=None,
+    help="Container name. Omit to target the primary.",
+)
+def shell(sandbox_id: str, cmd: str, container: str | None) -> None:
     """Open an interactive shell in a sandbox.
 
     SANDBOX_ID is the ID of the sandbox to connect to.
@@ -82,6 +87,7 @@ def shell(sandbox_id: str, cmd: str) -> None:
         command,
         width=size.columns,
         height=size.lines,
+        container=container,
     )
 
     # Raw mode forwards all keystrokes (incl. Ctrl+C) to the remote session

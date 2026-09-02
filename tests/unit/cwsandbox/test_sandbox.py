@@ -347,6 +347,7 @@ class TestSandboxRun:
     """Tests for Sandbox.run factory method."""
 
     @staticmethod
+    @staticmethod
     def _run_with_mock_stub(*args: str, **kwargs: Any) -> tuple[Sandbox, MagicMock]:
         mock_stub = MagicMock()
         mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response("matrix-id"))
@@ -878,14 +879,31 @@ class TestSandboxRun:
         with pytest.raises(TypeError, match="require container_image"):
             Sandbox.run_from_template("template-123", "-c", "echo ready")
 
-    def test_run_from_template_args_without_command_raises(self) -> None:
-        with pytest.raises(TypeError, match="args require command"):
-            Sandbox.run_from_template(
+    def test_run_from_template_args_without_command_are_honored(self) -> None:
+        stub = MagicMock()
+        stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response())
+        stub.CreateSandboxFromTemplate = AsyncMock(
+            return_value=_create_sandbox_response("template-id")
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_template(
                 "template-123",
                 "-c",
                 "echo ready",
                 container_image="python:3.11",
             )
+
+        request = stub.CreateSandboxFromTemplate.call_args.args[0]
+        assert request.overrides.containers[0].image == "python:3.11"
+        assert not request.overrides.containers[0].command
+        assert list(request.overrides.containers[0].args) == ["-c", "echo ready"]
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_template_command_without_image_raises(self) -> None:
         with pytest.raises(TypeError, match="require container_image"):
@@ -2492,6 +2510,7 @@ class TestSandboxFileTooLarge:
             timeout_seconds: float | None = None,
             operation: str,
             filepath: str | None = None,
+            container: str | None = None,
         ) -> tuple[int, bytes, bytes]:
             if hasattr(stdin, "__aiter__"):
                 async for chunk in stdin:  # type: ignore[union-attr]
@@ -2527,6 +2546,7 @@ class TestSandboxFileTooLarge:
             timeout_seconds: float | None = None,
             operation: str,
             filepath: str | None = None,
+            container: str | None = None,
         ) -> tuple[int, bytes, bytes]:
             raise SandboxStreamBackpressureError(
                 "output stream ended early; not read fast enough",
@@ -2571,6 +2591,7 @@ class TestSandboxFileTooLarge:
             timeout_seconds: float | None = None,
             operation: str,
             filepath: str | None = None,
+            container: str | None = None,
         ) -> tuple[int, bytes, bytes]:
             if hasattr(stdin, "__aiter__"):
                 async for _chunk in stdin:  # type: ignore[union-attr]
@@ -2677,6 +2698,7 @@ class TestSandboxFileTooLarge:
             timeout_seconds: float | None = None,
             operation: str,
             filepath: str | None = None,
+            container: str | None = None,
         ) -> tuple[int, bytes, bytes]:
             if hasattr(stdin, "__aiter__"):
                 async for chunk in stdin:  # type: ignore[union-attr]
@@ -2819,6 +2841,7 @@ class TestSandboxFileTooLarge:
             timeout_seconds: float | None = None,
             operation: str,
             filepath: str | None = None,
+            container: str | None = None,
         ) -> tuple[int, bytes, bytes]:
             async for chunk in stdin:  # type: ignore[union-attr]
                 seen_chunks.append(bytes(chunk))
@@ -3227,7 +3250,9 @@ class TestSandboxReadFileStreaming:
         sandbox = self._setup_running_sandbox()
         captured: dict[str, float] = {}
 
-        async def fake_stat(filepath: str, timeout: float) -> int | None:
+        async def fake_stat(
+            filepath: str, timeout: float, *, container: str | None = None
+        ) -> int | None:
             captured["timeout"] = timeout
             return None
 

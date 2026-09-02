@@ -82,6 +82,68 @@ class TestGetCommand:
         )
         assert result.output.strip() == expected
 
+    def test_get_displays_containers(self) -> None:
+        """cwsandbox get shows container spec and status when present."""
+        from types import SimpleNamespace
+
+        mock_sandbox = _mock_sandbox()
+        mock_sandbox.containers = (
+            SimpleNamespace(name="main", image="python:3.11", primary=True),
+            SimpleNamespace(name="cache", image="redis:7", primary=False),
+        )
+        mock_sandbox.container_statuses = (
+            SimpleNamespace(
+                name="main",
+                state=SimpleNamespace(value="running"),
+                exit_code=None,
+                restart_count=0,
+            ),
+            SimpleNamespace(
+                name="cache",
+                state=SimpleNamespace(value="running"),
+                exit_code=None,
+                restart_count=1,
+            ),
+        )
+
+        with patch("cwsandbox.cli.get.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.from_id.return_value = make_operation_ref(mock_sandbox)
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["get", "abc-123"])
+
+        assert result.exit_code == 0
+        assert "CONTAINERS" in result.output
+        assert "main (primary)" in result.output
+        assert "cache (helper)" in result.output
+        assert "CONTAINER STATUS" in result.output
+        assert "restarts=1" in result.output
+        assert "exit=" not in result.output
+
+    def test_get_displays_terminal_container_exit_code(self) -> None:
+        """Terminal container rows include exit=; running rows omit it."""
+        from types import SimpleNamespace
+
+        mock_sandbox = _mock_sandbox()
+        mock_sandbox.containers = (SimpleNamespace(name="main", image="python:3.11", primary=True),)
+        mock_sandbox.container_statuses = (
+            SimpleNamespace(
+                name="main",
+                state=SimpleNamespace(value="completed"),
+                exit_code=0,
+                restart_count=0,
+            ),
+        )
+
+        with patch("cwsandbox.cli.get.Sandbox") as mock_sandbox_cls:
+            mock_sandbox_cls.from_id.return_value = make_operation_ref(mock_sandbox)
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["get", "abc-123"])
+
+        assert result.exit_code == 0
+        assert "exit=0" in result.output
+
     def test_get_sandbox_not_found(self) -> None:
         """cwsandbox get shows clean error for SandboxNotFoundError."""
         mock_op_ref = MagicMock()

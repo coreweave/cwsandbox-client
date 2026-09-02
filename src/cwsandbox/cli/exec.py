@@ -31,11 +31,17 @@ from cwsandbox import Sandbox
     default=None,
     help="Timeout in seconds.",
 )
+@click.option(
+    "--container",
+    default=None,
+    help="Container name. Omit to target the primary.",
+)
 def exec_command(
     sandbox_id: str,
     command: tuple[str, ...],
     cwd: str | None,
     timeout_seconds: float | None,
+    container: str | None,
 ) -> None:
     """Execute a command in a sandbox.
 
@@ -56,6 +62,7 @@ def exec_command(
             list(command),
             cwd=cwd,
             timeout_seconds=timeout_seconds,
+            container=container,
         )
 
         def _drain_stderr() -> None:

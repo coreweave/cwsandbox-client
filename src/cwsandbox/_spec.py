@@ -109,19 +109,21 @@ def volumes_to_proto(
         vol = _coerce_volume_options(raw)
         if isinstance(vol, ScratchVolumeOptions):
             volumes.append(scratch_volume_to_proto(vol))
-            mounts.append(
-                volume_mount_to_proto(
-                    vol.name, vol.mount_path, sub_path=vol.sub_path, read_only=vol.read_only
+            if vol.mount_path:
+                mounts.append(
+                    volume_mount_to_proto(
+                        vol.name, vol.mount_path, sub_path=vol.sub_path, read_only=vol.read_only
+                    )
                 )
-            )
             scratch_names.append(vol.name)
         else:
             volumes.append(sandbox_pb2.SandboxVolume(name=vol.name, volume_id=vol.volume_id))
-            mounts.append(
-                volume_mount_to_proto(
-                    vol.name, vol.mount_path, sub_path=vol.sub_path, read_only=vol.read_only
+            if vol.mount_path:
+                mounts.append(
+                    volume_mount_to_proto(
+                        vol.name, vol.mount_path, sub_path=vol.sub_path, read_only=vol.read_only
+                    )
                 )
-            )
     return volumes, mounts, tuple(scratch_names)
 
 

@@ -52,11 +52,11 @@ Key methods:
 - `start()`: Send create request, return `OperationRef[None]`. Call `.result()` to block until backend accepts. Freezes one create `request_id` for idempotent retries.
 - `wait()`: Block until RUNNING status, returns self for chaining
 - `wait_until_complete(timeout=None, raise_on_termination=True)`: Wait until terminal state (COMPLETED, FAILED, TERMINATED), return `OperationRef[Sandbox]`. Polls through TERMINATING automatically. Call `.result()` to block or `await` in async contexts. Set `raise_on_termination=False` to handle externally-terminated sandboxes without raising `SandboxTerminatedError`.
-- `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`.
-- `shell(command=None, *, width=None, height=None)`: Start an interactive TTY session, return `TerminalSession`. Always allocates a TTY and enables stdin. Output is raw bytes (merged stdout/stderr) with no buffering — safe for long-running interactive sessions. Defaults to `["/bin/bash"]`.
-- `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode.
-- `read_file(path)`: Return `OperationRef[bytes]`
-- `write_file(path, content)`: Return `OperationRef[None]`
+- `exec(command, cwd=None, check=False, timeout_seconds=None, stdin=False, container=None)`: Execute command, return `Process`. Call `.result()` to block for `ProcessResult`. Iterate `process.stdout` before `.result()` for real-time streaming. Set `check=True` to raise `SandboxExecutionError` on non-zero returncode. Set `cwd` to an absolute path to run the command in a specific working directory (implemented via shell wrapping, requires /bin/sh in container). Set `stdin=True` to enable stdin streaming via `process.stdin`. Empty/`None` `container` targets the primary.
+- `shell(command=None, *, width=None, height=None, container=None)`: Start an interactive TTY session, return `TerminalSession`. Always allocates a TTY and enables stdin. Output is raw bytes (merged stdout/stderr) with no buffering — safe for long-running interactive sessions. Defaults to `["/bin/bash"]`. Empty/`None` `container` targets the primary.
+- `stream_logs(*, follow=False, tail_lines=None, since_time=None, timestamps=False, container=None)`: Stream logs from the sandbox's main process (PID 1), return `StreamReader[str]`. Only captures stdout/stderr from the command passed to `Sandbox.run()` — output from `exec()` commands is **not** included. Set `follow=True` for continuous streaming (like `tail -f`). Uses bounded queues for backpressure in follow mode. Empty/`None` `container` targets the primary.
+- `read_file(path, *, container=None)`: Return `OperationRef[bytes]`. Empty/`None` `container` targets the primary.
+- `write_file(path, content, *, container=None)`: Return `OperationRef[None]`. Empty/`None` `container` targets the primary.
 - `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False, wait_for_ready=True, request_id=None)`: Stop sandbox via DeleteSandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the delete RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture a file-system snapshot of the configured scratch volume before shutdown — the resulting ID is then available via the `file_system_snapshot_id` property. Because `stop()` coalesces concurrent callers onto one shared stop task, a `snapshot_on_stop=True` request that would join (or observe) a stop not capturing a snapshot — sandbox already stopping/stopped, or a plain `stop()` already in flight — raises `SnapshotOnStopConflictError` rather than completing with no archive; plain stops always coalesce. `wait_for_ready`/`request_id` apply only when `snapshot_on_stop=True` (the client uses a larger timeout when snapshotting, since the stop blocks on the archive). Set `missing_ok=True` to suppress `SandboxNotFoundError`.
 - `snapshot(wait_for_ready=True, request_id=None)`: Capture a file-system snapshot (FSS) of the configured scratch volume without stopping, return `OperationRef[str]` (the new snapshot's ID). Call `Sandbox.get_snapshot(id)` for the full record. Requires a scratch / `file_system_snapshot` mount and the org to be enabled for FSS. Auto-starts the sandbox first if needed. With `wait_for_ready=True` (default) blocks until the snapshot is READY/FAILED. To fork a sandbox, `snapshot()` then `Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(..., file_system_snapshot_id=<id>))` (or equivalent `volumes=`).
 - `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
@@ -72,6 +72,8 @@ Properties:
 - `effective_egress` / `effective_ingress`: Full echoed rule sets from status
 - `effective_runtime_class`: Runtime class applied by the backend
 - `attached_volume_ids`: Registered Volume IDs attached to the sandbox
+- `containers`: Echoed create-time `Container` spec. `primary=True` is filled on the inferred primary so a clone of this list is a valid create.
+- `container_statuses`: Per-container observed state. Sandbox `status` / `returncode` stay primary-owned.
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
 
@@ -81,15 +83,16 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
 - `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) plus create-time `egress` / `ingress` grants (`EgressRule` / `IngressRule`), or dict
-- `volumes` - Scratch (`ScratchVolumeOptions`) or registered (`RegisteredVolumeOptions`) volumes
+- `volumes` - Scratch (`ScratchVolumeOptions`) or registered (`RegisteredVolumeOptions`) volumes. `mount_path` is optional on scratch (omit to declare without mounting). A set `mount_path` is a convenience mount on the primary.
 - `runtime_class` - Optional runtime-class pin (e.g. `"gvisor"`), clamped by policy
-- `security_context` - In-guest privilege for the primary container (`SecurityContext` or dict)
-- `working_dir` - Working directory for the primary container command
+- `security_context` - In-guest privilege for the primary container (`SecurityContext` or dict). Mutually exclusive with `containers=`.
+- `working_dir` - Working directory for the primary container command. Mutually exclusive with `containers=` (set it on `Container` instead).
 - `object_storage_access` - Temporary object-storage credentials (`ObjectStorageAccess` or dict)
-- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`)
+- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (optional `mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Omit `mount_path` to declare without mounting.
+- `containers` - List of `Container`. Mutually exclusive with `container_image`, `command`/`args`, `resources`, `mounted_files`, `secrets`, `image_pull_credentials`, `environment_variables`, `security_context`, and `working_dir`. Not used by `@session.function()`. One container: names/`primary` may be omitted. More than one: every row needs a name and resources, and exactly one `primary=True`. GPU is allowed only on the primary.
 - `resources` - Resource configuration via `ResourceOptions`, nested dict, or legacy flat dict (CPU, memory, GPU)
 - `mounted_files` - Files to mount into the sandbox at startup (read-only at runtime; use `write_file()` for writable files)
-- `image_pull_credentials` - Private registry pull credentials. On `run_from_template()`, requires `container_image` (whole-container replace); omit to keep a credential stored on the template
+- `image_pull_credentials` - Private registry pull credentials. On `run_from_template()`, requires `container_image` (whole-container replace) unless `containers=` replaces the list; omit to keep a credential stored on the template
 - `secrets` - Create-time secret inject from secret stores as env vars, via `Secret` or dict
 - `environment_variables` - Environment variables to inject (merges with defaults)
 - `annotations` - Kubernetes pod annotations (merges with defaults, explicit keys win)
@@ -143,9 +146,10 @@ Fields (all optional with sensible defaults):
 - `resources` - Resource configuration (`ResourceOptions | dict[str, Any] | None`)
 - `network` - Deny-flag `NetworkOptions` plus optional `egress` / `ingress` grants
 - `services` - Tuple of typed `Service` ports
-- `volumes` - Tuple of `ScratchVolumeOptions` / `RegisteredVolumeOptions`
+- `volumes` - Tuple of `ScratchVolumeOptions` / `RegisteredVolumeOptions` (`mount_path` optional on scratch)
 - `runtime_class`, `security_context`, `working_dir`, `object_storage_access` - Create-spec fields shared across sandboxes
-- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale)
+- `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` (shareable mount_path/size; explicit `run()` value replaces it wholesale; `mount_path` optional)
+- `containers` - Optional `tuple[Container, ...]`. Mutually exclusive with single-container fields on `Sandbox.run()` / `session.sandbox()`. `@session.function()` ignores this field and always creates a single-container sandbox.
 - `secrets` - Create-time secret inject (tuple of `Secret`)
 - `environment_variables` - Environment variables to inject
 - `annotations` - Kubernetes pod annotations (`dict[str, str]`, default: empty)
@@ -262,6 +266,31 @@ sandbox = Sandbox.run(
 )
 ```
 
+**`Container`** / **`VolumeMount`** / **`ContainerStatus`**: Multi-container create and echo. Pass `containers=[Container(...), ...]` to `Sandbox.run()` / `session.sandbox()`. Volumes stay sandbox-level; sharing is two containers listing the same volume name in `volume_mounts`. The kwargs path (`Sandbox.run("echo", "hello")`) still sends one container named `"main"` with `primary` unset.
+
+```python
+from cwsandbox import Container, ResourceOptions, Sandbox, ScratchVolumeOptions, VolumeMount
+
+with Sandbox.run(
+    containers=[
+        Container(
+            image="python:3.11",
+            name="main",
+            primary=True,
+            resources=ResourceOptions(requests={"cpu": "1"}, limits={"cpu": "1"}),
+            volume_mounts=[VolumeMount(volume="workspace", mount_path="/workspace")],
+        ),
+        Container(
+            image="redis:7",
+            name="cache",
+            resources=ResourceOptions(requests={"cpu": "1"}, limits={"cpu": "1"}),
+        ),
+    ],
+    volumes=[ScratchVolumeOptions(name="workspace")],
+) as sb:
+    sb.exec(["echo", "hello"], container="cache").result()
+```
+
 **`ResourceOptions`** (`_types.py`): Frozen dataclass for typed resource configuration. Supports separate requests and limits for Burstable QoS pods. GPU is a separate top-level field because GPU overcommit is not supported by the backend. The `resources` parameter accepts a `ResourceOptions` instance, a nested dict, or a legacy flat dict (which is automatically coerced).
 
 Fields:
@@ -294,11 +323,11 @@ sandbox = Sandbox.run(
 
 **File System Snapshots (FSS)** (`_types.py`): A configured scratch volume can be snapshotted (on request or on stop) and restored into new sandboxes. FSS is gated per-organization on the backend; orgs that are not enabled get `SnapshotNotSupportedError`.
 
-- **`ScratchVolumeOptions`**: Named scratch mount. Fields: `name`, `mount_path` (absolute), optional `size`, `restore_from_snapshot_id`, `medium` (`disk`/`memory`), `sub_path`, `read_only`. Prefer `volumes=` for multi-volume setups.
+- **`ScratchVolumeOptions`**: Named scratch volume. Fields: `name`, optional `mount_path` (absolute convenience mount on the primary; omit to declare without mounting), optional `size`, `restore_from_snapshot_id`, `medium` (`disk`/`memory`), `sub_path`, `read_only`. Prefer `volumes=` for multi-volume setups. Attach per-container with `Container.volume_mounts`.
 - **`RegisteredVolumeOptions`**: Mount a registered Volume. Fields: `name`, `volume_id`, `mount_path`, optional `sub_path`, `read_only`.
 - **`SecurityContext`**: In-guest privilege (run-as, privileged, capabilities, seccomp). Host-reaching knobs are policy-only.
 - **`ObjectStorageAccess`**: Temporary object-storage credentials (`buckets`, optional `permission`, `object_prefix`).
-- **`FileSystemSnapshotOptions`**: Convenience single-mount wrapper (`mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Maps to a scratch volume via `to_scratch_volume()`.
+- **`FileSystemSnapshotOptions`**: Convenience single-mount wrapper (optional `mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Maps to a scratch volume via `to_scratch_volume()`.
 - **`FileSystemSnapshot`**: Frozen record from `get_snapshot()` / `list_snapshots()` (`snapshot()` returns only the ID). Fields include `file_system_snapshot_id`, `status`, `status_reason`, `size_bytes`, `source_sandbox_id`, `trigger`, `request_id`, `object_bucket`, `source_volume_name`, timestamps.
 - **`FileSystemSnapshotStatus`**: StrEnum — `UNSPECIFIED`, `CREATING`, `READY`, `FAILED`, `DELETING`.
 - **`FileSystemSnapshotTrigger`**: StrEnum — `UNSPECIFIED`, `ON_DELETE` (from `stop(snapshot_on_stop=True)`), `MANUAL` (from `snapshot()`).
@@ -381,6 +410,8 @@ Internals:
 Arguments, closures, referenced globals, and return values must be
 JSON-serializable (str, int, float, dict, list, bool, None). Non-JSON
 values surface as a `SandboxExecutionError` from inside the sandbox.
+
+`@session.function()` stays a single-container workflow. Session `containers` defaults are ignored when the decorator creates a sandbox.
 
 ### Event Loop Management (`_loop_manager.py`)
 

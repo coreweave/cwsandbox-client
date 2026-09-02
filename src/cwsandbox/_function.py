@@ -316,9 +316,10 @@ class RemoteFunction(Generic[P, R]):
         # Create sandbox directly and use async start to avoid deadlock.
         # session.sandbox() uses sync APIs which would deadlock when called
         # from the daemon thread running this async method.
+        # Remote functions stay single-container: ignore session containers=.
         sandbox = Sandbox(
             container_image=self._container_image,
-            defaults=self._session._defaults,
+            defaults=self._session._defaults.with_overrides(containers=None),
             _session=self._session,
             **sandbox_kwargs,
         )

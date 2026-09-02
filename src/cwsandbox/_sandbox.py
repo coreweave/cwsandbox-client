@@ -29,7 +29,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
@@ -142,6 +142,7 @@ from cwsandbox._spec import (
     volumes_to_proto,
 )
 from cwsandbox._types import (
+    Container,
     DataPlaneMode,
     EgressRule,
     Endpoint,
@@ -176,7 +177,12 @@ from cwsandbox._types import (
     StreamWriter,
     TerminalResult,
     TerminalSession,
+    VolumeMount,
+    _coerce_container,
     _coerce_object_storage_access,
+    _coerce_volume_mount,
+    _unique_secrets_by_env_var,
+    _validate_containers,
 )
 from cwsandbox.exceptions import (
     CWSandboxAuthenticationError,
@@ -317,6 +323,27 @@ class SandboxStatus(StrEnum):
         """Convert SandboxStatus to protobuf State enum."""
         proto_name = f"STATE_{self.name}"
         return sandbox_pb2.State.Value(proto_name)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContainerStatus:
+    """Observed state of one container on a sandbox.
+
+    Sandbox ``status`` / ``returncode`` stay primary-owned. This row is the
+    kubelet's view of that named container.
+
+    Attributes:
+        name: Container name.
+        state: Observed lifecycle state of this container.
+        exit_code: Exit code once the container is in a terminal state.
+            None while the container is still running.
+        restart_count: Times the container has restarted.
+    """
+
+    name: str
+    state: SandboxStatus
+    exit_code: int | None = None
+    restart_count: int = 0
 
 
 def _fss_status_from_proto(value: int) -> FileSystemSnapshotStatus:
@@ -478,16 +505,66 @@ def _coerce_file_system_snapshot(
 
 def _scratch_from_fss_options(
     opts: FileSystemSnapshotOptions,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return (SandboxVolume kwargs, VolumeMount kwargs) for convenience FSS options."""
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Return (SandboxVolume kwargs, VolumeMount kwargs or None) for convenience FSS."""
     scratch: dict[str, Any] = {}
     if opts.size is not None:
         scratch["size"] = opts.size
     if opts.file_system_snapshot_id is not None:
         scratch["restore_from_snapshot_id"] = opts.file_system_snapshot_id
-    volume = {"name": DEFAULT_SCRATCH_VOLUME_NAME, "scratch": scratch}
-    mount = {"volume": DEFAULT_SCRATCH_VOLUME_NAME, "mount_path": opts.mount_path}
+    volume = {"name": opts.name or DEFAULT_SCRATCH_VOLUME_NAME, "scratch": scratch}
+    if not opts.mount_path:
+        return volume, None
+    mount = {"volume": volume["name"], "mount_path": opts.mount_path}
     return volume, mount
+
+
+_CONTAINERS_EXCLUSIVE_KWARGS = (
+    "container_image",
+    "command",
+    "args",
+    "resources",
+    "mounted_files",
+    "secrets",
+    "image_pull_credentials",
+    "environment_variables",
+)
+
+
+def _normalize_container_target(container: str | None) -> str | None:
+    if container is None:
+        return None
+    stripped = container.strip()
+    return stripped or None
+
+
+def _set_request_container(message: Any, container: str | None) -> None:
+    target = _normalize_container_target(container)
+    if target:
+        message.container = target
+
+
+def _has_compute_resources(resources: ResourceOptions | None) -> bool:
+    return resources is not None and bool(resources.requests or resources.limits or resources.gpu)
+
+
+def _validate_container_compute(containers: Sequence[Container]) -> None:
+    count = len(containers)
+    for row in containers:
+        is_primary = row.primary or count == 1
+        resources = normalize_resources(row.resources)
+        if count > 1 and not _has_compute_resources(resources):
+            label = row.name or "<unnamed>"
+            raise ValueError(
+                f"container {label!r} requires resources when more than one container is specified"
+            )
+        if resources is not None and resources.gpu and not is_primary:
+            raise ValueError("GPU is only allowed on the primary container")
+
+
+def _containers_conflict_message(conflicts: Sequence[str]) -> str:
+    listed = ", ".join(conflicts)
+    return f"containers= is mutually exclusive with single-container kwargs ({listed})"
 
 
 async def _create_snapshot_via_stub(
@@ -1604,6 +1681,7 @@ class Sandbox:
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
+        containers: Sequence[Container | Mapping[str, Any]] | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -1667,6 +1745,13 @@ class Sandbox:
                 Merged with defaults (defaults first, then this list).
             data_plane_mode: Transport policy for exec, logs, and file operations.
                 Defaults to ``SandboxDefaults.data_plane_mode``.
+            containers: Multi-container spec. Mutually exclusive with
+                ``container_image``, ``command``/``args``, ``resources``,
+                ``mounted_files``, ``secrets``, ``image_pull_credentials``,
+                ``environment_variables``, ``security_context``, and
+                ``working_dir``. This list replaces those single-container
+                fields, including the same names on ``SandboxDefaults``.
+                Put secrets, env, and working_dir on each ``Container``.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -1681,18 +1766,55 @@ class Sandbox:
         self._auth = auth if auth is not None else self._defaults.auth
 
         from_template = template_id is not None
+        effective_containers = (
+            containers
+            if containers is not None
+            else (None if from_template else self._defaults.containers)
+        )
+        using_containers = effective_containers is not None
+        if effective_containers is not None:
+            user_containers = _validate_containers(
+                tuple(_coerce_container(row) for row in effective_containers)
+            )
+            _validate_container_compute(user_containers)
+            conflicts = [
+                name
+                for name, value in (
+                    ("container_image", container_image),
+                    ("command", command),
+                    ("args", args),
+                    ("resources", resources),
+                    ("mounted_files", mounted_files),
+                    ("secrets", secrets),
+                    ("image_pull_credentials", image_pull_credentials),
+                    ("environment_variables", environment_variables),
+                    ("security_context", security_context),
+                    ("working_dir", working_dir),
+                )
+                if value is not None
+            ]
+            if conflicts:
+                raise TypeError(_containers_conflict_message(conflicts))
+        else:
+            user_containers = None
+
         # Template creates stay sparse for spec-owned fields (env, annotations,
         # command): SDK defaults would otherwise replace the template. Tags
         # still merge so session.list()/adopt can find the sandbox after a crash.
-        self._command: str | None = command if from_template else command or self._defaults.command
-        self._args: list[str] | None = (
-            args if args is not None else (None if from_template else list(self._defaults.args))
-        )
-
-        # Apply defaults with explicit values taking precedence
-        self._container_image: str | None = (
-            container_image if from_template else container_image or self._defaults.container_image
-        )
+        if using_containers:
+            self._command: str | None = None
+            self._args: list[str] | None = None
+            self._container_image: str | None = None
+        else:
+            self._command = command if from_template else command or self._defaults.command
+            self._args = (
+                args if args is not None else (None if from_template else list(self._defaults.args))
+            )
+            self._container_image = (
+                container_image
+                if from_template
+                else container_image or self._defaults.container_image
+            )
         self._base_url = (
             base_url or os.environ.get("CWSANDBOX_BASE_URL") or self._defaults.base_url
         ).rstrip("/")
@@ -1730,9 +1852,13 @@ class Sandbox:
 
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
         self._environment_variables = (
-            dict(environment_variables or {})
-            if from_template
-            else self._defaults.merge_environment_variables(environment_variables)
+            {}
+            if using_containers
+            else (
+                dict(environment_variables or {})
+                if from_template
+                else self._defaults.merge_environment_variables(environment_variables)
+            )
         )
         self._annotations = (
             dict(annotations or {})
@@ -1769,9 +1895,13 @@ class Sandbox:
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
+        self._spec_containers: tuple[Container, ...] = ()
+        self._container_statuses: tuple[ContainerStatus, ...] = ()
         # Use explicit resources or fall back to defaults, then normalize
         effective_resources = (
-            resources if resources is not None or from_template else self._defaults.resources
+            None
+            if using_containers
+            else (resources if resources is not None or from_template else self._defaults.resources)
         )
         normalized = normalize_resources(effective_resources)
         if normalized is not None:
@@ -1853,11 +1983,13 @@ class Sandbox:
         effective_security_context = (
             security_context
             if security_context is not None or from_template
-            else self._defaults.security_context
+            else (None if using_containers else self._defaults.security_context)
         )
         self._security_context = coerce_security_context(effective_security_context)
         effective_working_dir = (
-            working_dir if working_dir is not None or from_template else self._defaults.working_dir
+            working_dir
+            if working_dir is not None or from_template
+            else (None if using_containers else self._defaults.working_dir)
         )
         self._working_dir = effective_working_dir or None
         effective_osa = (
@@ -1866,24 +1998,17 @@ class Sandbox:
             else self._defaults.object_storage_access
         )
         self._object_storage_access = _coerce_object_storage_access(effective_osa)
-        merged_secrets = ([] if from_template else list(self._defaults.secrets or ())) + [
+        if using_containers:
+            assert user_containers is not None
+            self._start_kwargs["containers"] = list(user_containers)
+        inherited_secrets: list[Secret] = (
+            [] if from_template or using_containers else list(self._defaults.secrets or ())
+        )
+        merged_secrets = inherited_secrets + [
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
         ]
         if merged_secrets:
-            seen: dict[str, Secret] = {}
-            for secret in merged_secrets:
-                env_var = secret.env_var
-                assert env_var is not None  # guaranteed by Secret.__post_init__
-                if env_var in seen and secret != seen[env_var]:
-                    raise ValueError(
-                        f"Conflicting secrets for env_var {env_var!r}: "
-                        f"Secret(store={seen[env_var].store!r}, name={seen[env_var].name!r}, "
-                        f"field={seen[env_var].field!r}) vs "
-                        f"Secret(store={secret.store!r}, name={secret.name!r}, "
-                        f"field={secret.field!r})"
-                    )
-                seen[env_var] = secret
-            self._start_kwargs["secrets"] = list(seen.values())
+            self._start_kwargs["secrets"] = list(_unique_secrets_by_env_var(merged_secrets))
 
         self._channel: grpc.aio.Channel | None = None
         self._stub: sandbox_pb2_grpc.SandboxServiceStub | None = None
@@ -1994,6 +2119,7 @@ class Sandbox:
         annotations: dict[str, str] | None = None,
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
+        containers: Sequence[Container | Mapping[str, Any]] | None = None,
     ) -> Sandbox:
         """Create and start a sandbox, return immediately once backend accepts.
 
@@ -2055,6 +2181,14 @@ class Sandbox:
                 Merged with defaults (defaults first, then this list).
             data_plane_mode: Transport policy for exec, logs, and file operations.
                 ``auto`` prefers direct mTLS with gateway fallback.
+            containers: Multi-container spec. Mutually exclusive with
+                positional command/args and with ``container_image``,
+                ``resources``, ``mounted_files``, ``secrets``,
+                ``image_pull_credentials``, ``environment_variables``,
+                ``security_context``, and ``working_dir``. This list
+                replaces those single-container fields, including the
+                same names on ``SandboxDefaults``. Put secrets, env,
+                and working_dir on each ``Container``.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -2122,6 +2256,7 @@ class Sandbox:
             annotations=annotations,
             secrets=secrets,
             data_plane_mode=data_plane_mode,
+            containers=containers,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
@@ -2141,19 +2276,21 @@ class Sandbox:
 
         Args:
             template_id: Organization-scoped template UUID.
-            *args: Optional command args override. Requires ``command`` and
-                ``container_image``.
-            command: Optional command override. Requires ``container_image``.
+            *args: Optional command args override. Honored without ``command``.
+                Sparse single-container overlays still require ``container_image``.
+            command: Optional command override. Requires ``container_image``
+                unless ``containers=`` replaces the whole list.
             defaults: Optional SandboxDefaults.
             **kwargs: Same advanced create kwargs as ``run()``. Passing
                 ``container_image`` replaces the whole template container
                 (command, args, env, files, resources, name ``main``); there
-                is no fetch-and-merge. Other container-field overrides
-                (``command``, ``args``, ``environment_variables``,
+                is no fetch-and-merge. ``containers=`` is a full list replace
+                and does not require ``container_image``. Other container-field
+                overlays (``command``, ``args``, ``environment_variables``,
                 ``secrets``, ``resources``, ``mounted_files``, ``volumes``,
                 ``file_system_snapshot``, ``image_pull_credentials``,
-                ``security_context``, ``working_dir``) also
-                require ``container_image``:
+                ``security_context``, ``working_dir``) require
+                ``container_image`` unless ``containers=`` replaces the list:
                 the API replaces the whole container list and rejects a
                 sparse patch. Session/default tags are merged and sent as a
                 replace-on-presence override so ``list()``/``adopt`` can find
@@ -2300,6 +2437,8 @@ class Sandbox:
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
+        sandbox._spec_containers = ()
+        sandbox._container_statuses = ()
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
         sandbox._start_lock = asyncio.Lock()
@@ -3303,6 +3442,20 @@ class Sandbox:
         return self._service_endpoints
 
     @property
+    def containers(self) -> tuple[Container, ...]:
+        """Create-time container spec echoed from the sandbox resource.
+
+        Empty until create/Get/list populates it. ``primary=True`` is filled
+        on the inferred primary so a clone of this list is a valid create.
+        """
+        return self._spec_containers
+
+    @property
+    def container_statuses(self) -> tuple[ContainerStatus, ...]:
+        """Per-container observed state. Sandbox ``status`` stays primary-owned."""
+        return self._container_statuses
+
+    @property
     def dns_egress_names(self) -> tuple[str, ...]:
         """Hostnames granted at create, echoed from ``status.effective_egress``.
 
@@ -4098,82 +4251,168 @@ class Sandbox:
                 raise translated from e
         raise AssertionError("unreachable: placement spillover loop exited without return")
 
+    def _apply_resource_options(self, container: sandbox_pb2.Container, resources_opt: Any) -> None:
+        if resources_opt is None:
+            return
+        if not isinstance(resources_opt, ResourceOptions):
+            resources_opt = normalize_resources(resources_opt)
+        if resources_opt is None:
+            return
+        reqs = self._resources_to_proto(resources_opt.requests, resources_opt.gpu)
+        lims = self._resources_to_proto(resources_opt.limits, resources_opt.gpu)
+        if reqs is not None or lims is not None:
+            container.resource_requirements.CopyFrom(
+                sandbox_pb2.ResourceRequirements(
+                    requests=reqs or sandbox_pb2.Resources(),
+                    limits=lims or sandbox_pb2.Resources(),
+                )
+            )
+
+    @staticmethod
+    def _apply_secrets(container: sandbox_pb2.Container, secrets: Any) -> None:
+        if not secrets:
+            return
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for secret in secrets:
+            if not isinstance(secret, Secret):
+                secret = Secret(**secret)
+            grouped.setdefault(secret.store, []).append(
+                {
+                    "path": secret.name,
+                    "field": secret.field,
+                    "env_var": secret.env_var or secret.name,
+                }
+            )
+        for store, mappings in grouped.items():
+            container.secret_stores.append(
+                sandbox_pb2.SecretStoreReference(store_name=store, secrets=mappings)
+            )
+
+    @staticmethod
+    def _apply_image_pull_credentials(container: sandbox_pb2.Container, ipc: Any) -> None:
+        if ipc is None:
+            return
+        if isinstance(ipc, dict):
+            ipc = ImagePullCredentials(**ipc)
+        container.image_pull_credentials.CopyFrom(
+            sandbox_pb2.ImagePullCredentials(
+                registry=ipc.registry,
+                credentials=sandbox_pb2.SecretSource(
+                    store_name=ipc.store, path=ipc.name, field=ipc.field
+                ),
+            )
+        )
+
+    @staticmethod
+    def _apply_mounted_files(container: sandbox_pb2.Container, mounted_files: Any) -> None:
+        if not mounted_files:
+            return
+        entries = (
+            (
+                {"mount_path": path, "file_content": content}
+                for path, content in mounted_files.items()
+            )
+            if isinstance(mounted_files, Mapping)
+            else iter(mounted_files)
+        )
+        for entry in entries:
+            path = entry["mount_path"]
+            content = entry["file_content"]
+            data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
+            container.files.append(sandbox_pb2.FileMount(path=path, content=bytes(data)))
+
+    @staticmethod
+    def _volume_mount_to_proto(mount: VolumeMount) -> sandbox_pb2.VolumeMount:
+        proto = sandbox_pb2.VolumeMount(volume=mount.volume, mount_path=mount.mount_path)
+        if mount.read_only:
+            proto.read_only = True
+        if mount.sub_path:
+            proto.sub_path = mount.sub_path
+        return proto
+
+    def _user_container_to_proto(self, row: Container) -> sandbox_pb2.Container:
+        container = sandbox_pb2.Container(image=row.image)
+        if row.name:
+            container.name = row.name
+        if row.command:
+            container.command = row.command
+        if row.args:
+            container.args.extend(row.args)
+        if row.environment_variables:
+            container.environment_variables.update(row.environment_variables)
+        if row.working_dir:
+            container.working_dir = row.working_dir
+        if row.primary:
+            container.primary = True
+        self._apply_resource_options(container, row.resources)
+        self._apply_secrets(container, row.secrets)
+        self._apply_image_pull_credentials(container, row.image_pull_credentials)
+        self._apply_mounted_files(container, row.mounted_files)
+        for mount in row.volume_mounts or ():
+            container.volume_mounts.append(self._volume_mount_to_proto(_coerce_volume_mount(mount)))
+        return container
+
+    @staticmethod
+    def _append_unique_mounts(
+        container: sandbox_pb2.Container, mounts: Sequence[sandbox_pb2.VolumeMount]
+    ) -> None:
+        existing = {(mount.volume, mount.mount_path) for mount in container.volume_mounts}
+        for mount in mounts:
+            key = (mount.volume, mount.mount_path)
+            if key not in existing:
+                container.volume_mounts.append(mount)
+                existing.add(key)
+
+    @staticmethod
+    def _primary_index(containers: Sequence[sandbox_pb2.Container]) -> int:
+        for index, row in enumerate(containers):
+            if row.HasField("primary") and row.primary:
+                return index
+        return 0
+
+    @staticmethod
+    def _container_to_partial(container: sandbox_pb2.Container) -> sandbox_pb2.PartialContainer:
+        partial = sandbox_pb2.PartialContainer()
+        partial.ParseFromString(container.SerializeToString())
+        return partial
+
     def _build_create_request(
         self, *, request_id: str, start_kwargs: dict[str, Any]
     ) -> sandbox_pb2.CreateSandboxRequest:
         """Build a v1 CreateSandboxRequest from constructor/start kwargs."""
-        container = sandbox_pb2.Container(
-            name="main",
-            image=self._container_image,
-            command=self._command,
-            args=list(self._args or []),
-            primary=True,
-        )
-        if self._environment_variables:
-            container.environment_variables.update(self._environment_variables)
-
-        resources_opt = start_kwargs.pop("resources", None)
-        if resources_opt is not None:
-            if not isinstance(resources_opt, ResourceOptions):
-                resources_opt = normalize_resources(resources_opt)
-            if resources_opt is not None:
-                reqs = self._resources_to_proto(resources_opt.requests, resources_opt.gpu)
-                lims = self._resources_to_proto(resources_opt.limits, resources_opt.gpu)
-                if reqs is not None or lims is not None:
-                    container.resource_requirements.CopyFrom(
-                        sandbox_pb2.ResourceRequirements(
-                            requests=reqs or sandbox_pb2.Resources(),
-                            limits=lims or sandbox_pb2.Resources(),
-                        )
-                    )
-
-        secrets = start_kwargs.pop("secrets", None)
-        if secrets:
-            grouped: dict[str, list[dict[str, str]]] = {}
-            for s in secrets:
-                if not isinstance(s, Secret):
-                    s = Secret(**s)
-                grouped.setdefault(s.store, []).append(
-                    {"path": s.name, "field": s.field, "env_var": s.env_var or s.name}
-                )
-            for store, mappings in grouped.items():
-                container.secret_stores.append(
-                    sandbox_pb2.SecretStoreReference(store_name=store, secrets=mappings)
-                )
-
-        ipc = start_kwargs.pop("image_pull_credentials", None) or self._image_pull_credentials
-        if ipc is not None:
-            if isinstance(ipc, dict):
-                ipc = ImagePullCredentials(**ipc)
-            container.image_pull_credentials.CopyFrom(
-                sandbox_pb2.ImagePullCredentials(
-                    registry=ipc.registry,
-                    credentials=sandbox_pb2.SecretSource(
-                        store_name=ipc.store, path=ipc.name, field=ipc.field
-                    ),
-                )
+        user_containers = start_kwargs.pop("containers", None)
+        proto_containers: list[sandbox_pb2.Container]
+        if user_containers:
+            proto_containers = [
+                self._user_container_to_proto(_coerce_container(row)) for row in user_containers
+            ]
+            start_kwargs.pop("resources", None)
+            start_kwargs.pop("secrets", None)
+            start_kwargs.pop("mounted_files", None)
+            start_kwargs.pop("image_pull_credentials", None)
+        else:
+            container = sandbox_pb2.Container(
+                name="main",
+                image=self._container_image,
+                command=self._command,
+                args=list(self._args or []),
             )
-
-        if self._working_dir:
-            container.working_dir = self._working_dir
-        if self._security_context is not None:
-            container.security_context.CopyFrom(security_context_to_proto(self._security_context))
-
-        mounted_files = start_kwargs.pop("mounted_files", None)
-        if mounted_files:
-            entries = (
-                (
-                    {"mount_path": path, "file_content": content}
-                    for path, content in mounted_files.items()
+            if self._working_dir:
+                container.working_dir = self._working_dir
+            if self._security_context is not None:
+                container.security_context.CopyFrom(
+                    security_context_to_proto(self._security_context)
                 )
-                if isinstance(mounted_files, Mapping)
-                else iter(mounted_files)
+            if self._environment_variables:
+                container.environment_variables.update(self._environment_variables)
+            self._apply_resource_options(container, start_kwargs.pop("resources", None))
+            self._apply_secrets(container, start_kwargs.pop("secrets", None))
+            self._apply_image_pull_credentials(
+                container,
+                start_kwargs.pop("image_pull_credentials", None) or self._image_pull_credentials,
             )
-            for entry in entries:
-                path = entry["mount_path"]
-                content = entry["file_content"]
-                data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
-                container.files.append(sandbox_pb2.FileMount(path=path, content=bytes(data)))
+            self._apply_mounted_files(container, start_kwargs.pop("mounted_files", None))
+            proto_containers = [container]
 
         volumes: list[sandbox_pb2.SandboxVolume] = []
         mounts: list[sandbox_pb2.VolumeMount] = []
@@ -4189,20 +4428,23 @@ class Sandbox:
                 fss_opts = FileSystemSnapshotOptions(**fss_opts)
             scratch_opts = fss_opts.to_scratch_volume()
             volumes.append(scratch_volume_to_proto(scratch_opts))
-            mounts.append(
-                volume_mount_to_proto(
-                    scratch_opts.name,
-                    scratch_opts.mount_path,
-                    sub_path=scratch_opts.sub_path,
-                    read_only=scratch_opts.read_only,
+            if scratch_opts.mount_path:
+                mounts.append(
+                    volume_mount_to_proto(
+                        scratch_opts.name,
+                        scratch_opts.mount_path,
+                        sub_path=scratch_opts.sub_path,
+                        read_only=scratch_opts.read_only,
+                    )
                 )
-            )
             self._scratch_volume_names = tuple(
                 list(self._scratch_volume_names) + [scratch_opts.name]
             )
 
-        for mount in mounts:
-            container.volume_mounts.append(mount)
+        if proto_containers and mounts:
+            self._append_unique_mounts(
+                proto_containers[self._primary_index(proto_containers)], mounts
+            )
 
         services_arg = start_kwargs.pop("services", None) or self._services
         services: list[sandbox_pb2.Service] = []
@@ -4293,7 +4535,7 @@ class Sandbox:
             mode = sandbox_pb2.SANDBOX_MODE_CKS
 
         spec = sandbox_pb2.SandboxSpec(
-            containers=[container],
+            containers=proto_containers,
             volumes=volumes,
             services=services,
             tags=list(self._tags or []),
@@ -4337,7 +4579,8 @@ class Sandbox:
             request_id=request_id, start_kwargs=dict(overrides_kwargs)
         )
         spec = create_req.sandbox.spec
-        source_container = spec.containers[0]
+        source_container = spec.containers[0] if spec.containers else sandbox_pb2.Container()
+        containers_override = "containers" in explicit_keys
         container_field_overrides = (
             self._command is not None
             or self._args is not None
@@ -4349,18 +4592,16 @@ class Sandbox:
             or self._image_pull_credentials is not None
             or self._security_context is not None
             or self._working_dir is not None
+            or containers_override
         )
-        if container_field_overrides and self._container_image is None:
+        if container_field_overrides and self._container_image is None and not containers_override:
             raise TypeError(
                 "replace-on-presence container overrides require container_image; "
                 "the API replaces the whole container list and rejects sparse patches"
             )
-        if self._container_image is not None:
-            if self._args is not None and self._command is None:
-                raise TypeError(
-                    "container overrides with args require command; "
-                    "the API rejects args without command after a whole-list container replace"
-                )
+        if containers_override:
+            override_containers = [self._container_to_partial(row) for row in spec.containers]
+        elif self._container_image is not None:
             container = sandbox_pb2.PartialContainer(
                 name="main",
                 image=self._container_image,
@@ -4387,12 +4628,13 @@ class Sandbox:
                 container.security_context.CopyFrom(
                     security_context_to_proto(self._security_context)
                 )
+            override_containers = [container]
         else:
-            container = sandbox_pb2.PartialContainer()
+            override_containers = []
 
         overrides = sandbox_pb2.PartialSandboxSpec()
-        if self._container_image is not None:
-            overrides.containers.append(container)
+        if override_containers:
+            overrides.containers.extend(override_containers)
         if {"volumes", "file_system_snapshot"} & explicit_keys:
             overrides.volumes.extend(spec.volumes)
         if self._services:
@@ -4514,6 +4756,87 @@ class Sandbox:
             self._resource_limits = self._resources_from_proto(status.effective_resources)
             self._resource_requests = self._resource_limits
             self._resource_gpu = self._gpu_from_proto(status.effective_resources)
+        echoed = tuple(self._container_from_proto(row) for row in view._sandbox.spec.containers)
+        if echoed and not any(row.primary for row in echoed):
+            echoed = (replace(echoed[0], primary=True),) + echoed[1:]
+        self._spec_containers = echoed
+        statuses: list[ContainerStatus] = []
+        for row in status.container_statuses:
+            state = SandboxStatus.from_proto(row.state)
+            statuses.append(
+                ContainerStatus(
+                    name=row.name,
+                    state=state,
+                    exit_code=row.exit_code if state in _TERMINAL_STATUSES else None,
+                    restart_count=row.restart_count,
+                )
+            )
+        self._container_statuses = tuple(statuses)
+
+    def _container_from_proto(self, proto: sandbox_pb2.Container) -> Container:
+        resources: ResourceOptions | None = None
+        if proto.HasField("resource_requirements"):
+            rr = proto.resource_requirements
+            gpu = None
+            requests = self._resources_from_proto(rr.requests) if rr.HasField("requests") else None
+            limits = self._resources_from_proto(rr.limits) if rr.HasField("limits") else None
+            if rr.HasField("requests"):
+                gpu = self._gpu_from_proto(rr.requests)
+            if gpu is None and rr.HasField("limits"):
+                gpu = self._gpu_from_proto(rr.limits)
+            if requests or limits or gpu:
+                resources = ResourceOptions(requests=requests, limits=limits, gpu=gpu)
+        elif proto.HasField("resources"):
+            cpu_mem = self._resources_from_proto(proto.resources)
+            gpu = self._gpu_from_proto(proto.resources)
+            if cpu_mem or gpu:
+                resources = ResourceOptions(requests=cpu_mem, limits=cpu_mem, gpu=gpu)
+        secrets = tuple(
+            Secret(
+                store=store.store_name,
+                name=mapping.path,
+                field=mapping.field,
+                env_var=mapping.env_var or None,
+            )
+            for store in proto.secret_stores
+            for mapping in store.secrets
+        )
+        mounts = tuple(
+            VolumeMount(
+                volume=mount.volume,
+                mount_path=mount.mount_path,
+                read_only=mount.read_only,
+                sub_path=mount.sub_path or None,
+            )
+            for mount in proto.volume_mounts
+        )
+        files = tuple(
+            {"mount_path": file_mount.path, "file_content": bytes(file_mount.content)}
+            for file_mount in proto.files
+        )
+        ipc = None
+        if proto.HasField("image_pull_credentials"):
+            creds = proto.image_pull_credentials
+            ipc = ImagePullCredentials(
+                registry=creds.registry,
+                store=creds.credentials.store_name,
+                name=creds.credentials.path,
+                field=creds.credentials.field,
+            )
+        return Container._from_observed(
+            image=proto.image,
+            name=proto.name or None,
+            command=proto.command or None,
+            args=tuple(proto.args) or None,
+            environment_variables=dict(proto.environment_variables) or None,
+            resources=resources,
+            mounted_files=files or None,
+            volume_mounts=mounts or None,
+            secrets=secrets or None,
+            working_dir=proto.working_dir or None,
+            image_pull_credentials=ipc,
+            primary=proto.HasField("primary") and proto.primary,
+        )
 
     @staticmethod
     def _resources_from_proto(res: sandbox_pb2.Resources) -> dict[str, str] | None:
@@ -5623,6 +5946,7 @@ class Sandbox:
         since_time: datetime | None = None,
         timestamps: bool = False,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> None:
         """Stream PID-1 logs via v1 unary StreamLogs → LogEntry server stream."""
         inner_exit_clean = False
@@ -5666,6 +5990,7 @@ class Sandbox:
                     sandbox_id=sandbox_id,
                     follow=follow,
                 )
+                _set_request_container(request, container)
                 if is_resume:
                     request.resume_log_session_id = session_id
                     request.resume_log_offset = last_offset
@@ -5891,6 +6216,7 @@ class Sandbox:
         resize_queue: asyncio.Queue[tuple[int, int] | None],
         tty_width: int | None = None,
         tty_height: int | None = None,
+        container: str | None = None,
     ) -> TerminalResult:
         """Internal async: Execute TTY command, push raw bytes to output queue.
 
@@ -5935,6 +6261,7 @@ class Sandbox:
                     command=list(command),
                     tty=True,
                 )
+                _set_request_container(init_msg, container)
                 if tty_width is not None:
                     init_msg.tty_width = tty_width
                 if tty_height is not None:
@@ -6128,6 +6455,7 @@ class Sandbox:
         timeout_seconds: float | None = None,
         stdin_queue: asyncio.Queue[bytes | None] | None = None,
         stdin_writer: StreamWriter | None = None,
+        container: str | None = None,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
@@ -6182,12 +6510,12 @@ class Sandbox:
             which signals gRPC to half-close the send direction.
             """
             # Yield init message first
-            yield sandbox_pb2.ExecStreamRequest(
-                init=sandbox_pb2.ExecStreamInit(
-                    sandbox_id=sandbox_id,
-                    command=rpc_command,
-                )
+            init_msg = sandbox_pb2.ExecStreamInit(
+                sandbox_id=sandbox_id,
+                command=rpc_command,
             )
+            _set_request_container(init_msg, container)
+            yield sandbox_pb2.ExecStreamRequest(init=init_msg)
 
             # If stdin is enabled, wait for ready signal before sending data
             if stdin_queue is not None:
@@ -6399,6 +6727,7 @@ class Sandbox:
         check: bool = False,
         timeout_seconds: float | None = None,
         stdin: bool = False,
+        container: str | None = None,
     ) -> Process:
         """Execute command, return Process immediately.
 
@@ -6416,6 +6745,7 @@ class Sandbox:
             stdin: If True, enable stdin streaming. Process.stdin will be a
                 StreamWriter that can send input to the command. If False (default),
                 stdin is closed immediately and Process.stdin is None.
+            container: Container name to exec into. Empty/None targets the primary.
 
         Returns:
             Process handle with streaming stdout/stderr. Call .result() to block
@@ -6481,6 +6811,7 @@ class Sandbox:
                 timeout_seconds=timeout_seconds,
                 stdin_queue=stdin_queue,
                 stdin_writer=stdin_writer,
+                container=container,
             )
         )
 
@@ -6499,6 +6830,7 @@ class Sandbox:
         *,
         width: int | None = None,
         height: int | None = None,
+        container: str | None = None,
     ) -> TerminalSession:
         """Start an interactive TTY session in the sandbox.
 
@@ -6511,6 +6843,8 @@ class Sandbox:
                 Accepts a sequence like ["/bin/sh"] or ["/usr/bin/python3"].
             width: Initial terminal width in columns.
             height: Initial terminal height in rows.
+            container: Container name for the TTY session. Empty/None targets
+                the primary.
 
         Returns:
             TerminalSession handle with .output (StreamReader[bytes]),
@@ -6557,6 +6891,7 @@ class Sandbox:
                 resize_queue=resize_queue,
                 tty_width=width,
                 tty_height=height,
+                container=container,
             )
         )
 
@@ -6586,6 +6921,7 @@ class Sandbox:
         operation: str,
         filepath: str | None = None,
         _retry_retiring: bool = True,
+        container: str | None = None,
     ) -> tuple[int, bytes, bytes]:
         """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
@@ -6620,12 +6956,12 @@ class Sandbox:
         request_error: Exception | None = None
 
         async def request_generator() -> AsyncIterator[sandbox_pb2.ExecStreamRequest]:
-            yield sandbox_pb2.ExecStreamRequest(
-                init=sandbox_pb2.ExecStreamInit(
-                    sandbox_id=sandbox_id,
-                    command=list(command),
-                )
+            init_msg = sandbox_pb2.ExecStreamInit(
+                sandbox_id=sandbox_id,
+                command=list(command),
             )
+            _set_request_container(init_msg, container)
+            yield sandbox_pb2.ExecStreamRequest(init=init_msg)
 
             if stdin is None:
                 return
@@ -6751,6 +7087,7 @@ class Sandbox:
                 operation=operation,
                 filepath=filepath,
                 _retry_retiring=False,
+                container=container,
             )
 
         if request_error is not None:
@@ -6768,11 +7105,14 @@ class Sandbox:
             b"".join(stderr_buffer),
         )
 
-    async def _read_file_unary_async(self, filepath: str, timeout: float) -> bytes:
+    async def _read_file_unary_async(
+        self, filepath: str, timeout: float, *, container: str | None = None
+    ) -> bytes:
         request = sandbox_pb2.ReadFileRequest(
             sandbox_id=self._sandbox_id,
             path=filepath,
         )
+        _set_request_container(request, container)
         for attempt in range(2):
             prepared = await self._prepare_data_plane_call(
                 sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
@@ -6801,7 +7141,12 @@ class Sandbox:
         raise AssertionError("unreachable")
 
     async def _read_file_via_exec_streaming(
-        self, filepath: str, timeout: float, *, expected_size: int | None = None
+        self,
+        filepath: str,
+        timeout: float,
+        *,
+        expected_size: int | None = None,
+        container: str | None = None,
     ) -> bytes:
         script = (
             "path=$1\n"
@@ -6820,6 +7165,7 @@ class Sandbox:
             timeout_seconds=timeout,
             operation="Read file",
             filepath=filepath,
+            container=container,
         )
         if returncode != 0:
             detail = stderr.decode("utf-8", errors="replace").strip()
@@ -6857,7 +7203,9 @@ class Sandbox:
         )
         return stdout
 
-    async def _stat_file_size_async(self, filepath: str, timeout: float) -> int | None:
+    async def _stat_file_size_async(
+        self, filepath: str, timeout: float, *, container: str | None = None
+    ) -> int | None:
         """Best-effort: ask the sandbox for the file's size in bytes.
 
         Returns ``None`` if the size could not be determined (stat unavailable,
@@ -6872,6 +7220,7 @@ class Sandbox:
                 timeout_seconds=timeout,
                 operation="Stat file size",
                 filepath=filepath,
+                container=container,
             )
         except Exception:
             return None
@@ -6958,6 +7307,8 @@ class Sandbox:
         self,
         filepath: str,
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> bytes:
         """Internal async: Read a file from the sandbox filesystem."""
         await self._ensure_started_async()
@@ -6975,7 +7326,7 @@ class Sandbox:
         logger.debug("Reading file from sandbox %s: %s", self._sandbox_id, filepath)
 
         try:
-            return await self._read_file_unary_async(filepath, timeout)
+            return await self._read_file_unary_async(filepath, timeout, container=container)
         except SandboxFileError as e:
             if e.reason != CWSANDBOX_FILE_TOO_LARGE:
                 raise
@@ -6993,7 +7344,9 @@ class Sandbox:
             # ``size`` is the server-reported pre-read size: feed it to the
             # truncation check directly, so the fallback needs no extra stat
             # round-trip and cannot false-positive on a growing file.
-            return await self._read_file_via_exec_streaming(filepath, timeout, expected_size=size)
+            return await self._read_file_via_exec_streaming(
+                filepath, timeout, expected_size=size, container=container
+            )
         except SandboxResourceExhaustedError:
             # Backend resource pressure is indistinguishable from message-size
             # rejects on this code path without inspecting error text; remote
@@ -7007,19 +7360,21 @@ class Sandbox:
                 self._sandbox_id,
                 filepath,
             )
-            return await self._read_file_via_exec_streaming(filepath, timeout)
+            return await self._read_file_via_exec_streaming(filepath, timeout, container=container)
 
     def read_file(
         self,
         filepath: str,
         *,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> OperationRef[bytes]:
         """Read file from sandbox, return OperationRef immediately.
 
         Args:
             filepath: Path to file in sandbox
             timeout_seconds: Timeout for the operation
+            container: Container to read from. Empty/None targets the primary.
 
         Returns:
             OperationRef[bytes]: Use .result() to block and retrieve contents.
@@ -7055,7 +7410,9 @@ class Sandbox:
             ```
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
-        future = self._loop_manager.run_async(self._read_file_async(filepath, timeout))
+        future = self._loop_manager.run_async(
+            self._read_file_async(filepath, timeout, container=container)
+        )
         return OperationRef(future)
 
     async def _write_file_unary_async(
@@ -7063,12 +7420,15 @@ class Sandbox:
         filepath: str,
         contents: bytes,
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> None:
         request = sandbox_pb2.WriteFileRequest(
             sandbox_id=self._sandbox_id,
             path=filepath,
             content=contents,
         )
+        _set_request_container(request, container)
         for attempt in range(2):
             prepared = await self._prepare_data_plane_call(
                 sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE,
@@ -7102,6 +7462,8 @@ class Sandbox:
         filepath: str,
         contents: bytes,
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> None:
         script = (
             "path=$1\n"
@@ -7126,6 +7488,7 @@ class Sandbox:
                 timeout_seconds=timeout,
                 operation="Write file",
                 filepath=filepath,
+                container=container,
             )
         except SandboxStreamBackpressureError:
             # A too-slow producer is its own actionable, typed failure. Let it
@@ -7244,6 +7607,8 @@ class Sandbox:
         filepath: str,
         contents: bytes,
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> None:
         """Internal async: Write a file to the sandbox filesystem."""
         await self._ensure_started_async()
@@ -7288,11 +7653,13 @@ class Sandbox:
             self._notify_streaming_fallback_once(
                 "Write file", filepath, size, suggest_method="write_file_streaming"
             )
-            await self._write_file_via_exec_streaming(filepath, contents, timeout)
+            await self._write_file_via_exec_streaming(
+                filepath, contents, timeout, container=container
+            )
             return
 
         try:
-            await self._write_file_unary_async(filepath, contents, timeout)
+            await self._write_file_unary_async(filepath, contents, timeout, container=container)
         except SandboxFileError as e:
             if e.reason != CWSANDBOX_FILE_TOO_LARGE:
                 raise
@@ -7302,7 +7669,9 @@ class Sandbox:
             self._notify_streaming_fallback_once(
                 "Write file", filepath, size, suggest_method="write_file_streaming"
             )
-            await self._write_file_via_exec_streaming(filepath, contents, timeout)
+            await self._write_file_via_exec_streaming(
+                filepath, contents, timeout, container=container
+            )
         except SandboxResourceExhaustedError as e:
             # Legacy gRPC frame-size signal. Distinguishable from real backend
             # pressure only by message text, so the fallback fires only on the
@@ -7315,7 +7684,9 @@ class Sandbox:
                 self._sandbox_id,
                 filepath,
             )
-            await self._write_file_via_exec_streaming(filepath, contents, timeout)
+            await self._write_file_via_exec_streaming(
+                filepath, contents, timeout, container=container
+            )
 
     def write_file(
         self,
@@ -7323,6 +7694,7 @@ class Sandbox:
         contents: bytes,
         *,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> OperationRef[None]:
         """Write file to sandbox, return OperationRef immediately.
 
@@ -7330,6 +7702,7 @@ class Sandbox:
             filepath: Path to file in sandbox
             contents: File contents as bytes
             timeout_seconds: Timeout for the operation
+            container: Container to write into. Empty/None targets the primary.
 
         Returns:
             OperationRef[None]: Use .result() to block until complete.
@@ -7356,7 +7729,9 @@ class Sandbox:
             ```
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
-        future = self._loop_manager.run_async(self._write_file_async(filepath, contents, timeout))
+        future = self._loop_manager.run_async(
+            self._write_file_async(filepath, contents, timeout, container=container)
+        )
         return OperationRef(future)
 
     async def _write_file_streaming_async(
@@ -7364,6 +7739,8 @@ class Sandbox:
         filepath: str,
         source: bytes | Iterable[bytes] | AsyncIterable[bytes],
         timeout: float,
+        *,
+        container: str | None = None,
     ) -> None:
         await self._ensure_started_async()
         if self._is_done or self._is_stopping:
@@ -7405,6 +7782,7 @@ class Sandbox:
                 timeout_seconds=timeout,
                 operation="Stream write file",
                 filepath=filepath,
+                container=container,
             )
         except SandboxStreamBackpressureError:
             # A too-slow producer is its own actionable failure — surface the
@@ -7440,6 +7818,7 @@ class Sandbox:
         source: bytes | Iterable[bytes] | AsyncIterable[bytes],
         *,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> OperationRef[None]:
         """Stream a file to the sandbox without materializing the full payload.
 
@@ -7477,7 +7856,7 @@ class Sandbox:
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(
-            self._write_file_streaming_async(filepath, source, timeout)
+            self._write_file_streaming_async(filepath, source, timeout, container=container)
         )
         return OperationRef(future)
 
@@ -7487,6 +7866,8 @@ class Sandbox:
         output_queue: asyncio.Queue[bytes | Exception | None],
         timeout: float,
         _retry_retiring: bool = True,
+        *,
+        container: str | None = None,
     ) -> None:
         try:
             # Absolute wall-clock deadline for the whole operation (stat + read),
@@ -7510,7 +7891,9 @@ class Sandbox:
             # never look like a short read (issue #1172 false-positive fix). The
             # stat draws from the operation's remaining budget, capped short
             # because it is an O(1) metadata lookup.
-            expected_size = await self._stat_file_size_async(filepath, self._stat_budget(deadline))
+            expected_size = await self._stat_file_size_async(
+                filepath, self._stat_budget(deadline), container=container
+            )
 
             prepared = await self._prepare_streaming_call()
             stub = prepared.stub
@@ -7526,12 +7909,12 @@ class Sandbox:
                 # stdin close is unnecessary and can race server-side stream
                 # setup. The request stream half-closes when this generator
                 # returns, matching the stdin-less exec path.
-                yield sandbox_pb2.ExecStreamRequest(
-                    init=sandbox_pb2.ExecStreamInit(
-                        sandbox_id=sandbox_id,
-                        command=["/bin/cat", "--", filepath],
-                    )
+                init_msg = sandbox_pb2.ExecStreamInit(
+                    sandbox_id=sandbox_id,
+                    command=["/bin/cat", "--", filepath],
                 )
+                _set_request_container(init_msg, container)
+                yield sandbox_pb2.ExecStreamRequest(init=init_msg)
 
             # The read gets the budget remaining after the pre-read stat, so the
             # two phases together honor the caller's overall timeout.
@@ -7596,6 +7979,7 @@ class Sandbox:
                         output_queue,
                         timeout if retry_budget is None else retry_budget,
                         _retry_retiring=False,
+                        container=container,
                     )
                     return
                 raise SandboxTimeoutError(f"Timed out reading file '{filepath}'")
@@ -7652,6 +8036,7 @@ class Sandbox:
         filepath: str,
         *,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> StreamReader[bytes]:
         """Stream a file from the sandbox in chunks without buffering the whole payload.
 
@@ -7712,7 +8097,7 @@ class Sandbox:
             maxsize=STREAMING_OUTPUT_QUEUE_SIZE
         )
         future = self._loop_manager.run_async(
-            self._read_file_streaming_async(filepath, output_queue, timeout)
+            self._read_file_streaming_async(filepath, output_queue, timeout, container=container)
         )
         reader = StreamReader(
             output_queue,
@@ -7733,6 +8118,7 @@ class Sandbox:
         since_time: datetime | None = None,
         timestamps: bool = False,
         timeout_seconds: float | None = None,
+        container: str | None = None,
     ) -> StreamReader[str]:
         """Stream logs from the sandbox's main process.
 
@@ -7764,6 +8150,8 @@ class Sandbox:
             timeout_seconds: Client-side deadline for the gRPC call. Defaults
                 to ``request_timeout_seconds`` when ``follow=False``, and
                 ``None`` (no timeout) when ``follow=True``.
+            container: Container whose logs to stream. Empty/None targets the
+                primary.
 
         Returns:
             StreamReader yielding log lines as strings. Iterate synchronously
@@ -7809,6 +8197,7 @@ class Sandbox:
                 since_time=since_time,
                 timestamps=timestamps,
                 timeout_seconds=timeout_seconds,
+                container=container,
             )
         )
 

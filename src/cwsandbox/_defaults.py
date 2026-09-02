@@ -11,6 +11,7 @@ from typing import Any
 
 from cwsandbox._auth import AuthConfig
 from cwsandbox._types import (
+    Container,
     DataPlaneMode,
     FileSystemSnapshotOptions,
     NetworkOptions,
@@ -23,6 +24,7 @@ from cwsandbox._types import (
     Secret,
     SecurityContext,
     Service,
+    _coerce_container,
     _coerce_object_storage_access,
     _coerce_security_context,
     _coerce_volume_options,
@@ -310,15 +312,24 @@ class SandboxDefaults:
         volumes: Scratch or registered volumes (``ScratchVolumeOptions`` or
             ``RegisteredVolumeOptions``).
         runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
-        security_context: In-guest privilege for the primary container.
-        working_dir: Working directory for the primary container command.
+        security_context: In-guest privilege for the single-container path.
+            Not applied when ``containers=`` or ``defaults.containers`` is used.
+        working_dir: Working directory for the single-container path.
+            Not applied when a container list is used.
         object_storage_access: Temporary object-storage credentials.
         file_system_snapshot: Convenience single-mount FSS options via
             ``FileSystemSnapshotOptions``. Shareable mount defaults (mount_path,
             size); an explicit ``run()`` value replaces it wholesale. Prefer
             ``volumes=`` for multi-volume setups.
-        secrets: Secrets to inject as environment variables at create time.
-        environment_variables: Environment variables injected into the sandbox.
+        containers: Optional multi-container spec (``Container``). Mutually
+            exclusive with single-container fields on ``Sandbox.run()``.
+            When this list is used, ``secrets``, ``environment_variables``,
+            ``security_context``, and ``working_dir`` on these defaults
+            are not applied; set them on each ``Container``.
+        secrets: Secrets for the single-container path. Not applied when
+            ``containers=`` or ``defaults.containers`` is used.
+        environment_variables: Environment variables for the single-container
+            path. Not applied when a container list is used.
         annotations: Kubernetes pod annotations (key-value string pairs).
             Merged with per-sandbox annotations; explicit values override defaults.
             Use for non-sensitive metadata only.
@@ -364,6 +375,7 @@ class SandboxDefaults:
     working_dir: str | None = None
     object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None
     file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None
+    containers: tuple[Container, ...] | None = None
     secrets: tuple[Secret, ...] | None = None
     environment_variables: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
@@ -425,10 +437,11 @@ class SandboxDefaults:
         - ``secrets`` list of dicts -> tuple of ``Secret``
         - ``services`` list of dicts -> tuple of ``Service``
         - ``volumes`` list of dicts -> tuple of scratch/registered volume options
+        - ``containers`` list of dicts -> tuple of ``Container``
         - ``security_context`` dict -> ``SecurityContext``
         - ``object_storage_access`` dict -> ``ObjectStorageAccess``
-        - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes`` lists
-          -> tuples
+        - ``args``, ``tags``, ``runner_ids``, ``services``, ``volumes``,
+          ``containers`` lists -> tuples
         - ``resources``, ``environment_variables`` -> plain ``dict``
         """
         if d is None:
@@ -487,6 +500,9 @@ class SandboxDefaults:
         volumes = kwargs.get("volumes")
         if volumes is not None:
             kwargs["volumes"] = tuple(_coerce_volume_options(v) for v in volumes)
+        containers = kwargs.get("containers")
+        if containers is not None:
+            kwargs["containers"] = tuple(_coerce_container(c) for c in containers)
         kwargs["security_context"] = _coerce_security_context(kwargs.get("security_context"))
         kwargs["object_storage_access"] = _coerce_object_storage_access(
             kwargs.get("object_storage_access")

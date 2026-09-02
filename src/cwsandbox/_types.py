@@ -318,12 +318,48 @@ class Service:
 
 # DNS-1123 subdomain, matching k8s IsDNS1123Subdomain used by the gateway.
 _DNS1123_LABEL = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+_DNS1123_LABEL_RE = re.compile(rf"^{_DNS1123_LABEL}$")
+_DNS1123_LABEL_MAX = 63
 _DNS1123_SUBDOMAIN_RE = re.compile(rf"^{_DNS1123_LABEL}(?:\.{_DNS1123_LABEL})*$")
 _DNS1123_SUBDOMAIN_MAX = 253
+
+# Closed reserved kubelet names (and restore- prefix) from the v1 multi-container contract.
+_RESERVED_CONTAINER_NAMES = frozenset(
+    {
+        "cw-object-store-agent",
+        "cw-object-store-agent-restore",
+        "dns-egress",
+        "dns-egress-probe",
+    }
+)
+_RESERVED_CONTAINER_NAME_PREFIX = "cw-object-store-agent-restore-"
 
 
 def _is_dns1123_subdomain(name: str) -> bool:
     return len(name) <= _DNS1123_SUBDOMAIN_MAX and _DNS1123_SUBDOMAIN_RE.fullmatch(name) is not None
+
+
+def _is_dns1123_label(name: str) -> bool:
+    return len(name) <= _DNS1123_LABEL_MAX and _DNS1123_LABEL_RE.fullmatch(name) is not None
+
+
+def _validate_absolute_mount_path(path: str, *, field: str) -> None:
+    if not path:
+        raise ValueError(f"{field} cannot be empty")
+    if not path.startswith("/"):
+        raise ValueError(f"{field} must be an absolute path, got: {path!r}")
+    if path == "/":
+        raise ValueError(f"{field} cannot be '/'")
+
+
+def _validate_container_name(name: str) -> None:
+    if not _is_dns1123_label(name):
+        raise ValueError(
+            "Container.name must be a DNS-1123 label (lowercase alphanumeric and "
+            f"hyphens, at most {_DNS1123_LABEL_MAX} characters), got: {name!r}"
+        )
+    if name in _RESERVED_CONTAINER_NAMES or name.startswith(_RESERVED_CONTAINER_NAME_PREFIX):
+        raise ValueError(f"Container.name {name!r} is reserved by the platform")
 
 
 class TenantScope(StrEnum):
@@ -679,9 +715,14 @@ def _coerce_string_sequence(value: Sequence[str] | None, *, field: str) -> tuple
 class ScratchVolumeOptions:
     """Named scratch volume for snapshot/restore workflows.
 
+    Volumes are sandbox-level. ``mount_path`` is a convenience that mounts
+    this volume on the primary container. For multi-container sandboxes,
+    omit ``mount_path`` and declare mounts on ``Container.volume_mounts``.
+
     Attributes:
         name: Volume name within the sandbox (referenced by mounts/snapshots).
-        mount_path: Absolute path to mount into the primary container.
+        mount_path: Absolute path to mount into the primary container. None
+            declares the volume without mounting it.
         size: Volume size (e.g. ``"10Gi"``). None uses the platform default.
         restore_from_snapshot_id: When set, restore this snapshot at create.
         medium: Backing store. Unset uses disk. ``MEMORY`` is tmpfs and
@@ -691,7 +732,7 @@ class ScratchVolumeOptions:
     """
 
     name: str
-    mount_path: str
+    mount_path: str | None = None
     size: str | None = None
     restore_from_snapshot_id: str | None = None
     medium: StorageMedium | str | None = None
@@ -701,14 +742,8 @@ class ScratchVolumeOptions:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("ScratchVolumeOptions.name cannot be empty")
-        if not self.mount_path:
-            raise ValueError("ScratchVolumeOptions.mount_path cannot be empty")
-        if not self.mount_path.startswith("/"):
-            raise ValueError(
-                f"ScratchVolumeOptions.mount_path must be absolute, got: {self.mount_path!r}"
-            )
-        if self.mount_path == "/":
-            raise ValueError("ScratchVolumeOptions.mount_path cannot be '/'")
+        if self.mount_path is not None:
+            _validate_absolute_mount_path(self.mount_path, field="ScratchVolumeOptions.mount_path")
         if self.size is not None and not self.size:
             object.__setattr__(self, "size", None)
         if self.restore_from_snapshot_id is not None and not self.restore_from_snapshot_id:
@@ -786,6 +821,40 @@ def _coerce_volume_options(
     raise TypeError(
         "volumes entries must be ScratchVolumeOptions, RegisteredVolumeOptions, "
         f"or dict, got {type(vol).__name__}"
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeMount:
+    """Mount of a sandbox-level volume into one container.
+
+    Attributes:
+        volume: Name of a ``ScratchVolumeOptions`` / ``SandboxSpec`` volume.
+        mount_path: Absolute path inside the container.
+        read_only: When True, mount the volume read-only.
+        sub_path: Optional path within the volume to mount.
+    """
+
+    volume: str
+    mount_path: str
+    read_only: bool = False
+    sub_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.volume:
+            raise ValueError("VolumeMount.volume cannot be empty")
+        _validate_absolute_mount_path(self.mount_path, field="VolumeMount.mount_path")
+        if self.sub_path is not None and not self.sub_path:
+            object.__setattr__(self, "sub_path", None)
+
+
+def _coerce_volume_mount(value: VolumeMount | Mapping[str, Any]) -> VolumeMount:
+    if isinstance(value, VolumeMount):
+        return value
+    if isinstance(value, Mapping):
+        return VolumeMount(**value)
+    raise TypeError(
+        f"volume_mounts entries must be VolumeMount or dict, got {type(value).__name__}"
     )
 
 
@@ -1010,6 +1079,24 @@ class Secret:
             raise ValueError("Secret.env_var cannot be empty")
 
 
+def _unique_secrets_by_env_var(secrets: Sequence[Secret]) -> tuple[Secret, ...]:
+    """Keep one secret per env_var; raise if two distinct sources conflict."""
+    seen: dict[str, Secret] = {}
+    for secret in secrets:
+        env_var = secret.env_var
+        assert env_var is not None  # guaranteed by Secret.__post_init__
+        if env_var in seen and secret != seen[env_var]:
+            raise ValueError(
+                f"Conflicting secrets for env_var {env_var!r}: "
+                f"Secret(store={seen[env_var].store!r}, name={seen[env_var].name!r}, "
+                f"field={seen[env_var].field!r}) vs "
+                f"Secret(store={secret.store!r}, name={secret.name!r}, "
+                f"field={secret.field!r})"
+            )
+        seen[env_var] = secret
+    return tuple(seen.values())
+
+
 @dataclass(frozen=True, kw_only=True)
 class ResourceOptions:
     """Resource configuration for sandbox CPU, memory, and GPU.
@@ -1038,6 +1125,147 @@ class ResourceOptions:
             object.__setattr__(self, "limits", None)
         if isinstance(self.gpu, dict) and len(self.gpu) == 0:
             object.__setattr__(self, "gpu", None)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Container:
+    """One user container in a sandbox.
+
+    Pass a list to ``Sandbox.run(containers=[...])``. That form is mutually
+    exclusive with the single-container kwargs (``container_image``,
+    ``command``/``args``, ``resources``, ``mounted_files``, ``secrets``,
+    ``image_pull_credentials``, ``environment_variables``,
+    ``security_context``, ``working_dir``) and does not inherit those
+    same fields from ``SandboxDefaults``.
+
+    One container: ``primary`` may be omitted or False (that row is primary).
+    More than one: exactly one row must set ``primary=True``, and every row
+    needs a name and resources. GPU is allowed only on the primary.
+
+    Attributes:
+        image: OCI image to run.
+        name: DNS-1123 label. Optional for a single container; required when
+            more than one container is specified.
+        command: Entrypoint. Empty/None uses the image entrypoint. Args may
+            be set without command.
+        args: Arguments to the command or image entrypoint.
+        environment_variables: Env vars injected into this container only.
+        resources: CPU/memory/GPU for this container. Required when more
+            than one container is specified.
+        mounted_files: Files written into this container at startup.
+        volume_mounts: Sandbox-level volumes to mount into this container.
+        secrets: Secret-store inject for this container only.
+        working_dir: Working directory for the command. Must be absolute
+            when set.
+        image_pull_credentials: Private-registry pull credentials.
+        primary: When True, this container owns sandbox lifecycle and is
+            the default exec/logs/files target.
+    """
+
+    image: str
+    name: str | None = None
+    command: str | None = None
+    args: Sequence[str] | None = None
+    environment_variables: Mapping[str, str] | None = None
+    resources: ResourceOptions | dict[str, Any] | None = None
+    mounted_files: Sequence[Mapping[str, Any]] | None = None
+    volume_mounts: Sequence[VolumeMount | Mapping[str, Any]] | None = None
+    secrets: Sequence[Secret | Mapping[str, Any]] | None = None
+    working_dir: str | None = None
+    image_pull_credentials: ImagePullCredentials | Mapping[str, Any] | None = None
+    primary: bool = False
+    # Status echo only. Create-time name/cwd/image checks do not apply to
+    # server-authored rows (reserved platform sidecars, working_dir="/").
+    _observed: bool = field(default=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.image and not self._observed:
+            raise ValueError("Container.image cannot be empty")
+        if self.name is not None:
+            if not self.name:
+                object.__setattr__(self, "name", None)
+            elif not self._observed:
+                _validate_container_name(self.name)
+        if self.command is not None and not self.command:
+            object.__setattr__(self, "command", None)
+        if self.args is not None:
+            if isinstance(self.args, (str, bytes)):
+                raise TypeError("Container.args must be a sequence of strings, not a string")
+            coerced_args = tuple(self.args)
+            for i, arg in enumerate(coerced_args):
+                if not isinstance(arg, str):
+                    raise TypeError(f"Container.args[{i}] must be str, got {type(arg).__name__}")
+            object.__setattr__(self, "args", coerced_args)
+        if self.environment_variables is not None:
+            object.__setattr__(self, "environment_variables", dict(self.environment_variables))
+        if self.working_dir is not None:
+            if not self.working_dir:
+                object.__setattr__(self, "working_dir", None)
+            elif not self._observed:
+                _validate_absolute_mount_path(self.working_dir, field="Container.working_dir")
+        if self.volume_mounts is not None:
+            object.__setattr__(
+                self,
+                "volume_mounts",
+                tuple(_coerce_volume_mount(m) for m in self.volume_mounts),
+            )
+        if self.secrets is not None:
+            object.__setattr__(
+                self,
+                "secrets",
+                _unique_secrets_by_env_var(
+                    tuple(s if isinstance(s, Secret) else Secret(**s) for s in self.secrets)
+                ),
+            )
+        if self.image_pull_credentials is not None and not isinstance(
+            self.image_pull_credentials, ImagePullCredentials
+        ):
+            object.__setattr__(
+                self,
+                "image_pull_credentials",
+                ImagePullCredentials(**self.image_pull_credentials),
+            )
+        if self.mounted_files is not None:
+            object.__setattr__(self, "mounted_files", tuple(self.mounted_files))
+
+    @classmethod
+    def _from_observed(cls, **kwargs: Any) -> Container:
+        """Build a Container from a Get/list spec echo.
+
+        Skips reserved-name, DNS-1123, working_dir, and empty-image checks.
+        ``replace()`` keeps ``_observed`` so inferred ``primary`` stays valid.
+        """
+        return cls(_observed=True, **kwargs)
+
+
+def _coerce_container(value: Container | Mapping[str, Any]) -> Container:
+    if isinstance(value, Container):
+        return value
+    if isinstance(value, Mapping):
+        return Container(**value)
+    raise TypeError(f"containers entries must be Container or dict, got {type(value).__name__}")
+
+
+def _validate_containers(containers: Sequence[Container]) -> tuple[Container, ...]:
+    """Validate a create-time container list (names, primary flag)."""
+    if not containers:
+        raise ValueError("containers cannot be empty")
+    rows = tuple(containers)
+    if len(rows) > 1:
+        primary_count = sum(1 for row in rows if row.primary)
+        if primary_count != 1:
+            raise ValueError("containers with more than one entry require exactly one primary=True")
+        missing = [i for i, row in enumerate(rows) if not row.name]
+        if missing:
+            raise ValueError("every container must have a name when more than one is specified")
+    seen: set[str] = set()
+    for row in rows:
+        if not row.name:
+            continue
+        if row.name in seen:
+            raise ValueError(f"duplicate container name: {row.name!r}")
+        seen.add(row.name)
+    return rows
 
 
 class FileSystemSnapshotStatus(StrEnum):
@@ -1094,31 +1322,28 @@ class FileSystemSnapshotOptions:
     """Convenience single-mount wrapper over a named scratch volume.
 
     Prefer ``ScratchVolumeOptions`` / ``volumes=`` for multi-volume sandboxes.
-    This helper maps to a scratch volume named ``workspace`` (or ``name``)
-    mounted at ``mount_path``.
+    This helper maps to a scratch volume named ``workspace`` (or ``name``).
+    ``mount_path`` is optional: omit it to declare the volume without
+    mounting, and attach it via ``Container.volume_mounts``.
 
     Attributes:
-        mount_path: Absolute directory to mount (e.g. "/workspace").
+        mount_path: Absolute directory to mount (e.g. "/workspace"). None
+            declares the volume without a convenience mount.
         size: Mount size as a Kubernetes resource quantity (e.g. "10Gi").
         file_system_snapshot_id: When set, restore this snapshot at start.
         name: Scratch volume name (default ``"workspace"``).
     """
 
-    mount_path: str
+    mount_path: str | None = None
     size: str | None = None
     file_system_snapshot_id: str | None = None
     name: str = "workspace"
 
     def __post_init__(self) -> None:
-        if not self.mount_path:
-            raise ValueError("FileSystemSnapshotOptions.mount_path cannot be empty")
-        if not self.mount_path.startswith("/"):
-            raise ValueError(
-                f"FileSystemSnapshotOptions.mount_path must be an absolute path, "
-                f"got: {self.mount_path!r}"
+        if self.mount_path is not None:
+            _validate_absolute_mount_path(
+                self.mount_path, field="FileSystemSnapshotOptions.mount_path"
             )
-        if self.mount_path == "/":
-            raise ValueError("FileSystemSnapshotOptions.mount_path cannot be '/'")
         if not self.name:
             raise ValueError("FileSystemSnapshotOptions.name cannot be empty")
         if self.size is not None and not self.size:

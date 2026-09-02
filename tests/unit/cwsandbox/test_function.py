@@ -600,6 +600,44 @@ class TestRemoteFunction:
             mock_sandbox.read_file.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_execute_async_clears_session_container_defaults(self) -> None:
+        """@session.function() ignores session containers= defaults."""
+        from cwsandbox import Container, ResourceOptions, SandboxDefaults, Session
+
+        cpu = ResourceOptions(requests={"cpu": "1"}, limits={"cpu": "1"})
+        defaults = SandboxDefaults(
+            containers=(
+                Container(image="redis:7", name="main", primary=True, resources=cpu),
+                Container(image="redis:7", name="cache", resources=cpu),
+            ),
+            container_image="python:3.11",
+        )
+        session = Session(defaults)
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(add, session=session, container_image="python:3.12")
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
+        mock_sandbox.sandbox_id = "test-sandbox-id"
+        mock_sandbox.write_file = MagicMock(return_value=make_operation_ref(None))
+        mock_sandbox.exec = MagicMock(return_value=make_process(returncode=0))
+        mock_sandbox.read_file = MagicMock(return_value=make_operation_ref(json.dumps(5).encode()))
+
+        with patch("cwsandbox._sandbox.Sandbox") as MockSandbox:
+            MockSandbox.return_value = mock_sandbox
+            result = await remote_fn._execute_async(2, 3)
+
+        assert result == 5
+        call_kwargs = MockSandbox.call_args[1]
+        assert call_kwargs["container_image"] == "python:3.12"
+        assert call_kwargs["defaults"].containers is None
+
+    @pytest.mark.asyncio
     async def test_execute_async_raises_on_failure(self) -> None:
         """Test _execute_async raises SandboxExecutionError on non-zero exit."""
         from cwsandbox import Session

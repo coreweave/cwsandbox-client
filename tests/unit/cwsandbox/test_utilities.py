@@ -360,3 +360,8 @@ class TestExports:
     def test_set_auth_mode_in_all(self) -> None:
         """set_auth_mode is in __all__."""
         assert "set_auth_mode" in cwsandbox.__all__
+
+    def test_container_types_in_all(self) -> None:
+        assert "Container" in cwsandbox.__all__
+        assert "VolumeMount" in cwsandbox.__all__
+        assert "ContainerStatus" in cwsandbox.__all__

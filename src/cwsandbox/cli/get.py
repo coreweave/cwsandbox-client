@@ -16,7 +16,7 @@ from cwsandbox import Sandbox
 
 def _sandbox_details(sandbox: Sandbox) -> dict[str, Any]:
     """Return the CLI detail payload for a sandbox."""
-    return {
+    details: dict[str, Any] = {
         "sandbox_id": sandbox.sandbox_id,
         "status": sandbox.status.value if sandbox.status else None,
         "runner_id": sandbox.runner_id,
@@ -24,6 +24,28 @@ def _sandbox_details(sandbox: Sandbox) -> dict[str, Any]:
         "started_at": sandbox.started_at.isoformat() if sandbox.started_at else None,
         "returncode": sandbox.returncode,
     }
+    containers = getattr(sandbox, "containers", ())
+    if isinstance(containers, (list, tuple)) and containers:
+        details["containers"] = [
+            {
+                "name": row.name,
+                "image": row.image,
+                "primary": row.primary,
+            }
+            for row in containers
+        ]
+    statuses = getattr(sandbox, "container_statuses", ())
+    if isinstance(statuses, (list, tuple)) and statuses:
+        details["container_statuses"] = [
+            {
+                "name": row.name,
+                "state": row.state.value if hasattr(row.state, "value") else str(row.state),
+                "exit_code": row.exit_code,
+                "restart_count": row.restart_count,
+            }
+            for row in statuses
+        ]
+    return details
 
 
 def _display_value(value: Any) -> str:
@@ -66,3 +88,25 @@ def get_sandbox(sandbox_id: str, output_format: str) -> None:
     width = max(len(label) for label, _ in rows)
     for label, value in rows:
         click.echo(f"{label:<{width}}  {_display_value(value)}")
+
+    containers = details.get("containers") or ()
+    if containers:
+        click.echo("")
+        click.echo("CONTAINERS")
+        for row in containers:
+            marker = "primary" if row.get("primary") else "helper"
+            name = row.get("name") or "-"
+            image = row.get("image") or "-"
+            click.echo(f"  {name} ({marker})  {image}")
+
+    statuses = details.get("container_statuses") or ()
+    if statuses:
+        click.echo("")
+        click.echo("CONTAINER STATUS")
+        for row in statuses:
+            name = row.get("name") or "-"
+            state = row.get("state") or "-"
+            exit_code = row.get("exit_code")
+            restarts = row.get("restart_count")
+            extra = f"  exit={exit_code}" if exit_code is not None else ""
+            click.echo(f"  {name}  {state}{extra}  restarts={restarts}")

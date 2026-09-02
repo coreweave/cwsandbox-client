@@ -138,9 +138,25 @@ class TestShellCommand:
             ["/bin/bash"],
             width=80,
             height=24,
+            container=None,
         )
         # Verify terminal was restored
         env["tcsetattr"].assert_called_once()
+
+    def test_shell_with_container(self) -> None:
+        """cwsandbox sh --container passes container to shell()."""
+        mock_sandbox = MagicMock()
+        with _terminal_env(mock_sandbox):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["sh", "test-sandbox-id", "--container", "cache"])
+
+        assert result.exit_code == 0
+        mock_sandbox.shell.assert_called_once_with(
+            ["/bin/bash"],
+            width=80,
+            height=24,
+            container="cache",
+        )
 
     def test_shell_custom_cmd(self) -> None:
         """cwsandbox shell --cmd passes custom command to shell()."""
@@ -157,6 +173,7 @@ class TestShellCommand:
             ["python", "main.py"],
             width=120,
             height=40,
+            container=None,
         )
 
     def test_shell_empty_cmd_error(self) -> None:

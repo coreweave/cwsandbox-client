@@ -33,12 +33,18 @@ from cwsandbox import Sandbox
     help="Show logs since timestamp (e.g. 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS').",
 )
 @click.option("--timestamps", "-t", is_flag=True, default=False, help="Show timestamps.")
+@click.option(
+    "--container",
+    default=None,
+    help="Container name. Omit to target the primary.",
+)
 def logs(
     sandbox_id: str,
     follow: bool,
     tail_lines: int | None,
     since_time: datetime | None,
     timestamps: bool,
+    container: str | None,
 ) -> None:
     """Stream logs from a sandbox's main process.
 
@@ -61,6 +67,7 @@ def logs(
         tail_lines=tail_lines,
         since_time=since_time,
         timestamps=timestamps,
+        container=container,
     )
     try:
         for line in reader:
