@@ -4509,7 +4509,7 @@ class Sandbox:
                         sandbox_pb2.EndpointKind,
                         sandbox_pb2.EndpointKind.Value(f"ENDPOINT_KIND_{kind.name}"),
                     )
-                    if isinstance(auth, EndpointAuth):
+                    if auth is not None:
                         proto_svc.endpoint.auth = cast(
                             sandbox_pb2.EndpointAuth,
                             sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
