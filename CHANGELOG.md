@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.12.3 (2026-09-03)
+
+### Bug Fixes
+
+- **exec**: Retry transient direct failures
+  ([#171](https://github.com/coreweave/cwsandbox-client/pull/171),
+  [`2fb01dc`](https://github.com/coreweave/cwsandbox-client/commit/2fb01dc55792d793ea19ed78aa4ffd80814f9640))
+
+### Testing
+
+- **e2e**: Fix runtime and file fallback checks
+  ([`f3965ee`](https://github.com/coreweave/cwsandbox-client/commit/f3965eeacfc7095d132dffd26b2f50d058c3b91e))
+
+
 ## v1.12.2 (2026-09-02)
 
 ### Bug Fixes
