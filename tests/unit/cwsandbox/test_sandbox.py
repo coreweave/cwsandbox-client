@@ -27,7 +27,6 @@ from cwsandbox import (
     EndpointAuth,
     EndpointKind,
     HttpsEndpointStatus,
-    TlsPassthroughEndpointStatus,
     ImagePullCredentials,
     IngressRule,
     NetworkOptions,
@@ -44,6 +43,7 @@ from cwsandbox import (
     ServiceProtocol,
     ServiceVisibility,
     StorageMedium,
+    TlsPassthroughEndpointStatus,
 )
 from cwsandbox._sandbox import (
     SandboxStatus,
