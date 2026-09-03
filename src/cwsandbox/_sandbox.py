@@ -32,6 +32,7 @@ from collections.abc import (
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
 
 import grpc
@@ -167,6 +168,7 @@ from cwsandbox._types import (
     ProcessResult,
     RegisteredVolumeOptions,
     ResourceOptions,
+    SandboxFileType,
     ScratchVolumeOptions,
     Secret,
     SecurityContext,
@@ -288,6 +290,8 @@ class SandboxStatus(StrEnum):
     Attributes:
         PENDING: Sandbox has been accepted but not yet scheduled.
         CREATING: Sandbox container is being created.
+        PREPARING: Accepted image fill; not placed. Gateway does not insert
+            this state yet. ``wait()`` polls through it; it is not a success.
         RUNNING: Sandbox is running and ready for operations.
         PAUSED: Sandbox is paused (resources may be reclaimed).
         TERMINATING: Sandbox is draining through its grace period before exit.
@@ -301,6 +305,7 @@ class SandboxStatus(StrEnum):
 
     RUNNING = "running"
     CREATING = "creating"
+    PREPARING = "preparing"
     PENDING = "pending"
     PAUSED = "paused"
     TERMINATING = "terminating"
@@ -1094,13 +1099,18 @@ def _resolve_placement_for_spillover(
     spillover: PlacementSpillover,
     *,
     from_template: bool,
+    from_file: bool = False,
 ) -> PlacementMode | None:
     """Validate spillover against placement_mode/template; resolve attempt-1 mode.
 
     For non-``STRICT`` spillover, an unset/unspecified primary is filled in as
-    the spillover's first mode (CKS or serverless). Templates only allow
-    ``STRICT``.
+    the spillover's first mode (CKS or serverless). Templates and from-file
+    creates only allow ``STRICT``.
     """
+    if from_file and spillover != PlacementSpillover.STRICT:
+        raise TypeError(
+            f"placement_spillover must be 'strict' for run_from_file (got {spillover.value!r})"
+        )
     if from_template and spillover != PlacementSpillover.STRICT:
         raise ValueError(
             f"placement_spillover must be STRICT for template sandboxes (got {spillover.value!r})"
@@ -1129,6 +1139,66 @@ def _resolve_placement_for_spillover(
         return PlacementMode.SERVERLESS if primary is None else primary
 
     return placement_mode
+
+
+# Raw Compose YAML cap for CreateSandboxFromFile (Gateway also enforces this).
+_CREATE_FROM_FILE_CONTENTS_MAX_BYTES = 256 * 1024
+
+_FROM_FILE_UNSUPPORTED_KWARGS = frozenset(
+    {
+        "build_contexts",
+        "container_image",
+        "containers",
+        "environment_variables",
+        "file_system_snapshot",
+        "image_pull_credentials",
+        "instance_type",
+        "mounted_files",
+        "network_ids",
+        "resources",
+        "runtime_class",
+        "secrets",
+        "security_context",
+        "services",
+        "template_id",
+        "volumes",
+        "working_dir",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _FromFileCreate:
+    """CreateSandboxFromFile payload. Do not log ``contents``."""
+
+    contents: bytes
+    file_type: SandboxFileType
+    primary_service: str
+    image_overrides: dict[str, str]
+    default_resources: ResourceOptions | None
+
+    def __repr__(self) -> str:
+        return (
+            f"_FromFileCreate(file_type={self.file_type!r}, "
+            f"primary_service={self.primary_service!r}, "
+            f"contents=<{len(self.contents)} bytes>, "
+            f"image_overrides={self.image_overrides!r}, "
+            f"default_resources={self.default_resources!r})"
+        )
+
+
+def _read_from_file_contents(contents: str | Path | bytes) -> bytes:
+    if isinstance(contents, bytes):
+        return contents
+    return Path(contents).read_bytes()
+
+
+def _coerce_sandbox_file_type(file_type: SandboxFileType | str) -> SandboxFileType:
+    if isinstance(file_type, str):
+        return SandboxFileType(file_type.lower())
+    if not isinstance(file_type, SandboxFileType):
+        raise TypeError(f"file_type must be SandboxFileType or str, got {type(file_type).__name__}")
+    return file_type
 
 
 def _is_spillover_eligible(exc: Exception) -> bool:
@@ -1684,6 +1754,7 @@ class Sandbox:
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
         containers: Sequence[Container | Mapping[str, Any]] | None = None,
+        _from_file: _FromFileCreate | None = None,
         _session: Session | None = None,
     ) -> None:
         """Initialize a sandbox (does not start it).
@@ -1725,7 +1796,8 @@ class Sandbox:
                 ``strict`` (no create retry). Non-strict modes retry CreateSandbox
                 once on the alternate mode when the primary cannot place the
                 request. ``serverless_then_cks`` cannot be combined with
-                ``runner_ids``. Template sandboxes require ``strict``.
+                ``runner_ids``. Template and from-file sandboxes require
+                ``strict``.
             services: Typed service ports (``Service`` list/tuple).
             volumes: Scratch or registered volumes (``ScratchVolumeOptions``,
                 ``RegisteredVolumeOptions``, or a ``volume_id`` dict).
@@ -1768,10 +1840,14 @@ class Sandbox:
         self._auth = auth if auth is not None else self._defaults.auth
 
         from_template = template_id is not None
+        from_file = _from_file is not None
+        if from_file and from_template:
+            raise TypeError("template_id cannot be combined with run_from_file")
+        skip_spec_defaults = from_template or from_file
         effective_containers = (
             containers
             if containers is not None
-            else (None if from_template else self._defaults.containers)
+            else (None if skip_spec_defaults else self._defaults.containers)
         )
         using_containers = effective_containers is not None
         if effective_containers is not None:
@@ -1808,13 +1884,15 @@ class Sandbox:
             self._args: list[str] | None = None
             self._container_image: str | None = None
         else:
-            self._command = command if from_template else command or self._defaults.command
+            self._command = command if skip_spec_defaults else command or self._defaults.command
             self._args = (
-                args if args is not None else (None if from_template else list(self._defaults.args))
+                args
+                if args is not None
+                else (None if skip_spec_defaults else list(self._defaults.args))
             )
             self._container_image = (
                 container_image
-                if from_template
+                if skip_spec_defaults
                 else container_image or self._defaults.container_image
             )
         self._base_url = (
@@ -1858,7 +1936,7 @@ class Sandbox:
             if using_containers
             else (
                 dict(environment_variables or {})
-                if from_template
+                if skip_spec_defaults
                 else self._defaults.merge_environment_variables(environment_variables)
             )
         )
@@ -1904,7 +1982,11 @@ class Sandbox:
         effective_resources = (
             None
             if using_containers
-            else (resources if resources is not None or from_template else self._defaults.resources)
+            else (
+                resources
+                if resources is not None or skip_spec_defaults
+                else self._defaults.resources
+            )
         )
         normalized = normalize_resources(effective_resources)
         if normalized is not None:
@@ -1925,7 +2007,7 @@ class Sandbox:
         effective_fss = (
             file_system_snapshot
             if file_system_snapshot is not None
-            else (None if from_template else self._defaults.file_system_snapshot)
+            else (None if skip_spec_defaults else self._defaults.file_system_snapshot)
         )
         effective_fss = _coerce_file_system_snapshot(effective_fss)
         if effective_fss is not None:
@@ -1943,16 +2025,17 @@ class Sandbox:
             self._placement_mode = PlacementMode(pm.lower()) if isinstance(pm, str) else pm
         if placement_spillover is not None:
             self._placement_spillover = _normalize_placement_spillover(placement_spillover)
-        elif not from_template:
+        elif from_template or from_file:
+            self._placement_spillover = PlacementSpillover.STRICT
+        else:
             self._placement_spillover = _normalize_placement_spillover(
                 self._defaults.placement_spillover
             )
-        else:
-            self._placement_spillover = PlacementSpillover.STRICT
         self._placement_mode = _resolve_placement_for_spillover(
             self._placement_mode,
             self._placement_spillover,
             from_template=from_template,
+            from_file=from_file,
         )
         if self._placement_spillover == PlacementSpillover.SERVERLESS_THEN_CKS and self._runner_ids:
             raise ValueError(
@@ -1963,35 +2046,36 @@ class Sandbox:
             )
         if services is not None:
             self._services = [Service(**s) if isinstance(s, dict) else s for s in services]
-        elif not from_template and self._defaults.services is not None:
+        elif not skip_spec_defaults and self._defaults.services is not None:
             self._services = list(self._defaults.services)
         if volumes is not None:
             self._start_kwargs["volumes"] = list(volumes)
             self._scratch_volume_names = _scratch_names_from_volumes(volumes)
-        elif not from_template and self._defaults.volumes is not None:
+        elif not skip_spec_defaults and self._defaults.volumes is not None:
             self._start_kwargs["volumes"] = list(self._defaults.volumes)
             self._scratch_volume_names = _scratch_names_from_volumes(self._defaults.volumes)
         if template_id is not None:
             self._template_id = template_id
+        self._from_file = _from_file
         if image_pull_credentials is not None:
             if isinstance(image_pull_credentials, dict):
                 image_pull_credentials = ImagePullCredentials(**image_pull_credentials)
             self._image_pull_credentials = image_pull_credentials
         effective_runtime_class = (
             runtime_class
-            if runtime_class is not None or from_template
+            if runtime_class is not None or skip_spec_defaults
             else self._defaults.runtime_class
         )
         self._runtime_class = effective_runtime_class or None
         effective_security_context = (
             security_context
-            if security_context is not None or from_template
+            if security_context is not None or skip_spec_defaults
             else (None if using_containers else self._defaults.security_context)
         )
         self._security_context = coerce_security_context(effective_security_context)
         effective_working_dir = (
             working_dir
-            if working_dir is not None or from_template
+            if working_dir is not None or skip_spec_defaults
             else (None if using_containers else self._defaults.working_dir)
         )
         self._working_dir = effective_working_dir or None
@@ -2005,7 +2089,7 @@ class Sandbox:
             assert user_containers is not None
             self._start_kwargs["containers"] = list(user_containers)
         inherited_secrets: list[Secret] = (
-            [] if from_template or using_containers else list(self._defaults.secrets or ())
+            [] if skip_spec_defaults or using_containers else list(self._defaults.secrets or ())
         )
         merged_secrets = inherited_secrets + [
             Secret(**s) if isinstance(s, dict) else s for s in (secrets or ())
@@ -2322,6 +2406,126 @@ class Sandbox:
         return sandbox
 
     @classmethod
+    def run_from_file(
+        cls,
+        contents: str | Path | bytes,
+        /,
+        *,
+        primary_service: str,
+        file_type: SandboxFileType | str = SandboxFileType.COMPOSE,
+        image_overrides: Mapping[str, str] | None = None,
+        default_resources: ResourceOptions | dict[str, Any] | None = None,
+        defaults: SandboxDefaults | None = None,
+        auth: AuthConfig | None = None,
+        request_timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
+        max_lifetime_seconds: float | None = None,
+        tags: list[str] | None = None,
+        runner_ids: list[str] | None = None,
+        network: NetworkOptions | dict[str, Any] | None = None,
+        placement_mode: PlacementMode | str | None = None,
+        placement_spillover: PlacementSpillover | str | None = None,
+        object_storage_access: ObjectStorageAccess | dict[str, Any] | None = None,
+        annotations: dict[str, str] | None = None,
+        request_id: str | None = None,
+        data_plane_mode: DataPlaneMode | str | None = None,
+        **kwargs: Any,
+    ) -> Sandbox:
+        """Create a sandbox from an uploaded file (CreateSandboxFromFile).
+
+        v1 Compose only, pull-only images. Reads ``contents`` as raw bytes and
+        does not normalize YAML: the same ``request_id`` with different bytes
+        (including whitespace-only edits) is ``CWSANDBOX_REQUEST_ID_CONFLICT``.
+        Returns immediately once the backend accepts; reuse ``wait()`` for
+        RUNNING. Do not wait for ``PREPARING``.
+
+        GetSandbox returns the translated spec, not the source file. A leftover
+        Compose ``build:`` is ``CWSANDBOX_NOT_IMPLEMENTED``. Skip-build by
+        setting ``image:`` in the YAML or ``image_overrides``.
+
+        Args:
+            contents: Compose file path (``str`` / ``Path``) or raw YAML bytes.
+                A ``str`` is always opened as a path; pass Compose text as
+                ``bytes`` (``.encode("utf-8")``). Cap is 256 KiB. Bytes are
+                sent as-is.
+            primary_service: Compose service that is the sandbox primary.
+            file_type: Document type. Defaults to ``compose``.
+            image_overrides: Per-service pullable image refs. Keys must be
+                services in ``contents``.
+            default_resources: CPU/memory copied onto each service that omitted
+                ``deploy.resources``. Per container, not a project budget.
+                GPU is rejected locally (Gateway also rejects it).
+            defaults: Optional ``SandboxDefaults``. Tags, network,
+                ``placement_mode``, ``runner_ids``, annotations, object-storage
+                access, and max lifetime are inherited. Container/volume/
+                service defaults are not. Non-strict ``placement_spillover``
+                on defaults is ignored (from-file is always strict).
+            request_id: Optional idempotency token. Auto-generated when omitted.
+            **kwargs: Rejected. This RPC does not accept volumes, published
+                services, ``runtime_class``, ``image_pull_credentials``,
+                ``network_ids``, or ``build_contexts``.
+
+        Returns:
+            Sandbox handle (create accepted; may still be starting).
+        """
+        if kwargs:
+            bad = ", ".join(sorted(kwargs))
+            extra = sorted(set(kwargs) & _FROM_FILE_UNSUPPORTED_KWARGS)
+            if extra:
+                raise TypeError(
+                    "CreateSandboxFromFile does not accept "
+                    + ", ".join(extra)
+                    + "; use Sandbox.run() for volumes, published services, "
+                    "runtime_class, and image_pull_credentials"
+                )
+            raise TypeError(f"run_from_file() got unexpected keyword argument(s): {bad}")
+
+        if not primary_service:
+            raise ValueError("primary_service is required")
+
+        file_type = _coerce_sandbox_file_type(file_type)
+        raw = _read_from_file_contents(contents)
+        if len(raw) > _CREATE_FROM_FILE_CONTENTS_MAX_BYTES:
+            raise ValueError(
+                f"contents exceeds {_CREATE_FROM_FILE_CONTENTS_MAX_BYTES} bytes "
+                f"(got {len(raw)}). Gateway cap is 256 KiB raw YAML."
+            )
+
+        resources_opt = normalize_resources(default_resources)
+        if resources_opt is not None and resources_opt.gpu:
+            raise ValueError("default_resources must not set GPU")
+
+        overrides = dict(image_overrides) if image_overrides else {}
+        sandbox = cls(
+            defaults=defaults,
+            auth=auth,
+            request_timeout_seconds=request_timeout_seconds,
+            poll_retry_budget_seconds=poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+            max_lifetime_seconds=max_lifetime_seconds,
+            tags=tags,
+            runner_ids=runner_ids,
+            network=network,
+            placement_mode=placement_mode,
+            placement_spillover=placement_spillover,
+            object_storage_access=object_storage_access,
+            annotations=annotations,
+            data_plane_mode=data_plane_mode,
+            _from_file=_FromFileCreate(
+                contents=raw,
+                file_type=file_type,
+                primary_service=primary_service,
+                image_overrides=overrides,
+                default_resources=resources_opt,
+            ),
+        )
+        if request_id:
+            sandbox._create_request_id = request_id
+        sandbox.start().result()
+        return sandbox
+
+    @classmethod
     def session(
         cls,
         defaults: SandboxDefaults | Mapping[str, Any] | None = None,
@@ -2417,6 +2621,7 @@ class Sandbox:
         sandbox._placement_spillover = PlacementSpillover.STRICT
         sandbox._services = None
         sandbox._template_id = None
+        sandbox._from_file = None
         sandbox._image_pull_credentials = None
         sandbox._runtime_class = None
         sandbox._security_context = None
@@ -3943,7 +4148,7 @@ class Sandbox:
 
         Returns the response when sandbox reaches a stable state (RUNNING,
         PAUSED, COMPLETED, FAILED, TERMINATED, or UNSPECIFIED). Transient
-        states like CREATING and PENDING are polled through. Polls
+        states like CREATING, PENDING, and PREPARING are polled through. Polls
         indefinitely, relying on external cancellation via stop() or
         asyncio.wait_for.
 
@@ -4041,7 +4246,7 @@ class Sandbox:
         # Clamp the first RPC timeout to the retry budget so a single wedged
         # Get cannot stall longer than the budget ceiling. Do not start the
         # deadline timer yet: the budget is for retry bursts, and healthy
-        # polling across transient states (CREATING, PENDING) must not
+        # polling across transient states (CREATING, PENDING, PREPARING) must not
         # consume it. The timer starts on the first retryable failure below.
         rpc_timeout_override: float | None = None
         if self._poll_retry_budget_seconds > 0:
@@ -4160,10 +4365,27 @@ class Sandbox:
             template_id = self._start_kwargs.get("template_id") or self._template_id
             self._start_accepted_at = time.monotonic()
 
-            if template_id:
+            if self._from_file is not None:
+                from_file_request = self._build_create_from_file_request(
+                    request_id=self._create_request_id,
+                )
+                logger.debug(
+                    "Creating sandbox from file (type=%s, primary_service=%s)",
+                    self._from_file.file_type,
+                    self._from_file.primary_service,
+                )
+                try:
+                    response = await self._stub.CreateSandboxFromFile(
+                        from_file_request,
+                        timeout=self._request_timeout_seconds,
+                        metadata=self._auth_metadata,
+                    )
+                except grpc.RpcError as e:
+                    raise _translate_rpc_error(e, operation="Create sandbox from file") from e
+            elif template_id:
                 kwargs = dict(self._start_kwargs)
                 kwargs.pop("template_id", None)
-                request = self._build_create_from_template_request(
+                template_request = self._build_create_from_template_request(
                     template_id=template_id,
                     request_id=self._create_request_id,
                     overrides_kwargs=kwargs,
@@ -4171,7 +4393,7 @@ class Sandbox:
                 logger.debug("Creating sandbox from template %s", template_id)
                 try:
                     response = await self._stub.CreateSandboxFromTemplate(
-                        request,
+                        template_request,
                         timeout=self._request_timeout_seconds,
                         metadata=self._auth_metadata,
                     )
@@ -4682,6 +4904,77 @@ class Sandbox:
             overrides=overrides,
             request_id=request_id,
         )
+
+    def _build_create_from_file_request(
+        self,
+        *,
+        request_id: str,
+    ) -> sandbox_pb2.CreateSandboxFromFileRequest:
+        """Build CreateSandboxFromFileRequest. Does not set build_contexts or network_ids."""
+        spec = self._from_file
+        if spec is None:
+            raise RuntimeError("create-from-file request built without a file payload")
+
+        placement = self._placement_mode
+        mode = sandbox_pb2.SANDBOX_MODE_UNSPECIFIED
+        if placement is not None:
+            if isinstance(placement, str):
+                placement = PlacementMode(placement.lower())
+            if placement == PlacementMode.SERVERLESS:
+                mode = sandbox_pb2.SANDBOX_MODE_SERVERLESS
+            elif placement == PlacementMode.CKS:
+                mode = sandbox_pb2.SANDBOX_MODE_CKS
+
+        runner_ids = self._runner_ids
+        if runner_ids and mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS:
+            raise ValueError("runner_ids requires placement_mode=CKS")
+        if runner_ids and mode == sandbox_pb2.SANDBOX_MODE_UNSPECIFIED:
+            mode = sandbox_pb2.SANDBOX_MODE_CKS
+
+        proto_type = sandbox_pb2.SandboxFileType.Value(f"SANDBOX_FILE_TYPE_{spec.file_type.name}")
+        request = sandbox_pb2.CreateSandboxFromFileRequest(
+            type=cast(sandbox_pb2.SandboxFileType, proto_type),
+            contents=spec.contents,
+            request_id=request_id,
+        )
+        if spec.primary_service:
+            request.primary_service = spec.primary_service
+        if spec.image_overrides:
+            request.image_overrides.update(spec.image_overrides)
+        if spec.default_resources is not None:
+            reqs = self._resources_to_proto(spec.default_resources.requests, None)
+            lims = self._resources_to_proto(spec.default_resources.limits, None)
+            if reqs is not None or lims is not None:
+                request.default_resources.CopyFrom(
+                    sandbox_pb2.ResourceRequirements(
+                        requests=reqs or sandbox_pb2.Resources(),
+                        limits=lims or sandbox_pb2.Resources(),
+                    )
+                )
+        if mode != sandbox_pb2.SANDBOX_MODE_UNSPECIFIED:
+            request.mode = mode
+        if self._max_lifetime_seconds is not None:
+            request.max_lifetime_seconds = int(self._max_lifetime_seconds)
+        if self._tags:
+            request.tags.extend(self._tags)
+        network = self._start_kwargs.get("network")
+        if network is not None:
+            if isinstance(network, dict):
+                network = NetworkOptions(**network)
+            if not isinstance(network, NetworkOptions):
+                raise TypeError(
+                    f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
+                )
+            request.network.CopyFrom(network_to_proto(network))
+        if self._object_storage_access is not None:
+            request.object_storage_access.CopyFrom(
+                object_storage_to_proto(self._object_storage_access)
+            )
+        if self._annotations:
+            request.annotations.update(self._annotations)
+        if runner_ids:
+            request.runner_ids.extend(runner_ids)
+        return request
 
     @staticmethod
     def _resources_to_proto(

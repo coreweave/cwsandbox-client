@@ -122,6 +122,10 @@ CWSANDBOX_RUNNER_OVERLOADED = "CWSANDBOX_RUNNER_OVERLOADED"
 
 # Request-shape refusal (e.g. DeleteSandbox allow_missing + snapshot_volumes).
 CWSANDBOX_INVALID_REQUEST = "CWSANDBOX_INVALID_REQUEST"
+# CreateSandboxFromFile: leftover Compose build: or an unknown file type.
+CWSANDBOX_NOT_IMPLEMENTED = "CWSANDBOX_NOT_IMPLEMENTED"
+# Same request_id with different declared inputs (including YAML whitespace).
+CWSANDBOX_REQUEST_ID_CONFLICT = "CWSANDBOX_REQUEST_ID_CONFLICT"
 
 # Org / product gates that must not trigger placement spillover.
 CWSANDBOX_SERVERLESS_NOT_ALLOWED = "CWSANDBOX_SERVERLESS_NOT_ALLOWED"

@@ -11,6 +11,7 @@ import math
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,9 +34,12 @@ from cwsandbox import (
     ObjectStorageAccess,
     ObjectStoragePermission,
     PlacementMode,
+    PlacementSpillover,
     RegisteredVolumeOptions,
+    ResourceOptions,
     Sandbox,
     SandboxDefaults,
+    SandboxFileType,
     ScratchVolumeOptions,
     Secret,
     SecurityContext,
@@ -1111,6 +1115,171 @@ class TestSandboxRun:
         assert credentials.credentials.path == "registry-creds"
         assert credentials.credentials.field == "token"
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    @staticmethod
+    def _run_from_file_with_mock_stub(
+        contents: str | Path | bytes,
+        **kwargs: Any,
+    ) -> tuple[Sandbox, MagicMock]:
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response())
+        mock_stub.CreateSandboxFromTemplate = AsyncMock(
+            return_value=_create_sandbox_response("template-id")
+        )
+        mock_stub.CreateSandboxFromFile = AsyncMock(
+            return_value=_create_sandbox_response("from-file-id")
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_file(contents, **kwargs)
+        return sandbox, mock_stub
+
+    def test_run_from_file_uses_v1_request_shape(self, tmp_path: Path) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        compose = b"services:\n  main:\n    image: python:3.11\n"
+        path = tmp_path / "compose.yaml"
+        path.write_bytes(compose)
+
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            path,
+            primary_service="main",
+            image_overrides={"api": "python:3.12"},
+            default_resources=ResourceOptions(
+                requests={"cpu": "1", "memory": "256Mi"},
+                limits={"cpu": "1", "memory": "256Mi"},
+            ),
+            placement_mode=PlacementMode.CKS,
+            runner_ids=["runner-1"],
+            tags=["from-file"],
+            request_id="req-compose-1",
+        )
+
+        stub.CreateSandbox.assert_not_called()
+        stub.CreateSandboxFromTemplate.assert_not_called()
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.type == sandbox_pb2.SANDBOX_FILE_TYPE_COMPOSE
+        assert request.contents == compose
+        assert request.primary_service == "main"
+        assert dict(request.image_overrides) == {"api": "python:3.12"}
+        assert request.default_resources.requests.cpu == "1"
+        assert request.default_resources.requests.memory == "256Mi"
+        assert not request.default_resources.requests.HasField("gpu")
+        assert request.mode == sandbox_pb2.SANDBOX_MODE_CKS
+        assert list(request.runner_ids) == ["runner-1"]
+        assert list(request.tags) == ["from-file"]
+        assert request.request_id == "req-compose-1"
+        assert list(request.network_ids) == []
+        assert dict(request.build_contexts) == {}
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_sends_raw_bytes_without_normalizing(self) -> None:
+        compose = b"services:\n  main:\n    image: python:3.11\n  \n"
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            compose,
+            primary_service="main",
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.contents == compose
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_treats_str_as_path(self, tmp_path: Path) -> None:
+        compose = b"services:\n  main:\n    image: python:3.11\n"
+        path = tmp_path / "compose.yaml"
+        path.write_bytes(compose)
+
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            str(path),
+            primary_service="main",
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.contents == compose
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_merges_default_tags_and_network(self) -> None:
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+            defaults=SandboxDefaults(
+                tags=["session-tag"],
+                network=NetworkOptions(deny_egress=True),
+            ),
+            tags=["extra"],
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert list(request.tags) == ["session-tag", "extra"]
+        assert request.network.deny_egress is True
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_ignores_container_defaults(self) -> None:
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+            defaults=SandboxDefaults(
+                container_image="should-not-send",
+                volumes=(ScratchVolumeOptions(name="workspace", mount_path="/workspace"),),
+                services=(Service(port=8080, visibility=ServiceVisibility.PUBLIC),),
+            ),
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert sandbox._container_image is None
+        assert "volumes" not in sandbox._start_kwargs
+        assert sandbox._services is None
+        assert not request.HasField("default_resources")
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_requires_primary_service(self) -> None:
+        with pytest.raises(ValueError, match="primary_service is required"):
+            Sandbox.run_from_file(b"services: {}\n", primary_service="")
+
+    def test_run_from_file_rejects_gpu_default_resources(self) -> None:
+        with pytest.raises(ValueError, match="must not set GPU"):
+            Sandbox.run_from_file(
+                b"services:\n  main:\n    image: python:3.11\n",
+                primary_service="main",
+                default_resources=ResourceOptions(gpu={"count": 1}),
+            )
+
+    def test_run_from_file_rejects_oversize_contents(self) -> None:
+        from cwsandbox._sandbox import _CREATE_FROM_FILE_CONTENTS_MAX_BYTES
+
+        payload = b"x" * (_CREATE_FROM_FILE_CONTENTS_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="256 KiB"):
+            Sandbox.run_from_file(payload, primary_service="main")
+
+    def test_run_from_file_rejects_volumes(self) -> None:
+        with pytest.raises(TypeError, match="does not accept volumes"):
+            Sandbox.run_from_file(
+                b"services:\n  main:\n    image: python:3.11\n",
+                primary_service="main",
+                volumes=[ScratchVolumeOptions(name="workspace")],
+            )
+
+    def test_run_from_file_rejects_non_strict_spillover(self) -> None:
+        with pytest.raises(TypeError, match="must be 'strict'"):
+            Sandbox.run_from_file(
+                b"services:\n  main:\n    image: python:3.11\n",
+                primary_service="main",
+                placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            )
+
+    def test_run_from_file_defaults_file_type_compose(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+            file_type="compose",
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.type == sandbox_pb2.SANDBOX_FILE_TYPE_COMPOSE
+        assert SandboxFileType.COMPOSE == "compose"
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
 
     @pytest.mark.parametrize(
         ("kwargs", "message"),
@@ -6671,6 +6840,16 @@ class TestTerminatingStatus:
 
         status = SandboxStatus.from_proto(sandbox_pb2.STATE_TERMINATING)
         assert status == SandboxStatus.TERMINATING
+
+    def test_from_proto_preparing(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _RUNNING_STATUSES, _TERMINAL_STATUSES
+
+        status = SandboxStatus.from_proto(sandbox_pb2.STATE_PREPARING)
+        assert status == SandboxStatus.PREPARING
+        assert status.to_proto() == sandbox_pb2.STATE_PREPARING
+        assert SandboxStatus.PREPARING not in _TERMINAL_STATUSES
+        assert SandboxStatus.PREPARING not in _RUNNING_STATUSES
 
     def test_to_proto_terminating(self) -> None:
         """TERMINATING round-trips through to_proto."""

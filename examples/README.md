@@ -135,6 +135,19 @@ Demonstrates:
 - Inspecting confirmed resources from the sandbox response
 - Sharing resource defaults across sandboxes via `SandboxDefaults`
 
+### Run from File (`run_from_file.py`)
+
+Create a sandbox from a Compose YAML file (pull-only images):
+
+```bash
+python examples/run_from_file.py
+```
+
+Demonstrates:
+- Using `Sandbox.run_from_file()` with a local Compose path and `primary_service`
+- `image_overrides` as the skip-build path (leftover `build:` is still unimplemented)
+- Reusing `wait()` for RUNNING (do not wait for PREPARING)
+
 ### Run from Template (`run_from_template.py`)
 
 Create sandboxes from an organization template:

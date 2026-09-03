@@ -29,6 +29,7 @@ class State(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     STATE_TERMINATED: _ClassVar[State]
     STATE_PENDING: _ClassVar[State]
     STATE_PAUSED: _ClassVar[State]
+    STATE_PREPARING: _ClassVar[State]
 
 class ServiceProtocol(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -75,6 +76,11 @@ class ObjectStoragePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     OBJECT_STORAGE_PERMISSION_READ: _ClassVar[ObjectStoragePermission]
     OBJECT_STORAGE_PERMISSION_READ_WRITE: _ClassVar[ObjectStoragePermission]
 
+class SandboxFileType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SANDBOX_FILE_TYPE_UNSPECIFIED: _ClassVar[SandboxFileType]
+    SANDBOX_FILE_TYPE_COMPOSE: _ClassVar[SandboxFileType]
+
 class SnapshotState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     SNAPSHOT_STATE_UNSPECIFIED: _ClassVar[SnapshotState]
@@ -119,6 +125,7 @@ STATE_TERMINATING: State
 STATE_TERMINATED: State
 STATE_PENDING: State
 STATE_PAUSED: State
+STATE_PREPARING: State
 SERVICE_PROTOCOL_UNSPECIFIED: ServiceProtocol
 SERVICE_PROTOCOL_TCP: ServiceProtocol
 SERVICE_PROTOCOL_UDP: ServiceProtocol
@@ -143,6 +150,8 @@ STORAGE_MEDIUM_MEMORY: StorageMedium
 OBJECT_STORAGE_PERMISSION_UNSPECIFIED: ObjectStoragePermission
 OBJECT_STORAGE_PERMISSION_READ: ObjectStoragePermission
 OBJECT_STORAGE_PERMISSION_READ_WRITE: ObjectStoragePermission
+SANDBOX_FILE_TYPE_UNSPECIFIED: SandboxFileType
+SANDBOX_FILE_TYPE_COMPOSE: SandboxFileType
 SNAPSHOT_STATE_UNSPECIFIED: SnapshotState
 SNAPSHOT_STATE_CREATING: SnapshotState
 SNAPSHOT_STATE_READY: SnapshotState
@@ -233,8 +242,22 @@ class SecurityContext(_message.Message):
     seccomp_profile: str
     def __init__(self, run_as_user: _Optional[int] = ..., run_as_group: _Optional[int] = ..., privileged: bool = ..., allow_privilege_escalation: bool = ..., read_only_root_filesystem: bool = ..., capabilities_add: _Optional[_Iterable[str]] = ..., capabilities_drop: _Optional[_Iterable[str]] = ..., seccomp_profile: _Optional[str] = ...) -> None: ...
 
+class Probe(_message.Message):
+    __slots__ = ("exec", "period_seconds", "timeout_seconds", "failure_threshold", "initial_delay_seconds")
+    EXEC_FIELD_NUMBER: _ClassVar[int]
+    PERIOD_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_THRESHOLD_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_DELAY_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    exec: _containers.RepeatedScalarFieldContainer[str]
+    period_seconds: int
+    timeout_seconds: int
+    failure_threshold: int
+    initial_delay_seconds: int
+    def __init__(self, exec: _Optional[_Iterable[str]] = ..., period_seconds: _Optional[int] = ..., timeout_seconds: _Optional[int] = ..., failure_threshold: _Optional[int] = ..., initial_delay_seconds: _Optional[int] = ...) -> None: ...
+
 class Container(_message.Message):
-    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary")
+    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary", "startup_probe")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -256,6 +279,7 @@ class Container(_message.Message):
     SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     PRIMARY_FIELD_NUMBER: _ClassVar[int]
+    STARTUP_PROBE_FIELD_NUMBER: _ClassVar[int]
     name: str
     image: str
     command: str
@@ -270,10 +294,11 @@ class Container(_message.Message):
     security_context: SecurityContext
     image_pull_credentials: ImagePullCredentials
     primary: bool
-    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ...) -> None: ...
+    startup_probe: Probe
+    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ..., startup_probe: _Optional[_Union[Probe, _Mapping]] = ...) -> None: ...
 
 class PartialContainer(_message.Message):
-    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary")
+    __slots__ = ("name", "image", "command", "args", "environment_variables", "resources", "files", "volume_mounts", "secret_stores", "working_dir", "resource_requirements", "security_context", "image_pull_credentials", "primary", "startup_probe")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -295,6 +320,7 @@ class PartialContainer(_message.Message):
     SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     PRIMARY_FIELD_NUMBER: _ClassVar[int]
+    STARTUP_PROBE_FIELD_NUMBER: _ClassVar[int]
     name: str
     image: str
     command: str
@@ -309,7 +335,8 @@ class PartialContainer(_message.Message):
     security_context: SecurityContext
     image_pull_credentials: ImagePullCredentials
     primary: bool
-    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ...) -> None: ...
+    startup_probe: Probe
+    def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ..., startup_probe: _Optional[_Union[Probe, _Mapping]] = ...) -> None: ...
 
 class PartialSandboxSpec(_message.Message):
     __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
@@ -676,6 +703,61 @@ class CreateSandboxFromTemplateRequest(_message.Message):
     overrides: PartialSandboxSpec
     request_id: str
     def __init__(self, template_id: _Optional[str] = ..., overrides: _Optional[_Union[PartialSandboxSpec, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+
+class CreateSandboxFromFileRequest(_message.Message):
+    __slots__ = ("type", "contents", "primary_service", "image_overrides", "build_contexts", "default_resources", "mode", "max_lifetime_seconds", "tags", "network", "network_ids", "object_storage_access", "annotations", "runner_ids", "request_id")
+    class ImageOverridesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class BuildContextsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: bytes
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[bytes] = ...) -> None: ...
+    class AnnotationsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    CONTENTS_FIELD_NUMBER: _ClassVar[int]
+    PRIMARY_SERVICE_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_OVERRIDES_FIELD_NUMBER: _ClassVar[int]
+    BUILD_CONTEXTS_FIELD_NUMBER: _ClassVar[int]
+    DEFAULT_RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    MAX_LIFETIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    NETWORK_FIELD_NUMBER: _ClassVar[int]
+    NETWORK_IDS_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_STORAGE_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
+    RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    type: SandboxFileType
+    contents: bytes
+    primary_service: str
+    image_overrides: _containers.ScalarMap[str, str]
+    build_contexts: _containers.ScalarMap[str, bytes]
+    default_resources: ResourceRequirements
+    mode: SandboxMode
+    max_lifetime_seconds: int
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    network: NetworkOptions
+    network_ids: _containers.RepeatedScalarFieldContainer[str]
+    object_storage_access: ObjectStorageAccess
+    annotations: _containers.ScalarMap[str, str]
+    runner_ids: _containers.RepeatedScalarFieldContainer[str]
+    request_id: str
+    def __init__(self, type: _Optional[_Union[SandboxFileType, str]] = ..., contents: _Optional[bytes] = ..., primary_service: _Optional[str] = ..., image_overrides: _Optional[_Mapping[str, str]] = ..., build_contexts: _Optional[_Mapping[str, bytes]] = ..., default_resources: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., max_lifetime_seconds: _Optional[int] = ..., tags: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class GetSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id",)
