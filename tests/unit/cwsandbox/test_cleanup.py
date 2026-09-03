@@ -5,6 +5,7 @@
 """Unit tests for cwsandbox._cleanup module."""
 
 import signal
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -197,6 +198,40 @@ class TestInstallHandlers:
 
                 # Should only register once
                 assert mock_register.call_count == 1
+
+    def test_install_handlers_skips_signals_outside_main_thread(self) -> None:
+        """Test importing from a worker thread does not install signal handlers."""
+        errors = []
+
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+
+                def install_in_thread() -> None:
+                    try:
+                        _install_handlers()
+                    except Exception as exc:  # pragma: no cover - assertion below fails
+                        errors.append(exc)
+
+                thread = threading.Thread(target=install_in_thread)
+                thread.start()
+                thread.join()
+
+                assert errors == []
+                mock_register.assert_called_once_with(_cleanup)
+                mock_signal.assert_not_called()
+
+    def test_install_handlers_can_install_signals_after_worker_thread_import(self) -> None:
+        """Test signal handlers can still be installed later from the main thread."""
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                thread = threading.Thread(target=_install_handlers)
+                thread.start()
+                thread.join()
+
+                _install_handlers()
+
+                mock_register.assert_called_once_with(_cleanup)
+                assert mock_signal.call_count == 2
 
     def test_install_handlers_preserves_original_handlers(self) -> None:
         """Test _install_handlers preserves original signal handlers."""
