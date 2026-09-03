@@ -3452,10 +3452,11 @@ class Sandbox:
         ``host:port``. Use the host as TLS SNI. The workload owns certs.
 
         Create, Get, list, and ``from_id`` fill this when the sandbox has
-        a TLS passthrough endpoint. The live handle also retains a Create
-        value across ``wait()`` / ``get_status()`` if a later Get omits it.
-        Empty when no TLS passthrough endpoint was requested, when the
-        backend omitted the address, or after the sandbox stops.
+        a TLS passthrough endpoint. On a live handle, ``wait()`` /
+        ``get_status()`` keep a cached address per ``(port, name)`` when
+        that service is still present and Get omits the endpoint or
+        address. A row disappears when the service is gone or the
+        sandbox is TERMINATING or terminal.
         """
         return self._service_addresses
 
@@ -4714,7 +4715,7 @@ class Sandbox:
         status = view._sandbox.status
         service_urls: list[tuple[int, str, str]] = []
         service_endpoints: list[HttpsEndpointStatus] = []
-        service_addresses: list[TlsPassthroughEndpointStatus] = []
+        tls_rows: list[tuple[int, str, str]] = []
         for s in status.services:
             has_endpoint = s.HasField("endpoint")
             kind = s.endpoint.kind if has_endpoint else None
@@ -4733,28 +4734,38 @@ class Sandbox:
                         )
                     )
             elif has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH:
-                if s.endpoint.address:
-                    service_addresses.append(
-                        TlsPassthroughEndpointStatus(
-                            port=s.port,
-                            name=s.name,
-                            kind=EndpointKind.TLS_PASSTHROUGH,
-                            address=s.endpoint.address,
-                        )
-                    )
+                tls_rows.append((s.port, s.name, s.endpoint.address))
             elif not has_endpoint and s.url:
                 service_urls.append((s.port, s.name, s.url))
         self._service_urls = tuple(service_urls)
         self._service_endpoints = tuple(service_endpoints)
-        if service_addresses:
-            self._service_addresses = tuple(service_addresses)
-        elif status.state in (
+        if status.state in (
             sandbox_pb2.STATE_TERMINATING,
             sandbox_pb2.STATE_COMPLETED,
             sandbox_pb2.STATE_FAILED,
             sandbox_pb2.STATE_TERMINATED,
         ):
             self._service_addresses = ()
+        else:
+            live = {(service.port, service.name) for service in status.services}
+            cached = {(entry.port, entry.name): entry for entry in self._service_addresses}
+            by_key = {key: entry for key, entry in cached.items() if key in live}
+            for port, name, address in tls_rows:
+                if address:
+                    by_key[(port, name)] = TlsPassthroughEndpointStatus(
+                        port=port,
+                        name=name,
+                        kind=EndpointKind.TLS_PASSTHROUGH,
+                        address=address,
+                    )
+            merged: list[TlsPassthroughEndpointStatus] = []
+            seen: set[tuple[int, str]] = set()
+            for service in status.services:
+                key = (service.port, service.name)
+                if key in by_key and key not in seen:
+                    merged.append(by_key[key])
+                    seen.add(key)
+            self._service_addresses = tuple(merged)
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )
