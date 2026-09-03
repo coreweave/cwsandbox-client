@@ -65,6 +65,68 @@ class _DirectRpcError(grpc.RpcError):
         return self._trailing
 
 
+class _DirectAioRpcError(grpc.aio.AioRpcError):
+    def __init__(
+        self,
+        code: grpc.StatusCode,
+        *,
+        reason: str | None = None,
+        details: str = "transient failure",
+    ) -> None:
+        self._code = code
+        self._details = details
+        self._trailing: list[tuple[str, bytes]] = []
+        if reason is not None:
+            info = error_details_pb2.ErrorInfo(
+                reason=reason,
+                domain="cwsandbox.com",
+            )
+            detail = any_pb2.Any()
+            detail.Pack(info)
+            status = status_pb2.Status(code=code.value[0], message=details)
+            status.details.append(detail)
+            self._trailing.append(("grpc-status-details-bin", status.SerializeToString()))
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+    def initial_metadata(self) -> tuple[()]:
+        return ()
+
+    def trailing_metadata(self) -> list[tuple[str, bytes]]:
+        return self._trailing
+
+
+class _FakeExecCall:
+    def __init__(
+        self,
+        responses: list[sandbox_pb2.ExecStreamResponse] | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self._responses = responses or []
+        self._error = error
+        self._index = 0
+        self.cancel = MagicMock()
+        self.add_done_callback = MagicMock()
+
+    def __aiter__(self) -> _FakeExecCall:
+        return self
+
+    async def __anext__(self) -> sandbox_pb2.ExecStreamResponse:
+        if self._index < len(self._responses):
+            response = self._responses[self._index]
+            self._index += 1
+            return response
+        if self._error is not None:
+            error, self._error = self._error, None
+            raise error
+        raise StopAsyncIteration
+
+
 def _connection_response(*permissions: int) -> sandbox_pb2.SandboxConnection:
     expires_at = Timestamp()
     expires_at.FromDatetime(datetime.now(UTC) + timedelta(hours=2))
@@ -425,6 +487,175 @@ async def test_retiring_direct_unary_discards_channel_and_retries_once() -> None
     first_lease.discard.assert_awaited_once()
     first_lease.release.assert_awaited_once_with(discard=True)
     second_lease.release.assert_awaited_once_with(discard=False)
+
+
+@pytest.mark.parametrize(
+    ("code", "reason", "details"),
+    [
+        pytest.param(
+            grpc.StatusCode.UNAVAILABLE,
+            "CWSANDBOX_RUNNER_SHARD_RETIRING",
+            "Runner shard is retiring; retry the operation on the current endpoint",
+            id="runner-shard-retiring-action-33802245090",
+        ),
+        pytest.param(
+            grpc.StatusCode.UNAVAILABLE,
+            None,
+            "connection lost",
+            id="bare-unavailable",
+        ),
+        pytest.param(
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            None,
+            "runner overloaded",
+            id="resource-exhausted",
+        ),
+        pytest.param(
+            grpc.StatusCode.INTERNAL,
+            "CWSANDBOX_BACKEND_UNAVAILABLE",
+            "backend unavailable",
+            id="structured-backend-unavailable",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_direct_exec_retries_transient_error_before_first_response(
+    code: grpc.StatusCode,
+    reason: str | None,
+    details: str,
+) -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    first_stub = MagicMock()
+    first_stub.StreamExec = MagicMock(
+        return_value=_FakeExecCall(error=_DirectAioRpcError(code, reason=reason, details=details))
+    )
+    second_stub = MagicMock()
+    second_stub.StreamExec = MagicMock(
+        return_value=_FakeExecCall(
+            [
+                sandbox_pb2.ExecStreamResponse(
+                    output=sandbox_pb2.ExecStreamOutput(
+                        stream=sandbox_pb2.ExecStreamOutput.STREAM_STDOUT,
+                        data=b"ok\n",
+                    )
+                ),
+                sandbox_pb2.ExecStreamResponse(exit=sandbox_pb2.ExecStreamExit(exit_code=0)),
+            ]
+        )
+    )
+    first_lease = MagicMock(stub=first_stub)
+    first_lease.release = AsyncMock()
+    first_lease.discard = AsyncMock()
+    second_lease = MagicMock(stub=second_stub)
+    second_lease.release = AsyncMock()
+    second_lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(side_effect=[first_lease, second_lease])
+    stdout_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    stderr_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+    ):
+        result = await sandbox._exec_streaming_async(["echo", "ok"], stdout_queue, stderr_queue)
+
+    assert result.stdout == "ok\n"
+    assert sandbox._direct_data_plane.acquire.await_count == 2
+    first_lease.discard.assert_awaited_once()
+    first_lease.release.assert_awaited_once_with(discard=True)
+    assert await stdout_queue.get() == "ok\n"
+    assert await stdout_queue.get() is None
+    assert await stderr_queue.get() is None
+
+
+@pytest.mark.asyncio
+async def test_direct_exec_retries_transient_error_only_once() -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    leases = []
+    for _ in range(2):
+        stub = MagicMock()
+        stub.StreamExec = MagicMock(
+            return_value=_FakeExecCall(error=_DirectAioRpcError(grpc.StatusCode.UNAVAILABLE))
+        )
+        lease = MagicMock(stub=stub)
+        lease.release = AsyncMock()
+        lease.discard = AsyncMock()
+        leases.append(lease)
+    sandbox._direct_data_plane.acquire = AsyncMock(side_effect=leases)
+    stdout_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    stderr_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        pytest.raises(SandboxUnavailableError),
+    ):
+        await sandbox._exec_streaming_async(["echo", "ok"], stdout_queue, stderr_queue)
+
+    assert sandbox._direct_data_plane.acquire.await_count == 2
+    leases[0].discard.assert_awaited_once()
+    leases[0].release.assert_awaited_once_with(discard=True)
+    assert stdout_queue.qsize() == 1
+    assert await stdout_queue.get() is None
+    assert await stderr_queue.get() is None
+
+
+@pytest.mark.asyncio
+async def test_direct_exec_retry_connection_failure_closes_streams() -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    stub = MagicMock()
+    stub.StreamExec = MagicMock(
+        return_value=_FakeExecCall(error=_DirectAioRpcError(grpc.StatusCode.UNAVAILABLE))
+    )
+    lease = MagicMock(stub=stub)
+    lease.release = AsyncMock()
+    lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(
+        side_effect=[lease, DirectDataPlaneUnavailable("replacement unavailable")]
+    )
+    stdout_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    stderr_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        pytest.raises(SandboxUnavailableError, match="replacement unavailable"),
+    ):
+        await sandbox._exec_streaming_async(["echo", "ok"], stdout_queue, stderr_queue)
+
+    assert await stdout_queue.get() is None
+    assert await stderr_queue.get() is None
+
+
+@pytest.mark.asyncio
+async def test_direct_exec_does_not_retry_after_first_response() -> None:
+    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+    stub = MagicMock()
+    stub.StreamExec = MagicMock(
+        return_value=_FakeExecCall(
+            [sandbox_pb2.ExecStreamResponse(ready=sandbox_pb2.ExecStreamReady())],
+            error=_DirectAioRpcError(grpc.StatusCode.UNAVAILABLE),
+        )
+    )
+    lease = MagicMock(stub=stub)
+    lease.release = AsyncMock()
+    lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(return_value=lease)
+    stdout_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    stderr_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        pytest.raises(SandboxUnavailableError),
+    ):
+        await sandbox._exec_streaming_async(["echo", "ok"], stdout_queue, stderr_queue)
+
+    sandbox._direct_data_plane.acquire.assert_awaited_once()
 
 
 @pytest.mark.asyncio

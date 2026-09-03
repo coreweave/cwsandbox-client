@@ -1367,6 +1367,11 @@ def _is_resumable_transport_error(exc: BaseException) -> bool:
     return exc.code() in _STREAMING_RESUMABLE_STATUS_CODES
 
 
+def _is_retryable_transient_error(exc: CWSandboxError) -> bool:
+    """Return whether a translated failure belongs to the transient registry."""
+    return not isinstance(exc, SandboxNotFoundError) and isinstance(exc, _RETRYABLE_POLL_EXCEPTIONS)
+
+
 def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
     """Classify a translated poll exception as retryable or fatal.
 
@@ -1374,11 +1379,7 @@ def _classify_poll_error(exc: CWSandboxError) -> _PollErrorClassification:
     that produced it - callers that receive ``SandboxNotFoundError`` have an
     authoritative "gone" signal and must not retry it at the poll level.
     """
-    if isinstance(exc, SandboxNotFoundError):
-        return "fatal"
-    if isinstance(exc, _RETRYABLE_POLL_EXCEPTIONS):
-        return "retryable"
-    return "fatal"
+    return "retryable" if _is_retryable_transient_error(exc) else "fatal"
 
 
 _T = TypeVar("_T")
@@ -6456,6 +6457,9 @@ class Sandbox:
         stdin_queue: asyncio.Queue[bytes | None] | None = None,
         stdin_writer: StreamWriter | None = None,
         container: str | None = None,
+        _retry_transient: bool = True,
+        _deadline: float | None = None,
+        _signal_completion: bool = True,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
@@ -6467,6 +6471,8 @@ class Sandbox:
         None in stdin_queue signals EOF. Uses done_writing() for proper half-close.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        if _deadline is None and timeout is not None:
+            _deadline = time.monotonic() + timeout
 
         if not command:
             raise ValueError("Command cannot be empty")
@@ -6622,6 +6628,9 @@ class Sandbox:
 
         # Start collector task (sender is handled by gRPC via the request_iterator)
         collect_task = asyncio.create_task(collect_responses())
+        received_response = False
+        retry_error: CWSandboxError | None = None
+        retry_timeout: float | None = None
 
         try:
             while True:
@@ -6629,9 +6638,21 @@ class Sandbox:
                 if item is None:
                     break
                 if isinstance(item, Exception):
+                    if (
+                        prepared.is_direct
+                        and _retry_transient
+                        and not received_response
+                        and isinstance(item, CWSandboxError)
+                        and _is_retryable_transient_error(item)
+                    ):
+                        retry_timeout = self._remaining_budget(_deadline)
+                        if retry_timeout is None or retry_timeout > 0:
+                            retry_error = item
+                            break
                     raise item
 
                 response = item
+                received_response = True
                 if response.HasField("ready"):
                     # Server ready to receive stdin data
                     # Log latency only when stdin is enabled (no overhead when stdin=False)
@@ -6684,12 +6705,40 @@ class Sandbox:
             collect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await collect_task
-            # Signal stdin writer that process has exited (prevents writes to exited process)
-            if stdin_writer is not None:
-                stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
-            # Signal end-of-stream
-            await stdout_queue.put(None)
-            await stderr_queue.put(None)
+            if retry_error is None and _signal_completion:
+                # Signal stdin writer that process has exited (prevents writes to exited process)
+                if stdin_writer is not None:
+                    stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
+                # Signal end-of-stream
+                await stdout_queue.put(None)
+                await stderr_queue.put(None)
+
+        if retry_error is not None:
+            # A transient rejection before the runner emitted any frame is safe
+            # to replay. Drop the direct lease so the next preparation resolves
+            # the sandbox's current endpoint instead of reusing a stale channel.
+            await prepared.discard()
+            await prepared.release(discard=True)
+            try:
+                return await self._exec_streaming_async(
+                    command,
+                    stdout_queue,
+                    stderr_queue,
+                    cwd=cwd,
+                    check=check,
+                    timeout_seconds=retry_timeout,
+                    stdin_queue=stdin_queue,
+                    stdin_writer=stdin_writer,
+                    container=container,
+                    _retry_transient=False,
+                    _deadline=_deadline,
+                    _signal_completion=False,
+                )
+            finally:
+                if stdin_writer is not None:
+                    stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
+                await stdout_queue.put(None)
+                await stderr_queue.put(None)
 
         # Propagate any error from request_generator (gRPC swallows generator exceptions)
         if request_error is not None:
