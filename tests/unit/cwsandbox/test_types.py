@@ -257,10 +257,44 @@ class TestService:
     def test_endpoint_required_kind_and_auth(self) -> None:
         with pytest.raises(TypeError):
             Endpoint()  # type: ignore[call-arg]
+        with pytest.raises(ValueError, match="auth is required"):
+            Endpoint(kind=EndpointKind.HTTPS)
         ep = Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN)
         assert ep.kind == EndpointKind.HTTPS
         assert ep.auth == EndpointAuth.OPEN
         assert ep.request_timeout_seconds is None
+
+    def test_tls_passthrough_omits_auth_and_timeout(self) -> None:
+        ep = Endpoint(kind=EndpointKind.TLS_PASSTHROUGH)
+        assert ep.kind == EndpointKind.TLS_PASSTHROUGH
+        assert ep.auth is None
+        assert ep.request_timeout_seconds is None
+        coerced = Endpoint(kind="tls_passthrough")
+        assert coerced.kind == EndpointKind.TLS_PASSTHROUGH
+
+    def test_tls_passthrough_rejects_auth(self) -> None:
+        with pytest.raises(ValueError, match="auth must be unset"):
+            Endpoint(kind=EndpointKind.TLS_PASSTHROUGH, auth=EndpointAuth.OPEN)
+
+    def test_tls_passthrough_rejects_timeout(self) -> None:
+        with pytest.raises(ValueError, match="request_timeout_seconds must be unset"):
+            Endpoint(kind=EndpointKind.TLS_PASSTHROUGH, request_timeout_seconds=15)
+        with pytest.raises(ValueError, match="request_timeout_seconds must be unset"):
+            Endpoint(kind=EndpointKind.TLS_PASSTHROUGH, request_timeout_seconds=0)
+
+    def test_service_tls_nested_dict_rejects_auth_and_timeout(self) -> None:
+        with pytest.raises(ValueError, match="auth must be unset"):
+            Service(
+                port=8443,
+                visibility="public",
+                endpoint={"kind": "tls_passthrough", "auth": "open"},
+            )
+        with pytest.raises(ValueError, match="request_timeout_seconds must be unset"):
+            Service(
+                port=8443,
+                visibility="public",
+                endpoint={"kind": "tls_passthrough", "request_timeout_seconds": 15},
+            )
 
     def test_endpoint_string_coercion(self) -> None:
         ep = Endpoint(kind="https", auth="open")

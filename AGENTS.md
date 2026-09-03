@@ -67,6 +67,7 @@ Properties:
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
 - `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression
+- `service_addresses`: Tuple of `TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as `host:port`) for TLS passthrough endpoints. Create, Get, list, and `from_id` fill this. Use the host as TLS SNI. Empty after stop.
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
 - `effective_egress` / `effective_ingress`: Full echoed rule sets from status
@@ -203,7 +204,7 @@ data = await ref
 
 **`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates require `STRICT`.
 
-**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint` / `HttpsEndpointStatus`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Optional `Endpoint.request_timeout_seconds` is the server-side HTTPS request clock (504 while the sandbox stays alive). The SDK only checks that the value is an `int`. It is not `Sandbox.run(request_timeout_seconds=...)` (client RPC deadline). Omit/`0` is the platform default (15s on serverless). The server accepts `0` or `[15, 900]`. On create-from-template, `0` is replace-on-presence and does not clear a template timeout back to the platform default. Applied timeout is echoed on `Sandbox.service_endpoints`. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
+**`Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint` / `HttpsEndpointStatus` / `TlsPassthroughEndpointStatus`** (`_types.py`): Typed service ports replace beta string ingress/egress modes. Pass as `services=` on `run()` / defaults. HTTPS is create-time only: `endpoint=Endpoint(kind=HTTPS, auth=OPEN)` on PUBLIC. Optional `Endpoint.request_timeout_seconds` is the server-side HTTPS request clock (504 while the sandbox stays alive). The SDK only checks that the value is an `int`. It is not `Sandbox.run(request_timeout_seconds=...)` (client RPC deadline). Omit/`0` is the platform default (15s on serverless). The server accepts `0` or `[15, 900]`. On create-from-template, `0` is replace-on-presence and does not clear a template timeout back to the platform default. Applied timeout is echoed on `Sandbox.service_endpoints`. TLS passthrough is create-time only: `endpoint=Endpoint(kind=TLS_PASSTHROUGH)` on PUBLIC, auth and timeout omitted (`None`, not `0`). Create, Get, list, and `from_id` fill `Sandbox.service_addresses` as `TlsPassthroughEndpointStatus`; use `address` host as TLS SNI. Mixed HTTPS+TLS on one sandbox is supported. Listen-only PUBLIC or PRIVATE plus a product endpoint is `CWSANDBOX_NOT_IMPLEMENTED`.
 
 ```python
 from cwsandbox import PlacementMode, Service, ServiceVisibility, Sandbox
@@ -500,7 +501,7 @@ The API reference generator in `coreweave/docs` needs `MANIFEST_GROUPS` updated 
 
 ### Unsupported on 1.0 (not a hybrid fallback)
 
-These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** / TLS_PASSTHROUGH product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject and FSS bucket get/set still work.
+These were never public 0.26 SDK surfaces and remain unsupported until v1 backends implement them: Settings **WIF admin**, **SecretStore admin** CRUD, **NetworkService** / `network_ids`, **TOKEN** product endpoints, mixed PRIVATE+PUBLIC on one sandbox. Create-time `Secret` inject and FSS bucket get/set still work.
 
 ### Backend Communication
 
@@ -628,6 +629,7 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
 - `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)
+- `tls_passthrough.py` - TLS passthrough Create/Get/List address + SNI GET
 - `reconnect_to_sandbox.py`, `async_patterns.py` - Reconnection and async patterns
 - `delete_sandboxes.py` - Deletion patterns with `Sandbox.delete()`
 - `list_stopped_sandboxes.py` - `Sandbox.list(show_terminated=True)`

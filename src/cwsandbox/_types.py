@@ -191,9 +191,10 @@ class ServiceProtocol(StrEnum):
 
 
 class EndpointKind(StrEnum):
-    """HTTPS is the only supported endpoint kind."""
+    """Supported product endpoint kinds."""
 
     HTTPS = "https"
+    TLS_PASSTHROUGH = "tls_passthrough"
 
 
 class EndpointAuth(StrEnum):
@@ -204,11 +205,16 @@ class EndpointAuth(StrEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class Endpoint:
-    """Public HTTPS URL for a service. Set at create time; CoreWeave terminates TLS.
+    """Product endpoint on a PUBLIC service. Set at create time.
 
-    ``kind`` and ``auth`` are required. Only HTTPS + OPEN is supported.
-    A URL in ``Sandbox.service_urls`` means the hostname was assigned, not
-    that the app is listening yet.
+    HTTPS + OPEN: CoreWeave terminates TLS. A URL in
+    ``Sandbox.service_urls`` means the hostname was assigned, not that
+    the app is listening yet. ``auth`` is required.
+
+    TLS_PASSTHROUGH: the platform forwards TLS by SNI to the container.
+    ``auth`` and ``request_timeout_seconds`` must be unset. The assigned
+    target is ``host:port`` on ``Sandbox.service_addresses``. Use the
+    host as TLS SNI. The workload owns certs.
 
     ``request_timeout_seconds`` is the server-side HTTPS request clock on
     this product endpoint (504 while the sandbox stays alive). It is not
@@ -216,18 +222,20 @@ class Endpoint:
     deadline. This client only requires an ``int`` (or ``None``).
 
     Attributes:
-        kind: ``HTTPS``.
-        auth: ``OPEN`` (no platform token required).
+        kind: ``HTTPS`` or ``TLS_PASSTHROUGH``.
+        auth: ``OPEN`` when kind is HTTPS. Must be omitted for TLS
+            passthrough.
         request_timeout_seconds: Seconds before the platform closes an
             in-flight HTTPS request. ``None`` or ``0`` selects the
             platform default (15s on serverless). The server accepts
             ``0`` or ``[15, 900]``. On create-from-template, ``0`` is
             replace-on-presence and does not clear a template timeout
-            back to the platform default.
+            back to the platform default. Must be unset for TLS
+            passthrough.
     """
 
     kind: EndpointKind | str
-    auth: EndpointAuth | str
+    auth: EndpointAuth | str | None = None
     request_timeout_seconds: int | None = None
 
     def __post_init__(self) -> None:
@@ -236,13 +244,23 @@ class Endpoint:
         if isinstance(self.auth, str):
             object.__setattr__(self, "auth", EndpointAuth(self.auth.lower()))
         timeout = self.request_timeout_seconds
-        if timeout is None:
-            return
-        if isinstance(timeout, bool) or not isinstance(timeout, int):
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int)):
             raise TypeError(
                 "Endpoint.request_timeout_seconds must be an int or None, "
                 f"got {type(timeout).__name__}"
             )
+        if self.kind == EndpointKind.HTTPS:
+            if self.auth is None:
+                raise ValueError("Endpoint.auth is required when kind is HTTPS")
+            return
+        if self.kind == EndpointKind.TLS_PASSTHROUGH:
+            if self.auth is not None:
+                raise ValueError("Endpoint.auth must be unset when kind is TLS_PASSTHROUGH")
+            if timeout is not None:
+                raise ValueError(
+                    "Endpoint.request_timeout_seconds must be unset when kind "
+                    "is TLS_PASSTHROUGH"
+                )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -271,6 +289,26 @@ class HttpsEndpointStatus:
 
 
 @dataclass(frozen=True, kw_only=True)
+class TlsPassthroughEndpointStatus:
+    """Applied TLS passthrough endpoint echoed on ``Sandbox.service_addresses``.
+
+    ``address`` is ``host:port``. Use the host as TLS SNI. The workload
+    owns certs. Empty after stop.
+
+    Attributes:
+        port: Container port for this service.
+        name: Service name from status (may be empty).
+        kind: ``TLS_PASSTHROUGH``.
+        address: Assigned ``host:port``.
+    """
+
+    port: int
+    name: str
+    kind: EndpointKind
+    address: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class Service:
     """Typed service port exposed by a sandbox.
 
@@ -286,8 +324,9 @@ class Service:
             stays empty unless the API reports a URL. The service still
             appears in ``exposed_ports``. Must be PUBLIC when ``endpoint``
             is set.
-        endpoint: Optional HTTPS URL (HTTPS/OPEN, optional
-            ``request_timeout_seconds``). Omit for a plain TCP/UDP port.
+        endpoint: Optional product endpoint. HTTPS/OPEN (optional
+            ``request_timeout_seconds``) or TLS_PASSTHROUGH (auth and
+            timeout unset). Omit for a plain TCP/UDP port.
     """
 
     port: int

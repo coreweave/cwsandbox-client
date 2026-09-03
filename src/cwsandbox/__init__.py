@@ -68,6 +68,7 @@ from cwsandbox._types import (
     TenantScope,
     TerminalResult,
     TerminalSession,
+    TlsPassthroughEndpointStatus,
     VolumeMount,
 )
 from cwsandbox._volume import PvcVolumeSource, Volume, VolumeLocality, VolumeState
@@ -404,6 +405,7 @@ __all__ = [
     "StreamWriter",
     "TerminalResult",
     "TerminalSession",
+    "TlsPassthroughEndpointStatus",
     "Volume",
     "VolumeBackendNotFoundError",
     "VolumeError",

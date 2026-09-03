@@ -177,6 +177,7 @@ from cwsandbox._types import (
     StreamWriter,
     TerminalResult,
     TerminalSession,
+    TlsPassthroughEndpointStatus,
     VolumeMount,
     _coerce_container,
     _coerce_object_storage_access,
@@ -1893,6 +1894,7 @@ class Sandbox:
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
+        self._service_addresses: tuple[TlsPassthroughEndpointStatus, ...] = ()
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
@@ -2434,6 +2436,7 @@ class Sandbox:
         )
         sandbox._service_urls = ()
         sandbox._service_endpoints = ()
+        sandbox._service_addresses = ()
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
@@ -3440,6 +3443,21 @@ class Sandbox:
         no HTTPS product endpoint was requested or the response omitted one.
         """
         return self._service_endpoints
+
+    @property
+    def service_addresses(self) -> tuple[TlsPassthroughEndpointStatus, ...]:
+        """TLS passthrough endpoints echoed from create, Get, or list.
+
+        Each entry is ``TlsPassthroughEndpointStatus`` with ``address`` as
+        ``host:port``. Use the host as TLS SNI. The workload owns certs.
+
+        Create, Get, list, and ``from_id`` fill this when the sandbox has
+        a TLS passthrough endpoint. The live handle also retains a Create
+        value across ``wait()`` / ``get_status()`` if a later Get omits it.
+        Empty when no TLS passthrough endpoint was requested, when the
+        backend omitted the address, or after the sandbox stops.
+        """
+        return self._service_addresses
 
     @property
     def containers(self) -> tuple[Container, ...]:
@@ -4489,10 +4507,11 @@ class Sandbox:
                         sandbox_pb2.EndpointKind,
                         sandbox_pb2.EndpointKind.Value(f"ENDPOINT_KIND_{kind.name}"),
                     )
-                    proto_svc.endpoint.auth = cast(
-                        sandbox_pb2.EndpointAuth,
-                        sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
-                    )
+                    if isinstance(auth, EndpointAuth):
+                        proto_svc.endpoint.auth = cast(
+                            sandbox_pb2.EndpointAuth,
+                            sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
+                        )
                     if endpoint.request_timeout_seconds:
                         proto_svc.endpoint.request_timeout_seconds = (
                             endpoint.request_timeout_seconds
@@ -4695,27 +4714,47 @@ class Sandbox:
         status = view._sandbox.status
         service_urls: list[tuple[int, str, str]] = []
         service_endpoints: list[HttpsEndpointStatus] = []
+        service_addresses: list[TlsPassthroughEndpointStatus] = []
         for s in status.services:
-            url = s.url or (s.endpoint.url if s.HasField("endpoint") else "")
-            if url:
-                service_urls.append((s.port, s.name, url))
-            if (
-                s.HasField("endpoint")
-                and s.endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
-                and s.endpoint.request_timeout_seconds > 0
-            ):
-                service_endpoints.append(
-                    HttpsEndpointStatus(
-                        port=s.port,
-                        name=s.name,
-                        kind=EndpointKind.HTTPS,
-                        auth=EndpointAuth.OPEN,
-                        url=s.endpoint.url,
-                        request_timeout_seconds=s.endpoint.request_timeout_seconds,
+            has_endpoint = s.HasField("endpoint")
+            kind = s.endpoint.kind if has_endpoint else None
+            if has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_HTTPS:
+                if s.endpoint.url:
+                    service_urls.append((s.port, s.name, s.endpoint.url))
+                if s.endpoint.request_timeout_seconds > 0:
+                    service_endpoints.append(
+                        HttpsEndpointStatus(
+                            port=s.port,
+                            name=s.name,
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.OPEN,
+                            url=s.endpoint.url,
+                            request_timeout_seconds=s.endpoint.request_timeout_seconds,
+                        )
                     )
-                )
+            elif has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH:
+                if s.endpoint.address:
+                    service_addresses.append(
+                        TlsPassthroughEndpointStatus(
+                            port=s.port,
+                            name=s.name,
+                            kind=EndpointKind.TLS_PASSTHROUGH,
+                            address=s.endpoint.address,
+                        )
+                    )
+            elif not has_endpoint and s.url:
+                service_urls.append((s.port, s.name, s.url))
         self._service_urls = tuple(service_urls)
         self._service_endpoints = tuple(service_endpoints)
+        if service_addresses:
+            self._service_addresses = tuple(service_addresses)
+        elif status.state in (
+            sandbox_pb2.STATE_TERMINATING,
+            sandbox_pb2.STATE_COMPLETED,
+            sandbox_pb2.STATE_FAILED,
+            sandbox_pb2.STATE_TERMINATED,
+        ):
+            self._service_addresses = ()
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )
