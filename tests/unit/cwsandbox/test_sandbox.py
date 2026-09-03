@@ -7279,6 +7279,80 @@ class TestStoppingStateTransitions:
 
         assert sandbox.service_addresses == ()
 
+    def test_apply_sandbox_info_clears_tls_address_when_paused(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_PAUSED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._state = sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == ()
+        assert sandbox.status == SandboxStatus.PAUSED
+
+    def test_apply_sandbox_info_clears_tls_address_on_poll_unspecified(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_UNSPECIFIED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._state = sandbox._apply_sandbox_info(_SandboxView(proto), source="poll")
+
+        assert sandbox.service_addresses == ()
+        assert sandbox.status == SandboxStatus.COMPLETED
+
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""
         from cwsandbox._proto import sandbox_pb2

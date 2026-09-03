@@ -3454,9 +3454,10 @@ class Sandbox:
         Create, Get, list, and ``from_id`` fill this when the sandbox has
         a TLS passthrough endpoint. On a live handle, ``wait()`` /
         ``get_status()`` keep a cached address per ``(port, name)`` when
-        that service is still present and Get omits the endpoint or
-        address. A row disappears when the service is gone or the
-        sandbox is TERMINATING or terminal.
+        proto state is CREATING or RUNNING, that service is still
+        present, and Get omits the endpoint or address. A row
+        disappears when the service is gone or proto state is not
+        CREATING or RUNNING.
         """
         return self._service_addresses
 
@@ -4740,13 +4741,9 @@ class Sandbox:
         self._service_urls = tuple(service_urls)
         self._service_endpoints = tuple(service_endpoints)
         if status.state in (
-            sandbox_pb2.STATE_TERMINATING,
-            sandbox_pb2.STATE_COMPLETED,
-            sandbox_pb2.STATE_FAILED,
-            sandbox_pb2.STATE_TERMINATED,
+            sandbox_pb2.STATE_CREATING,
+            sandbox_pb2.STATE_RUNNING,
         ):
-            self._service_addresses = ()
-        else:
             live = {(service.port, service.name) for service in status.services}
             cached = {(entry.port, entry.name): entry for entry in self._service_addresses}
             by_key = {key: entry for key, entry in cached.items() if key in live}
@@ -4766,6 +4763,8 @@ class Sandbox:
                     merged.append(by_key[key])
                     seen.add(key)
             self._service_addresses = tuple(merged)
+        else:
+            self._service_addresses = ()
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )
