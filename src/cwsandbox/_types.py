@@ -258,8 +258,7 @@ class Endpoint:
                 raise ValueError("Endpoint.auth must be unset when kind is TLS_PASSTHROUGH")
             if timeout is not None:
                 raise ValueError(
-                    "Endpoint.request_timeout_seconds must be unset when kind "
-                    "is TLS_PASSTHROUGH"
+                    "Endpoint.request_timeout_seconds must be unset when kind is TLS_PASSTHROUGH"
                 )
 
 

@@ -985,15 +985,11 @@ def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
                     response = httpx.get(url, timeout=10.0, verify=False)
                     if response.status_code == 200 and response.text == "product-tls-ok":
                         return
-                    last_error = AssertionError(
-                        f"{response.status_code} {response.text!r}"
-                    )
+                    last_error = AssertionError(f"{response.status_code} {response.text!r}")
                 except (httpx.HTTPError, OSError) as exc:
                     last_error = exc
                 time.sleep(2)
-            raise AssertionError(
-                f"TLS GET {url} did not return product-tls-ok: {last_error}"
-            )
+            raise AssertionError(f"TLS GET {url} did not return product-tls-ok: {last_error}")
     except SandboxError as exc:
         if exc.reason == CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED:
             pytest.skip(f"no runner advertises TLS passthrough: {exc}")
