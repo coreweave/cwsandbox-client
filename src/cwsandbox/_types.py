@@ -132,9 +132,9 @@ class PlacementSpillover(StrEnum):
     ``placement_mode`` remains the primary (first-attempt) mode. Spillover modes
     retry CreateSandbox once with the alternate mode when the first attempt
     cannot place the request (capacity, no suitable runner, runner
-    unavailable/overloaded, or a placement constraint). Template creates
-    allow only ``STRICT``. ``SERVERLESS_THEN_CKS`` cannot be combined with
-    ``runner_ids``.
+    unavailable/overloaded, or a placement constraint). Template and
+    ``run_from_file`` creates allow only ``STRICT``. ``SERVERLESS_THEN_CKS``
+    cannot be combined with ``runner_ids``.
 
     Attributes:
         STRICT: No spill (default). Honor ``placement_mode`` only.
@@ -150,6 +150,19 @@ class PlacementSpillover(StrEnum):
     STRICT = "strict"
     CKS_THEN_SERVERLESS = "cks_then_serverless"
     SERVERLESS_THEN_CKS = "serverless_then_cks"
+
+
+class SandboxFileType(StrEnum):
+    """Document type for ``Sandbox.run_from_file``.
+
+    Attributes:
+        UNSPECIFIED: Leave unset; Gateway rejects this as invalid.
+        COMPOSE: Compose YAML (pull-only). A leftover ``build:`` is
+            ``CWSANDBOX_NOT_IMPLEMENTED``.
+    """
+
+    UNSPECIFIED = "unspecified"
+    COMPOSE = "compose"
 
 
 class DataPlaneMode(StrEnum):

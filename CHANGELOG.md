@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Features
+
+- **sandbox**: Add `Sandbox.run_from_file()` for v1 `CreateSandboxFromFile`
+
+  Compose YAML (path or raw bytes) creates a sandbox through the live
+  pull-only Gateway path. `primary_service` is required. `image_overrides`
+  and CPU/memory `default_resources` are optional. YAML is not normalized;
+  leftover `build:` stays `CWSANDBOX_NOT_IMPLEMENTED`. `wait()` is unchanged
+  and polls through `PREPARING` without treating it as ready.
+
+
 ## v1.13.0 (2026-09-04)
 
 

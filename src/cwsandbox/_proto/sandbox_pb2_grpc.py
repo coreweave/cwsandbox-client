@@ -27,6 +27,11 @@ class SandboxServiceStub(object):
                 request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromTemplateRequest.SerializeToString,
                 response_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.FromString,
                 )
+        self.CreateSandboxFromFile = channel.unary_unary(
+                '/coreweave.sandbox.v1.SandboxService/CreateSandboxFromFile',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromFileRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.FromString,
+                )
         self.GetSandbox = channel.unary_unary(
                 '/coreweave.sandbox.v1.SandboxService/GetSandbox',
                 request_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.GetSandboxRequest.SerializeToString,
@@ -117,6 +122,19 @@ class SandboxServiceServicer(object):
         scoped SandboxTemplate with optional replace-on-presence overrides
         (AIP-136 custom method). Returns immediately with the sandbox in
         STATE_CREATING; poll GetSandbox for STATE_RUNNING / terminal states.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateSandboxFromFile(self, request, context):
+        """CreateSandboxFromFile launches a sandbox from an uploaded file (AIP-136
+        custom method). Unspecified type is INVALID_ARGUMENT
+        (CWSANDBOX_INVALID_REQUEST) on type. Compose (SANDBOX_FILE_TYPE_COMPOSE)
+        is accepted when every service already has a pullable image (`image:` or
+        image_overrides). A service that still needs a build is UNIMPLEMENTED
+        (CWSANDBOX_NOT_IMPLEMENTED) on that service's build. Other declared
+        types are UNIMPLEMENTED (CWSANDBOX_NOT_IMPLEMENTED) on type.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -253,6 +271,11 @@ def add_SandboxServiceServicer_to_server(servicer, server):
                     request_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromTemplateRequest.FromString,
                     response_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.SerializeToString,
             ),
+            'CreateSandboxFromFile': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateSandboxFromFile,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromFileRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.SerializeToString,
+            ),
             'GetSandbox': grpc.unary_unary_rpc_method_handler(
                     servicer.GetSandbox,
                     request_deserializer=coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.GetSandboxRequest.FromString,
@@ -363,6 +386,23 @@ class SandboxService(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SandboxService/CreateSandboxFromTemplate',
             coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromTemplateRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def CreateSandboxFromFile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SandboxService/CreateSandboxFromFile',
+            coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.CreateSandboxFromFileRequest.SerializeToString,
             coreweave_dot_sandbox_dot_v1_dot_sandbox__pb2.Sandbox.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
