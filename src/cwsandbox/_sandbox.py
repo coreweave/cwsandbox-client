@@ -197,6 +197,7 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxProtocolError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxSnapshotError,
@@ -474,12 +475,21 @@ class _SandboxView:
         return getattr(self._sandbox, name)
 
 
-def _as_sandbox_view(value: Any) -> _SandboxView:
+def _as_sandbox_view(value: Any, *, sandbox_id: str | None = None) -> _SandboxView:
     """Normalize Get/List sandbox messages to ``_SandboxView``.
 
     Duck-typed stand-ins used by unit tests (SimpleNamespace/MagicMock that
     already expose ``sandbox_status``) are returned unchanged.
+
+    Raises:
+        SandboxProtocolError: ``value`` is ``None``, which is what the gRPC
+            layer yields when a response cannot be deserialized.
     """
+    if value is None:
+        target = f" for sandbox {sandbox_id}" if sandbox_id else ""
+        raise SandboxProtocolError(
+            f"The sandbox service returned a response that could not be decoded{target}"
+        )
     if isinstance(value, _SandboxView):
         return value
     if isinstance(value, sandbox_pb2.Sandbox):
@@ -2977,7 +2987,8 @@ class Sandbox:
             request = sandbox_pb2.GetSandboxRequest(sandbox_id=sandbox_id)
             try:
                 response = _as_sandbox_view(
-                    await stub.GetSandbox(request, timeout=timeout, metadata=auth_metadata)
+                    await stub.GetSandbox(request, timeout=timeout, metadata=auth_metadata),
+                    sandbox_id=sandbox_id,
                 )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, sandbox_id=sandbox_id, operation="Get sandbox") from e
@@ -3931,7 +3942,8 @@ class Sandbox:
                     request,
                     timeout=self._poll_rpc_timeout_seconds,
                     metadata=self._auth_metadata,
-                )
+                ),
+                sandbox_id=self._sandbox_id,
             )
         except grpc.RpcError as e:
             raise _translate_rpc_error(
@@ -4190,7 +4202,8 @@ class Sandbox:
                         request,
                         timeout=effective_rpc_timeout,
                         metadata=self._auth_metadata,
-                    )
+                    ),
+                    sandbox_id=self._sandbox_id,
                 )
             except grpc.RpcError as e:
                 raise _translate_rpc_error(
@@ -5213,7 +5226,8 @@ class Sandbox:
             response: _SandboxView = _as_sandbox_view(
                 await self._stub.GetSandbox(
                     request, timeout=rpc_timeout, metadata=self._auth_metadata
-                )
+                ),
+                sandbox_id=self._sandbox_id,
             )
             return response
         except grpc.RpcError as e:

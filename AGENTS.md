@@ -573,6 +573,7 @@ CWSandboxError
 │   │   └── VolumeWaitTimeoutError       # Volume.wait_until_ready budget exceeded
 │   ├── SandboxResourceExhaustedError    # backend resource pressure (gRPC RESOURCE_EXHAUSTED)
 │   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
+│   ├── SandboxProtocolError             # Get response could not be decoded (gRPC yields None); fatal, never retried
 │   ├── SandboxTerminatedError
 │   ├── SandboxFailedError
 │   ├── SandboxNotFoundError             # .sandbox_id attribute
