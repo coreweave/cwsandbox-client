@@ -24,6 +24,7 @@ Runnable example scripts demonstrating cwsandbox SDK usage patterns.
 | `run_from_template.py` | Sync | `def main()` | `Sandbox.run_from_template()`: start from a template, replace-on-presence container override |
 | `error_handling.py` | Sync | `def main()` | Exception hierarchy: SandboxExecutionError, TimeoutError, NotFoundError |
 | `file_system_snapshots.py` | Sync | `def main()` | FSS snapshot/restore/fork with `file_system_snapshot`, `snapshot()`, snapshot management |
+| `tls_passthrough.py` | Sync | `def main()` | TLS passthrough Create/Get/List address + SNI GET |
 | `multiple_sandboxes.py` | Sync | `def main()` | Session-based multi-sandbox management |
 | `delete_sandboxes.py` | Sync | `def main()` | Deletion patterns with `Sandbox.delete()` |
 | `interactive_streaming_sandbox.py` | Sync | `def main()` | Log streaming with `stream_logs()` and CLI interaction |

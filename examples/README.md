@@ -150,6 +150,20 @@ Demonstrates:
 - Why container-field overrides (`command`, `args`, `environment_variables`, ...) require `container_image`
 - Tags supplied via defaults are an override too, replacing the template's tags rather than merging with them
 
+### TLS Passthrough (`tls_passthrough.py`)
+
+Create a TLS passthrough product endpoint and reach it with SNI:
+
+```bash
+python examples/tls_passthrough.py
+```
+
+Demonstrates:
+- Creating `Endpoint(kind=TLS_PASSTHROUGH)` on a PUBLIC service
+- Reading the Create-time `host:port` from `Sandbox.service_addresses[].address`
+- `Sandbox.from_id` (Get) and `Sandbox.list` echoing the same address
+- GETting the edge with SNI equal to that host (self-signed workload cert)
+
 ### Error Handling (`error_handling.py`)
 
 Proper error handling with the exception hierarchy:

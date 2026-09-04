@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Features
+
+- **sandbox**: Add TLS passthrough product endpoints
+
+Create-time `Endpoint(kind=TLS_PASSTHROUGH)` on a PUBLIC service. Auth and
+`request_timeout_seconds` must be omitted (`None`, not `0`). Create, Get,
+list, and `from_id` fill `Sandbox.service_addresses` as
+`TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as
+`host:port`). Use the host as TLS SNI; the workload owns certs.
+
+See `examples/tls_passthrough.py`.
+
+
 ## v1.12.3 (2026-09-03)
 
 ### Bug Fixes

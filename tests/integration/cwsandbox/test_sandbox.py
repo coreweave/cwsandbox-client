@@ -20,6 +20,8 @@ from grpc.aio import UnaryStreamCall
 
 from cwsandbox import (
     DataPlaneMode,
+    Endpoint,
+    EndpointKind,
     NetworkOptions,
     PlacementMode,
     ResourceOptions,
@@ -31,6 +33,7 @@ from cwsandbox import (
     Session,
     list_runners,
 )
+from cwsandbox._error_info import CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._proto import sandbox_pb2 as streaming_pb2
 from cwsandbox._proto import sandbox_pb2_grpc as streaming_pb2_grpc
@@ -912,6 +915,85 @@ def test_sandbox_public_service_connectivity(sandbox_defaults: SandboxDefaults) 
         time.sleep(2)
         response = httpx.get(service_url, timeout=120.0)
         assert response.status_code == 200
+
+
+_TLS_PASSTHROUGH_SCRIPT = """
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import ssl, subprocess
+subprocess.check_call([
+    "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", "/tmp/tls.key", "-out", "/tmp/tls.crt",
+    "-days", "1", "-subj", "/CN=tls-probe",
+])
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"product-tls-ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+server = HTTPServer(("0.0.0.0", 8443), H)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+server.socket = ctx.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+"""
+
+
+def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
+    """Create TLS passthrough must retain address after wait and serve via SNI."""
+    defaults = sandbox_defaults.with_overrides(max_lifetime_seconds=300)
+    service = Service(
+        port=8443,
+        name="tls",
+        visibility=ServiceVisibility.PUBLIC,
+        endpoint=Endpoint(kind=EndpointKind.TLS_PASSTHROUGH),
+    )
+    try:
+        with Sandbox.run(
+            "python3",
+            "-c",
+            _TLS_PASSTHROUGH_SCRIPT,
+            defaults=defaults,
+            container_image="python:3.9",
+            services=[service],
+        ) as sandbox:
+            assert sandbox.service_addresses, "Create must fill service_addresses"
+            tls = sandbox.service_addresses[0]
+            assert tls.port == 8443
+            assert tls.name == "tls"
+            assert tls.kind == EndpointKind.TLS_PASSTHROUGH
+            assert ":" in tls.address
+            sandbox.wait()
+            sandbox.get_status()
+            assert sandbox.service_addresses == (tls,)
+            assert all(entry[0] != 8443 for entry in sandbox.service_urls)
+
+            host, advertised_port = tls.address.rsplit(":", 1)
+            url = (
+                f"https://{host}/"
+                if advertised_port == "443"
+                else f"https://{host}:{advertised_port}/"
+            )
+            deadline = time.monotonic() + 60.0
+            last_error: Exception | None = None
+            while time.monotonic() < deadline:
+                try:
+                    response = httpx.get(url, timeout=10.0, verify=False)
+                    if response.status_code == 200 and response.text == "product-tls-ok":
+                        return
+                    last_error = AssertionError(f"{response.status_code} {response.text!r}")
+                except (httpx.HTTPError, OSError) as exc:
+                    last_error = exc
+                time.sleep(2)
+            raise AssertionError(f"TLS GET {url} did not return product-tls-ok: {last_error}")
+    except SandboxError as exc:
+        if exc.reason == CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED:
+            pytest.skip(f"no runner advertises TLS passthrough: {exc}")
+        raise
 
 
 def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:

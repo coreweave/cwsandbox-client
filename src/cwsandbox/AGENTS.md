@@ -16,7 +16,7 @@ cwsandbox/
 ├── _sandbox.py       # Sandbox class, SandboxStatus enum (largest file)
 ├── _session.py       # Session class for multi-sandbox management
 ├── _function.py      # RemoteFunction for @session.function() decorator
-├── _types.py         # OperationRef, Process, Service, Endpoint, HttpsEndpointStatus, EgressRule, ScratchVolumeOptions, FSS types
+├── _types.py         # OperationRef, Process, Service, Endpoint, HttpsEndpointStatus, TlsPassthroughEndpointStatus, EgressRule, ScratchVolumeOptions, FSS types
 ├── _spec.py          # Create-spec converters (security context, volumes, network, OSA)
 ├── _volume.py        # Registered Volume CRUD
 ├── _defaults.py      # SandboxDefaults configuration dataclass

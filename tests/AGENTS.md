@@ -153,7 +153,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 
 | File | Coverage |
 |------|----------|
-| `test_sandbox.py` | Sandbox lifecycle, file ops, exec, working_dir, scratch volume, runtime_class. Uses `require_auth`. |
+| `test_sandbox.py` | Sandbox lifecycle, file ops, exec, working_dir, scratch volume, runtime_class, TLS passthrough. Uses `require_auth`; TLS skips when no runner advertises it. |
 | `test_dns_egress.py` | DNS-name HTTPS egress. Uses `require_auth`; skips when no runner admits names. |
 | `test_session.py` | Session management, function execution. Uses `require_auth`. |
 | `test_file_system_snapshot.py` | FSS snapshot/fork/restore/management. Uses `require_auth`; skips gracefully on `SnapshotNotSupportedError` when the org is not FSS-enabled. |

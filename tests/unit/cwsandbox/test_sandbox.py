@@ -43,6 +43,7 @@ from cwsandbox import (
     ServiceProtocol,
     ServiceVisibility,
     StorageMedium,
+    TlsPassthroughEndpointStatus,
 )
 from cwsandbox._sandbox import (
     SandboxStatus,
@@ -539,6 +540,133 @@ class TestSandboxRun:
         assert stub.CreateSandbox.call_args.kwargs["timeout"] == 45
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_request_maps_tls_passthrough_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                Service(
+                    name="tls",
+                    port=8443,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.TLS_PASSTHROUGH),
+                ),
+            ],
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        spec = request.sandbox.spec
+        assert len(spec.services) == 1
+        assert spec.services[0].HasField("endpoint")
+        assert spec.services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH
+        assert spec.services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_UNSPECIFIED
+        assert spec.services[0].endpoint.request_timeout_seconds == 0
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_tls_passthrough_from_nested_dict(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                {
+                    "port": 8443,
+                    "visibility": "public",
+                    "endpoint": {"kind": "tls_passthrough"},
+                }
+            ],
+        )
+
+        ep = stub.CreateSandbox.call_args.args[0].sandbox.spec.services[0].endpoint
+        assert ep.kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH
+        assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_UNSPECIFIED
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_request_maps_mixed_https_and_tls(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                Service(
+                    name="web",
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.OPEN),
+                ),
+                Service(
+                    name="tls",
+                    port=8443,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.TLS_PASSTHROUGH),
+                ),
+            ],
+        )
+
+        services = stub.CreateSandbox.call_args.args[0].sandbox.spec.services
+        assert services[0].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+        assert services[0].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
+        assert services[1].endpoint.kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH
+        assert services[1].endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_UNSPECIFIED
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_echoes_tls_address_from_status(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="tls-id",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_CREATING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        url="https://should-not-appear.example",
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                            url="https://tls-endpoint-url.example",
+                            address="8443-tls-id.example:443",
+                        ),
+                    )
+                ],
+            ),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8443,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(kind=EndpointKind.TLS_PASSTHROUGH),
+                    )
+                ],
+            )
+
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-tls-id.example:443",
+            ),
+        )
+        assert sandbox.service_urls == ()
+        assert sandbox.service_endpoints == ()
+        sandbox._state = _Terminal(sandbox_id="tls-id", status=SandboxStatus.COMPLETED)
+
     def test_create_request_maps_https_request_timeout_seconds_from_nested_dict(
         self,
     ) -> None:
@@ -873,6 +1001,26 @@ class TestSandboxRun:
         assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_OPEN
         assert ep.request_timeout_seconds == 120
         assert stub.CreateSandboxFromTemplate.call_args.kwargs["timeout"] == 45
+        sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_maps_tls_passthrough_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            template_id="template-123",
+            services=[
+                Service(
+                    port=8443,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.TLS_PASSTHROUGH),
+                )
+            ],
+        )
+
+        ep = stub.CreateSandboxFromTemplate.call_args.args[0].overrides.services[0].endpoint
+        assert ep.kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH
+        assert ep.auth == sandbox_pb2.ENDPOINT_AUTH_UNSPECIFIED
+        assert ep.request_timeout_seconds == 0
         sandbox._state = _Terminal(sandbox_id="template-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_template_args_without_image_raises(self) -> None:
@@ -4649,6 +4797,90 @@ class TestSandboxFromId:
             assert sandbox._poll_retry_budget_seconds == 12.0
             assert sandbox._poll_rpc_timeout_seconds == 7.0
 
+    @pytest.mark.asyncio
+    async def test_from_id_fills_tls_address(self, mock_api_key: str) -> None:
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="tls-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                            address="8443-tls-123.example:443",
+                        ),
+                    )
+                ],
+            ),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("tls-123")
+
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-tls-123.example:443",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_from_id_empty_tls_address_does_not_retain(self, mock_api_key: str) -> None:
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="tls-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("tls-123")
+
+        assert sandbox.service_addresses == ()
+
 
 class TestSandboxDeleteClassMethod:
     """Tests for Sandbox.delete class method."""
@@ -6523,7 +6755,10 @@ class TestStoppingStateTransitions:
                         port=9090,
                         name="metrics",
                         visibility=sandbox_pb2.VISIBILITY_UNSPECIFIED,
-                        endpoint=sandbox_pb2.EndpointStatus(url="https://sb.example/9090"),
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            url="https://sb.example/9090",
+                        ),
                     ),
                     sandbox_pb2.ServiceStatus(
                         port=7070,
@@ -6649,9 +6884,11 @@ class TestStoppingStateTransitions:
                         port=8443,
                         name="tls",
                         visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        url="https://should-not-appear.example",
                         endpoint=sandbox_pb2.EndpointStatus(
                             kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
-                            url="8443-sb-1.example:443",
+                            url="https://tls-endpoint-url.example",
+                            address="8443-sb-1.example:443",
                         ),
                     ),
                 ],
@@ -6659,6 +6896,18 @@ class TestStoppingStateTransitions:
         )
         sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
 
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+        assert sandbox.service_urls == (
+            (8080, "web", "https://8080-sb-1.example"),
+            (9090, "ready", "https://9090-sb-1.example"),
+        )
         assert sandbox.service_endpoints == (
             HttpsEndpointStatus(
                 port=8080,
@@ -6675,6 +6924,46 @@ class TestStoppingStateTransitions:
                 auth=EndpointAuth.OPEN,
                 url="https://9090-sb-1.example",
                 request_timeout_seconds=15,
+            ),
+        )
+
+    def test_apply_sandbox_info_ignores_tls_urls(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        url="https://service-url.example",
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                            url="https://endpoint-url.example",
+                            address="8443-sb-1.example:443",
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_urls == ()
+        assert sandbox.service_endpoints == ()
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
             ),
         )
 
@@ -6728,6 +7017,341 @@ class TestStoppingStateTransitions:
                 request_timeout_seconds=120,
             ),
         )
+
+    def test_apply_sandbox_info_retains_tls_address_when_get_omits_it(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+        assert sandbox.service_urls == ()
+
+    def test_apply_sandbox_info_retains_tls_when_get_omits_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+        assert sandbox.service_urls == ()
+
+    def test_apply_sandbox_info_retains_tls_when_mixed_get_omits_address(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_urls = ((8080, "web", "https://8080-sb-1.example"),)
+        sandbox._service_endpoints = (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="https://8080-sb-1.example",
+                request_timeout_seconds=15,
+            ),
+        )
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_OPEN,
+                            url="https://8080-sb-1.example",
+                            request_timeout_seconds=15,
+                        ),
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    ),
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_urls == ((8080, "web", "https://8080-sb-1.example"),)
+        assert sandbox.service_endpoints == (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.OPEN,
+                url="https://8080-sb-1.example",
+                request_timeout_seconds=15,
+            ),
+        )
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+    def test_apply_sandbox_info_merges_partial_two_tls_get(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls-a",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+            TlsPassthroughEndpointStatus(
+                port=9443,
+                name="tls-b",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="9443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls-a",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                            address="8443-sb-1-updated.example:443",
+                        ),
+                    ),
+                    sandbox_pb2.ServiceStatus(
+                        port=9443,
+                        name="tls-b",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    ),
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls-a",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1-updated.example:443",
+            ),
+            TlsPassthroughEndpointStatus(
+                port=9443,
+                name="tls-b",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="9443-sb-1.example:443",
+            ),
+        )
+
+    def test_apply_sandbox_info_clears_tls_address_when_terminal(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_COMPLETED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == ()
+
+    def test_apply_sandbox_info_clears_tls_address_when_paused(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_PAUSED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._state = sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_addresses == ()
+        assert sandbox.status == SandboxStatus.PAUSED
+
+    def test_apply_sandbox_info_clears_tls_address_on_poll_unspecified(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._service_addresses = (
+            TlsPassthroughEndpointStatus(
+                port=8443,
+                name="tls",
+                kind=EndpointKind.TLS_PASSTHROUGH,
+                address="8443-sb-1.example:443",
+            ),
+        )
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_UNSPECIFIED,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8443,
+                        name="tls",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._state = sandbox._apply_sandbox_info(_SandboxView(proto), source="poll")
+
+        assert sandbox.service_addresses == ()
+        assert sandbox.status == SandboxStatus.COMPLETED
 
     def test_stopping_to_running_rejected(self) -> None:
         """_Stopping -> _Running is rejected (stale poll response)."""

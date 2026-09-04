@@ -177,6 +177,7 @@ from cwsandbox._types import (
     StreamWriter,
     TerminalResult,
     TerminalSession,
+    TlsPassthroughEndpointStatus,
     VolumeMount,
     _coerce_container,
     _coerce_object_storage_access,
@@ -1894,6 +1895,7 @@ class Sandbox:
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
+        self._service_addresses: tuple[TlsPassthroughEndpointStatus, ...] = ()
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
@@ -2435,6 +2437,7 @@ class Sandbox:
         )
         sandbox._service_urls = ()
         sandbox._service_endpoints = ()
+        sandbox._service_addresses = ()
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
@@ -3441,6 +3444,23 @@ class Sandbox:
         no HTTPS product endpoint was requested or the response omitted one.
         """
         return self._service_endpoints
+
+    @property
+    def service_addresses(self) -> tuple[TlsPassthroughEndpointStatus, ...]:
+        """TLS passthrough endpoints echoed from create, Get, or list.
+
+        Each entry is ``TlsPassthroughEndpointStatus`` with ``address`` as
+        ``host:port``. Use the host as TLS SNI. The workload owns certs.
+
+        Create, Get, list, and ``from_id`` fill this when the sandbox has
+        a TLS passthrough endpoint. On a live handle, ``wait()`` /
+        ``get_status()`` keep a cached address per ``(port, name)`` when
+        proto state is CREATING or RUNNING, that service is still
+        present, and Get omits the endpoint or address. A row
+        disappears when the service is gone or proto state is not
+        CREATING or RUNNING.
+        """
+        return self._service_addresses
 
     @property
     def containers(self) -> tuple[Container, ...]:
@@ -4490,10 +4510,11 @@ class Sandbox:
                         sandbox_pb2.EndpointKind,
                         sandbox_pb2.EndpointKind.Value(f"ENDPOINT_KIND_{kind.name}"),
                     )
-                    proto_svc.endpoint.auth = cast(
-                        sandbox_pb2.EndpointAuth,
-                        sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
-                    )
+                    if auth is not None:
+                        proto_svc.endpoint.auth = cast(
+                            sandbox_pb2.EndpointAuth,
+                            sandbox_pb2.EndpointAuth.Value(f"ENDPOINT_AUTH_{auth.name}"),
+                        )
                     if endpoint.request_timeout_seconds:
                         proto_svc.endpoint.request_timeout_seconds = (
                             endpoint.request_timeout_seconds
@@ -4696,27 +4717,55 @@ class Sandbox:
         status = view._sandbox.status
         service_urls: list[tuple[int, str, str]] = []
         service_endpoints: list[HttpsEndpointStatus] = []
+        tls_rows: list[tuple[int, str, str]] = []
         for s in status.services:
-            url = s.url or (s.endpoint.url if s.HasField("endpoint") else "")
-            if url:
-                service_urls.append((s.port, s.name, url))
-            if (
-                s.HasField("endpoint")
-                and s.endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
-                and s.endpoint.request_timeout_seconds > 0
-            ):
-                service_endpoints.append(
-                    HttpsEndpointStatus(
-                        port=s.port,
-                        name=s.name,
-                        kind=EndpointKind.HTTPS,
-                        auth=EndpointAuth.OPEN,
-                        url=s.endpoint.url,
-                        request_timeout_seconds=s.endpoint.request_timeout_seconds,
+            has_endpoint = s.HasField("endpoint")
+            kind = s.endpoint.kind if has_endpoint else None
+            if has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_HTTPS:
+                if s.endpoint.url:
+                    service_urls.append((s.port, s.name, s.endpoint.url))
+                if s.endpoint.request_timeout_seconds > 0:
+                    service_endpoints.append(
+                        HttpsEndpointStatus(
+                            port=s.port,
+                            name=s.name,
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.OPEN,
+                            url=s.endpoint.url,
+                            request_timeout_seconds=s.endpoint.request_timeout_seconds,
+                        )
                     )
-                )
+            elif has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH:
+                tls_rows.append((s.port, s.name, s.endpoint.address))
+            elif not has_endpoint and s.url:
+                service_urls.append((s.port, s.name, s.url))
         self._service_urls = tuple(service_urls)
         self._service_endpoints = tuple(service_endpoints)
+        if status.state in (
+            sandbox_pb2.STATE_CREATING,
+            sandbox_pb2.STATE_RUNNING,
+        ):
+            live = {(service.port, service.name) for service in status.services}
+            cached = {(entry.port, entry.name): entry for entry in self._service_addresses}
+            by_key = {key: entry for key, entry in cached.items() if key in live}
+            for port, name, address in tls_rows:
+                if address:
+                    by_key[(port, name)] = TlsPassthroughEndpointStatus(
+                        port=port,
+                        name=name,
+                        kind=EndpointKind.TLS_PASSTHROUGH,
+                        address=address,
+                    )
+            merged: list[TlsPassthroughEndpointStatus] = []
+            seen: set[tuple[int, str]] = set()
+            for service in status.services:
+                key = (service.port, service.name)
+                if key in by_key and key not in seen:
+                    merged.append(by_key[key])
+                    seen.add(key)
+            self._service_addresses = tuple(merged)
+        else:
+            self._service_addresses = ()
         self._dns_egress_names = tuple(
             rule.dns_name for rule in status.effective_egress if rule.dns_name
         )
