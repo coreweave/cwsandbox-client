@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.14.1 (2026-09-04)
+
+### Bug Fixes
+
+- **sandbox**: Raise SandboxProtocolError for undecodable Get responses
+  ([`a3898ae`](https://github.com/coreweave/cwsandbox-client/commit/a3898aebb6577d9f9c712990c98e82f069ceece0))
+
+When a GetSandbox reply fails protobuf deserialization, grpc logs "Exception deserializing message!"
+  and yields None instead of raising. The SDK passed that None into the sandbox view adapter, so
+  wait/poll, get_status(), and from_id() surfaced an unrelated AttributeError ('NoneType' object has
+  no attribute ...) and the real signal, that the response could not be decoded, was lost.
+
+Reject a None response in the shared adapter with a new SandboxProtocolError that names the sandbox.
+  The class sits outside the transient retry registry, so the poll loop treats it as fatal: a decode
+  failure is not a blip that repeating the request would clear.
+
+Fixes #145
+
+
 ## v1.14.0 (2026-09-04)
 
 ### Features
