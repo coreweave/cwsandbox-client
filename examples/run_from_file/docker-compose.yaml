@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-PackageName: cwsandbox-client
+#
+# Three-service Compose: Redis, a Python API that is healthy only after PING
+# to Redis, and an Ubuntu primary that waits on both. Images are public
+# official tags. Ports stay in-pod; service names resolve on loopback.
+services:
+  cache:
+    image: docker.io/library/redis:7-alpine
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 15
+      start_period: 5s
+  api:
+    image: docker.io/library/python:3.12-slim
+    expose:
+      - "8080"
+    environment:
+      REDIS_HOST: cache
+    depends_on:
+      cache:
+        condition: service_healthy
+    entrypoint:
+      - python3
+      - -c
+      - |
+        import os
+        import socket
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    conn = socket.create_connection((os.environ["REDIS_HOST"], 6379), 2)
+                    conn.sendall(b"PING\r\n")
+                    ok = conn.recv(16).startswith(b"+PONG")
+                except OSError:
+                    ok = False
+                self.send_response(200 if ok else 503)
+                self.end_headers()
+                self.wfile.write(b"PONG" if ok else b"DOWN")
+
+            def log_message(self, *args):
+                pass
+
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+  main:
+    image: docker.io/library/ubuntu:22.04
+    command: ["sleep", "3600"]
+    environment:
+      API_HOST: api
+      REDIS_HOST: cache
+    depends_on:
+      cache:
+        condition: service_healthy
+      api:
+        condition: service_healthy

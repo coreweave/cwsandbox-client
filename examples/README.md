@@ -135,18 +135,23 @@ Demonstrates:
 - Inspecting confirmed resources from the sandbox response
 - Sharing resource defaults across sandboxes via `SandboxDefaults`
 
-### Run from File (`run_from_file.py`)
+### Run from File (`run_from_file/run_from_file.py`)
 
 Create a sandbox from a Compose YAML file (pull-only images):
 
 ```bash
-python examples/run_from_file.py
+python examples/run_from_file/run_from_file.py
 ```
+
+The script reads `examples/run_from_file/docker-compose.yaml`: Redis, a Python
+API that is healthy only after PING to Redis, and an Ubuntu primary that waits
+on both.
 
 Demonstrates:
 - Using `Sandbox.run_from_file()` with a local Compose path and `primary_service`
-- `image_overrides` as the skip-build path (leftover `build:` is still unimplemented)
+- Healthchecks and `depends_on` across three services
 - Reusing `wait()` for RUNNING (do not wait for PREPARING)
+- Exec against the primary and a named helper after the health chain passes
 
 ### Run from Template (`run_from_template.py`)
 
