@@ -286,7 +286,7 @@ class _PreparedDataPlaneCall:
 class SandboxStatus(StrEnum):
     """Sandbox lifecycle status values.
 
-    Lifecycle: CREATING -> RUNNING -> TERMINATING -> COMPLETED | FAILED
+    Lifecycle: CREATING | PREPARING -> RUNNING -> TERMINATING -> COMPLETED | FAILED
 
     Attributes:
         PENDING: Sandbox has been accepted but not yet scheduled.
@@ -1118,8 +1118,8 @@ def _resolve_placement_for_spillover(
     creates only allow ``STRICT``.
     """
     if from_file and spillover != PlacementSpillover.STRICT:
-        raise TypeError(
-            f"placement_spillover must be 'strict' for run_from_file (got {spillover.value!r})"
+        raise ValueError(
+            f"placement_spillover must be STRICT for run_from_file (got {spillover.value!r})"
         )
     if from_template and spillover != PlacementSpillover.STRICT:
         raise ValueError(
@@ -2470,7 +2470,8 @@ class Sandbox:
                 ``placement_mode``, ``runner_ids``, annotations, object-storage
                 access, and max lifetime are inherited. Container/volume/
                 service defaults are not. Non-strict ``placement_spillover``
-                on defaults is ignored (from-file is always strict).
+                on defaults is ignored (from-file is always strict). An
+                explicit non-strict keyword argument raises.
             request_id: Optional idempotency token. Auto-generated when omitted.
             **kwargs: Rejected. This RPC does not accept volumes, published
                 services, ``runtime_class``, ``image_pull_credentials``,

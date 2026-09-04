@@ -187,7 +187,7 @@ data = ref.result()               # Block when result needed
 data = await ref
 ```
 
-**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states. Lifecycle: `CREATING` -> `RUNNING` -> `TERMINATING` -> `COMPLETED` | `FAILED`. Values: `PENDING`, `CREATING`, `PREPARING` (accepted image fill; Gateway does not insert these rows yet; `wait()` polls through it), `RUNNING`, `PAUSED`, `TERMINATING`, `COMPLETED`, `FAILED`, `TERMINATED` (deprecated), `UNSPECIFIED`. `TERMINATING` is non-terminal: the sandbox is draining through its grace period. `TERMINATED` is deprecated in favor of the `TERMINATING` -> `COMPLETED`/`FAILED` flow but still emitted by older backends. Terminal statuses (used for caching and polling): `COMPLETED`, `FAILED`, `TERMINATED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
+**`SandboxStatus`** (`_sandbox.py`): StrEnum for sandbox lifecycle states. Lifecycle: `CREATING` | `PREPARING` -> `RUNNING` -> `TERMINATING` -> `COMPLETED` | `FAILED`. Values: `PENDING`, `CREATING`, `PREPARING` (accepted image fill; Gateway does not insert these rows yet; `wait()` polls through it), `RUNNING`, `PAUSED`, `TERMINATING`, `COMPLETED`, `FAILED`, `TERMINATED` (deprecated), `UNSPECIFIED`. `TERMINATING` is non-terminal: the sandbox is draining through its grace period. `TERMINATED` is deprecated in favor of the `TERMINATING` -> `COMPLETED`/`FAILED` flow but still emitted by older backends. Terminal statuses (used for caching and polling): `COMPLETED`, `FAILED`, `TERMINATED`. Methods `from_proto()` and `to_proto()` for protobuf conversion.
 
 **Exec Types** (`_types.py`): Types for command execution, returned by `Sandbox.exec()`:
 
