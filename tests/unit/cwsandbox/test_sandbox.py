@@ -1262,12 +1262,23 @@ class TestSandboxRun:
             )
 
     def test_run_from_file_rejects_non_strict_spillover(self) -> None:
-        with pytest.raises(TypeError, match="must be 'strict'"):
+        with pytest.raises(ValueError, match="must be STRICT"):
             Sandbox.run_from_file(
                 b"services:\n  main:\n    image: python:3.11\n",
                 primary_service="main",
                 placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
             )
+
+    def test_run_from_file_ignores_non_strict_spillover_on_defaults(self) -> None:
+        sandbox, _stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+            defaults=SandboxDefaults(
+                placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            ),
+        )
+        assert sandbox._placement_spillover == PlacementSpillover.STRICT
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
 
     def test_run_from_file_defaults_file_type_compose(self) -> None:
         from cwsandbox._proto import sandbox_pb2
@@ -3819,6 +3830,40 @@ class TestSandboxWaitForRunning:
             sandbox.wait()
 
             assert sandbox.returncode == 0
+
+    def test_wait_polls_through_preparing(self) -> None:
+        """wait() keeps polling while proto state is PREPARING.
+
+        STATE_PREPARING used to map to UNSPECIFIED, which is a stable poll
+        result and made wait() return before the sandbox was ready.
+        """
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "preparing-id"
+        sandbox._state = _Starting(sandbox_id="preparing-id")
+
+        preparing = sandbox_pb2.Sandbox(
+            sandbox_id="preparing-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PREPARING),
+        )
+        running = sandbox_pb2.Sandbox(
+            sandbox_id="preparing-id",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+            ),
+        )
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.GetSandbox = AsyncMock(side_effect=[preparing, running])
+            with patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock):
+                sandbox.wait()
+
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox._stub.GetSandbox.await_count == 2
 
 
 class TestSandboxEnvironmentVariables:

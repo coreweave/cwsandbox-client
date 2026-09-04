@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- **sandbox**: Raise ValueError for non-strict `run_from_file()` spillover
+
+  `run_from_file(placement_spillover=...)` now raises `ValueError` when the
+  value is not `strict`, matching template creates. A non-strict value on
+  `SandboxDefaults` is still ignored.
+
+### Documentation
+
+- **sandbox**: Mention `PREPARING` on the `SandboxStatus` lifecycle line
+
+
 ## v1.14.1 (2026-09-04)
 
 ### Bug Fixes
