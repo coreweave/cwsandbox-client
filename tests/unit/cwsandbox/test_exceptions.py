@@ -22,6 +22,7 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxProtocolError,
     SandboxSnapshotError,
     SandboxStreamBackpressureError,
     SandboxStreamTruncatedError,
@@ -60,6 +61,7 @@ class TestExceptionHierarchy:
         assert issubclass(SandboxFailedError, SandboxError)
         assert issubclass(SandboxExecutionError, SandboxError)
         assert issubclass(SandboxFileError, SandboxError)
+        assert issubclass(SandboxProtocolError, SandboxError)
         assert issubclass(SandboxValidationError, SandboxError)
         assert issubclass(SandboxValidationError, CWSandboxValidationError)
 

@@ -350,6 +350,16 @@ class SandboxTerminalStateUnavailableError(SandboxError):
     """
 
 
+class SandboxProtocolError(SandboxError):
+    """Raised when the backend returned a response the client could not decode.
+
+    The gRPC layer logs the decode failure and yields no message in its
+    place. Poll loop treats this as fatal: the response is malformed for
+    this client version, so repeating the request would not change the
+    outcome.
+    """
+
+
 class SandboxSnapshotError(SandboxError):
     """Base exception for file-system snapshot (FSS) operation failures.
 

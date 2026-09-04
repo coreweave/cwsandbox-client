@@ -58,6 +58,7 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxProtocolError,
     SandboxResourceExhaustedError,
     SandboxValidationError,
 )
@@ -4742,6 +4743,26 @@ class TestSandboxFromId:
             assert sandbox.runner_id == "tower-1"
             call_kwargs = mock_stub.GetSandbox.call_args[1]
             assert call_kwargs["metadata"] == expected_metadata
+
+    @pytest.mark.asyncio
+    async def test_from_id_raises_protocol_error_on_undecodable_response(
+        self, mock_api_key: str
+    ) -> None:
+        """from_id() surfaces a Get that yields no decoded message as SandboxProtocolError."""
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=None)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            with pytest.raises(SandboxProtocolError, match="test-123"):
+                await Sandbox.from_id("test-123")
+
+        mock_channel.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_from_id_raises_not_found(self, mock_api_key: str) -> None:

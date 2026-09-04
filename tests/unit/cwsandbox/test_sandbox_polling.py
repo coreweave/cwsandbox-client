@@ -32,6 +32,7 @@ from cwsandbox.exceptions import (
     SandboxFailedError,
     SandboxNotFoundError,
     SandboxNotRunningError,
+    SandboxProtocolError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxTerminalStateUnavailableError,
@@ -120,6 +121,41 @@ def _get_response(status: int, **kwargs: object) -> MagicMock:
         resp.exit_code = exit_code
         resp.HasField.side_effect = lambda name: name == "exit_code"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Undecodable Get responses
+# ---------------------------------------------------------------------------
+
+
+class TestUndecodableGetResponse:
+    """A Get that yields no decoded message is a fatal protocol error."""
+
+    @pytest.mark.asyncio
+    async def test_poll_raises_protocol_error_without_retry(self) -> None:
+        """The poll path calls Get once and does not spend retry budget on it."""
+        sandbox = _make_sandbox()
+        sandbox._poll_retry_budget_seconds = 30.0
+        mock_get = AsyncMock(return_value=None)
+        sandbox._stub.GetSandbox = mock_get
+
+        with pytest.raises(
+            SandboxProtocolError, match="could not be decoded for sandbox test-sandbox"
+        ):
+            await sandbox._poll_with_retry()
+
+        assert mock_get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_status_raises_protocol_error(self) -> None:
+        sandbox = _make_sandbox(status=SandboxStatus.RUNNING)
+        sandbox._stub.GetSandbox = AsyncMock(return_value=None)
+
+        with pytest.raises(SandboxProtocolError):
+            await sandbox._get_status_async()
+
+    def test_classified_fatal(self) -> None:
+        assert _classify_poll_error(SandboxProtocolError("undecodable")) == "fatal"
 
 
 # ---------------------------------------------------------------------------
