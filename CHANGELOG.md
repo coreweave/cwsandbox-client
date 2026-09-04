@@ -1,19 +1,16 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.14.2 (2026-09-04)
 
 ### Bug Fixes
 
-- **sandbox**: Raise ValueError for non-strict `run_from_file()` spillover
+- Match from-file spillover errors and pin PREPARING wait
+  ([#173](https://github.com/coreweave/cwsandbox-client/pull/173),
+  [`239bb45`](https://github.com/coreweave/cwsandbox-client/commit/239bb45dda3b7641e044a465a7d6d844113eb8d1))
 
-  `run_from_file(placement_spillover=...)` now raises `ValueError` when the
-  value is not `strict`, matching template creates. A non-strict value on
-  `SandboxDefaults` is still ignored.
-
-### Documentation
-
-- **sandbox**: Mention `PREPARING` on the `SandboxStatus` lifecycle line
+Non-strict placement_spillover on run_from_file now raises ValueError like templates, and wait() has
+  a poll test so PREPARING cannot look ready.
 
 
 ## v1.14.1 (2026-09-04)
