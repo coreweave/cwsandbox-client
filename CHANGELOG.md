@@ -1,19 +1,7 @@
 # CHANGELOG
 
 
-## Unreleased
-
-### Features
-
-- **sandbox**: Add TLS passthrough product endpoints
-
-Create-time `Endpoint(kind=TLS_PASSTHROUGH)` on a PUBLIC service. Auth and
-`request_timeout_seconds` must be omitted (`None`, not `0`). Create, Get,
-list, and `from_id` fill `Sandbox.service_addresses` as
-`TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as
-`host:port`). Use the host as TLS SNI; the workload owns certs.
-
-See `examples/tls_passthrough.py`.
+## v1.13.0 (2026-09-04)
 
 
 ## v1.12.3 (2026-09-03)
@@ -23,6 +11,37 @@ See `examples/tls_passthrough.py`.
 - **exec**: Retry transient direct failures
   ([#171](https://github.com/coreweave/cwsandbox-client/pull/171),
   [`2fb01dc`](https://github.com/coreweave/cwsandbox-client/commit/2fb01dc55792d793ea19ed78aa4ffd80814f9640))
+
+- **sandbox**: Only retain TLS passthrough addresses while sandbox is CREATING or RUNNING
+  ([`23bb665`](https://github.com/coreweave/cwsandbox-client/commit/23bb6657dcd9e5e70a5da0183ba04373d8776c78))
+
+Clear cached TLS passthrough service addresses when the sandbox state is anything other than
+  CREATING or RUNNING, including PAUSED and terminal states. Previously addresses were only cleared
+  for TERMINATING/terminal states, so paused or unspecified states could leave stale addresses
+  around.
+
+- **sandbox**: Retain TLS passthrough addresses when Get omits them
+  ([`2f3eb76`](https://github.com/coreweave/cwsandbox-client/commit/2f3eb7649fbb99582f37a49896aac4ca71df06fc))
+
+- **sandbox**: Set endpoint auth when auth is not None
+  ([`296c604`](https://github.com/coreweave/cwsandbox-client/commit/296c6048d56df7e222663901b365440a1bde886a))
+
+### Code Style
+
+- Reformat long strings in TLS passthrough endpoint and test
+  ([`177f0c9`](https://github.com/coreweave/cwsandbox-client/commit/177f0c9b493a77ec55e1af855be6d3c66d2e5526))
+
+- **tests**: Move TlsPassthroughEndpointStatus import into alphabetical order
+  ([`05669d3`](https://github.com/coreweave/cwsandbox-client/commit/05669d3558820e693967d32984d507c0f7e0bad1))
+
+### Features
+
+- **sandbox**: Add TLS passthrough product endpoints
+  ([`f6f405b`](https://github.com/coreweave/cwsandbox-client/commit/f6f405bb24d83b12d2de1255d4ad5eb9db196d35))
+
+Create, Get, and list echo host:port on Sandbox.service_addresses as TlsPassthroughEndpointStatus.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
 
 ### Testing
 
