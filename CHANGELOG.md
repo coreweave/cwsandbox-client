@@ -1,17 +1,28 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.14.0 (2026-09-04)
 
 ### Features
 
-- **sandbox**: Add `Sandbox.run_from_file()` for v1 `CreateSandboxFromFile`
+- Add Sandbox.run_from_file for Compose create
+  ([#170](https://github.com/coreweave/cwsandbox-client/pull/170),
+  [`02058b0`](https://github.com/coreweave/cwsandbox-client/commit/02058b0dce3bd1769d5efc27211dc1806d04bb8d))
 
-  Compose YAML (path or raw bytes) creates a sandbox through the live
-  pull-only Gateway path. `primary_service` is required. `image_overrides`
-  and CPU/memory `default_resources` are optional. YAML is not normalized;
-  leftover `build:` stays `CWSANDBOX_NOT_IMPLEMENTED`. `wait()` is unchanged
-  and polls through `PREPARING` without treating it as ready.
+* feat: add Sandbox.run_from_file for Compose create
+
+Wire the live v1 CreateSandboxFromFile RPC so callers can start a sandbox from pull-only Compose
+  YAML without a template overlay.
+
+* test(e2e): cover Compose create with dependent services
+
+Prove run_from_file reaches RUNNING and that Redis, the API, and the primary can talk over loopback
+  after the health chain passes.
+
+* docs(examples): load Compose from a sibling YAML file
+
+Show run_from_file against a three-service Redis, API, and Ubuntu Compose file instead of inlined
+  YAML.
 
 
 ## v1.13.0 (2026-09-04)
