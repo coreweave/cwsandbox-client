@@ -56,6 +56,14 @@ def logs(
     produce any log output.
 
     SANDBOX_ID is the ID of the sandbox to stream logs from.
+
+    Examples:
+
+        cwsandbox logs <sandbox-id> --tail 100 --timestamps
+
+        cwsandbox logs <sandbox-id> --follow
+
+        cwsandbox logs <sandbox-id> --since "2026-09-10 09:00:00"
     """
     if since_time is not None and since_time.tzinfo is None:
         since_time = since_time.replace(tzinfo=UTC)

@@ -44,6 +44,14 @@ def list_sandboxes(
     """List sandboxes.
 
     Displays sandbox ID, status, runner, and started time for matching sandboxes.
+
+    Examples:
+
+        cwsandbox ls
+
+        cwsandbox ls --status running --tag development
+
+        cwsandbox ls --output json
     """
     sandboxes = Sandbox.list(
         tags=list(tags) if tags else None,
