@@ -132,7 +132,8 @@ class PlacementSpillover(StrEnum):
     ``placement_mode`` remains the primary (first-attempt) mode. Spillover modes
     retry CreateSandbox once with the alternate mode when the first attempt
     cannot place the request (capacity, no suitable runner, runner
-    unavailable/overloaded, or a placement constraint). Template and
+    unavailable/overloaded, a placement constraint, or a resource request
+    over the primary mode's policy ceiling). Template and
     ``run_from_file`` creates allow only ``STRICT``. ``SERVERLESS_THEN_CKS``
     cannot be combined with ``runner_ids``.
 

@@ -15,9 +15,11 @@ import pytest
 from cwsandbox import PlacementMode, PlacementSpillover, Sandbox
 from cwsandbox._error_info import (
     CWSANDBOX_BACKEND_UNAVAILABLE,
+    CWSANDBOX_INVALID_REQUEST,
     CWSANDBOX_NO_SUITABLE_RUNNER,
     CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
     CWSANDBOX_PLACEMENT_REJECTED,
+    CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
     CWSANDBOX_RUNNER_OVERLOADED,
     CWSANDBOX_RUNNER_UNAVAILABLE,
@@ -33,11 +35,13 @@ from cwsandbox._sandbox import (
     _translate_rpc_error,
 )
 from cwsandbox.exceptions import (
+    CWSandboxError,
     SandboxError,
     SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxUnavailableError,
+    SandboxValidationError,
 )
 
 
@@ -97,6 +101,16 @@ def _capacity_error(
     )
 
 
+def _ceiling_error(
+    details: str = "memory exceeds the policy per-container maximum",
+) -> _MockRpcErrorWithDetails:
+    return _MockRpcErrorWithDetails(
+        grpc.StatusCode.INVALID_ARGUMENT,
+        details,
+        reason=CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+    )
+
+
 def _run_with_create_side_effect(
     side_effect: Any,
     **kwargs: Any,
@@ -138,6 +152,7 @@ class TestSpilloverEligibility:
                 CWSANDBOX_NO_SUITABLE_RUNNER,
                 CWSANDBOX_RUNNER_OVERLOADED,
                 CWSANDBOX_RUNNER_UNAVAILABLE,
+                CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
             }
         )
 
@@ -203,6 +218,22 @@ class TestSpilloverEligibility:
         )
         assert isinstance(exc, SandboxUnavailableError)
         assert _is_spillover_eligible(exc)
+
+    def test_resource_ceiling_is_eligible(self) -> None:
+        exc = _translate_rpc_error(_ceiling_error())
+        assert exc.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert _is_spillover_eligible(exc)
+
+    def test_other_invalid_argument_is_not_eligible(self) -> None:
+        exc = _translate_rpc_error(
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "bad field",
+                reason=CWSANDBOX_INVALID_REQUEST,
+            )
+        )
+        assert exc.reason == CWSANDBOX_INVALID_REQUEST
+        assert not _is_spillover_eligible(exc)
 
 
 class TestSpilloverValidation:
@@ -346,6 +377,59 @@ class TestSpilloverCreatePath:
         assert isinstance(err, SandboxResourceExhaustedError)
         assert stub.CreateSandbox.call_count == 1
 
+    def test_cks_then_serverless_retries_on_resource_ceiling(self) -> None:
+        ok = _create_sandbox_response("spilled-ceiling")
+        sandbox, stub, err = _run_with_create_side_effect(
+            [_ceiling_error(), ok],
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            runner_ids=["runner-a"],
+        )
+        assert err is None
+        assert sandbox is not None
+        assert stub.CreateSandbox.call_count == 2
+        req1 = stub.CreateSandbox.call_args_list[0].args[0]
+        req2 = stub.CreateSandbox.call_args_list[1].args[0]
+        assert req1.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_CKS
+        assert list(req1.sandbox.spec.runner_ids) == ["runner-a"]
+        assert req2.sandbox.spec.mode == sandbox_pb2.SANDBOX_MODE_SERVERLESS
+        assert list(req2.sandbox.spec.runner_ids) == []
+        assert req1.request_id != req2.request_id
+        assert sandbox._placement_mode == PlacementMode.SERVERLESS
+        assert sandbox._runner_ids is None
+
+    def test_resource_ceiling_on_both_modes_chains_cause(self) -> None:
+        sandbox, stub, err = _run_with_create_side_effect(
+            [_ceiling_error("cks ceiling"), _ceiling_error("serverless ceiling")],
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+        )
+        assert sandbox is None
+        assert isinstance(err, CWSandboxError)
+        assert err.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert isinstance(err.__cause__, CWSandboxError)
+        assert err.__cause__.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert any(
+            CWSANDBOX_RESOURCE_CEILING_EXCEEDED in note for note in getattr(err, "__notes__", [])
+        )
+        assert stub.CreateSandbox.call_count == 2
+
+    def test_other_invalid_argument_does_not_retry(self) -> None:
+        bad = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "bad field",
+            reason=CWSANDBOX_INVALID_REQUEST,
+        )
+        sandbox, stub, err = _run_with_create_side_effect(
+            [bad],
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+        )
+        assert sandbox is None
+        assert isinstance(err, CWSandboxError)
+        assert err.reason == CWSANDBOX_INVALID_REQUEST
+        assert stub.CreateSandbox.call_count == 1
+
     def test_restore_on_failed_spill_second_start_retries_primary(self) -> None:
         first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
         second = _MockRpcErrorWithDetails(
@@ -472,6 +556,9 @@ class TestSpilloverCreatePath:
         assert not _create_attempt_definitely_rejected(SandboxNotRunningError("cancelled"))
         assert _create_attempt_definitely_rejected(
             SandboxError("bad request", reason="CWSANDBOX_INVALID_REQUEST")
+        )
+        assert _create_attempt_definitely_rejected(
+            SandboxValidationError("too big", reason=CWSANDBOX_RESOURCE_CEILING_EXCEEDED)
         )
         assert _create_attempt_definitely_rejected(
             SandboxUnavailableError("runner down", reason=CWSANDBOX_RUNNER_UNAVAILABLE)

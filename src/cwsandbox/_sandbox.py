@@ -1215,9 +1215,12 @@ def _is_spillover_eligible(exc: Exception) -> bool:
     """True when a CreateSandbox failure may trigger one alternate-mode retry.
 
     Spillable when the primary mode cannot satisfy the request, identified
-    by AIP-193 reasons in ``SPILLOVER_ELIGIBLE_REASONS``. Never spills on
-    serverless product gates, auth, ``INVALID_ARGUMENT``, or bare
-    ``RESOURCE_EXHAUSTED`` without a recognized reason.
+    by AIP-193 reasons in ``SPILLOVER_ELIGIBLE_REASONS``: capacity and
+    placement failures, plus ``CWSANDBOX_RESOURCE_CEILING_EXCEEDED`` because
+    the ceiling belongs to the primary mode's policy and the alternate mode
+    resolves against its own. Never spills on serverless product gates, auth,
+    any other ``INVALID_ARGUMENT``, or bare ``RESOURCE_EXHAUSTED`` without a
+    recognized reason.
     """
     reason = getattr(exc, "reason", None)
     if reason in SPILLOVER_BLOCKED_REASONS:

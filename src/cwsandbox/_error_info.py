@@ -119,6 +119,12 @@ CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED = "CWSANDBOX_PLACEMENT_CONSTRAINT_UNS
 CWSANDBOX_NO_SUITABLE_RUNNER = "CWSANDBOX_NO_SUITABLE_RUNNER"
 CWSANDBOX_RUNNER_OVERLOADED = "CWSANDBOX_RUNNER_OVERLOADED"
 # CWSANDBOX_RUNNER_UNAVAILABLE is defined with the unavailable reasons above.
+# A container's CPU, memory, GPU, or memory-backed volume request exceeds the
+# ceiling of the policy the primary mode resolved against. The ceiling is a
+# property of that mode's policy, not of the request, so the alternate mode
+# (which resolves against its own policy) may still accept the same spec.
+# Every other INVALID_ARGUMENT reason stays terminal.
+CWSANDBOX_RESOURCE_CEILING_EXCEEDED = "CWSANDBOX_RESOURCE_CEILING_EXCEEDED"
 
 # Request-shape refusal (e.g. DeleteSandbox allow_missing + snapshot_volumes).
 CWSANDBOX_INVALID_REQUEST = "CWSANDBOX_INVALID_REQUEST"
@@ -143,6 +149,7 @@ SPILLOVER_ELIGIBLE_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_NO_SUITABLE_RUNNER,
         CWSANDBOX_RUNNER_OVERLOADED,
         CWSANDBOX_RUNNER_UNAVAILABLE,
+        CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     }
 )
 
