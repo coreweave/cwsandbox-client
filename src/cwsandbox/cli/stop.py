@@ -57,6 +57,14 @@ def stop_sandbox(
     """Stop a sandbox.
 
     SANDBOX_ID is the ID of the sandbox to stop.
+
+    Examples:
+
+        cwsandbox stop <sandbox-id>
+
+        cwsandbox stop <sandbox-id> --snapshot-on-stop
+
+        cwsandbox stop <sandbox-id> --graceful-shutdown-seconds 30
     """
     if not snapshot_on_stop and not wait_for_snapshot:
         raise click.UsageError("--no-wait-for-snapshot requires --snapshot-on-stop.")
