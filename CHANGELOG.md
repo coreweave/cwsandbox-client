@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.14.3 (2026-09-18)
+
+### Bug Fixes
+
+- **sandbox**: Spill placement on resource ceiling rejections
+  ([`61aadf2`](https://github.com/coreweave/cwsandbox-client/commit/61aadf219ca610af5aedc11672aa687acb69897e))
+
+A CreateSandbox rejected with CWSANDBOX_RESOURCE_CEILING_EXCEEDED now counts as a spillable primary
+  failure for placement_spillover. The ceiling is set by the policy the primary placement mode
+  resolved against, not by the request, so the alternate mode's policy may accept the same spec.
+  Every other INVALID_ARGUMENT reason stays terminal and still never spills.
+
+- **sandbox**: Validate spillover rejection metadata
+  ([`398482a`](https://github.com/coreweave/cwsandbox-client/commit/398482ae2fc1968498f1d42852198bea03d19474))
+
+Require the error domain and transport status to agree with a spillover reason. Raw reason strings
+  alone must not trigger an alternate create or reset an ambiguous create's request ID, which could
+  duplicate a sandbox.
+
+Cover resource-ceiling failures in both directions, field-level error details, strict placement, and
+  request-ID reuse after failed attempts.
+
+
 ## v1.14.2 (2026-09-04)
 
 ### Bug Fixes
