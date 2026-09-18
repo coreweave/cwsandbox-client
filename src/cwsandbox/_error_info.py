@@ -119,6 +119,10 @@ CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED = "CWSANDBOX_PLACEMENT_CONSTRAINT_UNS
 CWSANDBOX_NO_SUITABLE_RUNNER = "CWSANDBOX_NO_SUITABLE_RUNNER"
 CWSANDBOX_RUNNER_OVERLOADED = "CWSANDBOX_RUNNER_OVERLOADED"
 # CWSANDBOX_RUNNER_UNAVAILABLE is defined with the unavailable reasons above.
+# Resource ceilings can differ between placement modes, so the alternate mode
+# may accept a request rejected by the primary. This is the only
+# INVALID_ARGUMENT reason eligible for spillover.
+CWSANDBOX_RESOURCE_CEILING_EXCEEDED = "CWSANDBOX_RESOURCE_CEILING_EXCEEDED"
 
 # Request-shape refusal (e.g. DeleteSandbox allow_missing + snapshot_volumes).
 CWSANDBOX_INVALID_REQUEST = "CWSANDBOX_INVALID_REQUEST"
@@ -143,6 +147,7 @@ SPILLOVER_ELIGIBLE_REASONS: frozenset[str] = frozenset(
         CWSANDBOX_NO_SUITABLE_RUNNER,
         CWSANDBOX_RUNNER_OVERLOADED,
         CWSANDBOX_RUNNER_UNAVAILABLE,
+        CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     }
 )
 

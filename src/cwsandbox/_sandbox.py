@@ -94,6 +94,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_INVALID_REQUEST,
+    CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     CWSANDBOX_RUNNER_SHARD_RETIRING,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     CWSANDBOX_VOLUME_BACKEND_NOT_FOUND,
@@ -109,7 +110,6 @@ from cwsandbox._error_info import (
     FILE_ERROR_REASONS,
     SNAPSHOT_INTERNAL_REASONS,
     SNAPSHOT_TRANSIENT_REASONS,
-    SPILLOVER_BLOCKED_REASONS,
     SPILLOVER_ELIGIBLE_REASONS,
     STREAM_BACKPRESSURE,
     STREAM_TRUNCATED,
@@ -188,7 +188,6 @@ from cwsandbox._types import (
     _validate_containers,
 )
 from cwsandbox.exceptions import (
-    CWSandboxAuthenticationError,
     CWSandboxError,
     SandboxCommandTimeoutError,
     SandboxError,
@@ -1211,42 +1210,44 @@ def _coerce_sandbox_file_type(file_type: SandboxFileType | str) -> SandboxFileTy
     return file_type
 
 
-def _is_spillover_eligible(exc: Exception) -> bool:
+def _is_spillover_eligible(error: grpc.RpcError) -> bool:
     """True when a CreateSandbox failure may trigger one alternate-mode retry.
 
     Spillable when the primary mode cannot satisfy the request, identified
-    by AIP-193 reasons in ``SPILLOVER_ELIGIBLE_REASONS``. Never spills on
-    serverless product gates, auth, ``INVALID_ARGUMENT``, or bare
-    ``RESOURCE_EXHAUSTED`` without a recognized reason.
+    by AIP-193 reasons in ``SPILLOVER_ELIGIBLE_REASONS`` from
+    ``CWSANDBOX_ERROR_DOMAIN``. A resource ceiling allows spillover only with
+    ``INVALID_ARGUMENT``; the alternate mode's policy may accept the request.
+    Never spills on auth, other ``INVALID_ARGUMENT`` failures, or ambiguous
+    transport failures without a recognized placement rejection.
     """
-    reason = getattr(exc, "reason", None)
-    if reason in SPILLOVER_BLOCKED_REASONS:
+    parsed = parse_error_info(error)
+    if parsed is None or parsed.domain != CWSANDBOX_ERROR_DOMAIN:
         return False
-    return reason in SPILLOVER_ELIGIBLE_REASONS
+    code = error.code()
+    if parsed.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED:
+        return code == grpc.StatusCode.INVALID_ARGUMENT
+    return parsed.reason in SPILLOVER_ELIGIBLE_REASONS and code in (
+        grpc.StatusCode.RESOURCE_EXHAUSTED,
+        grpc.StatusCode.FAILED_PRECONDITION,
+        grpc.StatusCode.UNAVAILABLE,
+    )
 
 
-def _create_attempt_definitely_rejected(exc: Exception) -> bool:
+def _create_attempt_definitely_rejected(error: grpc.RpcError) -> bool:
     """True when a CreateSandbox error means the server did not commit a sandbox.
 
-    Restore the original request id only for an allowlisted reject. Transport
-    failures (UNAVAILABLE, DEADLINE_EXCEEDED, INTERNAL, UNKNOWN, CANCELLED)
-    and bare ``SandboxError`` without a reason keep the spilled id so a later
-    ``start()`` retries the same create.
+    Restore the original request id only for a definite rejection status or
+    a recognized placement rejection. Ambiguous transport failures keep the
+    spilled id so a later ``start()`` retries the same create, even when the
+    error carries an unrelated reason.
     """
-    if _is_spillover_eligible(exc):
-        return True
-    reason = getattr(exc, "reason", None)
-    if reason in SPILLOVER_BLOCKED_REASONS:
-        return True
-    if isinstance(exc, (CWSandboxAuthenticationError, SandboxNotFoundError)):
-        return True
-    if isinstance(exc, (SandboxUnavailableError, SandboxTimeoutError, SandboxNotRunningError)):
-        return False
-    if isinstance(exc, SandboxResourceExhaustedError) and reason:
-        return True
-    if isinstance(exc, SandboxError) and reason:
-        return True
-    return False
+    return error.code() in (
+        grpc.StatusCode.INVALID_ARGUMENT,
+        grpc.StatusCode.FAILED_PRECONDITION,
+        grpc.StatusCode.UNAUTHENTICATED,
+        grpc.StatusCode.PERMISSION_DENIED,
+        grpc.StatusCode.NOT_FOUND,
+    ) or _is_spillover_eligible(error)
 
 
 def _volume_source_is_scratch(volume: sandbox_pb2.SandboxVolume) -> bool:
@@ -4469,7 +4470,7 @@ class Sandbox:
                     attempt == 1
                     and primary_error is None
                     and self._placement_spillover != PlacementSpillover.STRICT
-                    and _is_spillover_eligible(translated)
+                    and _is_spillover_eligible(e)
                 ):
                     primary_error = translated
                     alternate = (
@@ -4494,7 +4495,7 @@ class Sandbox:
                     self._create_request_id = str(uuid.uuid4())
                     continue
                 if primary_error is not None:
-                    if _create_attempt_definitely_rejected(translated):
+                    if _create_attempt_definitely_rejected(e):
                         self._placement_mode = original_placement_mode
                         self._runner_ids = original_runner_ids
                         self._create_request_id = original_create_request_id

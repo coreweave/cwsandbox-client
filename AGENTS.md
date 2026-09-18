@@ -81,7 +81,7 @@ Properties:
 
 Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sandbox()`, and `@session.function()`):
 - `placement_mode` - `PlacementMode` (`serverless` / `cks`) or string; first-attempt mode when using spillover
-- `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Does not spill on serverless product gates, auth, or `INVALID_ARGUMENT`. Template creates (`template_id` / `run_from_template`) and `run_from_file` require `strict`.
+- `placement_spillover` - `PlacementSpillover` (`strict` default | `cks_then_serverless` | `serverless_then_cks`). On CreateSandbox failure when the primary mode cannot place the request (`CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED`, `CWSANDBOX_PLACEMENT_REJECTED`, `CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED`, `CWSANDBOX_NO_SUITABLE_RUNNER`, `CWSANDBOX_RUNNER_OVERLOADED`, `CWSANDBOX_RUNNER_UNAVAILABLE`, `CWSANDBOX_RESOURCE_CEILING_EXCEEDED`), retries once with the alternate mode and a new `request_id`. CKS→serverless clears `runner_ids`. `serverless_then_cks` rejects `runner_ids` at construction. Spillable reasons must carry the `cwsandbox.com` error domain. A resource-ceiling rejection must use `INVALID_ARGUMENT`; resource ceilings can differ between placement modes. Does not spill on serverless product gates, auth, or other `INVALID_ARGUMENT` reasons. Template creates (`template_id` / `run_from_template`) and `run_from_file` require `strict`.
 - `runner_ids` - CKS runner pin (rejected with serverless and with `serverless_then_cks`)
 - `services` - Typed ports via `Service` / `ServiceVisibility` / `ServiceProtocol` / `Endpoint`
 - `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) plus create-time `egress` / `ingress` grants (`EgressRule` / `IngressRule`), or dict
@@ -203,7 +203,7 @@ data = await ref
 
 **`PlacementMode`** (`_types.py`): `UNSPECIFIED` | `SERVERLESS` | `CKS`. Use with `runner_ids` only for CKS.
 
-**`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement failures. Templates and `run_from_file` require `STRICT`.
+**`PlacementSpillover`** (`_types.py`): `STRICT` (default) | `CKS_THEN_SERVERLESS` | `SERVERLESS_THEN_CKS`. Client-side one-shot CreateSandbox retry onto the alternate mode on spillable capacity/placement/resource-ceiling failures. Templates and `run_from_file` require `STRICT`.
 
 **`SandboxFileType`** (`_types.py`): `UNSPECIFIED` | `COMPOSE`. Used by `Sandbox.run_from_file()`. Compose is pull-only; leftover `build:` is `CWSANDBOX_NOT_IMPLEMENTED`.
 

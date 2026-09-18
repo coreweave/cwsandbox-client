@@ -302,8 +302,8 @@ class SandboxDefaults:
         placement_mode: ``PlacementMode`` (``serverless`` / ``cks``) or string.
         placement_spillover: ``PlacementSpillover`` policy for a one-shot create
             retry on the alternate mode when the primary fails with a spillable
-            capacity/placement reason. Default ``STRICT`` (no spill). Template
-            sandboxes require ``STRICT``.
+            capacity, placement, or resource-ceiling reason. Default ``STRICT``
+            (no spill). Template sandboxes require ``STRICT``.
         resources: Resource configuration. Accepts ``ResourceOptions`` for separate
             requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
         network: Deny-flag network options and optional create-time hostname

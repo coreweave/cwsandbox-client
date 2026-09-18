@@ -15,9 +15,11 @@ import pytest
 from cwsandbox import PlacementMode, PlacementSpillover, Sandbox
 from cwsandbox._error_info import (
     CWSANDBOX_BACKEND_UNAVAILABLE,
+    CWSANDBOX_INVALID_REQUEST,
     CWSANDBOX_NO_SUITABLE_RUNNER,
     CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
     CWSANDBOX_PLACEMENT_REJECTED,
+    CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
     CWSANDBOX_RUNNER_OVERLOADED,
     CWSANDBOX_RUNNER_UNAVAILABLE,
@@ -33,11 +35,12 @@ from cwsandbox._sandbox import (
     _translate_rpc_error,
 )
 from cwsandbox.exceptions import (
+    CWSandboxError,
     SandboxError,
-    SandboxNotRunningError,
     SandboxRequestTimeoutError,
     SandboxResourceExhaustedError,
     SandboxUnavailableError,
+    SandboxValidationError,
 )
 
 
@@ -59,6 +62,7 @@ class _MockRpcErrorWithDetails(grpc.RpcError):
         reason: str | None = None,
         domain: str = "cwsandbox.com",
         metadata: dict[str, str] | None = None,
+        field_violations: tuple[tuple[str, str], ...] = (),
     ) -> None:
         super().__init__()
         self._code = code
@@ -68,13 +72,20 @@ class _MockRpcErrorWithDetails(grpc.RpcError):
             from google.protobuf import any_pb2
             from google.rpc import error_details_pb2, status_pb2
 
-            status = status_pb2.Status(code=2, message=details)
+            status = status_pb2.Status(code=code.value[0], message=details)
             info = error_details_pb2.ErrorInfo(
                 reason=reason, domain=domain, metadata=metadata or {}
             )
             packed = any_pb2.Any()
             packed.Pack(info)
             status.details.append(packed)
+            if field_violations:
+                bad_request = error_details_pb2.BadRequest()
+                for field, description in field_violations:
+                    bad_request.field_violations.add(field=field, description=description)
+                packed = any_pb2.Any()
+                packed.Pack(bad_request)
+                status.details.append(packed)
             self._trailing = [("grpc-status-details-bin", status.SerializeToString())]
 
     def code(self) -> grpc.StatusCode:
@@ -94,6 +105,17 @@ def _capacity_error(
         grpc.StatusCode.RESOURCE_EXHAUSTED,
         "capacity exhausted",
         reason=reason,
+    )
+
+
+def _ceiling_error(
+    details: str = "memory exceeds the policy per-container maximum",
+) -> _MockRpcErrorWithDetails:
+    return _MockRpcErrorWithDetails(
+        grpc.StatusCode.INVALID_ARGUMENT,
+        details,
+        reason=CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+        field_violations=(("spec.containers[0].resources.memory", details),),
     )
 
 
@@ -138,71 +160,72 @@ class TestSpilloverEligibility:
                 CWSANDBOX_NO_SUITABLE_RUNNER,
                 CWSANDBOX_RUNNER_OVERLOADED,
                 CWSANDBOX_RUNNER_UNAVAILABLE,
+                CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
             }
         )
 
     def test_capacity_reason_is_eligible(self) -> None:
-        exc = _translate_rpc_error(_capacity_error())
-        assert _is_spillover_eligible(exc)
+        assert _is_spillover_eligible(_capacity_error())
 
     def test_placement_rejected_is_eligible(self) -> None:
-        exc = _translate_rpc_error(
-            _capacity_error(CWSANDBOX_PLACEMENT_REJECTED),
-        )
-        assert _is_spillover_eligible(exc)
+        assert _is_spillover_eligible(_capacity_error(CWSANDBOX_PLACEMENT_REJECTED))
 
     def test_constraint_unsatisfied_is_eligible(self) -> None:
-        exc = _translate_rpc_error(
-            _capacity_error(CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED),
-        )
-        assert _is_spillover_eligible(exc)
+        assert _is_spillover_eligible(_capacity_error(CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED))
 
     def test_bare_resource_exhausted_is_not_eligible(self) -> None:
-        exc = SandboxResourceExhaustedError("quota")
-        assert exc.reason is None
-        assert not _is_spillover_eligible(exc)
+        error = _MockRpcErrorWithDetails(grpc.StatusCode.RESOURCE_EXHAUSTED, "quota")
+        assert not _is_spillover_eligible(error)
 
     def test_serverless_not_allowed_is_not_eligible(self) -> None:
-        exc = _translate_rpc_error(
+        assert not _is_spillover_eligible(
             _MockRpcErrorWithDetails(
                 grpc.StatusCode.FAILED_PRECONDITION,
                 "serverless blocked",
                 reason=CWSANDBOX_SERVERLESS_NOT_ALLOWED,
             )
         )
-        assert isinstance(exc, SandboxError)
-        assert not _is_spillover_eligible(exc)
 
     def test_auth_style_error_is_not_eligible(self) -> None:
-        exc = SandboxError("nope", reason="PERMISSION_DENIED")
-        assert not _is_spillover_eligible(exc)
+        error = _MockRpcErrorWithDetails(grpc.StatusCode.PERMISSION_DENIED, "nope")
+        assert not _is_spillover_eligible(error)
 
     def test_no_suitable_runner_is_eligible(self) -> None:
-        exc = _translate_rpc_error(
+        assert _is_spillover_eligible(
             _MockRpcErrorWithDetails(
                 grpc.StatusCode.FAILED_PRECONDITION,
                 "no runner",
                 reason=CWSANDBOX_NO_SUITABLE_RUNNER,
             )
         )
-        assert _is_spillover_eligible(exc)
 
     def test_runner_overloaded_is_eligible(self) -> None:
-        exc = _translate_rpc_error(
-            _capacity_error(CWSANDBOX_RUNNER_OVERLOADED),
-        )
-        assert _is_spillover_eligible(exc)
+        assert _is_spillover_eligible(_capacity_error(CWSANDBOX_RUNNER_OVERLOADED))
 
     def test_runner_unavailable_is_eligible(self) -> None:
-        exc = _translate_rpc_error(
-            _MockRpcErrorWithDetails(
-                grpc.StatusCode.UNAVAILABLE,
-                "runner down",
-                reason=CWSANDBOX_RUNNER_UNAVAILABLE,
-            )
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.UNAVAILABLE,
+            "runner down",
+            reason=CWSANDBOX_RUNNER_UNAVAILABLE,
         )
-        assert isinstance(exc, SandboxUnavailableError)
-        assert _is_spillover_eligible(exc)
+        assert isinstance(_translate_rpc_error(error), SandboxUnavailableError)
+        assert _is_spillover_eligible(error)
+
+    def test_resource_ceiling_is_eligible(self) -> None:
+        error = _ceiling_error()
+        exc = _translate_rpc_error(error)
+        assert isinstance(exc, SandboxValidationError)
+        assert exc.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert exc.field_violations[0].field == "spec.containers[0].resources.memory"
+        assert _is_spillover_eligible(error)
+
+    def test_other_invalid_argument_is_not_eligible(self) -> None:
+        error = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "bad field",
+            reason=CWSANDBOX_INVALID_REQUEST,
+        )
+        assert not _is_spillover_eligible(error)
 
 
 class TestSpilloverValidation:
@@ -245,15 +268,46 @@ class TestSpilloverValidation:
 
 
 class TestSpilloverCreatePath:
-    def test_strict_does_not_retry_on_capacity(self) -> None:
+    @pytest.mark.parametrize(
+        ("code", "domain"),
+        [
+            (grpc.StatusCode.INVALID_ARGUMENT, "proxy.example.com"),
+            (grpc.StatusCode.INVALID_ARGUMENT, ""),
+            (grpc.StatusCode.UNAUTHENTICATED, "cwsandbox.com"),
+            (grpc.StatusCode.PERMISSION_DENIED, "cwsandbox.com"),
+            (grpc.StatusCode.DEADLINE_EXCEEDED, "cwsandbox.com"),
+            (grpc.StatusCode.UNAVAILABLE, "cwsandbox.com"),
+            (grpc.StatusCode.INTERNAL, "cwsandbox.com"),
+        ],
+    )
+    def test_ceiling_reason_requires_matching_domain_and_status(
+        self, code: grpc.StatusCode, domain: str
+    ) -> None:
+        error = _MockRpcErrorWithDetails(
+            code,
+            reason=CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+            domain=domain,
+        )
         sandbox, stub, err = _run_with_create_side_effect(
-            [_capacity_error()],
+            [error, _create_sandbox_response()],
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+        )
+        assert sandbox is None
+        assert isinstance(err, CWSandboxError)
+        assert err.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert stub.CreateSandbox.call_count == 1
+
+    @pytest.mark.parametrize("error", [_capacity_error(), _ceiling_error()])
+    def test_strict_does_not_retry(self, error: grpc.RpcError) -> None:
+        sandbox, stub, err = _run_with_create_side_effect(
+            [error],
             placement_mode=PlacementMode.CKS,
             placement_spillover=PlacementSpillover.STRICT,
             runner_ids=["runner-a"],
         )
         assert sandbox is None
-        assert isinstance(err, SandboxResourceExhaustedError)
+        assert isinstance(err, SandboxError)
+        assert err.__cause__ is error
         assert stub.CreateSandbox.call_count == 1
 
     def test_cks_then_serverless_retries_clears_runner_ids_new_request_id(self) -> None:
@@ -346,13 +400,108 @@ class TestSpilloverCreatePath:
         assert isinstance(err, SandboxResourceExhaustedError)
         assert stub.CreateSandbox.call_count == 1
 
-    def test_restore_on_failed_spill_second_start_retries_primary(self) -> None:
-        first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
-        second = _MockRpcErrorWithDetails(
-            grpc.StatusCode.RESOURCE_EXHAUSTED,
-            "still full",
-            reason=CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED,
+    @pytest.mark.parametrize(
+        ("primary", "spillover", "alternate", "runner_ids"),
+        [
+            (
+                PlacementMode.CKS,
+                PlacementSpillover.CKS_THEN_SERVERLESS,
+                PlacementMode.SERVERLESS,
+                ["runner-a"],
+            ),
+            (
+                PlacementMode.SERVERLESS,
+                PlacementSpillover.SERVERLESS_THEN_CKS,
+                PlacementMode.CKS,
+                None,
+            ),
+        ],
+    )
+    def test_retries_on_resource_ceiling_preserving_spec(
+        self,
+        primary: PlacementMode,
+        spillover: PlacementSpillover,
+        alternate: PlacementMode,
+        runner_ids: list[str] | None,
+    ) -> None:
+        ok = _create_sandbox_response("spilled-ceiling")
+        sandbox, stub, err = _run_with_create_side_effect(
+            [_ceiling_error(), ok],
+            placement_mode=primary,
+            placement_spillover=spillover,
+            runner_ids=runner_ids,
+            resources={"cpu": "2", "memory": "4Gi"},
         )
+        assert err is None
+        assert sandbox is not None
+        assert stub.CreateSandbox.call_count == 2
+        req1 = stub.CreateSandbox.call_args_list[0].args[0]
+        req2 = stub.CreateSandbox.call_args_list[1].args[0]
+        assert req1.sandbox.spec.mode == sandbox_pb2.SandboxMode.Value(
+            f"SANDBOX_MODE_{primary.name}"
+        )
+        assert list(req1.sandbox.spec.runner_ids) == (runner_ids or [])
+        assert req2.sandbox.spec.mode == sandbox_pb2.SandboxMode.Value(
+            f"SANDBOX_MODE_{alternate.name}"
+        )
+        assert list(req2.sandbox.spec.runner_ids) == []
+        assert req1.request_id != req2.request_id
+        expected_spec = sandbox_pb2.SandboxSpec()
+        expected_spec.CopyFrom(req1.sandbox.spec)
+        expected_spec.mode = req2.sandbox.spec.mode
+        expected_spec.ClearField("runner_ids")
+        assert req2.sandbox.spec == expected_spec
+        assert sandbox._placement_mode == alternate
+        assert sandbox._runner_ids is None
+
+    def test_resource_ceiling_on_both_modes_chains_cause(self) -> None:
+        sandbox, stub, err = _run_with_create_side_effect(
+            [_ceiling_error("cks ceiling"), _ceiling_error("serverless ceiling")],
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+        )
+        assert sandbox is None
+        assert isinstance(err, SandboxValidationError)
+        assert err.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert isinstance(err.__cause__, SandboxValidationError)
+        assert err.__cause__.reason == CWSANDBOX_RESOURCE_CEILING_EXCEEDED
+        assert err.field_violations[0].description == "serverless ceiling"
+        assert err.__cause__.field_violations[0].description == "cks ceiling"
+        assert any(
+            CWSANDBOX_RESOURCE_CEILING_EXCEEDED in note for note in getattr(err, "__notes__", [])
+        )
+        assert stub.CreateSandbox.call_count == 2
+
+    def test_other_invalid_argument_does_not_retry(self) -> None:
+        bad = _MockRpcErrorWithDetails(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "bad field",
+            reason=CWSANDBOX_INVALID_REQUEST,
+        )
+        sandbox, stub, err = _run_with_create_side_effect(
+            [bad],
+            placement_mode=PlacementMode.CKS,
+            placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+        )
+        assert sandbox is None
+        assert isinstance(err, CWSandboxError)
+        assert err.reason == CWSANDBOX_INVALID_REQUEST
+        assert stub.CreateSandbox.call_count == 1
+
+    @pytest.mark.parametrize(
+        ("first", "second", "exception_type"),
+        [
+            (
+                _capacity_error(),
+                _capacity_error(CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED),
+                SandboxResourceExhaustedError,
+            ),
+            (_ceiling_error(), _ceiling_error(), SandboxValidationError),
+        ],
+    )
+    def test_restore_on_failed_spill_second_start_retries_primary(
+        self, first: grpc.RpcError, second: grpc.RpcError, exception_type: type[SandboxError]
+    ) -> None:
         sandbox = Sandbox(
             placement_mode=PlacementMode.CKS,
             placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
@@ -367,7 +516,7 @@ class TestSpilloverCreatePath:
             sb._stub = mock_stub
 
         with patch.object(Sandbox, "_ensure_client", ensure_client):
-            with pytest.raises(SandboxResourceExhaustedError):
+            with pytest.raises(exception_type):
                 sandbox.start().result()
 
         first_req = mock_stub.CreateSandbox.call_args_list[0].args[0]
@@ -387,11 +536,38 @@ class TestSpilloverCreatePath:
         assert req.request_id == first_req.request_id
         sandbox._state = _Terminal(sandbox_id="retry-ok", status=SandboxStatus.COMPLETED)
 
-    def test_ambiguous_spill_second_keeps_spilled_request_id(self) -> None:
-        first = _capacity_error(CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED)
+    @pytest.mark.parametrize(
+        ("code", "reason", "domain"),
+        [
+            (grpc.StatusCode.DEADLINE_EXCEEDED, None, "cwsandbox.com"),
+            (
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+                CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+                "cwsandbox.com",
+            ),
+            (
+                grpc.StatusCode.UNAVAILABLE,
+                CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+                "cwsandbox.com",
+            ),
+            (grpc.StatusCode.INTERNAL, CWSANDBOX_RESOURCE_CEILING_EXCEEDED, "cwsandbox.com"),
+            (grpc.StatusCode.INTERNAL, "CWSANDBOX_INTERNAL_ERROR", "cwsandbox.com"),
+            (
+                grpc.StatusCode.UNAVAILABLE,
+                CWSANDBOX_RUNNER_UNAVAILABLE,
+                "proxy.example.com",
+            ),
+        ],
+    )
+    def test_ambiguous_spill_second_keeps_spilled_request_id(
+        self, code: grpc.StatusCode, reason: str | None, domain: str
+    ) -> None:
+        first = _ceiling_error()
         second = _MockRpcErrorWithDetails(
-            grpc.StatusCode.DEADLINE_EXCEEDED,
+            code,
             "maybe committed",
+            reason=reason,
+            domain=domain,
         )
         sandbox = Sandbox(
             placement_mode=PlacementMode.CKS,
@@ -407,7 +583,7 @@ class TestSpilloverCreatePath:
             sb._stub = mock_stub
 
         with patch.object(Sandbox, "_ensure_client", ensure_client):
-            with pytest.raises(SandboxRequestTimeoutError):
+            with pytest.raises(SandboxError):
                 sandbox.start().result()
 
         first_req = mock_stub.CreateSandbox.call_args_list[0].args[0]
@@ -458,21 +634,31 @@ class TestSpilloverCreatePath:
         assert mock_stub.CreateSandbox.call_args.args[0].request_id == spilled_id
         sandbox._state = _Terminal(sandbox_id="spill-id", status=SandboxStatus.COMPLETED)
 
-    def test_create_attempt_reject_classification(self) -> None:
-        assert _create_attempt_definitely_rejected(
-            SandboxResourceExhaustedError("full", reason=CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED)
-        )
-        assert not _create_attempt_definitely_rejected(SandboxRequestTimeoutError("late"))
-        assert not _create_attempt_definitely_rejected(SandboxUnavailableError("down"))
-        assert not _create_attempt_definitely_rejected(
-            SandboxUnavailableError("backend", reason=CWSANDBOX_BACKEND_UNAVAILABLE)
-        )
-        assert not _create_attempt_definitely_rejected(SandboxResourceExhaustedError("quota"))
-        assert not _create_attempt_definitely_rejected(SandboxError("internal"))
-        assert not _create_attempt_definitely_rejected(SandboxNotRunningError("cancelled"))
-        assert _create_attempt_definitely_rejected(
-            SandboxError("bad request", reason="CWSANDBOX_INVALID_REQUEST")
-        )
-        assert _create_attempt_definitely_rejected(
-            SandboxUnavailableError("runner down", reason=CWSANDBOX_RUNNER_UNAVAILABLE)
-        )
+    @pytest.mark.parametrize(
+        ("code", "reason", "rejected"),
+        [
+            (grpc.StatusCode.RESOURCE_EXHAUSTED, CWSANDBOX_PLACEMENT_CONSTRAINT_UNSATISFIED, True),
+            (grpc.StatusCode.INVALID_ARGUMENT, CWSANDBOX_INVALID_REQUEST, True),
+            (grpc.StatusCode.INVALID_ARGUMENT, CWSANDBOX_RESOURCE_CEILING_EXCEEDED, True),
+            (grpc.StatusCode.INVALID_ARGUMENT, None, True),
+            (grpc.StatusCode.FAILED_PRECONDITION, CWSANDBOX_SERVERLESS_NOT_ALLOWED, True),
+            (grpc.StatusCode.UNAUTHENTICATED, None, True),
+            (grpc.StatusCode.PERMISSION_DENIED, None, True),
+            (grpc.StatusCode.NOT_FOUND, None, True),
+            (grpc.StatusCode.UNAVAILABLE, CWSANDBOX_RUNNER_UNAVAILABLE, True),
+            (grpc.StatusCode.DEADLINE_EXCEEDED, None, False),
+            (grpc.StatusCode.UNAVAILABLE, None, False),
+            (grpc.StatusCode.UNAVAILABLE, CWSANDBOX_BACKEND_UNAVAILABLE, False),
+            (grpc.StatusCode.RESOURCE_EXHAUSTED, None, False),
+            (grpc.StatusCode.RESOURCE_EXHAUSTED, "UNKNOWN_QUOTA", False),
+            (grpc.StatusCode.INTERNAL, None, False),
+            (grpc.StatusCode.INTERNAL, "CWSANDBOX_INTERNAL_ERROR", False),
+            (grpc.StatusCode.UNKNOWN, CWSANDBOX_RESOURCE_CEILING_EXCEEDED, False),
+            (grpc.StatusCode.CANCELLED, CWSANDBOX_RESOURCE_CEILING_EXCEEDED, False),
+        ],
+    )
+    def test_create_attempt_reject_classification(
+        self, code: grpc.StatusCode, reason: str | None, rejected: bool
+    ) -> None:
+        error = _MockRpcErrorWithDetails(code, reason=reason)
+        assert _create_attempt_definitely_rejected(error) is rejected
