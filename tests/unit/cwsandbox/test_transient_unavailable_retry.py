@@ -24,7 +24,6 @@ from cwsandbox._sandbox import (
     _retry_transient_unavailable,
     _Starting,
 )
-from cwsandbox._session import Session
 from cwsandbox._types import DataPlaneMode
 from cwsandbox.exceptions import (
     SandboxError,
@@ -366,20 +365,11 @@ async def _delete(stub: MagicMock, **kwargs: object) -> None:
 
 class TestDeleteClassMethod:
     @pytest.mark.asyncio
-    async def test_incident_runner_unavailable_is_retried(self, mock_api_key: str) -> None:
+    async def test_hinted_runner_unavailable_is_retried(self, mock_api_key: str) -> None:
         stub = MagicMock()
         stub.DeleteSandbox = AsyncMock(side_effect=[_hinted(), sandbox_pb2.DeleteSandboxResponse()])
         await _delete(stub)
         assert stub.DeleteSandbox.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_opt_out_makes_one_attempt(self, mock_api_key: str) -> None:
-        stub = MagicMock()
-        stub.DeleteSandbox = AsyncMock(side_effect=[_hinted(), sandbox_pb2.DeleteSandboxResponse()])
-        with pytest.raises(SandboxUnavailableError) as exc_info:
-            await _delete(stub, retry_transient_unavailable=False)
-        assert stub.DeleteSandbox.await_count == 1
-        assert exc_info.value.reason == RUNNER_UNAVAILABLE
 
     @pytest.mark.asyncio
     async def test_exhausted_retries_surface_translated_last_error(self, mock_api_key: str) -> None:
@@ -430,16 +420,6 @@ class TestStop:
         with patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock):
             sandbox.stop().result()
         assert stub.DeleteSandbox.await_count == 2
-
-    def test_defaults_opt_out_makes_one_attempt(self) -> None:
-        sandbox, stub = _stoppable(SandboxDefaults(retry_transient_unavailable=False))
-        stub.DeleteSandbox = AsyncMock(side_effect=[_hinted(), sandbox_pb2.DeleteSandboxResponse()])
-        with (
-            patch.object(sandbox, "_await_terminal_after_stop", new_callable=AsyncMock),
-            pytest.raises(SandboxUnavailableError),
-        ):
-            sandbox.stop().result()
-        assert stub.DeleteSandbox.await_count == 1
 
     def test_snapshot_on_stop_is_not_retried(self) -> None:
         sandbox, stub = _stoppable()
@@ -536,18 +516,6 @@ class TestReadFile:
         assert sandbox._stub.ReadFile.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_gateway_read_opt_out(self) -> None:
-        sandbox = _running(
-            DataPlaneMode.GATEWAY, SandboxDefaults(retry_transient_unavailable=False)
-        )
-        sandbox._stub.ReadFile = AsyncMock(
-            side_effect=[_hinted(), sandbox_pb2.ReadFileResponse(content=b"ok")]
-        )
-        with pytest.raises(SandboxUnavailableError):
-            await _read(sandbox)
-        assert sandbox._stub.ReadFile.await_count == 1
-
-    @pytest.mark.asyncio
     async def test_direct_read_adds_no_hinted_retry(self) -> None:
         sandbox = _running(DataPlaneMode.DIRECT)
         direct_stub = MagicMock()
@@ -613,23 +581,19 @@ class TestReadFile:
     def _retiring() -> _RpcError:
         return _RpcError(grpc.StatusCode.UNAVAILABLE, reason="CWSANDBOX_RUNNER_SHARD_RETIRING")
 
-    @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.asyncio
-    async def test_retirement_fallback_keeps_full_timeout(self, enabled: bool) -> None:
+    async def test_retirement_fallback_keeps_full_timeout(self) -> None:
         # The gateway fallback after a slow direct shard-retirement pass gets
-        # the full per-call timeout, as before, whether the retry is on or off.
-        sandbox = _running(DataPlaneMode.AUTO, SandboxDefaults(retry_transient_unavailable=enabled))
+        # the full per-call timeout, as before this retry existed.
+        sandbox = _running(DataPlaneMode.AUTO)
         now = self._retiring_then_gateway(sandbox, self._retiring(), cost=60.0)
         with _patch_monotonic(lambda: now[0]):
             assert await _read(sandbox) == b"ok"
         assert sandbox._stub.ReadFile.call_args.kwargs["timeout"] == 30
 
-    @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.asyncio
-    async def test_zero_timeout_gateway_read_still_calls_rpc(self, enabled: bool) -> None:
-        sandbox = _running(
-            DataPlaneMode.GATEWAY, SandboxDefaults(retry_transient_unavailable=enabled)
-        )
+    async def test_zero_timeout_gateway_read_still_calls_rpc(self) -> None:
+        sandbox = _running(DataPlaneMode.GATEWAY)
         sandbox._stub.ReadFile = AsyncMock(return_value=sandbox_pb2.ReadFileResponse(content=b"ok"))
         p1, p2, p3 = _read_patches(sandbox)
         with p1, p2, p3:  # type: ignore[attr-defined]
@@ -655,44 +619,3 @@ class TestReadFile:
         ):
             await _read(sandbox)
         assert gateway_stub.ReadFile.await_count == 1
-
-
-# ---------------------------------------------------------------------------
-# Opt-out propagation to discovered handles
-# ---------------------------------------------------------------------------
-
-
-class TestOptOutPropagation:
-    def test_defaults_field_defaults_on_and_survives_from_dict(self) -> None:
-        assert SandboxDefaults().retry_transient_unavailable is True
-        assert SandboxDefaults.from_dict({"retry_transient_unavailable": None}) == (
-            SandboxDefaults()
-        )
-        assert (
-            SandboxDefaults.from_dict(
-                {"retry_transient_unavailable": False}
-            ).retry_transient_unavailable
-            is False
-        )
-
-    def test_from_sandbox_info_keeps_opt_out(self) -> None:
-        info = sandbox_pb2.Sandbox(sandbox_id="sb-1")
-        sandbox = Sandbox._from_sandbox_info(
-            info,
-            base_url="https://x",
-            timeout_seconds=30.0,
-            retry_transient_unavailable=False,
-        )
-        assert sandbox._defaults.retry_transient_unavailable is False
-
-    @pytest.mark.asyncio
-    async def test_session_from_id_and_list_forward_opt_out(self) -> None:
-        session = Session(SandboxDefaults(retry_transient_unavailable=False))
-        with (
-            patch.object(Sandbox, "_from_id_async", AsyncMock(return_value=MagicMock())) as fid,
-            patch.object(Sandbox, "_list_async", AsyncMock(return_value=[])) as lst,
-        ):
-            await session._from_id_async("sb-1", adopt=False)
-            await session._list_async()
-        assert fid.call_args.kwargs["retry_transient_unavailable"] is False
-        assert lst.call_args.kwargs["retry_transient_unavailable"] is False

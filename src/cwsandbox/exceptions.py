@@ -309,10 +309,8 @@ class SandboxUnavailableError(SandboxNotRunningError):
       their own retry budgets.
     - ``Sandbox.delete()``, ``stop()`` (without ``snapshot_on_stop``),
       and gateway ``read_file()``: up to 3 attempts when the server sent
-      gRPC ``UNAVAILABLE`` with a ``retry_delay``, within that RPC's
-      timeout. Opt out of this hinted retry with
-      ``SandboxDefaults.retry_transient_unavailable`` or
-      ``Sandbox.delete(retry_transient_unavailable=False)``.
+      gRPC ``UNAVAILABLE`` with a ``retry_delay`` of at most 10 s, within
+      that RPC's timeout.
 
     When raised from those calls, it is the last attempt's error. Other
     operations (exec, streams, creates, writes) add no retry for this

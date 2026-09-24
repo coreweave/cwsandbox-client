@@ -1560,7 +1560,7 @@ TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS: int = 3
 TRANSIENT_UNAVAILABLE_JITTER: float = 0.2
 """Upward-only jitter on the server's ``RetryInfo`` delay (never sleeps less)."""
 
-TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS: float = DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS: float = 5.0
 """Time a retried attempt must still have after the backoff, or the last error is raised.
 
 Keeps a starved final attempt from failing with ``DEADLINE_EXCEEDED`` and
@@ -1593,7 +1593,7 @@ async def _retry_transient_unavailable(
     *,
     timeout: float,
     operation: str,
-    enabled: bool,
+    enabled: bool = True,
     max_attempts: int = TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS,
     still_valid: Callable[[], bool] | None = None,
 ) -> _T:
@@ -1611,6 +1611,14 @@ async def _retry_transient_unavailable(
     given) must still hold, e.g. the channel the attempt uses was not closed
     by a concurrent stop. Otherwise the last raw ``grpc.RpcError`` is
     re-raised for the call site to translate. Cancellation propagates.
+
+    This reads ``RetryInfo`` differently from ``_retry_transient_rpc`` on
+    purpose; keep the two in mind together when changing either. That helper
+    retries every translated transient error, with or without a hint, so it
+    clamps a long hint to its cap and treats a zero hint as missing and uses
+    its own backoff. This one retries only because the server supplied the
+    hint, so it never sleeps less than the hint: a zero hint retries at once,
+    and a hint above the cap is raised rather than clamped.
     """
     deadline = time.monotonic() + timeout
     rpc_timeout = timeout
@@ -2678,7 +2686,6 @@ class Sandbox:
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
         auth: AuthConfig | None = None,
         auth_metadata: tuple[tuple[str, str], ...] | None = None,
-        retry_transient_unavailable: bool = True,
     ) -> Sandbox:
         """Create a Sandbox instance from a protobuf sandbox info response."""
         info = _as_sandbox_view(info)
@@ -2718,9 +2725,7 @@ class Sandbox:
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
         sandbox._session = None
-        sandbox._defaults = SandboxDefaults(
-            auth=auth, retry_transient_unavailable=retry_transient_unavailable
-        )
+        sandbox._defaults = SandboxDefaults(auth=auth)
         sandbox._start_kwargs = {}
         sandbox._create_request_id = None
         sandbox._placement_mode = None
@@ -2905,7 +2910,6 @@ class Sandbox:
         poll_rpc_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
         volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
-        retry_transient_unavailable: bool = True,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
         normalized_tags = _normalize_tags(tags)
@@ -2975,7 +2979,6 @@ class Sandbox:
                     data_plane_mode=data_plane_mode,
                     auth=auth,
                     auth_metadata=auth_metadata,
-                    retry_transient_unavailable=retry_transient_unavailable,
                 )
                 for sb in sandbox_infos
             ]
@@ -3055,7 +3058,6 @@ class Sandbox:
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
-        retry_transient_unavailable: bool = True,
     ) -> Sandbox:
         """Internal async: Attach to an existing sandbox by ID."""
         effective_base_url = (
@@ -3101,7 +3103,6 @@ class Sandbox:
                 data_plane_mode=data_plane_mode,
                 auth=auth,
                 auth_metadata=auth_metadata,
-                retry_transient_unavailable=retry_transient_unavailable,
             )
         finally:
             await channel.close(grace=None)
@@ -3115,12 +3116,15 @@ class Sandbox:
         auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
-        retry_transient_unavailable: bool = True,
     ) -> OperationRef[None]:
         """Delete a sandbox by ID without creating a Sandbox instance.
 
         This is a convenience method for cleanup scenarios where you
         don't need to perform other operations on the sandbox.
+
+        When the server returns ``UNAVAILABLE`` with a ``RetryInfo`` delay,
+        the delete is retried (up to 3 attempts, within ``timeout_seconds``);
+        a not-found answer on a retry counts as deleted.
 
         Args:
             sandbox_id: The sandbox ID to delete
@@ -3129,14 +3133,6 @@ class Sandbox:
             timeout_seconds: Request timeout (default: 300s)
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
-            retry_transient_unavailable: Retry the delete (up to 3 attempts,
-                within ``timeout_seconds``) when the server returns
-                ``UNAVAILABLE`` with a ``RetryInfo`` delay. Pass ``False`` to
-                make a single attempt. This is a per-call argument only;
-                ``SandboxDefaults`` and ``Session`` settings do not apply to
-                this classmethod. A not-found answer on a retry counts as
-                deleted.
-
         Returns:
             OperationRef[None]: Use .result() to block until complete.
             Raises SandboxNotFoundError if not found (unless missing_ok=True),
@@ -3165,7 +3161,6 @@ class Sandbox:
                 auth=auth,
                 timeout_seconds=timeout_seconds,
                 missing_ok=missing_ok,
-                retry_transient_unavailable=retry_transient_unavailable,
             )
         )
         return OperationRef(future)
@@ -3179,7 +3174,6 @@ class Sandbox:
         auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
-        retry_transient_unavailable: bool = True,
     ) -> None:
         """Internal async: Delete a sandbox by ID."""
         effective_base_url = (
@@ -3209,7 +3203,6 @@ class Sandbox:
                     _attempt,
                     timeout=timeout,
                     operation="Delete sandbox",
-                    enabled=retry_transient_unavailable,
                 )
             except grpc.RpcError as e:
                 parsed = parse_error_info(e)
@@ -6009,9 +6002,7 @@ class Sandbox:
                         _attempt,
                         timeout=client_deadline,
                         operation="Stop sandbox",
-                        enabled=(
-                            not snapshot_on_stop and self._defaults.retry_transient_unavailable
-                        ),
+                        enabled=not snapshot_on_stop,
                         # A joiner cancelled during backoff closes the channel
                         # and clears _stub; don't send the retry on it.
                         still_valid=lambda: self._stub is stub,
@@ -7727,7 +7718,6 @@ class Sandbox:
             _attempt,
             timeout=timeout,
             operation="Read file",
-            enabled=self._defaults.retry_transient_unavailable,
             max_attempts=max_attempts,
             # A concurrent stop closes the channel and clears _stub.
             still_valid=lambda: self._stub is stub,

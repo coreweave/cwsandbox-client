@@ -336,14 +336,6 @@ class SandboxDefaults:
         data_plane_mode: Transport policy for exec, logs, and file operations.
             ``auto`` (default) prefers direct mTLS and falls back to the gateway;
             ``gateway`` disables direct access; ``direct`` requires it.
-        retry_transient_unavailable: Retry ``stop()`` (without
-            ``snapshot_on_stop``) and gateway ``read_file()`` up to 3 attempts
-            when the server returns ``UNAVAILABLE`` with a ``RetryInfo`` delay
-            of at most 10 s, sleeping that delay (plus up to 20%) and only if
-            at least 5 s of the RPC's own timeout remains for the next attempt.
-            ``False`` disables only this hinted retry; exec, streams, creates,
-            and the existing poll, snapshot, and shard-retirement retries are
-            unaffected either way.
 
     Examples:
         ```python
@@ -388,8 +380,6 @@ class SandboxDefaults:
     environment_variables: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
     data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO
-
-    retry_transient_unavailable: bool = True
 
     def __post_init__(self) -> None:
         """Validate numeric poll configuration fields."""
@@ -478,7 +468,6 @@ class SandboxDefaults:
             "tags",
             "environment_variables",
             "data_plane_mode",
-            "retry_transient_unavailable",
         )
         for key in _non_optional:
             if key in kwargs and kwargs[key] is None:
