@@ -303,9 +303,20 @@ class SandboxUnavailableError(SandboxNotRunningError):
     """Raised when the sandbox service is transiently unavailable.
 
     Emitted for gRPC ``UNAVAILABLE`` and AIP-193 UNAVAILABLE_REASONS.
-    Poll loop treats this as retryable. This retry contract is
-    poll-specific; callers of non-poll operations must decide their
-    own retry policy.
+    The SDK already retries it in these places before raising:
+
+    - Status polling and file-system-snapshot get/list/delete, under
+      their own retry budgets.
+    - ``Sandbox.delete()``, ``stop()`` (without ``snapshot_on_stop``),
+      and gateway ``read_file()``: up to 3 attempts when the server sent
+      gRPC ``UNAVAILABLE`` with a ``retry_delay``, within that RPC's
+      timeout. Opt out of this hinted retry with
+      ``SandboxDefaults.retry_transient_unavailable`` or
+      ``Sandbox.delete(retry_transient_unavailable=False)``.
+
+    When raised from those calls, it is the last attempt's error. Other
+    operations (exec, streams, creates, writes) add no retry for this
+    error; callers decide their own policy.
     """
 
 

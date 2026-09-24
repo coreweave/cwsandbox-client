@@ -616,6 +616,7 @@ class Session:
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
             data_plane_mode=self._defaults.data_plane_mode,
+            retry_transient_unavailable=self._defaults.retry_transient_unavailable,
         )
 
         if adopt:
@@ -677,6 +678,7 @@ class Session:
             poll_retry_budget_seconds=self._defaults.poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=self._defaults.poll_rpc_timeout_seconds,
             data_plane_mode=self._defaults.data_plane_mode,
+            retry_transient_unavailable=self._defaults.retry_transient_unavailable,
         )
 
         if adopt:
