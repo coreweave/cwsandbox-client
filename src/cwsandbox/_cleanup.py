@@ -215,8 +215,7 @@ def disable_signal_handlers() -> None:
     with _activation_lock:
         if _signals_installed:
             raise RuntimeError(
-                "disable_signal_handlers() must be called before "
-                "cwsandbox installs signal handlers"
+                "disable_signal_handlers() must be called before cwsandbox installs signal handlers"
             )
 
         _signals_disabled = True
