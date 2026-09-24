@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -359,6 +360,48 @@ def _run_fresh(script: str, *, timeout: float = 15.0) -> subprocess.CompletedPro
     )
 
 
+def _run_fresh_until_sigterm(
+    script: str,
+    *,
+    ready_timeout: float = 10.0,
+    exit_timeout: float = 10.0,
+) -> subprocess.CompletedProcess[str]:
+    """Wait boundedly for READY, send SIGTERM, and always reap the child."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        ready, _, _ = select.select([proc.stdout], [], [], ready_timeout)
+        if not ready:
+            raise TimeoutError(f"child did not print READY within {ready_timeout}s")
+
+        line = proc.stdout.readline()
+        if line.strip() != "READY":
+            raise RuntimeError(f"child printed {line.strip()!r} before READY")
+
+        os.kill(proc.pid, signal.SIGTERM)
+        stdout, stderr = proc.communicate(timeout=exit_timeout)
+        return subprocess.CompletedProcess(
+            proc.args,
+            proc.returncode,
+            stdout=f"{line}{stdout}",
+            stderr=stderr,
+        )
+    except Exception as exc:
+        if proc.poll() is None:
+            proc.kill()
+        stdout, stderr = proc.communicate(timeout=exit_timeout)
+        raise AssertionError(f"{exc}\nchild stdout:\n{stdout}\nchild stderr:\n{stderr}") from exc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=exit_timeout)
+
+
 class TestFreshProcessCleanup:
     """Fresh-process coverage for import, threads, and signal compatibility."""
 
@@ -493,19 +536,9 @@ Sandbox()
 print("READY", flush=True)
 time.sleep(30)
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        assert proc.stdout is not None
-        ready = proc.stdout.readline()
-        assert ready.strip() == "READY", proc.stderr.read() if proc.stderr else ""
-        os.kill(proc.pid, signal.SIGTERM)
-        stdout, stderr = proc.communicate(timeout=10)
-        assert proc.returncode == 0, stderr
-        assert "HOST" in stdout
+        result = _run_fresh_until_sigterm(script)
+        assert result.returncode == 0, result.stderr
+        assert "HOST" in result.stdout
 
     @pytest.mark.skipif(not hasattr(signal, "SIGTERM") or os.name == "nt", reason="Unix SIGTERM")
     def test_activated_child_keeps_sigterm_exit_behavior(self) -> None:
@@ -518,15 +551,5 @@ Sandbox()
 print("READY", flush=True)
 time.sleep(30)
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        assert proc.stdout is not None
-        ready = proc.stdout.readline()
-        assert ready.strip() == "READY", proc.stderr.read() if proc.stderr else ""
-        os.kill(proc.pid, signal.SIGTERM)
-        _stdout, stderr = proc.communicate(timeout=10)
-        assert proc.returncode == 128 + signal.SIGTERM, stderr
+        result = _run_fresh_until_sigterm(script)
+        assert result.returncode == 128 + signal.SIGTERM, result.stderr
