@@ -27,6 +27,7 @@ _test_loops: list[asyncio.AbstractEventLoop] = []
 AUTH_ENV_VARS = (
     "CWSANDBOX_API_KEY",
     "CWSANDBOX_BASE_URL",
+    "CWSANDBOX_DISABLE_SIGNAL_HANDLERS",
     "WANDB_API_KEY",
     "WANDB_BASE_URL",
     "WANDB_ENTITY",

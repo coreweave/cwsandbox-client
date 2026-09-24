@@ -78,6 +78,29 @@ with Sandbox.run(auth=AuthStrategy.WANDB) as sb:
 W&B authentication is sent in the `x-wandb-api-key` header; it is not treated
 as a CoreWeave Bearer token.
 
+## Embedding in a long-running host
+
+Scripts and CLIs keep the default: the first owned sandbox registers `atexit`
+and, on the main thread, SIGINT/SIGTERM handlers so a signal can stop Sessions
+and exit.
+
+Long-running hosts that already own process lifecycle should disable those
+signal handlers before creating a sandbox. `atexit` still runs on normal
+process exit. The host is responsible for graceful shutdown and for explicitly
+stopping sandboxes it owns.
+
+```python
+import cwsandbox
+
+cwsandbox.disable_signal_handlers()
+```
+
+```bash
+CWSANDBOX_DISABLE_SIGNAL_HANDLERS=1
+```
+
+Accepted environment values: `1`, `true`, `yes`, `on` (case-insensitive).
+
 ## Development
 
 See [DEVELOPMENT.md](https://github.com/coreweave/cwsandbox-client/blob/main/DEVELOPMENT.md) for setup and workflow.

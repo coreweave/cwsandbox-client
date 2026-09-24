@@ -439,10 +439,13 @@ Lazy process hooks for graceful sandbox shutdown. `import cwsandbox` does not in
 
 `atexit` can register from any thread. SIGINT/SIGTERM install only on the main thread. Off-main activation skips signals without raising and retries on a later main-thread activation.
 
+Embedded hosts that own process lifecycle can call `cwsandbox.disable_signal_handlers()` or set `CWSANDBOX_DISABLE_SIGNAL_HANDLERS` to `1`/`true`/`yes`/`on`. That skips SIGINT/SIGTERM installation and, if the SDK already owns those slots, restores them only when `signal.getsignal(signum) is _signal_handler`. Late disable from a worker thread after installation raises without mutating disable/install state. `atexit` remains registered. There is no public re-enable path.
+
 - `_cleanup()`: Calls `_LoopManager.cleanup_all()` with re-entrancy guard
 - `_signal_handler()`: Handles SIGINT/SIGTERM, chains to original handlers
 - `_activate_cleanup_handlers()`: Lock-guarded lazy atexit + main-thread signal install
-- `_reset_for_testing()`: Restores handlers and clears both registration states
+- `disable_signal_handlers()`: Process-wide, sticky signal opt-out for embedded hosts
+- `_reset_for_testing()`: Restores handlers and clears registration plus disable state
 
 On first signal, performs cleanup then chains to original handler. On second signal during cleanup, forces immediate exit.
 
@@ -470,6 +473,15 @@ done, pending = cwsandbox.wait(refs, num_returns=2)
 
 # Wait with timeout
 done, pending = cwsandbox.wait(procs, timeout=30.0)
+```
+
+**`cwsandbox.disable_signal_handlers()`**: Process-wide opt-out of SDK SIGINT/SIGTERM ownership. Call before first sandbox ownership. `atexit` still registers lazily. The host must stop resources it owns.
+
+```python
+import cwsandbox
+
+cwsandbox.disable_signal_handlers()
+asyncio.run(run_worker())
 ```
 
 **`Waitable`**: Type alias for objects that can be waited on: `Sandbox | OperationRef[Any] | Process | TerminalSession`.

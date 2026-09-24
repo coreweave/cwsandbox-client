@@ -72,7 +72,7 @@ Set environment variables before running integration tests. A `.env` file in the
 
 **_LoopManager tests**: Use `_LoopManager._reset_for_testing()` in teardown to reset the singleton between tests.
 
-**_cleanup tests**: Use `_reset_for_testing()` from `cwsandbox._cleanup` in teardown to restore original signal handlers and clear both atexit and signal registration flags between tests. Fresh-process tests in `test_cleanup.py` cover import-time non-installation, worker-thread import, and SIGTERM compatibility.
+**_cleanup tests**: Use `_reset_for_testing()` from `cwsandbox._cleanup` in teardown to restore original signal handlers and clear atexit, signal, and disable state between tests. Fresh-process tests in `test_cleanup.py` cover import-time non-installation, worker-thread import, SIGTERM compatibility, and host signal opt-out.
 
 **Wandb/reporter tests**: Session reporter tests use `report_to=["wandb"]` for explicit opt-in or `report_to=[]` for disabled. To test wandb logging, set `session._reporter._run = mock_run` directly rather than mocking `wandb.log`, since the reporter calls `run.log()` on its cached run instance.
 
@@ -137,7 +137,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | File | Coverage |
 |------|----------|
 | `test_auth.py` | CoreWeave/W&B strategies, `.netrc`, providers, and legacy mode overrides |
-| `test_cleanup.py` | lazy atexit/signal activation, thread skip/recovery, re-entrancy, fresh-process SIGTERM |
+| `test_cleanup.py` | lazy atexit/signal activation, host opt-out, thread skip/recovery, re-entrancy, fresh-process SIGTERM |
 | `test_defaults.py` | SandboxDefaults configuration, merge_tags, with_overrides |
 | `test_exceptions.py` | Exception hierarchy, custom attributes |
 | `test_file_system_snapshot.py` | FSS types, error mapping, start/stop wiring, snapshot/fork/management methods |

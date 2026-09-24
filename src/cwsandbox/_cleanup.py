@@ -19,12 +19,20 @@ first owns a sandbox:
 requires Python's main thread. An off-main activation registers ``atexit``,
 skips signals without raising, and leaves signal installation pending so a
 later main-thread activation can recover it.
+
+Embedded hosts that own process lifecycle can call
+:func:`disable_signal_handlers` or set
+``CWSANDBOX_DISABLE_SIGNAL_HANDLERS`` to a truthy value (``1``, ``true``,
+``yes``, ``on``). That skips SIGINT/SIGTERM installation and, if the SDK
+already owns those slots, restores them. ``atexit`` remains registered.
+There is no public re-enable path.
 """
 
 from __future__ import annotations
 
 import atexit
 import logging
+import os
 import signal
 import sys
 import threading
@@ -36,12 +44,16 @@ logger = logging.getLogger(__name__)
 # Type alias for signal handlers
 _SignalHandler = Callable[[int, FrameType | None], None] | int | None
 
+_DISABLE_SIGNAL_HANDLERS_ENV = "CWSANDBOX_DISABLE_SIGNAL_HANDLERS"
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
 # Module-level state for cleanup coordination
 _cleanup_in_progress: bool = False
 _original_sigint: _SignalHandler = None
 _original_sigterm: _SignalHandler = None
 _atexit_registered: bool = False
 _signals_installed: bool = False
+_signals_disabled: bool = False
 _activation_lock = threading.Lock()
 
 
@@ -103,6 +115,12 @@ def _running_on_main_thread() -> bool:
     return threading.current_thread() is threading.main_thread()
 
 
+def _env_disables_signal_handlers() -> bool:
+    """Return True when the startup environment requests a signal opt-out."""
+    raw = os.environ.get(_DISABLE_SIGNAL_HANDLERS_ENV, "")
+    return raw.strip().lower() in _TRUTHY_ENV_VALUES
+
+
 def _is_restorable_handler(handler: _SignalHandler) -> bool:
     """Return True when *handler* is safe to pass back to ``signal.signal``."""
     if handler is None:
@@ -123,15 +141,27 @@ def _restore_original_handler(signum: int, original: _SignalHandler) -> None:
         pass
 
 
+def _restore_owned_handler(signum: int, original: _SignalHandler) -> None:
+    """Restore *original* only when this module still owns *signum*."""
+    if signal.getsignal(signum) is not _signal_handler:
+        return
+    replacement = original if _is_restorable_handler(original) else signal.SIG_DFL
+    signal.signal(signum, replacement)
+
+
 def _activate_cleanup_handlers() -> None:
     """Register atexit and, on the main thread, SIGINT/SIGTERM handlers.
 
     Safe to call from any thread and any number of times. ``atexit`` is
     registered once from the first activation. Signal handlers install
     once, and only on the main thread. An earlier off-main skip leaves
-    signal installation pending for a later main-thread call.
+    signal installation pending for a later main-thread call. A process
+    opt-out via :func:`disable_signal_handlers` or
+    ``CWSANDBOX_DISABLE_SIGNAL_HANDLERS`` skips signal installation but
+    still registers ``atexit``.
     """
-    global _original_sigint, _original_sigterm, _atexit_registered, _signals_installed
+    global _original_sigint, _original_sigterm, _atexit_registered
+    global _signals_installed, _signals_disabled
 
     with _activation_lock:
         if not _atexit_registered:
@@ -140,6 +170,11 @@ def _activate_cleanup_handlers() -> None:
             logger.debug("Registered atexit cleanup handler")
 
         if _signals_installed:
+            return
+
+        if _signals_disabled or _env_disables_signal_handlers():
+            _signals_disabled = True
+            logger.debug("Skipping signal handler install; host owns SIGINT/SIGTERM")
             return
 
         if not _running_on_main_thread():
@@ -159,6 +194,55 @@ def _activate_cleanup_handlers() -> None:
         logger.debug("Installed SIGINT/SIGTERM cleanup handlers")
 
 
+def disable_signal_handlers() -> None:
+    """Stop installing cwsandbox SIGINT/SIGTERM handlers for this process.
+
+    Call this from an embedded host before creating the first owned sandbox
+    so the host keeps process-signal ownership. The call is process-wide and
+    idempotent. ``atexit`` cleanup still registers lazily when a sandbox
+    becomes owned.
+
+    If cwsandbox already installed handlers, this restores only slots that
+    still point at the SDK handler. A host handler installed afterward is
+    left unchanged. Restoration requires the main thread; calling this from
+    a worker thread after installation raises ``RuntimeError`` without
+    changing disable or install state.
+
+    There is no public re-enable path. The host is responsible for graceful
+    shutdown and for explicitly stopping resources it owns.
+
+    Examples:
+        ```python
+        import cwsandbox
+
+        cwsandbox.disable_signal_handlers()
+        asyncio.run(run_worker())
+        ```
+    """
+    global _signals_disabled, _signals_installed
+    global _original_sigint, _original_sigterm
+
+    with _activation_lock:
+        if not _signals_installed:
+            _signals_disabled = True
+            logger.debug("Disabled cwsandbox SIGINT/SIGTERM handlers")
+            return
+
+        if not _running_on_main_thread():
+            raise RuntimeError(
+                "disable_signal_handlers() must be called from the main "
+                "thread after cwsandbox has installed SIGINT/SIGTERM handlers"
+            )
+
+        _restore_owned_handler(signal.SIGINT, _original_sigint)
+        _restore_owned_handler(signal.SIGTERM, _original_sigterm)
+        _signals_installed = False
+        _original_sigint = None
+        _original_sigterm = None
+        _signals_disabled = True
+        logger.debug("Restored host SIGINT/SIGTERM handlers and disabled SDK install")
+
+
 def _install_handlers() -> None:
     """Backward-compatible alias for :func:`_activate_cleanup_handlers`."""
     _activate_cleanup_handlers()
@@ -169,10 +253,11 @@ def _reset_for_testing() -> None:
 
     This function is intended for use in tests only. It restores original
     signal handlers when they were captured, unregisters the atexit
-    callback, and clears activation state so handlers can be reinstalled.
+    callback, and clears activation and disable state so handlers can be
+    reinstalled.
     """
     global _cleanup_in_progress, _atexit_registered, _signals_installed
-    global _original_sigint, _original_sigterm
+    global _signals_disabled, _original_sigint, _original_sigterm
 
     with _activation_lock:
         if _signals_installed:
@@ -185,5 +270,6 @@ def _reset_for_testing() -> None:
         _cleanup_in_progress = False
         _atexit_registered = False
         _signals_installed = False
+        _signals_disabled = False
         _original_sigint = None
         _original_sigterm = None
