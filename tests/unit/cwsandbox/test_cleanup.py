@@ -4,12 +4,19 @@
 
 """Unit tests for cwsandbox._cleanup module."""
 
+from __future__ import annotations
+
+import os
 import signal
+import subprocess
+import sys
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cwsandbox._cleanup import (
+    _activate_cleanup_handlers,
     _cleanup,
     _install_handlers,
     _reset_for_testing,
@@ -152,54 +159,36 @@ class TestSignalHandler:
             assert exc_info.value.code == 128 + signal.SIGTERM
 
 
-class TestInstallHandlers:
-    """Tests for _install_handlers function."""
+class TestActivateCleanupHandlers:
+    """Tests for lazy, lock-guarded handler activation."""
 
-    def test_install_handlers_registers_atexit(self) -> None:
-        """Test _install_handlers registers atexit handler."""
+    def test_activate_registers_atexit_once(self) -> None:
+        """Test activation registers atexit exactly once."""
         with patch("cwsandbox._cleanup.atexit.register") as mock_register:
             with patch("cwsandbox._cleanup.signal.signal"):
-                _install_handlers()
+                _activate_cleanup_handlers()
+                _activate_cleanup_handlers()
+                _activate_cleanup_handlers()
 
                 mock_register.assert_called_once_with(_cleanup)
 
-    def test_install_handlers_installs_sigint_handler(self) -> None:
-        """Test _install_handlers installs SIGINT handler."""
+    def test_main_thread_installs_sigint_and_sigterm_once(self) -> None:
+        """Test main-thread activation installs SIGINT and SIGTERM exactly once."""
         with patch("cwsandbox._cleanup.atexit.register"):
             with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
-                _install_handlers()
+                _activate_cleanup_handlers()
+                _activate_cleanup_handlers()
 
-                # Should have been called for SIGINT
                 calls = mock_signal.call_args_list
                 sigint_calls = [c for c in calls if c[0][0] == signal.SIGINT]
-                assert len(sigint_calls) == 1
-                assert sigint_calls[0][0][1] == _signal_handler
-
-    def test_install_handlers_installs_sigterm_handler(self) -> None:
-        """Test _install_handlers installs SIGTERM handler."""
-        with patch("cwsandbox._cleanup.atexit.register"):
-            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
-                _install_handlers()
-
-                # Should have been called for SIGTERM
-                calls = mock_signal.call_args_list
                 sigterm_calls = [c for c in calls if c[0][0] == signal.SIGTERM]
+                assert len(sigint_calls) == 1
                 assert len(sigterm_calls) == 1
+                assert sigint_calls[0][0][1] == _signal_handler
                 assert sigterm_calls[0][0][1] == _signal_handler
 
-    def test_install_handlers_only_installs_once(self) -> None:
-        """Test _install_handlers only installs handlers once."""
-        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
-            with patch("cwsandbox._cleanup.signal.signal"):
-                _install_handlers()
-                _install_handlers()
-                _install_handlers()
-
-                # Should only register once
-                assert mock_register.call_count == 1
-
-    def test_install_handlers_preserves_original_handlers(self) -> None:
-        """Test _install_handlers preserves original signal handlers."""
+    def test_activate_preserves_original_handlers(self) -> None:
+        """Test activation captures existing handlers for chaining."""
         import cwsandbox._cleanup as cleanup_module
 
         original_sigint = MagicMock()
@@ -210,10 +199,105 @@ class TestInstallHandlers:
                 "cwsandbox._cleanup.signal.signal",
                 side_effect=[original_sigint, original_sigterm],
             ):
-                _install_handlers()
+                _activate_cleanup_handlers()
 
                 assert cleanup_module._original_sigint == original_sigint
                 assert cleanup_module._original_sigterm == original_sigterm
+
+    def test_worker_thread_skips_signal_install(self) -> None:
+        """Test worker-thread activation does not call signal.signal or raise."""
+        import cwsandbox._cleanup as cleanup_module
+
+        errors: list[BaseException] = []
+
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+
+                def worker() -> None:
+                    try:
+                        _activate_cleanup_handlers()
+                    except BaseException as exc:  # noqa: BLE001 - collect for assertion
+                        errors.append(exc)
+
+                thread = threading.Thread(target=worker)
+                thread.start()
+                thread.join()
+
+        assert errors == []
+        mock_register.assert_called_once_with(_cleanup)
+        mock_signal.assert_not_called()
+        assert cleanup_module._atexit_registered is True
+        assert cleanup_module._signals_installed is False
+
+    def test_off_main_skip_leaves_signals_pending(self) -> None:
+        """Test an off-main skip does not mark signals installed."""
+        import cwsandbox._cleanup as cleanup_module
+
+        with patch("cwsandbox._cleanup.atexit.register"):
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                with patch("cwsandbox._cleanup._running_on_main_thread", return_value=False):
+                    _activate_cleanup_handlers()
+
+                mock_signal.assert_not_called()
+                assert cleanup_module._atexit_registered is True
+                assert cleanup_module._signals_installed is False
+
+    def test_later_main_thread_activation_recovers_signals(self) -> None:
+        """Test a later main-thread call installs handlers after an off-main skip."""
+        import cwsandbox._cleanup as cleanup_module
+
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                with patch("cwsandbox._cleanup._running_on_main_thread", return_value=False):
+                    _activate_cleanup_handlers()
+
+                assert cleanup_module._signals_installed is False
+                mock_signal.assert_not_called()
+
+                _activate_cleanup_handlers()
+
+                mock_register.assert_called_once_with(_cleanup)
+                assert mock_signal.call_count == 2
+                assert cleanup_module._signals_installed is True
+
+    def test_concurrent_activation_is_idempotent(self) -> None:
+        """Test concurrent first use registers atexit once and recovers signals once."""
+        import cwsandbox._cleanup as cleanup_module
+
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                errors: list[BaseException] = []
+
+                def worker() -> None:
+                    try:
+                        _activate_cleanup_handlers()
+                    except BaseException as exc:  # noqa: BLE001 - collect for assertion
+                        errors.append(exc)
+
+                threads = [threading.Thread(target=worker) for _ in range(8)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+
+                assert errors == []
+                mock_register.assert_called_once_with(_cleanup)
+                mock_signal.assert_not_called()
+                assert cleanup_module._signals_installed is False
+
+                _activate_cleanup_handlers()
+                _activate_cleanup_handlers()
+
+                assert mock_signal.call_count == 2
+                assert cleanup_module._signals_installed is True
+
+    def test_install_handlers_alias_activates(self) -> None:
+        """Test the compatibility alias still activates handlers."""
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal"):
+                _install_handlers()
+
+                mock_register.assert_called_once_with(_cleanup)
 
 
 class TestResetForTesting:
@@ -227,10 +311,192 @@ class TestResetForTesting:
         _reset_for_testing()
         assert cleanup_module._cleanup_in_progress is False
 
-    def test_reset_clears_handlers_installed(self) -> None:
-        """Test _reset_for_testing clears handlers_installed flag."""
+    def test_reset_clears_both_registration_states(self) -> None:
+        """Test _reset_for_testing clears atexit and signal registration flags."""
         import cwsandbox._cleanup as cleanup_module
 
-        cleanup_module._handlers_installed = True
+        cleanup_module._atexit_registered = True
+        cleanup_module._signals_installed = True
         _reset_for_testing()
-        assert cleanup_module._handlers_installed is False
+        assert cleanup_module._atexit_registered is False
+        assert cleanup_module._signals_installed is False
+
+    def test_reset_unregisters_atexit_and_restores_handlers(self) -> None:
+        """Test reset restores captured handlers and unregisters atexit."""
+        import cwsandbox._cleanup as cleanup_module
+
+        original_sigint = signal.SIG_IGN
+        original_sigterm = signal.SIG_IGN
+
+        with patch("cwsandbox._cleanup.atexit.register"):
+            with patch(
+                "cwsandbox._cleanup.signal.signal",
+                side_effect=[original_sigint, original_sigterm],
+            ):
+                _activate_cleanup_handlers()
+
+        with (
+            patch("cwsandbox._cleanup.atexit.unregister") as mock_unregister,
+            patch("cwsandbox._cleanup.signal.signal") as mock_signal,
+        ):
+            _reset_for_testing()
+
+        mock_unregister.assert_called_once_with(_cleanup)
+        mock_signal.assert_any_call(signal.SIGINT, original_sigint)
+        mock_signal.assert_any_call(signal.SIGTERM, original_sigterm)
+        assert cleanup_module._original_sigint is None
+        assert cleanup_module._original_sigterm is None
+
+
+def _run_fresh(script: str, *, timeout: float = 15.0) -> subprocess.CompletedProcess[str]:
+    """Run *script* in a fresh interpreter that can import this checkout."""
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+class TestFreshProcessCleanup:
+    """Fresh-process coverage for import, threads, and signal compatibility."""
+
+    def test_main_thread_import_leaves_handlers_unchanged(self) -> None:
+        """Importing cwsandbox on the main thread must not replace signals."""
+        script = """
+import signal
+before_int = signal.getsignal(signal.SIGINT)
+before_term = signal.getsignal(signal.SIGTERM)
+import cwsandbox
+after_int = signal.getsignal(signal.SIGINT)
+after_term = signal.getsignal(signal.SIGTERM)
+print(before_int is after_int and before_term is after_term)
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "True"
+
+    def test_worker_thread_import_succeeds(self) -> None:
+        """Importing cwsandbox off the main thread must not raise."""
+        script = """
+import signal
+import threading
+
+before_int = signal.getsignal(signal.SIGINT)
+before_term = signal.getsignal(signal.SIGTERM)
+errors = []
+
+def worker():
+    try:
+        import cwsandbox
+        from cwsandbox import Sandbox
+    except Exception as exc:
+        errors.append(repr(exc))
+
+thread = threading.Thread(target=worker)
+thread.start()
+thread.join()
+after_int = signal.getsignal(signal.SIGINT)
+after_term = signal.getsignal(signal.SIGTERM)
+print("errors", errors)
+print("unchanged", before_int is after_int and before_term is after_term)
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert "errors []" in result.stdout
+        assert "unchanged True" in result.stdout
+
+    def test_main_thread_owned_sandbox_installs_legacy_handler(self) -> None:
+        """First owned sandbox on the main thread installs the SDK handler."""
+        script = """
+import signal
+from cwsandbox import Sandbox
+from cwsandbox._cleanup import _signal_handler
+
+Sandbox()
+print(signal.getsignal(signal.SIGINT) is _signal_handler)
+print(signal.getsignal(signal.SIGTERM) is _signal_handler)
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == ["True", "True"]
+
+    def test_off_main_owned_sandbox_recovers_on_main_thread(self) -> None:
+        """Worker-thread first use skips signals; later main-thread use installs them."""
+        script = """
+import signal
+import threading
+from cwsandbox._cleanup import _activate_cleanup_handlers, _signal_handler
+
+def worker():
+    from cwsandbox import Sandbox
+    Sandbox()
+
+thread = threading.Thread(target=worker)
+thread.start()
+thread.join()
+print("after_worker", signal.getsignal(signal.SIGTERM) is _signal_handler)
+_activate_cleanup_handlers()
+print("after_main", signal.getsignal(signal.SIGTERM) is _signal_handler)
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert "after_worker False" in result.stdout
+        assert "after_main True" in result.stdout
+
+    @pytest.mark.skipif(not hasattr(signal, "SIGTERM") or os.name == "nt", reason="Unix SIGTERM")
+    def test_custom_host_handler_is_chained(self) -> None:
+        """A host handler installed before first sandbox use is chained."""
+        script = """
+import os
+import signal
+import time
+from cwsandbox import Sandbox
+
+def host(signum, frame):
+    print("HOST", flush=True)
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, host)
+Sandbox()
+print("READY", flush=True)
+time.sleep(30)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert proc.stdout is not None
+        ready = proc.stdout.readline()
+        assert ready.strip() == "READY", proc.stderr.read() if proc.stderr else ""
+        os.kill(proc.pid, signal.SIGTERM)
+        stdout, stderr = proc.communicate(timeout=10)
+        assert proc.returncode == 0, stderr
+        assert "HOST" in stdout
+
+    @pytest.mark.skipif(not hasattr(signal, "SIGTERM") or os.name == "nt", reason="Unix SIGTERM")
+    def test_activated_child_keeps_sigterm_exit_behavior(self) -> None:
+        """An activated child still exits 143 on SIGTERM with the default handler."""
+        script = """
+import time
+from cwsandbox import Sandbox
+
+Sandbox()
+print("READY", flush=True)
+time.sleep(30)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert proc.stdout is not None
+        ready = proc.stdout.readline()
+        assert ready.strip() == "READY", proc.stderr.read() if proc.stderr else ""
+        os.kill(proc.pid, signal.SIGTERM)
+        _stdout, stderr = proc.communicate(timeout=10)
+        assert proc.returncode == 128 + signal.SIGTERM, stderr

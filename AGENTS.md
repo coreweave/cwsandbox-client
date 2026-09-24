@@ -435,12 +435,14 @@ The daemon thread approach:
 
 ### Cleanup Handlers (`_cleanup.py`)
 
-Auto-installed handlers for graceful sandbox shutdown on process exit. Installed automatically on module import.
+Lazy process hooks for graceful sandbox shutdown. `import cwsandbox` does not install them. Activation happens when the caller first owns a sandbox: standalone `Sandbox` construction (`run()`, `run_from_template()`, `run_from_file()`, or `Sandbox()`) or `Session._register_sandbox()` (`sandbox()`, `adopt()`, `list(adopt=True)`, `from_id(adopt=True)`). Empty Sessions and passive `Sandbox.from_id()` do not activate.
+
+`atexit` can register from any thread. SIGINT/SIGTERM install only on the main thread. Off-main activation skips signals without raising and retries on a later main-thread activation.
 
 - `_cleanup()`: Calls `_LoopManager.cleanup_all()` with re-entrancy guard
 - `_signal_handler()`: Handles SIGINT/SIGTERM, chains to original handlers
-- `_install_handlers()`: Registers atexit handler and signal handlers
-- `_reset_for_testing()`: Resets module state for test isolation
+- `_activate_cleanup_handlers()`: Lock-guarded lazy atexit + main-thread signal install
+- `_reset_for_testing()`: Restores handlers and clears both registration states
 
 On first signal, performs cleanup then chains to original handler. On second signal during cleanup, forces immediate exit.
 

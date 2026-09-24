@@ -4,11 +4,21 @@
 
 """Cleanup handlers for graceful shutdown of sandboxes.
 
-This module installs atexit and signal handlers to ensure all sandboxes are
-properly stopped when the process exits. This prevents orphaned sandboxes
-from consuming resources after the client process terminates.
+This module registers atexit and signal handlers so owned sandboxes can be
+stopped when the process exits. That prevents orphaned sandboxes from
+consuming resources after the client process terminates.
 
-The handlers are installed automatically when this module is imported.
+Handlers are not installed on import. Activation happens when the caller
+first owns a sandbox:
+
+- constructing a standalone ``Sandbox`` (including ``run()``,
+  ``run_from_template()``, and ``run_from_file()``)
+- a ``Session`` first owning or adopting a sandbox
+
+``atexit`` may be registered from any thread. SIGINT/SIGTERM installation
+requires Python's main thread. An off-main activation registers ``atexit``,
+skips signals without raising, and leaves signal installation pending so a
+later main-thread activation can recover it.
 """
 
 from __future__ import annotations
@@ -17,6 +27,7 @@ import atexit
 import logging
 import signal
 import sys
+import threading
 from collections.abc import Callable
 from types import FrameType
 
@@ -29,7 +40,9 @@ _SignalHandler = Callable[[int, FrameType | None], None] | int | None
 _cleanup_in_progress: bool = False
 _original_sigint: _SignalHandler = None
 _original_sigterm: _SignalHandler = None
-_handlers_installed: bool = False
+_atexit_registered: bool = False
+_signals_installed: bool = False
+_activation_lock = threading.Lock()
 
 
 def _cleanup() -> None:
@@ -85,51 +98,92 @@ def _signal_handler(signum: int, frame: FrameType | None) -> None:
         original(signum, frame)
 
 
-def _install_handlers() -> None:
-    """Install atexit and signal handlers.
+def _running_on_main_thread() -> bool:
+    """Return True when the current thread can install signal handlers."""
+    return threading.current_thread() is threading.main_thread()
 
-    This function is called automatically on module import. It registers:
-    - An atexit handler for normal process exit
-    - Signal handlers for SIGINT (Ctrl+C) and SIGTERM
 
-    The original signal handlers are preserved and chained after cleanup.
-    """
-    global _original_sigint, _original_sigterm, _handlers_installed
+def _is_restorable_handler(handler: _SignalHandler) -> bool:
+    """Return True when *handler* is safe to pass back to ``signal.signal``."""
+    if handler is None:
+        return False
+    if handler in (signal.SIG_DFL, signal.SIG_IGN):
+        return True
+    module = getattr(type(handler), "__module__", "")
+    return callable(handler) and not module.startswith("unittest.mock")
 
-    if _handlers_installed:
+
+def _restore_original_handler(signum: int, original: _SignalHandler) -> None:
+    """Restore a captured handler, ignoring test doubles and off-main errors."""
+    if not _is_restorable_handler(original):
         return
+    try:
+        signal.signal(signum, original)
+    except (TypeError, ValueError, OSError):
+        pass
 
-    # Register atexit handler
-    atexit.register(_cleanup)
 
-    # Install signal handlers, preserving originals for chaining
-    _original_sigint = signal.signal(signal.SIGINT, _signal_handler)
-    _original_sigterm = signal.signal(signal.SIGTERM, _signal_handler)
+def _activate_cleanup_handlers() -> None:
+    """Register atexit and, on the main thread, SIGINT/SIGTERM handlers.
 
-    _handlers_installed = True
-    logger.debug("Installed cleanup handlers")
+    Safe to call from any thread and any number of times. ``atexit`` is
+    registered once from the first activation. Signal handlers install
+    once, and only on the main thread. An earlier off-main skip leaves
+    signal installation pending for a later main-thread call.
+    """
+    global _original_sigint, _original_sigterm, _atexit_registered, _signals_installed
+
+    with _activation_lock:
+        if not _atexit_registered:
+            atexit.register(_cleanup)
+            _atexit_registered = True
+            logger.debug("Registered atexit cleanup handler")
+
+        if _signals_installed:
+            return
+
+        if not _running_on_main_thread():
+            logger.debug("Skipping signal handler install off the main thread")
+            return
+
+        try:
+            _original_sigint = signal.signal(signal.SIGINT, _signal_handler)
+            _original_sigterm = signal.signal(signal.SIGTERM, _signal_handler)
+        except ValueError:
+            # Python rejects signal.signal() off the main thread. Treat this
+            # as a pending install so a later main-thread call can recover.
+            logger.debug("Signal handler install rejected; will retry on main thread")
+            return
+
+        _signals_installed = True
+        logger.debug("Installed SIGINT/SIGTERM cleanup handlers")
+
+
+def _install_handlers() -> None:
+    """Backward-compatible alias for :func:`_activate_cleanup_handlers`."""
+    _activate_cleanup_handlers()
 
 
 def _reset_for_testing() -> None:
     """Reset cleanup state for testing.
 
-    This function is intended for use in tests only. It resets the
-    module-level state to allow handlers to be reinstalled.
+    This function is intended for use in tests only. It restores original
+    signal handlers when they were captured, unregisters the atexit
+    callback, and clears activation state so handlers can be reinstalled.
     """
-    global _cleanup_in_progress, _handlers_installed
+    global _cleanup_in_progress, _atexit_registered, _signals_installed
     global _original_sigint, _original_sigterm
 
-    _cleanup_in_progress = False
-    _handlers_installed = False
+    with _activation_lock:
+        if _signals_installed:
+            _restore_original_handler(signal.SIGINT, _original_sigint)
+            _restore_original_handler(signal.SIGTERM, _original_sigterm)
 
-    # Restore original handlers if they were saved
-    if _original_sigint is not None:
-        signal.signal(signal.SIGINT, _original_sigint)
+        if _atexit_registered:
+            atexit.unregister(_cleanup)
+
+        _cleanup_in_progress = False
+        _atexit_registered = False
+        _signals_installed = False
         _original_sigint = None
-    if _original_sigterm is not None:
-        signal.signal(signal.SIGTERM, _original_sigterm)
         _original_sigterm = None
-
-
-# Install handlers on module import
-_install_handlers()

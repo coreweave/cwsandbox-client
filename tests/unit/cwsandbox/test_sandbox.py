@@ -9358,3 +9358,79 @@ class TestStreamLogsV1Basic:
         assert call_count == 2
         assert init_messages[0].timestamps is True
         assert init_messages[1].timestamps is False
+
+
+class TestCleanupActivation:
+    """Lifecycle tests for lazy cleanup activation from standalone Sandbox paths."""
+
+    def test_standalone_constructor_activates_after_validation(self) -> None:
+        """Standalone Sandbox() activates cleanup after the constructor succeeds."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            Sandbox()
+            mock_activate.assert_called_once()
+
+    def test_failed_constructor_does_not_activate(self) -> None:
+        """Constructor validation failure must not install process hooks."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            with pytest.raises(TypeError, match="ports was removed"):
+                Sandbox(ports=[])  # type: ignore[arg-type]
+            mock_activate.assert_not_called()
+
+    def test_run_activates_via_standalone_constructor(self) -> None:
+        """Sandbox.run() reaches the standalone activation choke point."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            with patch.object(Sandbox, "start", return_value=MagicMock()) as mock_start:
+                Sandbox.run()
+            mock_start.assert_called_once()
+            mock_activate.assert_called()
+
+    def test_run_from_template_activates_via_standalone_constructor(self) -> None:
+        """Sandbox.run_from_template() reaches the standalone activation choke point."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            with patch.object(Sandbox, "start", return_value=MagicMock()) as mock_start:
+                Sandbox.run_from_template("template-123")
+            mock_start.assert_called_once()
+            mock_activate.assert_called()
+
+    def test_run_from_file_activates_via_standalone_constructor(self) -> None:
+        """Sandbox.run_from_file() reaches the standalone activation choke point."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            with patch.object(Sandbox, "start", return_value=MagicMock()) as mock_start:
+                Sandbox.run_from_file(
+                    b"services:\n  main:\n    image: python:3.11\n",
+                    primary_service="main",
+                )
+            mock_start.assert_called_once()
+            mock_activate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_from_id_does_not_activate(self, mock_api_key: str) -> None:
+        """Passive Sandbox.from_id() must not install process hooks."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="test-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                runner_group_id="group-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate,
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("test-123")
+
+        assert sandbox.sandbox_id == "test-123"
+        mock_activate.assert_not_called()

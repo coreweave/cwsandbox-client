@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- **cleanup**: Install atexit and signal handlers lazily on first owned sandbox
+
+`import cwsandbox` no longer installs process-wide SIGINT/SIGTERM handlers. The same 1.x
+handlers now activate when a standalone `Sandbox` is constructed or a `Session` first
+owns or adopts a sandbox. Worker-thread import no longer raises `ValueError`.
+
+Fixes #136
+
+
 ## v1.14.3 (2026-09-18)
 
 ### Bug Fixes

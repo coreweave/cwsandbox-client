@@ -327,6 +327,9 @@ class Session:
 
     def _register_sandbox(self, sandbox: Sandbox) -> None:
         """Register a sandbox for tracking."""
+        from cwsandbox._cleanup import _activate_cleanup_handlers
+
+        _activate_cleanup_handlers()
         self._sandboxes[id(sandbox)] = sandbox
 
     def _deregister_sandbox(self, sandbox: Sandbox) -> None:

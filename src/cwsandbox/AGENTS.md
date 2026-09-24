@@ -23,7 +23,7 @@ cwsandbox/
 ├── _discovery.py     # list_runners / get_runner (no profiles)
 ├── _auth.py          # Per-instance CoreWeave/W&B auth resolution plus legacy mode override
 ├── _loop_manager.py  # Background asyncio event loop singleton
-├── _cleanup.py       # atexit/signal handlers for graceful shutdown
+├── _cleanup.py       # lazy atexit/signal handlers; activate on first owned sandbox
 ├── _proto/           # Vendored coreweave.sandbox.v1 stubs
 ├── exceptions.py     # Exception hierarchy
 └── py.typed          # PEP 561 type information marker

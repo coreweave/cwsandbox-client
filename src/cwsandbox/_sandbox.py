@@ -2177,6 +2177,15 @@ class Sandbox:
         # Get the singleton loop manager for sync/async bridging
         self._loop_manager = _LoopManager.get()
 
+        # Session-owned handles activate from Session._register_sandbox().
+        # Standalone construction (run / run_from_template / run_from_file /
+        # Sandbox()) activates here, after validation succeeds and before
+        # async work moves to the background loop thread.
+        if _session is None:
+            from cwsandbox._cleanup import _activate_cleanup_handlers
+
+            _activate_cleanup_handlers()
+
     @classmethod
     def run(
         cls,
