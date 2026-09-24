@@ -133,7 +133,8 @@ class SandboxServiceServicer(object):
         (CWSANDBOX_INVALID_REQUEST) on type. Compose (SANDBOX_FILE_TYPE_COMPOSE)
         is accepted when every service already has a pullable image (`image:` or
         image_overrides). A service that still needs a build is UNIMPLEMENTED
-        (CWSANDBOX_NOT_IMPLEMENTED) on that service's build. Other declared
+        (CWSANDBOX_NOT_IMPLEMENTED) on that service's build, after
+        build_context_objects and builder_sizes are validated. Other declared
         types are UNIMPLEMENTED (CWSANDBOX_NOT_IMPLEMENTED) on type.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)

@@ -190,8 +190,8 @@ class TestEgressRule:
         from cwsandbox._proto import sandbox_pb2
         from cwsandbox._spec import egress_rule_from_proto
 
-        proto = sandbox_pb2.EgressRule(dns_name="pypi.org")
-        proto.dns_name_except.append("files.pypi.org")
+        proto = sandbox_pb2.EgressRule(https_hostname="pypi.org")
+        proto.https_hostname_except.append("files.pypi.org")
         proto.ports.add(port=80)
         rule = egress_rule_from_proto(proto)
         assert rule.dns_name == "pypi.org"
