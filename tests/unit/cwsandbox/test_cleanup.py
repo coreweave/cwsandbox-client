@@ -422,6 +422,36 @@ print(signal.getsignal(signal.SIGTERM) is _signal_handler)
         assert result.returncode == 0, result.stderr
         assert result.stdout.splitlines() == ["True", "True"]
 
+    def test_session_from_id_installs_handler_on_calling_thread(self) -> None:
+        """Session.from_id(adopt=True) activates before background registration."""
+        script = """
+import signal
+from unittest.mock import AsyncMock, patch
+from cwsandbox import Session
+from cwsandbox._cleanup import _signal_handler
+
+class SandboxStub:
+    sandbox_id = "test-123"
+    _session = None
+
+    async def _stop_async(self):
+        pass
+
+session = Session(report_to=[])
+with patch(
+    "cwsandbox._sandbox.Sandbox._from_id_async",
+    new=AsyncMock(return_value=SandboxStub()),
+):
+    sandbox = session.from_id("test-123").result()
+
+print(sandbox.sandbox_id)
+print(signal.getsignal(signal.SIGTERM) is _signal_handler)
+session.close().result()
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == ["test-123", "True"]
+
     def test_off_main_owned_sandbox_recovers_on_main_thread(self) -> None:
         """Worker-thread first use skips signals; later main-thread use installs them."""
         script = """

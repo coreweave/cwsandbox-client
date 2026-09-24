@@ -197,6 +197,7 @@ class RemoteFunction(Generic[P, R]):
             result = await ref
             ```
         """
+        self._session._activate_cleanup_handlers()
         future = self._session._loop_manager.run_async(self._execute_async(*args, **kwargs))
         return OperationRef(future)
 
