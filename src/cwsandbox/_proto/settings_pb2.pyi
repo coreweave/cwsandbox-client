@@ -25,11 +25,20 @@ class SecretStoreProviderType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     __slots__ = ()
     SECRET_STORE_PROVIDER_TYPE_UNSPECIFIED: _ClassVar[SecretStoreProviderType]
     SECRET_STORE_PROVIDER_TYPE_WANDB: _ClassVar[SecretStoreProviderType]
+
+class BuildStorageMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BUILD_STORAGE_MODE_UNSPECIFIED: _ClassVar[BuildStorageMode]
+    BUILD_STORAGE_MODE_MANAGED: _ClassVar[BuildStorageMode]
+    BUILD_STORAGE_MODE_CUSTOMER_OWNED: _ClassVar[BuildStorageMode]
 FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_UNSPECIFIED: FileSystemSnapshotBucketMode
 FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_CW_MANAGED: FileSystemSnapshotBucketMode
 FILE_SYSTEM_SNAPSHOT_BUCKET_MODE_BRING_YOUR_OWN: FileSystemSnapshotBucketMode
 SECRET_STORE_PROVIDER_TYPE_UNSPECIFIED: SecretStoreProviderType
 SECRET_STORE_PROVIDER_TYPE_WANDB: SecretStoreProviderType
+BUILD_STORAGE_MODE_UNSPECIFIED: BuildStorageMode
+BUILD_STORAGE_MODE_MANAGED: BuildStorageMode
+BUILD_STORAGE_MODE_CUSTOMER_OWNED: BuildStorageMode
 
 class ObjectStorageWifConfig(_message.Message):
     __slots__ = ("wif_config_id", "enabled", "allowed_buckets", "max_permission", "create_time", "update_time")
@@ -156,3 +165,37 @@ class DeleteSecretStoreRequest(_message.Message):
     name: str
     allow_missing: bool
     def __init__(self, name: _Optional[str] = ..., allow_missing: bool = ...) -> None: ...
+
+class BuildStorageConfig(_message.Message):
+    __slots__ = ("enabled", "mode", "bucket_name", "location", "registry_namespace", "billing_reference", "etag", "revision", "effective_bucket_name")
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    BUCKET_NAME_FIELD_NUMBER: _ClassVar[int]
+    LOCATION_FIELD_NUMBER: _ClassVar[int]
+    REGISTRY_NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    BILLING_REFERENCE_FIELD_NUMBER: _ClassVar[int]
+    ETAG_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    EFFECTIVE_BUCKET_NAME_FIELD_NUMBER: _ClassVar[int]
+    enabled: bool
+    mode: BuildStorageMode
+    bucket_name: str
+    location: str
+    registry_namespace: str
+    billing_reference: str
+    etag: str
+    revision: int
+    effective_bucket_name: str
+    def __init__(self, enabled: bool = ..., mode: _Optional[_Union[BuildStorageMode, str]] = ..., bucket_name: _Optional[str] = ..., location: _Optional[str] = ..., registry_namespace: _Optional[str] = ..., billing_reference: _Optional[str] = ..., etag: _Optional[str] = ..., revision: _Optional[int] = ..., effective_bucket_name: _Optional[str] = ...) -> None: ...
+
+class GetBuildStorageConfigRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class UpdateBuildStorageConfigRequest(_message.Message):
+    __slots__ = ("build_storage_config", "update_mask")
+    BUILD_STORAGE_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    UPDATE_MASK_FIELD_NUMBER: _ClassVar[int]
+    build_storage_config: BuildStorageConfig
+    update_mask: _field_mask_pb2.FieldMask
+    def __init__(self, build_storage_config: _Optional[_Union[BuildStorageConfig, _Mapping]] = ..., update_mask: _Optional[_Union[_field_mask_pb2.FieldMask, _Mapping]] = ...) -> None: ...

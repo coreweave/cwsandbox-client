@@ -5075,7 +5075,7 @@ class Sandbox:
         else:
             self._service_addresses = ()
         self._dns_egress_names = tuple(
-            rule.dns_name for rule in status.effective_egress if rule.dns_name
+            rule.https_hostname for rule in status.effective_egress if rule.https_hostname
         )
         self._effective_runtime_class = status.effective_runtime_class or None
         self._attached_volume_ids = tuple(status.attached_volume_ids)

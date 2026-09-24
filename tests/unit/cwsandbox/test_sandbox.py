@@ -425,9 +425,9 @@ class TestSandboxRun:
         )
 
         request = stub.CreateSandbox.call_args.args[0]
-        names = [rule.dns_name for rule in request.sandbox.spec.network.egress]
+        names = [rule.https_hostname for rule in request.sandbox.spec.network.egress]
         assert names == ["pypi.org", "*.pypi.org"]
-        assert request.sandbox.spec.network.egress[0].WhichOneof("destination") == "dns_name"
+        assert request.sandbox.spec.network.egress[0].WhichOneof("destination") == "https_hostname"
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_dns_name_egress_from_network_dict(self) -> None:
@@ -436,7 +436,7 @@ class TestSandboxRun:
         )
 
         request = stub.CreateSandbox.call_args.args[0]
-        assert [rule.dns_name for rule in request.sandbox.spec.network.egress] == ["pypi.org"]
+        assert [rule.https_hostname for rule in request.sandbox.spec.network.egress] == ["pypi.org"]
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
     def test_create_echoes_dns_egress_names_from_status(self) -> None:
@@ -447,8 +447,8 @@ class TestSandboxRun:
             status=sandbox_pb2.SandboxStatus(
                 state=sandbox_pb2.STATE_PENDING,
                 effective_egress=[
-                    sandbox_pb2.EgressRule(dns_name="pypi.org"),
-                    sandbox_pb2.EgressRule(dns_name="*.pypi.org"),
+                    sandbox_pb2.EgressRule(https_hostname="pypi.org"),
+                    sandbox_pb2.EgressRule(https_hostname="*.pypi.org"),
                 ],
             ),
         )
@@ -810,7 +810,7 @@ class TestSandboxRun:
 
         request = stub.CreateSandbox.call_args.args[0]
         net = request.sandbox.spec.network
-        assert net.egress[0].dns_name == "pypi.org"
+        assert net.egress[0].https_hostname == "pypi.org"
         assert net.egress[1].cidr.cidr == "10.0.0.0/8"
         assert list(getattr(net.egress[1].cidr, "except")) == ["10.1.0.0/16"]
         assert net.egress[2].any is True
@@ -848,7 +848,7 @@ class TestSandboxRun:
                 effective_runtime_class="gvisor",
                 attached_volume_ids=["vol-1"],
                 effective_egress=[
-                    sandbox_pb2.EgressRule(dns_name="pypi.org"),
+                    sandbox_pb2.EgressRule(https_hostname="pypi.org"),
                     sandbox_pb2.EgressRule(any=True),
                 ],
                 effective_ingress=[sandbox_pb2.IngressRule(any=True)],

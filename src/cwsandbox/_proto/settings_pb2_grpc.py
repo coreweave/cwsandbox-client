@@ -18,6 +18,16 @@ class SettingsServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.GetBuildStorageConfig = channel.unary_unary(
+                '/coreweave.sandbox.v1.SettingsService/GetBuildStorageConfig',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.GetBuildStorageConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.FromString,
+                )
+        self.UpdateBuildStorageConfig = channel.unary_unary(
+                '/coreweave.sandbox.v1.SettingsService/UpdateBuildStorageConfig',
+                request_serializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.UpdateBuildStorageConfigRequest.SerializeToString,
+                response_deserializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.FromString,
+                )
         self.GetObjectStorageWifConfig = channel.unary_unary(
                 '/coreweave.sandbox.v1.SettingsService/GetObjectStorageWifConfig',
                 request_serializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.GetObjectStorageWifConfigRequest.SerializeToString,
@@ -72,6 +82,32 @@ class SettingsServiceStub(object):
 
 class SettingsServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
+
+    def GetBuildStorageConfig(self, request, context):
+        """GetBuildStorageConfig returns the caller organization's current Compose
+        build storage configuration. NOT_FOUND means it has not been configured.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateBuildStorageConfig(self, request, context):
+        """UpdateBuildStorageConfig creates or updates the organization's Compose
+        build storage configuration. Requires sandbox_admin. Enabling storage
+        requires authenticating with the caller's own CoreWeave API token; other
+        credentials receive FAILED_PRECONDITION. Enabling managed storage
+        provisions its dedicated bucket and applies its access and lifecycle
+        policies. Enabling customer-owned storage applies the build-log lifecycle
+        rules and checks context reads and build-log writes with the caller's
+        token. In both modes, setup adds the expire-bob-builds rule to the registry
+        namespace's lifecycle policy with the caller's token, preserving other
+        rules. It enables a disabled policy only when that is its only rule and
+        otherwise returns FAILED_PRECONDITION. A setup failure leaves the new
+        revision disabled; Get returns its current etag for the next update.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def GetObjectStorageWifConfig(self, request, context):
         """GetObjectStorageWifConfig returns the org's object-storage WIF config.
@@ -148,6 +184,16 @@ class SettingsServiceServicer(object):
 
 def add_SettingsServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'GetBuildStorageConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetBuildStorageConfig,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.GetBuildStorageConfigRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.SerializeToString,
+            ),
+            'UpdateBuildStorageConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateBuildStorageConfig,
+                    request_deserializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.UpdateBuildStorageConfigRequest.FromString,
+                    response_serializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.SerializeToString,
+            ),
             'GetObjectStorageWifConfig': grpc.unary_unary_rpc_method_handler(
                     servicer.GetObjectStorageWifConfig,
                     request_deserializer=coreweave_dot_sandbox_dot_v1_dot_settings__pb2.GetObjectStorageWifConfigRequest.FromString,
@@ -207,6 +253,40 @@ def add_SettingsServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class SettingsService(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def GetBuildStorageConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SettingsService/GetBuildStorageConfig',
+            coreweave_dot_sandbox_dot_v1_dot_settings__pb2.GetBuildStorageConfigRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def UpdateBuildStorageConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/coreweave.sandbox.v1.SettingsService/UpdateBuildStorageConfig',
+            coreweave_dot_sandbox_dot_v1_dot_settings__pb2.UpdateBuildStorageConfigRequest.SerializeToString,
+            coreweave_dot_sandbox_dot_v1_dot_settings__pb2.BuildStorageConfig.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def GetObjectStorageWifConfig(request,

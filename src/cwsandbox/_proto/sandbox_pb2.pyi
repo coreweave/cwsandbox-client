@@ -48,7 +48,7 @@ class EndpointAuth(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     ENDPOINT_AUTH_UNSPECIFIED: _ClassVar[EndpointAuth]
     ENDPOINT_AUTH_OPEN: _ClassVar[EndpointAuth]
-    ENDPOINT_AUTH_TOKEN: _ClassVar[EndpointAuth]
+    ENDPOINT_AUTH_SHARE_TOKEN: _ClassVar[EndpointAuth]
 
 class Visibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -56,6 +56,12 @@ class Visibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     VISIBILITY_PUBLIC: _ClassVar[Visibility]
     VISIBILITY_PRIVATE: _ClassVar[Visibility]
     VISIBILITY_CUSTOM: _ClassVar[Visibility]
+
+class DNSEgressMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DNS_EGRESS_MODE_UNSPECIFIED: _ClassVar[DNSEgressMode]
+    DNS_EGRESS_MODE_ALLOW: _ClassVar[DNSEgressMode]
+    DNS_EGRESS_MODE_DENY: _ClassVar[DNSEgressMode]
 
 class TenantScope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -135,11 +141,14 @@ ENDPOINT_KIND_HTTPS: EndpointKind
 ENDPOINT_KIND_TLS_PASSTHROUGH: EndpointKind
 ENDPOINT_AUTH_UNSPECIFIED: EndpointAuth
 ENDPOINT_AUTH_OPEN: EndpointAuth
-ENDPOINT_AUTH_TOKEN: EndpointAuth
+ENDPOINT_AUTH_SHARE_TOKEN: EndpointAuth
 VISIBILITY_UNSPECIFIED: Visibility
 VISIBILITY_PUBLIC: Visibility
 VISIBILITY_PRIVATE: Visibility
 VISIBILITY_CUSTOM: Visibility
+DNS_EGRESS_MODE_UNSPECIFIED: DNSEgressMode
+DNS_EGRESS_MODE_ALLOW: DNSEgressMode
+DNS_EGRESS_MODE_DENY: DNSEgressMode
 TENANT_SCOPE_UNSPECIFIED: TenantScope
 TENANT_SCOPE_SAME_USER: TenantScope
 TENANT_SCOPE_SAME_ORG: TenantScope
@@ -172,18 +181,22 @@ SANDBOX_DATA_PROTOCOL_UNSPECIFIED: SandboxDataProtocol
 SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1: SandboxDataProtocol
 
 class Sandbox(_message.Message):
-    __slots__ = ("sandbox_id", "spec", "status", "source_template_id", "source_template_revision")
+    __slots__ = ("sandbox_id", "spec", "status", "source_template_id", "source_template_revision", "display_name", "endpoint_share_token")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     SPEC_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     SOURCE_TEMPLATE_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_TEMPLATE_REVISION_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    ENDPOINT_SHARE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     spec: SandboxSpec
     status: SandboxStatus
     source_template_id: str
     source_template_revision: int
-    def __init__(self, sandbox_id: _Optional[str] = ..., spec: _Optional[_Union[SandboxSpec, _Mapping]] = ..., status: _Optional[_Union[SandboxStatus, _Mapping]] = ..., source_template_id: _Optional[str] = ..., source_template_revision: _Optional[int] = ...) -> None: ...
+    display_name: str
+    endpoint_share_token: str
+    def __init__(self, sandbox_id: _Optional[str] = ..., spec: _Optional[_Union[SandboxSpec, _Mapping]] = ..., status: _Optional[_Union[SandboxStatus, _Mapping]] = ..., source_template_id: _Optional[str] = ..., source_template_revision: _Optional[int] = ..., display_name: _Optional[str] = ..., endpoint_share_token: _Optional[str] = ...) -> None: ...
 
 class SandboxSpec(_message.Message):
     __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
@@ -376,7 +389,7 @@ class PartialSandboxSpec(_message.Message):
     def __init__(self, containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
 
 class SandboxStatus(_message.Message):
-    __slots__ = ("state", "state_reason", "create_time", "start_time", "end_time", "services", "resource_usage", "exit_code", "effective_resources", "effective_max_lifetime_seconds", "container_statuses", "runner_id", "runner_group_id", "effective_ingress", "effective_egress", "effective_resource_requirements", "attached_volume_ids", "effective_runtime_class")
+    __slots__ = ("state", "state_reason", "create_time", "start_time", "end_time", "services", "resource_usage", "exit_code", "effective_resources", "effective_max_lifetime_seconds", "container_statuses", "runner_id", "runner_group_id", "effective_ingress", "effective_egress", "effective_resource_requirements", "attached_volume_ids", "effective_runtime_class", "effective_dns_egress")
     STATE_FIELD_NUMBER: _ClassVar[int]
     STATE_REASON_FIELD_NUMBER: _ClassVar[int]
     CREATE_TIME_FIELD_NUMBER: _ClassVar[int]
@@ -395,6 +408,7 @@ class SandboxStatus(_message.Message):
     EFFECTIVE_RESOURCE_REQUIREMENTS_FIELD_NUMBER: _ClassVar[int]
     ATTACHED_VOLUME_IDS_FIELD_NUMBER: _ClassVar[int]
     EFFECTIVE_RUNTIME_CLASS_FIELD_NUMBER: _ClassVar[int]
+    EFFECTIVE_DNS_EGRESS_FIELD_NUMBER: _ClassVar[int]
     state: State
     state_reason: str
     create_time: _timestamp_pb2.Timestamp
@@ -413,7 +427,8 @@ class SandboxStatus(_message.Message):
     effective_resource_requirements: ResourceRequirements
     attached_volume_ids: _containers.RepeatedScalarFieldContainer[str]
     effective_runtime_class: str
-    def __init__(self, state: _Optional[_Union[State, str]] = ..., state_reason: _Optional[str] = ..., create_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., services: _Optional[_Iterable[_Union[ServiceStatus, _Mapping]]] = ..., resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., exit_code: _Optional[int] = ..., effective_resources: _Optional[_Union[Resources, _Mapping]] = ..., effective_max_lifetime_seconds: _Optional[int] = ..., container_statuses: _Optional[_Iterable[_Union[ContainerStatus, _Mapping]]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., effective_ingress: _Optional[_Iterable[_Union[IngressRule, _Mapping]]] = ..., effective_egress: _Optional[_Iterable[_Union[EgressRule, _Mapping]]] = ..., effective_resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., attached_volume_ids: _Optional[_Iterable[str]] = ..., effective_runtime_class: _Optional[str] = ...) -> None: ...
+    effective_dns_egress: DNSEgressMode
+    def __init__(self, state: _Optional[_Union[State, str]] = ..., state_reason: _Optional[str] = ..., create_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., services: _Optional[_Iterable[_Union[ServiceStatus, _Mapping]]] = ..., resource_usage: _Optional[_Union[ResourceUsage, _Mapping]] = ..., exit_code: _Optional[int] = ..., effective_resources: _Optional[_Union[Resources, _Mapping]] = ..., effective_max_lifetime_seconds: _Optional[int] = ..., container_statuses: _Optional[_Iterable[_Union[ContainerStatus, _Mapping]]] = ..., runner_id: _Optional[str] = ..., runner_group_id: _Optional[str] = ..., effective_ingress: _Optional[_Iterable[_Union[IngressRule, _Mapping]]] = ..., effective_egress: _Optional[_Iterable[_Union[EgressRule, _Mapping]]] = ..., effective_resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., attached_volume_ids: _Optional[_Iterable[str]] = ..., effective_runtime_class: _Optional[str] = ..., effective_dns_egress: _Optional[_Union[DNSEgressMode, str]] = ...) -> None: ...
 
 class ContainerStatus(_message.Message):
     __slots__ = ("name", "state", "exit_code", "restart_count")
@@ -510,34 +525,36 @@ class EndpointStatus(_message.Message):
     def __init__(self, kind: _Optional[_Union[EndpointKind, str]] = ..., auth: _Optional[_Union[EndpointAuth, str]] = ..., url: _Optional[str] = ..., request_timeout_seconds: _Optional[int] = ..., address: _Optional[str] = ...) -> None: ...
 
 class NetworkOptions(_message.Message):
-    __slots__ = ("ingress", "egress", "deny_egress", "deny_ingress")
+    __slots__ = ("ingress", "egress", "deny_egress", "deny_ingress", "dns_egress")
     INGRESS_FIELD_NUMBER: _ClassVar[int]
     EGRESS_FIELD_NUMBER: _ClassVar[int]
     DENY_EGRESS_FIELD_NUMBER: _ClassVar[int]
     DENY_INGRESS_FIELD_NUMBER: _ClassVar[int]
+    DNS_EGRESS_FIELD_NUMBER: _ClassVar[int]
     ingress: _containers.RepeatedCompositeFieldContainer[IngressRule]
     egress: _containers.RepeatedCompositeFieldContainer[EgressRule]
     deny_egress: bool
     deny_ingress: bool
-    def __init__(self, ingress: _Optional[_Iterable[_Union[IngressRule, _Mapping]]] = ..., egress: _Optional[_Iterable[_Union[EgressRule, _Mapping]]] = ..., deny_egress: bool = ..., deny_ingress: bool = ...) -> None: ...
+    dns_egress: DNSEgressMode
+    def __init__(self, ingress: _Optional[_Iterable[_Union[IngressRule, _Mapping]]] = ..., egress: _Optional[_Iterable[_Union[EgressRule, _Mapping]]] = ..., deny_egress: bool = ..., deny_ingress: bool = ..., dns_egress: _Optional[_Union[DNSEgressMode, str]] = ...) -> None: ...
 
 class EgressRule(_message.Message):
-    __slots__ = ("cidr", "dns_name", "tenant", "any", "selector", "ports", "dns_name_except")
+    __slots__ = ("cidr", "https_hostname", "tenant", "any", "selector", "ports", "https_hostname_except")
     CIDR_FIELD_NUMBER: _ClassVar[int]
-    DNS_NAME_FIELD_NUMBER: _ClassVar[int]
+    HTTPS_HOSTNAME_FIELD_NUMBER: _ClassVar[int]
     TENANT_FIELD_NUMBER: _ClassVar[int]
     ANY_FIELD_NUMBER: _ClassVar[int]
     SELECTOR_FIELD_NUMBER: _ClassVar[int]
     PORTS_FIELD_NUMBER: _ClassVar[int]
-    DNS_NAME_EXCEPT_FIELD_NUMBER: _ClassVar[int]
+    HTTPS_HOSTNAME_EXCEPT_FIELD_NUMBER: _ClassVar[int]
     cidr: CidrBlock
-    dns_name: str
+    https_hostname: str
     tenant: TenantScope
     any: bool
     selector: SelectorBlock
     ports: _containers.RepeatedCompositeFieldContainer[PortRange]
-    dns_name_except: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, cidr: _Optional[_Union[CidrBlock, _Mapping]] = ..., dns_name: _Optional[str] = ..., tenant: _Optional[_Union[TenantScope, str]] = ..., any: bool = ..., selector: _Optional[_Union[SelectorBlock, _Mapping]] = ..., ports: _Optional[_Iterable[_Union[PortRange, _Mapping]]] = ..., dns_name_except: _Optional[_Iterable[str]] = ...) -> None: ...
+    https_hostname_except: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, cidr: _Optional[_Union[CidrBlock, _Mapping]] = ..., https_hostname: _Optional[str] = ..., tenant: _Optional[_Union[TenantScope, str]] = ..., any: bool = ..., selector: _Optional[_Union[SelectorBlock, _Mapping]] = ..., ports: _Optional[_Iterable[_Union[PortRange, _Mapping]]] = ..., https_hostname_except: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class IngressRule(_message.Message):
     __slots__ = ("cidr", "tenant", "any", "ports")
@@ -695,17 +712,19 @@ class CreateSandboxRequest(_message.Message):
     def __init__(self, sandbox: _Optional[_Union[Sandbox, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class CreateSandboxFromTemplateRequest(_message.Message):
-    __slots__ = ("template_id", "overrides", "request_id")
+    __slots__ = ("template_id", "overrides", "request_id", "display_name")
     TEMPLATE_ID_FIELD_NUMBER: _ClassVar[int]
     OVERRIDES_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     template_id: str
     overrides: PartialSandboxSpec
     request_id: str
-    def __init__(self, template_id: _Optional[str] = ..., overrides: _Optional[_Union[PartialSandboxSpec, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    display_name: str
+    def __init__(self, template_id: _Optional[str] = ..., overrides: _Optional[_Union[PartialSandboxSpec, _Mapping]] = ..., request_id: _Optional[str] = ..., display_name: _Optional[str] = ...) -> None: ...
 
 class CreateSandboxFromFileRequest(_message.Message):
-    __slots__ = ("type", "contents", "primary_service", "image_overrides", "build_contexts", "default_resources", "mode", "max_lifetime_seconds", "tags", "network", "network_ids", "object_storage_access", "annotations", "runner_ids", "request_id")
+    __slots__ = ("type", "contents", "primary_service", "image_overrides", "build_contexts", "default_resources", "mode", "max_lifetime_seconds", "tags", "network", "network_ids", "object_storage_access", "annotations", "runner_ids", "request_id", "display_name", "build_context_objects", "builder_sizes")
     class ImageOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -727,6 +746,20 @@ class CreateSandboxFromFileRequest(_message.Message):
         key: str
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class BuildContextObjectsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: BuildContextObject
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[BuildContextObject, _Mapping]] = ...) -> None: ...
+    class BuilderSizesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     TYPE_FIELD_NUMBER: _ClassVar[int]
     CONTENTS_FIELD_NUMBER: _ClassVar[int]
     PRIMARY_SERVICE_FIELD_NUMBER: _ClassVar[int]
@@ -742,6 +775,9 @@ class CreateSandboxFromFileRequest(_message.Message):
     ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
     RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    BUILD_CONTEXT_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    BUILDER_SIZES_FIELD_NUMBER: _ClassVar[int]
     type: SandboxFileType
     contents: bytes
     primary_service: str
@@ -757,7 +793,22 @@ class CreateSandboxFromFileRequest(_message.Message):
     annotations: _containers.ScalarMap[str, str]
     runner_ids: _containers.RepeatedScalarFieldContainer[str]
     request_id: str
-    def __init__(self, type: _Optional[_Union[SandboxFileType, str]] = ..., contents: _Optional[bytes] = ..., primary_service: _Optional[str] = ..., image_overrides: _Optional[_Mapping[str, str]] = ..., build_contexts: _Optional[_Mapping[str, bytes]] = ..., default_resources: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., max_lifetime_seconds: _Optional[int] = ..., tags: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    display_name: str
+    build_context_objects: _containers.MessageMap[str, BuildContextObject]
+    builder_sizes: _containers.ScalarMap[str, str]
+    def __init__(self, type: _Optional[_Union[SandboxFileType, str]] = ..., contents: _Optional[bytes] = ..., primary_service: _Optional[str] = ..., image_overrides: _Optional[_Mapping[str, str]] = ..., build_contexts: _Optional[_Mapping[str, bytes]] = ..., default_resources: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., max_lifetime_seconds: _Optional[int] = ..., tags: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., request_id: _Optional[str] = ..., display_name: _Optional[str] = ..., build_context_objects: _Optional[_Mapping[str, BuildContextObject]] = ..., builder_sizes: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class BuildContextObject(_message.Message):
+    __slots__ = ("location", "bucket", "key", "version_id")
+    LOCATION_FIELD_NUMBER: _ClassVar[int]
+    BUCKET_FIELD_NUMBER: _ClassVar[int]
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    VERSION_ID_FIELD_NUMBER: _ClassVar[int]
+    location: str
+    bucket: str
+    key: str
+    version_id: str
+    def __init__(self, location: _Optional[str] = ..., bucket: _Optional[str] = ..., key: _Optional[str] = ..., version_id: _Optional[str] = ...) -> None: ...
 
 class GetSandboxRequest(_message.Message):
     __slots__ = ("sandbox_id",)

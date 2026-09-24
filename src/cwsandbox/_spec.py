@@ -168,7 +168,7 @@ def _cidr_from_proto(block: sandbox_pb2.CidrBlock) -> CidrBlock:
 def egress_rule_to_proto(rule: EgressRule) -> sandbox_pb2.EgressRule:
     proto = sandbox_pb2.EgressRule()
     if rule.dns_name:
-        proto.dns_name = rule.dns_name
+        proto.https_hostname = rule.dns_name
     elif rule.cidr is not None:
         proto.cidr.CopyFrom(_cidr_to_proto(rule.cidr))  # type: ignore[arg-type]
     elif rule.tenant is not None:
@@ -183,18 +183,22 @@ def egress_rule_to_proto(rule: EgressRule) -> sandbox_pb2.EgressRule:
             proto.selector.namespace_labels.update(selector.namespace_labels)
     proto.ports.extend(_ports_to_proto(rule.ports))  # type: ignore[arg-type]
     if rule.dns_name_except:
-        proto.dns_name_except.extend(rule.dns_name_except)
+        proto.https_hostname_except.extend(rule.dns_name_except)
     return proto
 
 
 def egress_rule_from_proto(rule: sandbox_pb2.EgressRule) -> EgressRule:
     dest = rule.WhichOneof("destination")
     ports = _ports_from_proto(rule.ports)
-    if dest == "dns_name" and ports and not (len(ports) == 1 and _is_https_443_port(ports[0])):
+    if (
+        dest == "https_hostname"
+        and ports
+        and not (len(ports) == 1 and _is_https_443_port(ports[0]))
+    ):
         ports = None
     kwargs: dict[str, Any] = {"ports": ports}
-    if dest == "dns_name":
-        kwargs["dns_name"] = rule.dns_name
+    if dest == "https_hostname":
+        kwargs["dns_name"] = rule.https_hostname
     elif dest == "cidr":
         kwargs["cidr"] = _cidr_from_proto(rule.cidr)
     elif dest == "tenant":
