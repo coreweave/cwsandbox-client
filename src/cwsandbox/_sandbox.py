@@ -1560,6 +1560,13 @@ TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS: int = 3
 TRANSIENT_UNAVAILABLE_JITTER: float = 0.2
 """Upward-only jitter on the server's ``RetryInfo`` delay (never sleeps less)."""
 
+TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS: float = DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS
+"""Time a retried attempt must still have after the backoff, or the last error is raised.
+
+Keeps a starved final attempt from failing with ``DEADLINE_EXCEEDED`` and
+hiding the server's ``UNAVAILABLE`` reason.
+"""
+
 
 def _transient_unavailable_hint(e: grpc.RpcError) -> tuple[float, str | None] | None:
     """Return ``(delay_seconds, reason)`` when the server asked for a retry, else ``None``.
@@ -1595,10 +1602,12 @@ async def _retry_transient_unavailable(
     ``attempt(rpc_timeout)`` performs exactly one raw stub call and lets
     ``grpc.RpcError`` escape untranslated. ``timeout`` bounds the whole retry
     sequence: the first call gets it unchanged, later calls get what is left.
-    A failure is
-    retried only when ``enabled``, fewer than ``max_attempts`` calls have been
-    made, the error matches ``_transient_unavailable_hint``, and the jittered
-    delay fits within ``timeout``. After sleeping, ``still_valid`` (when
+    A failure is retried only when ``enabled``, fewer than ``max_attempts``
+    calls have been made, the error matches ``_transient_unavailable_hint``,
+    the hint is at most ``MAX_POLL_RETRY_HINTED_DELAY_SECONDS`` (a longer one
+    is raised rather than slept or clamped below what the server asked), and
+    after the jittered delay at least ``TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS``
+    of ``timeout`` remains for the next call. After sleeping, ``still_valid`` (when
     given) must still hold, e.g. the channel the attempt uses was not closed
     by a concurrent stop. Otherwise the last raw ``grpc.RpcError`` is
     re-raised for the call site to translate. Cancellation propagates.
@@ -1615,8 +1624,10 @@ async def _retry_transient_unavailable(
             if hint is None or attempts >= max_attempts:
                 raise
             delay, reason = hint
+            if delay > MAX_POLL_RETRY_HINTED_DELAY_SECONDS:
+                raise
             sleep_for = delay * random.uniform(1.0, 1.0 + TRANSIENT_UNAVAILABLE_JITTER)
-            if time.monotonic() + sleep_for >= deadline:
+            if time.monotonic() + sleep_for + TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS > deadline:
                 raise
             logger.info(
                 "Retrying %s after transient unavailability: reason=%s attempt=%d/%d delay=%.2fs",
@@ -1628,7 +1639,7 @@ async def _retry_transient_unavailable(
             )
             await asyncio.sleep(sleep_for)
             rpc_timeout = deadline - time.monotonic()
-            if rpc_timeout <= 0:
+            if rpc_timeout < TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS:
                 raise
             if still_valid is not None and not still_valid():
                 raise
@@ -3104,7 +3115,7 @@ class Sandbox:
         auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
-        retry_transient_unavailable: bool | None = None,
+        retry_transient_unavailable: bool = True,
     ) -> OperationRef[None]:
         """Delete a sandbox by ID without creating a Sandbox instance.
 
@@ -3120,9 +3131,11 @@ class Sandbox:
                 doesn't exist.
             retry_transient_unavailable: Retry the delete (up to 3 attempts,
                 within ``timeout_seconds``) when the server returns
-                ``UNAVAILABLE`` with a ``RetryInfo`` delay. ``None`` (default)
-                means enabled; pass ``False`` to make a single attempt. A
-                not-found answer on a retry counts as deleted.
+                ``UNAVAILABLE`` with a ``RetryInfo`` delay. Pass ``False`` to
+                make a single attempt. This is a per-call argument only;
+                ``SandboxDefaults`` and ``Session`` settings do not apply to
+                this classmethod. A not-found answer on a retry counts as
+                deleted.
 
         Returns:
             OperationRef[None]: Use .result() to block until complete.
@@ -3166,7 +3179,7 @@ class Sandbox:
         auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
         missing_ok: bool = False,
-        retry_transient_unavailable: bool | None = None,
+        retry_transient_unavailable: bool = True,
     ) -> None:
         """Internal async: Delete a sandbox by ID."""
         effective_base_url = (
@@ -3196,7 +3209,7 @@ class Sandbox:
                     _attempt,
                     timeout=timeout,
                     operation="Delete sandbox",
-                    enabled=retry_transient_unavailable is not False,
+                    enabled=retry_transient_unavailable,
                 )
             except grpc.RpcError as e:
                 parsed = parse_error_info(e)
@@ -7659,10 +7672,8 @@ class Sandbox:
             path=filepath,
         )
         _set_request_container(request, container)
-        # One deadline across a direct -> gateway switch; the gateway path
+        # Each pass gets the full timeout, as before; the gateway path also
         # retries transient UNAVAILABLE within the remaining attempts (3 total).
-        deadline = time.monotonic() + timeout
-        last_direct_error: grpc.RpcError | None = None
         for attempt in range(2):
             prepared = await self._prepare_data_plane_call(
                 sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
@@ -7675,19 +7686,10 @@ class Sandbox:
                         request, timeout=timeout, metadata=prepared.metadata
                     )
                 else:
-                    remaining = timeout
-                    if attempt > 0 and self._defaults.retry_transient_unavailable:
-                        # After a direct-retirement pass the gateway gets only
-                        # what is left of the shared budget; if re-preparation
-                        # used it up, surface the direct error.
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            assert last_direct_error is not None
-                            raise last_direct_error
                     response = await self._read_file_gateway_async(
                         prepared,
                         request,
-                        timeout=remaining,
+                        timeout=timeout,
                         max_attempts=TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS - attempt,
                     )
                 return bytes(response.content)
@@ -7696,7 +7698,6 @@ class Sandbox:
                 if discard:
                     await prepared.discard()
                 if prepared.is_direct and attempt == 0 and _is_runner_shard_retiring_error(e):
-                    last_direct_error = e
                     continue
                 raise _translate_rpc_error(
                     e,

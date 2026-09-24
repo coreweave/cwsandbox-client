@@ -338,8 +338,9 @@ class SandboxDefaults:
             ``gateway`` disables direct access; ``direct`` requires it.
         retry_transient_unavailable: Retry ``stop()`` (without
             ``snapshot_on_stop``) and gateway ``read_file()`` up to 3 attempts
-            when the server returns ``UNAVAILABLE`` with a ``RetryInfo`` delay,
-            sleeping that delay (plus up to 20%) within the RPC's own timeout.
+            when the server returns ``UNAVAILABLE`` with a ``RetryInfo`` delay
+            of at most 10 s, sleeping that delay (plus up to 20%) and only if
+            at least 5 s of the RPC's own timeout remains for the next attempt.
             ``False`` disables only this hinted retry; exec, streams, creates,
             and the existing poll, snapshot, and shard-retirement retries are
             unaffected either way.

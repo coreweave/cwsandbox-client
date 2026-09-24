@@ -232,7 +232,7 @@ class TestRetryPolicy:
         err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(1, 0))
 
         async def _fake_sleep(seconds: float) -> None:
-            now[0] += 10.0  # the sleep overran the whole budget
+            now[0] += 16.0  # overslept: 4 s left, under the 5 s floor
 
         calls = _Calls(err, "ok")
         with (
@@ -240,8 +240,65 @@ class TestRetryPolicy:
             _patch_sleep(_fake_sleep),
             pytest.raises(grpc.RpcError),
         ):
-            await _run(calls, timeout=5.0)
+            await _run(calls, timeout=20.0)
         assert len(calls.timeouts) == 1
+
+    @pytest.mark.asyncio
+    async def test_hint_above_cap_is_raised_not_slept(self) -> None:
+        err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(11, 0))
+        calls = _Calls(err, "ok")
+        with (
+            _patch_sleep(sleep := AsyncMock()),
+            pytest.raises(grpc.RpcError) as exc_info,
+        ):
+            await _run(calls, timeout=300.0)
+        assert exc_info.value is err
+        assert len(calls.timeouts) == 1
+        sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hint_at_cap_is_retried(self) -> None:
+        err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(10, 0))
+        calls = _Calls(err, "ok")
+        with _patch_sleep(AsyncMock()), _patch_uniform(lambda a, b: a):
+            assert await _run(calls, timeout=300.0) == "ok"
+        assert len(calls.timeouts) == 2
+
+    @pytest.mark.parametrize(
+        ("timeout", "retried"),
+        [
+            pytest.param(9.9, False, id="delay-plus-floor-exceeds-budget"),
+            pytest.param(10.1, True, id="delay-plus-floor-fits-budget"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_retry_needs_min_time_left_for_next_attempt(
+        self, timeout: float, retried: bool
+    ) -> None:
+        # 5 s hint + 5 s floor for the next attempt.
+        now = [100.0]
+        err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(5, 0))
+
+        slept: list[float] = []
+
+        async def _fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+            now[0] += seconds
+
+        calls = _Calls(err, "ok")
+        with (
+            _patch_monotonic(lambda: now[0]),
+            _patch_sleep(_fake_sleep),
+            _patch_uniform(lambda a, b: a),
+        ):
+            if retried:
+                assert await _run(calls, timeout=timeout) == "ok"
+            else:
+                with pytest.raises(grpc.RpcError):
+                    await _run(calls, timeout=timeout)
+        assert len(calls.timeouts) == (2 if retried else 1)
+        # No pointless backoff when the next attempt could not fit anyway.
+        assert slept == ([5.0] if retried else [])
 
     @pytest.mark.asyncio
     async def test_jitter_never_sleeps_below_hint(self) -> None:
@@ -276,7 +333,7 @@ class TestRetryPolicy:
 
     @pytest.mark.asyncio
     async def test_cancel_during_backoff_propagates_without_another_attempt(self) -> None:
-        err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(60, 0))
+        err = _RpcError(grpc.StatusCode.UNAVAILABLE, retry_delay=(9, 0))
         calls = _Calls(err, "ok")
         task = asyncio.ensure_future(_run(calls, timeout=300.0))
         await asyncio.sleep(0.01)
@@ -556,27 +613,12 @@ class TestReadFile:
     def _retiring() -> _RpcError:
         return _RpcError(grpc.StatusCode.UNAVAILABLE, reason="CWSANDBOX_RUNNER_SHARD_RETIRING")
 
+    @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.asyncio
-    async def test_gateway_after_direct_gets_remaining_budget(self) -> None:
-        sandbox = _running(DataPlaneMode.AUTO)
-        now = self._retiring_then_gateway(sandbox, self._retiring(), cost=10.0)
-        with _patch_monotonic(lambda: now[0]):
-            assert await _read(sandbox) == b"ok"
-        assert sandbox._stub.ReadFile.call_args.kwargs["timeout"] == pytest.approx(20.0)
-
-    @pytest.mark.asyncio
-    async def test_budget_spent_before_gateway_surfaces_direct_error(self) -> None:
-        sandbox = _running(DataPlaneMode.AUTO)
-        retiring = self._retiring()
-        now = self._retiring_then_gateway(sandbox, retiring, cost=60.0)
-        with _patch_monotonic(lambda: now[0]), pytest.raises(SandboxUnavailableError) as exc_info:
-            await _read(sandbox)
-        sandbox._stub.ReadFile.assert_not_awaited()
-        assert exc_info.value.__cause__ is retiring
-
-    @pytest.mark.asyncio
-    async def test_opt_out_keeps_full_timeout_for_retirement_fallback(self) -> None:
-        sandbox = _running(DataPlaneMode.AUTO, SandboxDefaults(retry_transient_unavailable=False))
+    async def test_retirement_fallback_keeps_full_timeout(self, enabled: bool) -> None:
+        # The gateway fallback after a slow direct shard-retirement pass gets
+        # the full per-call timeout, as before, whether the retry is on or off.
+        sandbox = _running(DataPlaneMode.AUTO, SandboxDefaults(retry_transient_unavailable=enabled))
         now = self._retiring_then_gateway(sandbox, self._retiring(), cost=60.0)
         with _patch_monotonic(lambda: now[0]):
             assert await _read(sandbox) == b"ok"
