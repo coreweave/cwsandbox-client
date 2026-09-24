@@ -23,9 +23,11 @@ later main-thread activation can recover it.
 Embedded hosts that own process lifecycle can call
 :func:`disable_signal_handlers` or set
 ``CWSANDBOX_DISABLE_SIGNAL_HANDLERS`` to a truthy value (``1``, ``true``,
-``yes``, ``on``). That skips SIGINT/SIGTERM installation and, if the SDK
-already owns those slots, restores them. ``atexit`` remains registered.
-There is no public re-enable path.
+``yes``, ``on``) before the first owned sandbox. That skips SIGINT/SIGTERM
+installation. Changing the environment variable after installation has no
+effect. A late :func:`disable_signal_handlers` call raises
+``RuntimeError``. ``atexit`` remains registered. There is no public
+re-enable path.
 """
 
 from __future__ import annotations
@@ -141,14 +143,6 @@ def _restore_original_handler(signum: int, original: _SignalHandler) -> None:
         pass
 
 
-def _restore_owned_handler(signum: int, original: _SignalHandler) -> None:
-    """Restore *original* only when this module still owns *signum*."""
-    if signal.getsignal(signum) is not _signal_handler:
-        return
-    replacement = original if _is_restorable_handler(original) else signal.SIG_DFL
-    signal.signal(signum, replacement)
-
-
 def _activate_cleanup_handlers() -> None:
     """Register atexit and, on the main thread, SIGINT/SIGTERM handlers.
 
@@ -157,8 +151,8 @@ def _activate_cleanup_handlers() -> None:
     once, and only on the main thread. An earlier off-main skip leaves
     signal installation pending for a later main-thread call. A process
     opt-out via :func:`disable_signal_handlers` or
-    ``CWSANDBOX_DISABLE_SIGNAL_HANDLERS`` skips signal installation but
-    still registers ``atexit``.
+    ``CWSANDBOX_DISABLE_SIGNAL_HANDLERS`` must happen before installation
+    and skips signals while still registering ``atexit``.
     """
     global _original_sigint, _original_sigterm, _atexit_registered
     global _signals_installed, _signals_disabled
@@ -202,10 +196,7 @@ def disable_signal_handlers() -> None:
     idempotent. ``atexit`` cleanup still registers lazily when a sandbox
     becomes owned.
 
-    If cwsandbox already installed handlers, this restores only slots that
-    still point at the SDK handler. A host handler installed afterward is
-    left unchanged. Restoration requires the main thread; calling this from
-    a worker thread after installation raises ``RuntimeError`` without
+    If handlers are already installed, this raises ``RuntimeError`` without
     changing disable or install state.
 
     There is no public re-enable path. The host is responsible for graceful
@@ -219,28 +210,17 @@ def disable_signal_handlers() -> None:
         asyncio.run(run_worker())
         ```
     """
-    global _signals_disabled, _signals_installed
-    global _original_sigint, _original_sigterm
+    global _signals_disabled
 
     with _activation_lock:
-        if not _signals_installed:
-            _signals_disabled = True
-            logger.debug("Disabled cwsandbox SIGINT/SIGTERM handlers")
-            return
-
-        if not _running_on_main_thread():
+        if _signals_installed:
             raise RuntimeError(
-                "disable_signal_handlers() must be called from the main "
-                "thread after cwsandbox has installed SIGINT/SIGTERM handlers"
+                "disable_signal_handlers() must be called before "
+                "cwsandbox installs signal handlers"
             )
 
-        _restore_owned_handler(signal.SIGINT, _original_sigint)
-        _restore_owned_handler(signal.SIGTERM, _original_sigterm)
-        _signals_installed = False
-        _original_sigint = None
-        _original_sigterm = None
         _signals_disabled = True
-        logger.debug("Restored host SIGINT/SIGTERM handlers and disabled SDK install")
+        logger.debug("Disabled cwsandbox SIGINT/SIGTERM handlers")
 
 
 def _install_handlers() -> None:

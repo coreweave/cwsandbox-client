@@ -100,6 +100,8 @@ CWSANDBOX_DISABLE_SIGNAL_HANDLERS=1
 ```
 
 Accepted environment values: `1`, `true`, `yes`, `on` (case-insensitive).
+Configure the API or environment variable before the first owned sandbox;
+changing the variable afterward has no effect.
 
 ## Development
 

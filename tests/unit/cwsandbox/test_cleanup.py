@@ -634,68 +634,17 @@ class TestDisableSignalHandlers:
         assert cleanup_module._signals_disabled is True
         assert cleanup_module._signals_installed is False
 
-    def test_late_disable_restores_original_handlers(self) -> None:
-        """Late disable on the main thread restores captured originals."""
-        import cwsandbox._cleanup as cleanup_module
-
-        prior_int = signal.getsignal(signal.SIGINT)
-        prior_term = signal.getsignal(signal.SIGTERM)
-
-        _activate_cleanup_handlers()
-        assert signal.getsignal(signal.SIGINT) is _signal_handler
-        assert signal.getsignal(signal.SIGTERM) is _signal_handler
-
-        disable_signal_handlers()
-
-        assert signal.getsignal(signal.SIGINT) is prior_int
-        assert signal.getsignal(signal.SIGTERM) is prior_term
-        assert cleanup_module._signals_installed is False
-        assert cleanup_module._signals_disabled is True
-        assert cleanup_module._atexit_registered is True
-        assert cleanup_module._original_sigint is None
-        assert cleanup_module._original_sigterm is None
-
-    def test_late_disable_does_not_overwrite_host_handler(self) -> None:
-        """A host handler installed after cwsandbox is left in place."""
-        prior_int = signal.getsignal(signal.SIGINT)
-        prior_term = signal.getsignal(signal.SIGTERM)
-
-        def host(signum: int, frame: object) -> None:
-            return None
-
-        try:
-            _activate_cleanup_handlers()
-            signal.signal(signal.SIGTERM, host)
-            disable_signal_handlers()
-
-            assert signal.getsignal(signal.SIGTERM) is host
-            assert signal.getsignal(signal.SIGINT) is prior_int
-        finally:
-            signal.signal(signal.SIGINT, prior_int)
-            signal.signal(signal.SIGTERM, prior_term)
-
-    def test_off_main_late_disable_is_atomic(self) -> None:
-        """Off-main late disable raises without mutating disable or install state."""
+    def test_late_disable_raises_without_mutating_state(self) -> None:
+        """A late API call raises and leaves installed handlers unchanged."""
         import cwsandbox._cleanup as cleanup_module
 
         _activate_cleanup_handlers()
         original_int = cleanup_module._original_sigint
         original_term = cleanup_module._original_sigterm
-        errors: list[BaseException] = []
 
-        def worker() -> None:
-            try:
-                disable_signal_handlers()
-            except BaseException as exc:  # noqa: BLE001 - collect for assertion
-                errors.append(exc)
+        with pytest.raises(RuntimeError, match="before"):
+            disable_signal_handlers()
 
-        thread = threading.Thread(target=worker)
-        thread.start()
-        thread.join()
-
-        assert len(errors) == 1
-        assert isinstance(errors[0], RuntimeError)
-        assert "main thread" in str(errors[0])
         assert cleanup_module._signals_disabled is False
         assert cleanup_module._signals_installed is True
         assert cleanup_module._original_sigint is original_int
@@ -703,34 +652,19 @@ class TestDisableSignalHandlers:
         assert signal.getsignal(signal.SIGINT) is _signal_handler
         assert signal.getsignal(signal.SIGTERM) is _signal_handler
 
-    def test_concurrent_disable_and_activate_never_leave_installed_when_disabled(
-        self,
-    ) -> None:
-        """Disable and activate racing under the lock cannot leave both states true."""
+    def test_late_env_change_does_not_uninstall(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Setting the environment variable after install does not restore handlers."""
         import cwsandbox._cleanup as cleanup_module
 
-        errors: list[BaseException] = []
-
-        def worker() -> None:
-            try:
-                disable_signal_handlers()
+        with patch("cwsandbox._cleanup.atexit.register"):
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
                 _activate_cleanup_handlers()
-            except BaseException as exc:  # noqa: BLE001 - collect for assertion
-                errors.append(exc)
+                assert mock_signal.call_count == 2
+                monkeypatch.setenv("CWSANDBOX_DISABLE_SIGNAL_HANDLERS", "1")
+                _activate_cleanup_handlers()
 
-        threads = [threading.Thread(target=worker) for _ in range(8)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-
-        disable_signal_handlers()
-        _activate_cleanup_handlers()
-
-        assert errors == []
-        assert cleanup_module._signals_disabled is True
-        assert cleanup_module._signals_installed is False
-        assert cleanup_module._atexit_registered is True
+        assert cleanup_module._signals_installed is True
+        assert cleanup_module._signals_disabled is False
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " Yes "])
     def test_truthy_env_disables_signals(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -771,15 +705,3 @@ class TestDisableSignalHandlers:
         assert cleanup_module._signals_disabled is True
         _reset_for_testing()
         assert cleanup_module._signals_disabled is False
-
-    def test_atexit_remains_registered_after_late_disable(self) -> None:
-        """Late disable must not unregister the atexit fallback."""
-        import cwsandbox._cleanup as cleanup_module
-
-        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
-            with patch("cwsandbox._cleanup.signal.signal"):
-                _activate_cleanup_handlers()
-            disable_signal_handlers()
-
-        mock_register.assert_called_once_with(_cleanup)
-        assert cleanup_module._atexit_registered is True
