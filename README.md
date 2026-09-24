@@ -26,6 +26,33 @@ async with Sandbox.run("sleep", "infinity") as sb:
     print(result.stdout)  # 4
 ```
 
+## Command-line interface
+
+Install the optional CLI to inspect and manage existing sandboxes from your terminal:
+
+```bash
+pip install "cwsandbox[cli]"
+export CWSANDBOX_API_KEY="your-api-key"
+export SANDBOX_ID="your-sandbox-id"
+```
+
+```bash
+# Discover and inspect sandboxes
+cwsandbox ls
+cwsandbox get "$SANDBOX_ID"
+
+# Run a command or open an interactive shell
+cwsandbox exec "$SANDBOX_ID" python -c "print('hello')"
+cwsandbox sh "$SANDBOX_ID"
+
+# Inspect the main process logs, then stop the sandbox
+cwsandbox logs "$SANDBOX_ID" --tail 100 --timestamps
+cwsandbox stop "$SANDBOX_ID"
+```
+
+The CLI operates on sandboxes created with the Python SDK or another client. Run
+`cwsandbox --help` or `cwsandbox <command> --help` for all commands and options.
+
 ## Sandbox data connections
 
 Exec, log, and file operations prefer a sandbox-scoped direct mTLS connection.

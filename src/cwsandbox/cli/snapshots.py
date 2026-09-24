@@ -22,7 +22,14 @@ _STATUS_CHOICES = [
 
 @click.group()
 def snapshots() -> None:
-    """Create, inspect, list, and delete file-system snapshots."""
+    """Create, inspect, list, and delete file-system snapshots.
+
+    Examples:
+
+        cwsandbox snapshots create <sandbox-id>
+
+        cwsandbox snapshots list
+    """
 
 
 def _enum_value(value: Any) -> str | None:
@@ -116,6 +123,12 @@ def create_snapshot(
     """Create a file-system snapshot from a running sandbox.
 
     SANDBOX_ID is the ID of the sandbox to snapshot.
+
+    Examples:
+
+        cwsandbox snapshots create <sandbox-id>
+
+        cwsandbox snapshots create <sandbox-id> --no-wait --output json
     """
     sandbox = Sandbox.from_id(sandbox_id, timeout_seconds=timeout_seconds).result()
     snapshot_id = sandbox.snapshot(
@@ -153,7 +166,14 @@ def get_snapshot(
     timeout_seconds: float | None,
     output_format: str,
 ) -> None:
-    """Get a file-system snapshot by ID."""
+    """Get a file-system snapshot by ID.
+
+    Examples:
+
+        cwsandbox snapshots get <snapshot-id>
+
+        cwsandbox snapshots get <snapshot-id> --output json
+    """
     snapshot = Sandbox.get_snapshot(
         file_system_snapshot_id,
         timeout_seconds=timeout_seconds,
@@ -201,7 +221,14 @@ def list_snapshots(
     timeout_seconds: float | None,
     output_format: str,
 ) -> None:
-    """List file-system snapshots."""
+    """List file-system snapshots.
+
+    Examples:
+
+        cwsandbox snapshots list
+
+        cwsandbox snapshots list --source-sandbox-id <sandbox-id> --status ready
+    """
     snapshot_rows = Sandbox.list_snapshots(
         source_sandbox_id=source_sandbox_id,
         status=status,
@@ -244,7 +271,14 @@ def delete_snapshot(
     timeout_seconds: float | None,
     quiet: bool,
 ) -> None:
-    """Delete a file-system snapshot by ID."""
+    """Delete a file-system snapshot by ID.
+
+    Examples:
+
+        cwsandbox snapshots delete <snapshot-id>
+
+        cwsandbox snapshots delete <snapshot-id> --missing-ok
+    """
     Sandbox.delete_snapshot(
         file_system_snapshot_id,
         timeout_seconds=timeout_seconds,
