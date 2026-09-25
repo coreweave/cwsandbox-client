@@ -327,7 +327,14 @@ class Session:
 
     def _register_sandbox(self, sandbox: Sandbox) -> None:
         """Register a sandbox for tracking."""
+        self._activate_cleanup_handlers()
         self._sandboxes[id(sandbox)] = sandbox
+
+    def _activate_cleanup_handlers(self) -> None:
+        """Activate cleanup from the current ownership-requesting thread."""
+        from cwsandbox._cleanup import _activate_cleanup_handlers
+
+        _activate_cleanup_handlers()
 
     def _deregister_sandbox(self, sandbox: Sandbox) -> None:
         """Deregister a sandbox from tracking."""
@@ -563,6 +570,8 @@ class Session:
                 orphans = await session.list(adopt=True)
             ```
         """
+        if adopt:
+            self._activate_cleanup_handlers()
         future = self._loop_manager.run_async(
             self._list_async(
                 tags=tags,
@@ -655,6 +664,8 @@ class Session:
                 result = await sb.exec(["echo", "hello"])
             ```
         """
+        if adopt:
+            self._activate_cleanup_handlers()
         future = self._loop_manager.run_async(self._from_id_async(sandbox_id, adopt=adopt))
         return OperationRef(future)
 

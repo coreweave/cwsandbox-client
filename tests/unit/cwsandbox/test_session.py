@@ -1296,3 +1296,163 @@ class TestSessionInitReporterWarning:
         mock_logger.warning.assert_called_once()
         warning_args = mock_logger.warning.call_args[0]
         assert "unsupported" in str(warning_args)
+
+
+class TestCleanupActivation:
+    """Lifecycle tests for lazy cleanup activation from Session ownership paths."""
+
+    def test_empty_session_does_not_activate(self) -> None:
+        """Constructing an empty Session must not install process hooks."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            Session()
+            mock_activate.assert_not_called()
+
+    def test_session_sandbox_activates(self) -> None:
+        """session.sandbox() activates cleanup through _register_sandbox()."""
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            session = Session()
+            session.sandbox(command="sleep", args=["infinity"])
+            mock_activate.assert_called()
+
+    def test_adopt_activates(self) -> None:
+        """session.adopt() activates cleanup through _register_sandbox()."""
+        session = Session()
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-123"
+        sandbox._state = _Running(sandbox_id="test-123")
+
+        with patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate:
+            session.adopt(sandbox)
+            mock_activate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_adopt_true_activates(self, mock_api_key: str) -> None:
+        """session.list(adopt=True) activates cleanup through _register_sandbox()."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_sandbox_info = sandbox_pb2.Sandbox(
+            sandbox_id="test-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                runner_id="tower-1",
+                runner_group_id="group-1",
+            ),
+        )
+        session = Session()
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate,
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await session.list(adopt=True)
+
+        mock_activate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_adopt_false_does_not_activate(self, mock_api_key: str) -> None:
+        """session.list(adopt=False) must not install process hooks."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_sandbox_info = sandbox_pb2.Sandbox(
+            sandbox_id="test-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                runner_id="tower-1",
+                runner_group_id="group-1",
+            ),
+        )
+        session = Session()
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate,
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await session.list(adopt=False)
+
+        mock_activate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopt_true_activates(self, mock_api_key: str) -> None:
+        """session.from_id(adopt=True) activates cleanup through _register_sandbox()."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="test-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                runner_id="tower-1",
+                runner_group_id="group-1",
+            ),
+        )
+        session = Session()
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate,
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await session.from_id("test-123")
+
+        mock_activate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_from_id_adopt_false_does_not_activate(self, mock_api_key: str) -> None:
+        """session.from_id(adopt=False) must not install process hooks."""
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="test-123",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+                runner_id="tower-1",
+                runner_group_id="group-1",
+            ),
+        )
+        session = Session()
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._cleanup._activate_cleanup_handlers") as mock_activate,
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            await session.from_id("test-123", adopt=False)
+
+        mock_activate.assert_not_called()

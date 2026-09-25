@@ -487,6 +487,30 @@ class TestRemoteFunction:
 
         assert isinstance(ref, OperationRef)
 
+    def test_remote_activates_cleanup_before_dispatch(self) -> None:
+        """remote() activates cleanup on the calling thread."""
+        from cwsandbox import Session
+
+        session = Session()
+
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        remote_fn = RemoteFunction(add, session=session)
+        mock_future = MagicMock()
+
+        def mock_run_async(coro: Any) -> MagicMock:
+            coro.close()
+            return mock_future
+
+        with (
+            patch.object(session._loop_manager, "run_async", side_effect=mock_run_async),
+            patch.object(session, "_activate_cleanup_handlers") as mock_activate,
+        ):
+            remote_fn.remote(2, 3)
+
+        mock_activate.assert_called_once_with()
+
     def test_local_executes_without_sandbox(self) -> None:
         """Test that local() executes the function directly."""
         from cwsandbox import Session
