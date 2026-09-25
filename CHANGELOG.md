@@ -1,18 +1,25 @@
 # CHANGELOG
 
 
-## v1.14.4 (2026-09-25)
+## v1.15.0 (2026-09-25)
+
+### Bug Fixes
+
+- **cleanup**: Require `disable_signal_handlers()` before signal installation
+  ([`7cf596e`](https://github.com/coreweave/cwsandbox-client/commit/7cf596e7f31004171c7c6dfdcc1b89432e265dd4))
+
+### Code Style
+
+- **cleanup**: Reformat signal handler error message on one line
+  ([`1c00186`](https://github.com/coreweave/cwsandbox-client/commit/1c00186345085e9c817a8d9297150f56da97ee34))
 
 ### Features
 
-- **cleanup**: Add `disable_signal_handlers()` and `CWSANDBOX_DISABLE_SIGNAL_HANDLERS`
+- **cleanup**: Add disable_signal_handlers() for embedded host signal ownership
+  ([`24615f2`](https://github.com/coreweave/cwsandbox-client/commit/24615f2e26f7aa77a102e81e3e52e23b8af7a3f7))
 
-Embedded hosts can keep process-signal ownership. The API is process-wide and
-  sticky. Truthy environment values are `1`, `true`, `yes`, and `on`
-  (case-insensitive). `atexit` still registers when a sandbox becomes owned.
-  Configure the API or environment variable before first sandbox ownership.
-  A late API call raises. Changing the environment variable after
-  installation has no effect.
+
+## v1.14.4 (2026-09-25)
 
 ### Bug Fixes
 
