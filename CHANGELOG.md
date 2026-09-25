@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.15.1 (2026-09-25)
+
+### Bug Fixes
+
+- **sandbox**: Retry delete, stop, and read_file on hinted UNAVAILABLE
+  ([#177](https://github.com/coreweave/cwsandbox-client/pull/177),
+  [`391a043`](https://github.com/coreweave/cwsandbox-client/commit/391a043d9074773c65a50036843797fdf0529f24))
+
+Sandbox.delete(), plain stop(), and gateway read_file() now retry up to 3 attempts when the server
+  returns gRPC UNAVAILABLE with a RetryInfo delay, sleeping that delay plus up to 20% within the
+  RPC's own timeout. A hint over 10 s is not retried, and a retry needs at least 5 s left for the
+  next attempt. Previously a single transient rejection failed the call even though a retry a few
+  seconds later would succeed.
+
+Bare UNAVAILABLE, exec, streams, creates, writes, and stop with snapshot_on_stop are not retried. A
+  not-found answer on a retry counts as deleted/stopped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.15.0 (2026-09-25)
 
 ### Bug Fixes
