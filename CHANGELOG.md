@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Features
+
+- **sandbox**: Add HTTPS `auth=SHARE_TOKEN` and create-only `endpoint_share_token`
+
+  Create and CreateSandboxFromTemplate may return an `EndpointShareToken` at
+  `Sandbox.endpoint_share_token`. If the first response omits it while HTTPS URL
+  confirmation converges, the client replays the exact accepted create request
+  up to three times within a 15-second budget. Each replay is capped at five
+  seconds and honors a lower `request_timeout_seconds`; calling `start()` again
+  retries recovery on the same handle without creating a second sandbox. Get,
+  list, and `from_id` omit the token. A live handle keeps a recovered value
+  across `wait()` / `get_status()`. Empty string is `None`.
+  String/repr are redacted; `as_headers()` returns the preferred
+  `X-Sandbox-Share-Token` header. The returned dictionary contains the raw token
+  and must not be logged. Fleet gap reason is
+  `CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED`.
+
+
 ## v1.15.1 (2026-09-25)
 
 ### Bug Fixes

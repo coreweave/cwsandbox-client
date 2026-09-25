@@ -21,6 +21,7 @@ from grpc.aio import UnaryStreamCall
 from cwsandbox import (
     DataPlaneMode,
     Endpoint,
+    EndpointAuth,
     EndpointKind,
     NetworkOptions,
     PlacementMode,
@@ -33,7 +34,10 @@ from cwsandbox import (
     Session,
     list_runners,
 )
-from cwsandbox._error_info import CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED
+from cwsandbox._error_info import (
+    CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED,
+    CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED,
+)
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._proto import sandbox_pb2 as streaming_pb2
 from cwsandbox._proto import sandbox_pb2_grpc as streaming_pb2_grpc
@@ -994,6 +998,80 @@ def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
         if exc.reason == CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED:
             pytest.skip(f"no runner advertises TLS passthrough: {exc}")
         raise
+
+
+def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
+    """Share-token HTTPS is create-only; header/query work; bare GET is 401."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
+    service = Service(
+        port=8000,
+        name="http",
+        visibility=ServiceVisibility.PUBLIC,
+        endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+    )
+    sandbox: Sandbox | None = None
+    try:
+        try:
+            sandbox = Sandbox.run(
+                "python",
+                "-m",
+                "http.server",
+                "8000",
+                defaults=sandbox_defaults,
+                services=[service],
+            )
+        except SandboxError as exc:
+            if exc.reason == CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED:
+                pytest.skip(f"no runner advertises HTTPS share-token auth: {exc}")
+            raise
+
+        if sandbox.endpoint_share_token is None:
+            sandbox.start().result()
+        if sandbox.endpoint_share_token is None:
+            pytest.fail("same-request share-token recovery exhausted")
+        token = sandbox.endpoint_share_token
+        sandbox.wait()
+        sandbox.get_status()
+        assert sandbox.endpoint_share_token is token
+        _wait_for_service_urls(sandbox)
+        url = sandbox.service_urls[0][2]
+
+        reattached = Sandbox.from_id(sandbox.sandbox_id).result()
+        reattached.get_status()
+        assert reattached.endpoint_share_token is None
+
+        header_status: int | None = None
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            try:
+                header_status = httpx.get(
+                    url,
+                    headers=token.as_headers(),
+                    timeout=10.0,
+                ).status_code
+                if header_status == 200:
+                    break
+            except httpx.HTTPError:
+                header_status = None
+            time.sleep(2)
+        assert header_status == 200
+
+        query_status: int | None = None
+        try:
+            query_status = httpx.get(
+                url,
+                params={"share_token": token.get_secret_value()},
+                timeout=10.0,
+            ).status_code
+        except httpx.HTTPError:
+            query_status = None
+        assert query_status == 200
+
+        denied = httpx.get(url, timeout=10.0)
+        assert denied.status_code == 401
+    finally:
+        if sandbox is not None:
+            sandbox.stop(missing_ok=True).result()
 
 
 def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:

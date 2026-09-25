@@ -212,18 +212,73 @@ class EndpointKind(StrEnum):
 
 
 class EndpointAuth(StrEnum):
-    """OPEN is the only supported endpoint auth (no token required)."""
+    """HTTPS product-endpoint auth.
+
+    ``OPEN`` requires no credential. ``SHARE_TOKEN`` requires the
+    create-only ``Sandbox.endpoint_share_token`` on requests
+    (use ``EndpointShareToken.as_headers()``). Get, list, and ``from_id``
+    omit that token.
+    """
 
     OPEN = "open"
+    SHARE_TOKEN = "share_token"
+
+
+class EndpointShareToken:
+    """Create-only credential for an HTTPS share-token endpoint.
+
+    String conversion and representation are redacted to reduce accidental
+    disclosure in logs and tracebacks. Use ``as_headers()`` to authenticate
+    an HTTP request. Use ``get_secret_value()`` only when an integration
+    explicitly needs the raw credential, such as the backend's query-parameter
+    fallback. Both methods expose the raw credential; do not log their return
+    values.
+
+    Args:
+        value: Non-empty token returned by a sandbox create operation.
+    """
+
+    __slots__ = ("__value",)
+
+    def __init__(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError(f"EndpointShareToken value must be str, got {type(value).__name__}")
+        if not value:
+            raise ValueError("EndpointShareToken value must not be empty")
+        self.__value = value
+
+    def __repr__(self) -> str:
+        return "EndpointShareToken(<redacted>)"
+
+    def __str__(self) -> str:
+        return "<redacted>"
+
+    def get_secret_value(self) -> str:
+        """Return the raw credential.
+
+        Prefer ``as_headers()`` so the value does not enter caller-owned
+        intermediate strings or mappings unnecessarily. Do not log the
+        returned value.
+        """
+        return self.__value
+
+    def as_headers(self) -> dict[str, str]:
+        """Return the HTTP header required by a share-token endpoint.
+
+        The returned dictionary contains the raw credential. Do not log it.
+        """
+        return {"X-Sandbox-Share-Token": self.__value}
 
 
 @dataclass(frozen=True, kw_only=True)
 class Endpoint:
     """Product endpoint on a PUBLIC service. Set at create time.
 
-    HTTPS + OPEN: CoreWeave terminates TLS. A URL in
+    HTTPS + OPEN or SHARE_TOKEN: CoreWeave terminates TLS. A URL in
     ``Sandbox.service_urls`` means the hostname was assigned, not that
-    the app is listening yet. ``auth`` is required.
+    the app is listening yet. ``auth`` is required. ``SHARE_TOKEN``
+    requires the create-only ``Sandbox.endpoint_share_token``; use its
+    ``as_headers()`` method to authenticate requests.
 
     TLS_PASSTHROUGH: the platform forwards TLS by SNI to the container.
     ``auth`` and ``request_timeout_seconds`` must be unset. The assigned
@@ -237,8 +292,8 @@ class Endpoint:
 
     Attributes:
         kind: ``HTTPS`` or ``TLS_PASSTHROUGH``.
-        auth: ``OPEN`` when kind is HTTPS. Must be omitted for TLS
-            passthrough.
+        auth: ``OPEN`` or ``SHARE_TOKEN`` when kind is HTTPS. Must be
+            omitted for TLS passthrough.
         request_timeout_seconds: Seconds before the platform closes an
             in-flight HTTPS request. ``None`` or ``0`` selects the
             platform default (15s on serverless). The server accepts
@@ -288,7 +343,7 @@ class HttpsEndpointStatus:
         port: Container port for this service.
         name: Service name from status (may be empty).
         kind: ``HTTPS``.
-        auth: ``OPEN``.
+        auth: ``OPEN`` or ``SHARE_TOKEN``.
         url: Assigned HTTPS URL, or empty when suppressed.
         request_timeout_seconds: Applied HTTPS request timeout in seconds.
     """
@@ -337,9 +392,10 @@ class Service:
             stays empty unless the API reports a URL. The service still
             appears in ``exposed_ports``. Must be PUBLIC when ``endpoint``
             is set.
-        endpoint: Optional product endpoint. HTTPS/OPEN (optional
-            ``request_timeout_seconds``) or TLS_PASSTHROUGH (auth and
-            timeout unset). Omit for a plain TCP/UDP port.
+        endpoint: Optional product endpoint. HTTPS with ``OPEN`` or
+            ``SHARE_TOKEN`` (optional ``request_timeout_seconds``) or
+            TLS_PASSTHROUGH (auth and timeout unset). Omit for a plain
+            TCP/UDP port.
     """
 
     port: int
