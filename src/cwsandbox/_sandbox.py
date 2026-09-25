@@ -149,6 +149,7 @@ from cwsandbox._types import (
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    EndpointShareToken,
     ExecOutcome,
     FileSystemSnapshot,
     FileSystemSnapshotBucketConfig,
@@ -463,7 +464,7 @@ class _SandboxView:
     @property
     def endpoint_share_token(self) -> str | None:
         token = self._sandbox.endpoint_share_token
-        return token or None
+        return token if isinstance(token, str) and token else None
 
     def HasField(self, field_name: str) -> bool:
         if field_name == "exit_code":
@@ -1835,7 +1836,7 @@ class Sandbox:
         dns_egress_names: Hostnames granted at create (from status.effective_egress).
         endpoint_share_token: Create-only share-token credential for
             ``auth=SHARE_TOKEN`` HTTPS URLs. Get, list, and ``from_id``
-            omit it. Do not log the value.
+            omit it. Use ``as_headers()`` to authenticate requests.
     """
 
     def __init__(
@@ -2101,7 +2102,7 @@ class Sandbox:
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
         self._service_addresses: tuple[TlsPassthroughEndpointStatus, ...] = ()
-        self._endpoint_share_token: str | None = None
+        self._endpoint_share_token: EndpointShareToken | None = None
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
@@ -3799,15 +3800,16 @@ class Sandbox:
         return self._service_urls
 
     @property
-    def endpoint_share_token(self) -> str | None:
+    def endpoint_share_token(self) -> EndpointShareToken | None:
         """Create-only share token for ``auth=SHARE_TOKEN`` HTTPS URLs.
 
         Present only on the create handle after CreateSandbox or
         CreateSandboxFromTemplate (CreateSandboxFromFile may also return
         one). ``""`` is treated as absent. Get, list, and ``from_id``
         cannot recover it. A live handle keeps a create-time value
-        across ``wait()`` / ``get_status()``. Do not log the value.
-        Send it as ``X-Sandbox-Share-Token``.
+        across ``wait()`` / ``get_status()``. String conversion and
+        representation are redacted. Use ``as_headers()`` to authenticate
+        requests.
         """
         return self._endpoint_share_token
 
@@ -4583,7 +4585,10 @@ class Sandbox:
             self._sandbox_id = sandbox_id
             self._status_updated_at = datetime.now(UTC)
             self._state = _Starting(sandbox_id=sandbox_id)
-            self._endpoint_share_token = view.endpoint_share_token
+            raw_share_token = view.endpoint_share_token
+            self._endpoint_share_token = (
+                EndpointShareToken(raw_share_token) if raw_share_token is not None else None
+            )
             self._apply_status_echo(view)
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id

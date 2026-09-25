@@ -7,12 +7,13 @@
 
 - **sandbox**: Add HTTPS `auth=SHARE_TOKEN` and create-only `endpoint_share_token`
 
-  Create and CreateSandboxFromTemplate may return `Sandbox.endpoint_share_token`
-  once. Get, list, and `from_id` omit it. A live handle keeps a create-time
-  value across `wait()` / `get_status()`. Empty string is `None`. Callers send
-  `X-Sandbox-Share-Token`; the SDK does not attach it. Do not log the token.
-  A missing create-time token cannot be recovered by Get — delete and recreate.
-  Fleet gap reason is `CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED`.
+  Create and CreateSandboxFromTemplate may return an `EndpointShareToken` at
+  `Sandbox.endpoint_share_token` once. Get, list, and `from_id` omit it. A live
+  handle keeps a create-time value across `wait()` / `get_status()`. Empty string
+  is `None`. String/repr are redacted; `as_headers()` returns the preferred
+  `X-Sandbox-Share-Token` header. A missing create-time token cannot be recovered
+  by Get — delete and recreate. Fleet gap reason is
+  `CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED`.
 
 
 ## v1.15.1 (2026-09-25)

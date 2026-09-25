@@ -6,8 +6,9 @@
 
 Demonstrates:
 - Creating a PUBLIC HTTPS endpoint with auth=SHARE_TOKEN
-- Reading the create-only Sandbox.endpoint_share_token
-- Caller-attached X-Sandbox-Share-Token (SDK does not fetch for you)
+- Reading the create-only EndpointShareToken
+- Using EndpointShareToken.as_headers() to attach X-Sandbox-Share-Token
+- Redacted string/repr behavior for accidental-log protection
 - Logging the URL + "share token: received" only — never the raw token
 - from_id omits the token; the live handle keeps it
 
@@ -25,6 +26,7 @@ from cwsandbox import (
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    EndpointShareToken,
     Sandbox,
     SandboxDefaults,
     Service,
@@ -43,8 +45,8 @@ def _wait_for_url(sandbox: Sandbox, *, timeout: float = 60.0) -> str:
     raise SystemExit("service_urls stayed empty after wait")
 
 
-def _header_get(url: str, token: str) -> int:
-    request = urllib.request.Request(url, headers={"X-Sandbox-Share-Token": token})
+def _header_get(url: str, token: EndpointShareToken) -> int:
+    request = urllib.request.Request(url, headers=token.as_headers())
     deadline = time.monotonic() + 60.0
     while time.monotonic() < deadline:
         try:

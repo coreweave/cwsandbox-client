@@ -1003,24 +1003,6 @@ def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
 _SHARE_TOKEN_CREATE_ATTEMPTS = 3
 
 
-class _RedactedSecret:
-    """Keep a credential off pytest --showlocals output."""
-
-    __slots__ = ("_value",)
-
-    def __init__(self, value: str) -> None:
-        self._value = value
-
-    def __repr__(self) -> str:
-        return "<redacted>"
-
-    def header(self) -> dict[str, str]:
-        return {"X-Sandbox-Share-Token": self._value}
-
-    def query_params(self) -> dict[str, str]:
-        return {"share_token": self._value}
-
-
 def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
     """Share-token HTTPS is create-only; header/query work; bare GET is 401."""
     _require_service_visibility(ServiceVisibility.PUBLIC)
@@ -1060,10 +1042,10 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
 
         if sandbox.endpoint_share_token is None:
             pytest.fail("create-time share token missing")
-        secret = _RedactedSecret(sandbox.endpoint_share_token)
+        token = sandbox.endpoint_share_token
         sandbox.wait()
         sandbox.get_status()
-        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token is token
         _wait_for_service_urls(sandbox)
         url = sandbox.service_urls[0][2]
 
@@ -1077,7 +1059,7 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
             try:
                 header_status = httpx.get(
                     url,
-                    headers=secret.header(),
+                    headers=token.as_headers(),
                     timeout=10.0,
                 ).status_code
                 if header_status == 200:
@@ -1089,7 +1071,11 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
 
         query_status: int | None = None
         try:
-            query_status = httpx.get(url, params=secret.query_params(), timeout=10.0).status_code
+            query_status = httpx.get(
+                url,
+                params={"share_token": token.get_secret_value()},
+                timeout=10.0,
+            ).status_code
         except httpx.HTTPError:
             query_status = None
         assert query_status == 200

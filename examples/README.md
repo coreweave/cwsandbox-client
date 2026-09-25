@@ -178,8 +178,9 @@ python examples/https_share_token.py
 
 Demonstrates:
 - Creating `Endpoint(kind=HTTPS, auth=SHARE_TOKEN)` on a PUBLIC service
-- Reading the create-only `Sandbox.endpoint_share_token` (Get/`from_id` omit it)
-- Caller-attached `X-Sandbox-Share-Token` (the SDK does not fetch for you)
+- Reading the create-only `EndpointShareToken` (Get/`from_id` omit it)
+- Using `EndpointShareToken.as_headers()` to attach `X-Sandbox-Share-Token`
+- Redacted string/repr behavior for accidental-log protection
 - Logging the URL + "share token: received" only — never the raw token
 - Recovering a missing create-time token by deleting and recreating, not by polling Get
 

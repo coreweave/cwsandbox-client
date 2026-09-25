@@ -17,6 +17,7 @@ from cwsandbox._types import (
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    EndpointShareToken,
     IngressRule,
     NetworkOptions,
     ObjectStorageAccess,
@@ -241,6 +242,32 @@ class TestNetworkOptions:
     def test_egress_rejects_bare_string(self) -> None:
         with pytest.raises(TypeError, match="sequence"):
             NetworkOptions(egress="pypi.org")  # type: ignore[arg-type]
+
+
+class TestEndpointShareToken:
+    """Tests for redacted endpoint credentials."""
+
+    def test_redacts_string_and_repr(self) -> None:
+        token = EndpointShareToken("secret-value")
+
+        assert str(token) == "<redacted>"
+        assert f"{token}" == "<redacted>"
+        assert repr(token) == "EndpointShareToken(<redacted>)"
+        assert repr({"token": token}) == "{'token': EndpointShareToken(<redacted>)}"
+        assert "secret-value" not in str(token)
+        assert "secret-value" not in repr(token)
+
+    def test_explicit_secret_access(self) -> None:
+        token = EndpointShareToken("secret-value")
+
+        assert token.get_secret_value() == "secret-value"
+        assert token.as_headers() == {"X-Sandbox-Share-Token": "secret-value"}
+
+    def test_rejects_invalid_values(self) -> None:
+        with pytest.raises(TypeError, match="must be str"):
+            EndpointShareToken(123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="must not be empty"):
+            EndpointShareToken("")
 
 
 class TestService:

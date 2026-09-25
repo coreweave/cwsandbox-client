@@ -27,6 +27,7 @@ from cwsandbox import (
     Endpoint,
     EndpointAuth,
     EndpointKind,
+    EndpointShareToken,
     HttpsEndpointStatus,
     ImagePullCredentials,
     IngressRule,
@@ -543,7 +544,9 @@ class TestSandboxRun:
                 ],
             )
 
-        assert sandbox.endpoint_share_token == token
+        assert isinstance(sandbox.endpoint_share_token, EndpointShareToken)
+        assert sandbox.endpoint_share_token.get_secret_value() == token
+        assert sandbox.endpoint_share_token.as_headers() == {"X-Sandbox-Share-Token": token}
         sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
 
     def test_create_empty_endpoint_share_token_is_none(self) -> None:
@@ -599,7 +602,8 @@ class TestSandboxRun:
             )
 
         mock_stub.CreateSandbox.assert_not_called()
-        assert sandbox.endpoint_share_token == token
+        assert isinstance(sandbox.endpoint_share_token, EndpointShareToken)
+        assert sandbox.endpoint_share_token.get_secret_value() == token
         sandbox._state = _Terminal(sandbox_id="template-share-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
@@ -5251,7 +5255,7 @@ class TestEndpointShareToken:
         from cwsandbox._proto import sandbox_pb2
         from cwsandbox._sandbox import _SandboxView
 
-        token = "create-only-token"
+        token = EndpointShareToken("create-only-token")
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._state = _Running(sandbox_id="sb-1")
@@ -5264,7 +5268,7 @@ class TestEndpointShareToken:
         )
         sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
 
-        assert sandbox.endpoint_share_token == token
+        assert sandbox.endpoint_share_token is token
 
     def test_from_sandbox_info_omits_proto_token(self) -> None:
         from cwsandbox._proto import sandbox_pb2

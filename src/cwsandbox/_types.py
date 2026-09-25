@@ -216,12 +216,53 @@ class EndpointAuth(StrEnum):
 
     ``OPEN`` requires no credential. ``SHARE_TOKEN`` requires the
     create-only ``Sandbox.endpoint_share_token`` on requests
-    (``X-Sandbox-Share-Token``). Get, list, and ``from_id`` omit that
-    token; do not log it.
+    (use ``EndpointShareToken.as_headers()``). Get, list, and ``from_id``
+    omit that token.
     """
 
     OPEN = "open"
     SHARE_TOKEN = "share_token"
+
+
+class EndpointShareToken:
+    """Create-only credential for an HTTPS share-token endpoint.
+
+    String conversion and representation are redacted to reduce accidental
+    disclosure in logs and tracebacks. Use ``as_headers()`` to authenticate
+    an HTTP request. Use ``get_secret_value()`` only when an integration
+    explicitly needs the raw credential, such as the backend's query-parameter
+    fallback.
+
+    Args:
+        value: Non-empty token returned by a sandbox create operation.
+    """
+
+    __slots__ = ("__value",)
+
+    def __init__(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError(f"EndpointShareToken value must be str, got {type(value).__name__}")
+        if not value:
+            raise ValueError("EndpointShareToken value must not be empty")
+        self.__value = value
+
+    def __repr__(self) -> str:
+        return "EndpointShareToken(<redacted>)"
+
+    def __str__(self) -> str:
+        return "<redacted>"
+
+    def get_secret_value(self) -> str:
+        """Return the raw credential.
+
+        Prefer ``as_headers()`` so the value does not enter caller-owned
+        intermediate strings or mappings unnecessarily.
+        """
+        return self.__value
+
+    def as_headers(self) -> dict[str, str]:
+        """Return the HTTP header required by a share-token endpoint."""
+        return {"X-Sandbox-Share-Token": self.__value}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,8 +272,8 @@ class Endpoint:
     HTTPS + OPEN or SHARE_TOKEN: CoreWeave terminates TLS. A URL in
     ``Sandbox.service_urls`` means the hostname was assigned, not that
     the app is listening yet. ``auth`` is required. ``SHARE_TOKEN``
-    requires the create-only ``Sandbox.endpoint_share_token``; do not
-    log it.
+    requires the create-only ``Sandbox.endpoint_share_token``; use its
+    ``as_headers()`` method to authenticate requests.
 
     TLS_PASSTHROUGH: the platform forwards TLS by SNI to the container.
     ``auth`` and ``request_timeout_seconds`` must be unset. The assigned
