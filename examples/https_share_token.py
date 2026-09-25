@@ -52,9 +52,8 @@ def _header_get(url: str, token: EndpointShareToken) -> int:
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status
-        except urllib.error.HTTPError as exc:
-            if exc.code == 200:
-                return exc.code
+        except urllib.error.HTTPError:
+            pass
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         time.sleep(2)
@@ -83,9 +82,12 @@ def main() -> None:
         ) as sandbox:
             token = sandbox.endpoint_share_token
             if token is None:
+                sandbox.start().result()
+                token = sandbox.endpoint_share_token
+            if token is None:
                 raise SystemExit(
-                    "Share-token missing on create. Delete and recreate; "
-                    "Get/from_id cannot recover the token."
+                    "Share-token recovery exhausted on this create handle; "
+                    "Get/from_id cannot recover it."
                 )
 
             print(f"Sandbox: {sandbox.sandbox_id}")

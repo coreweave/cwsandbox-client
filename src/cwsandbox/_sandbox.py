@@ -466,6 +466,21 @@ class _SandboxView:
         token = self._sandbox.endpoint_share_token
         return token if isinstance(token, str) and token else None
 
+    @property
+    def has_share_token_endpoint(self) -> bool:
+        """Whether the create response describes an HTTPS share-token endpoint."""
+        service_groups: list[Any] = []
+        if self._sandbox.HasField("spec"):
+            service_groups.extend(self._sandbox.spec.services)
+        if self._sandbox.HasField("status"):
+            service_groups.extend(self._sandbox.status.services)
+        return any(
+            service.HasField("endpoint")
+            and service.endpoint.kind == sandbox_pb2.ENDPOINT_KIND_HTTPS
+            and service.endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN
+            for service in service_groups
+        )
+
     def HasField(self, field_name: str) -> bool:
         if field_name == "exit_code":
             return self._sandbox.status.HasField("exit_code")
@@ -1303,6 +1318,16 @@ _PollErrorClassification = Literal["retryable", "fatal"]
 # min(hint, budget, 10s).
 MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
 
+# A successful create can omit a share token while the Gateway confirms the
+# HTTPS URL durably. Replaying the exact request_id/body asks the owning runner
+# for the existing token without creating another sandbox. Recovery is bounded
+# by a short overall budget so it cannot hold the create lock or block stop().
+ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS: int = 3
+ENDPOINT_SHARE_TOKEN_REPLAY_DELAY_SECONDS: float = 1.0
+ENDPOINT_SHARE_TOKEN_REPLAY_MAX_DELAY_SECONDS: float = 5.0
+ENDPOINT_SHARE_TOKEN_REPLAY_BUDGET_SECONDS: float = 15.0
+ENDPOINT_SHARE_TOKEN_REPLAY_RPC_TIMEOUT_SECONDS: float = 5.0
+
 # Bounded retry budget for post-stop NOT_FOUND responses. The backend
 # persists terminal state for stopped sandboxes, so Get should return
 # COMPLETED or FAILED. NOT_FOUND here is expected only in a narrow race
@@ -2103,6 +2128,9 @@ class Sandbox:
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
         self._service_addresses: tuple[TlsPassthroughEndpointStatus, ...] = ()
         self._endpoint_share_token: EndpointShareToken | None = None
+        self._endpoint_share_token_replay_pending = False
+        self._endpoint_share_token_recovery_task: asyncio.Task[None] | None = None
+        self._endpoint_share_token_recovery_lock = asyncio.Lock()
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
@@ -2783,6 +2811,9 @@ class Sandbox:
         sandbox._service_endpoints = ()
         sandbox._service_addresses = ()
         sandbox._endpoint_share_token = None
+        sandbox._endpoint_share_token_replay_pending = False
+        sandbox._endpoint_share_token_recovery_task = None
+        sandbox._endpoint_share_token_recovery_lock = asyncio.Lock()
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
@@ -3804,12 +3835,13 @@ class Sandbox:
         """Create-only share token for ``auth=SHARE_TOKEN`` HTTPS URLs.
 
         Present only on the create handle after CreateSandbox or
-        CreateSandboxFromTemplate (CreateSandboxFromFile may also return
-        one). ``""`` is treated as absent. Get, list, and ``from_id``
-        cannot recover it. A live handle keeps a create-time value
-        across ``wait()`` / ``get_status()``. String conversion and
-        representation are redacted. Use ``as_headers()`` to authenticate
-        requests.
+        CreateSandboxFromTemplate. ``""`` is treated as absent. Get, list, and
+        ``from_id`` omit it. If the first create response omits the token, the
+        client replays the same idempotent create request up to three times;
+        calling ``start()`` again retries recovery without creating another
+        sandbox. A live handle keeps a recovered value across ``wait()`` /
+        ``get_status()``. String conversion and representation are redacted.
+        Use ``as_headers()`` to authenticate requests.
         """
         return self._endpoint_share_token
 
@@ -4525,73 +4557,231 @@ class Sandbox:
         Does NOT wait for RUNNING status. Idempotent - safe to call multiple times.
         Freezes one ``request_id`` across concurrent starts and ambiguous retries.
         """
-        if self._sandbox_id is not None:
+        if self._sandbox_id is not None and (
+            not self._endpoint_share_token_replay_pending or self._is_done
+        ):
             return self._sandbox_id
 
+        recover = False
         async with self._start_lock:
             if self._sandbox_id is not None:
-                return self._sandbox_id
-            if self._is_done:
-                raise SandboxNotRunningError("Sandbox has been stopped")
-
-            await self._ensure_client()
-            assert self._stub is not None
-
-            if not self._create_request_id:
-                self._create_request_id = str(uuid.uuid4())
-
-            template_id = self._start_kwargs.get("template_id") or self._template_id
-            self._start_accepted_at = time.monotonic()
-
-            if self._from_file is not None:
-                from_file_request = self._build_create_from_file_request(
-                    request_id=self._create_request_id,
-                )
-                logger.debug(
-                    "Creating sandbox from file (type=%s, primary_service=%s)",
-                    self._from_file.file_type,
-                    self._from_file.primary_service,
-                )
-                try:
-                    response = await self._stub.CreateSandboxFromFile(
-                        from_file_request,
-                        timeout=self._request_timeout_seconds,
-                        metadata=self._auth_metadata,
-                    )
-                except grpc.RpcError as e:
-                    raise _translate_rpc_error(e, operation="Create sandbox from file") from e
-            elif template_id:
-                kwargs = dict(self._start_kwargs)
-                kwargs.pop("template_id", None)
-                template_request = self._build_create_from_template_request(
-                    template_id=template_id,
-                    request_id=self._create_request_id,
-                    overrides_kwargs=kwargs,
-                )
-                logger.debug("Creating sandbox from template %s", template_id)
-                try:
-                    response = await self._stub.CreateSandboxFromTemplate(
-                        template_request,
-                        timeout=self._request_timeout_seconds,
-                        metadata=self._auth_metadata,
-                    )
-                except grpc.RpcError as e:
-                    raise _translate_rpc_error(e, operation="Create sandbox from template") from e
+                recover = self._endpoint_share_token_replay_pending and not self._is_done
+                sandbox_id = self._sandbox_id
             else:
-                response = await self._create_with_optional_spillover()
+                if self._is_done:
+                    raise SandboxNotRunningError("Sandbox has been stopped")
 
-            view = _SandboxView(response)
-            sandbox_id = str(view.sandbox_id)
-            self._sandbox_id = sandbox_id
-            self._status_updated_at = datetime.now(UTC)
-            self._state = _Starting(sandbox_id=sandbox_id)
-            raw_share_token = view.endpoint_share_token
-            self._endpoint_share_token = (
-                EndpointShareToken(raw_share_token) if raw_share_token is not None else None
+                await self._ensure_client()
+                assert self._stub is not None
+
+                if not self._create_request_id:
+                    self._create_request_id = str(uuid.uuid4())
+
+                template_id = self._start_kwargs.get("template_id") or self._template_id
+                self._start_accepted_at = time.monotonic()
+
+                if self._from_file is not None:
+                    from_file_request = self._build_create_from_file_request(
+                        request_id=self._create_request_id,
+                    )
+                    logger.debug(
+                        "Creating sandbox from file (type=%s, primary_service=%s)",
+                        self._from_file.file_type,
+                        self._from_file.primary_service,
+                    )
+                    try:
+                        response = await self._stub.CreateSandboxFromFile(
+                            from_file_request,
+                            timeout=self._request_timeout_seconds,
+                            metadata=self._auth_metadata,
+                        )
+                    except grpc.RpcError as e:
+                        raise _translate_rpc_error(e, operation="Create sandbox from file") from e
+                elif template_id:
+                    kwargs = dict(self._start_kwargs)
+                    kwargs.pop("template_id", None)
+                    template_request = self._build_create_from_template_request(
+                        template_id=template_id,
+                        request_id=self._create_request_id,
+                        overrides_kwargs=kwargs,
+                    )
+                    logger.debug("Creating sandbox from template %s", template_id)
+                    try:
+                        response = await self._stub.CreateSandboxFromTemplate(
+                            template_request,
+                            timeout=self._request_timeout_seconds,
+                            metadata=self._auth_metadata,
+                        )
+                    except grpc.RpcError as e:
+                        raise _translate_rpc_error(
+                            e, operation="Create sandbox from template"
+                        ) from e
+                else:
+                    response = await self._create_with_optional_spillover()
+
+                view = _SandboxView(response)
+                sandbox_id = str(view.sandbox_id)
+                self._sandbox_id = sandbox_id
+                self._status_updated_at = datetime.now(UTC)
+                self._state = _Starting(sandbox_id=sandbox_id)
+                raw_share_token = view.endpoint_share_token
+                self._endpoint_share_token = (
+                    EndpointShareToken(raw_share_token) if raw_share_token is not None else None
+                )
+                self._endpoint_share_token_replay_pending = (
+                    raw_share_token is None and self._create_uses_endpoint_share_token(view)
+                )
+                self._apply_status_echo(view)
+                recover = self._endpoint_share_token_replay_pending
+                logger.debug("Sandbox %s created (pending)", sandbox_id)
+
+        if recover:
+            await self._await_endpoint_share_token_recovery()
+        return sandbox_id
+
+    def _create_uses_endpoint_share_token(self, view: _SandboxView) -> bool:
+        if self._from_file is not None:
+            return False
+        if view.has_share_token_endpoint:
+            return True
+        for service in self._services or ():
+            endpoint = service.endpoint
+            if isinstance(endpoint, Endpoint):
+                if (
+                    endpoint.kind == EndpointKind.HTTPS
+                    and endpoint.auth == EndpointAuth.SHARE_TOKEN
+                ):
+                    return True
+        return False
+
+    async def _replay_create_for_endpoint_share_token(self, *, timeout: float) -> Any:
+        """Replay the accepted create with the frozen request ID and body."""
+        assert self._stub is not None
+        assert self._create_request_id is not None
+        assert self._from_file is None
+
+        template_id = self._start_kwargs.get("template_id") or self._template_id
+        if template_id:
+            kwargs = dict(self._start_kwargs)
+            kwargs.pop("template_id", None)
+            template_request = self._build_create_from_template_request(
+                template_id=template_id,
+                request_id=self._create_request_id,
+                overrides_kwargs=kwargs,
             )
-            self._apply_status_echo(view)
-            logger.debug("Sandbox %s created (pending)", sandbox_id)
-            return sandbox_id
+            return await self._stub.CreateSandboxFromTemplate(
+                template_request,
+                timeout=timeout,
+                metadata=self._auth_metadata,
+            )
+
+        create_request = self._build_create_request(
+            request_id=self._create_request_id,
+            start_kwargs=dict(self._start_kwargs),
+        )
+        return await self._stub.CreateSandbox(
+            create_request,
+            timeout=timeout,
+            metadata=self._auth_metadata,
+        )
+
+    async def _await_endpoint_share_token_recovery(self) -> None:
+        """Join one in-flight recovery generation for this handle."""
+        async with self._endpoint_share_token_recovery_lock:
+            if not self._endpoint_share_token_replay_pending or self._is_done:
+                return
+            task = self._endpoint_share_token_recovery_task
+            if task is None or task.done():
+                task = asyncio.create_task(self._recover_endpoint_share_token())
+                self._endpoint_share_token_recovery_task = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            if self._is_done or self._is_stopping or not self._endpoint_share_token_replay_pending:
+                return
+            raise
+
+    def _stop_endpoint_share_token_recovery(self) -> None:
+        """Stop further recovery after a terminal or cancelled lifecycle."""
+        self._endpoint_share_token_replay_pending = False
+        task = self._endpoint_share_token_recovery_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _recover_endpoint_share_token(self) -> None:
+        """Best-effort bounded recovery for an omitted create-time token."""
+        assert self._sandbox_id is not None
+
+        deadline = time.monotonic() + ENDPOINT_SHARE_TOKEN_REPLAY_BUDGET_SECONDS
+        delay = ENDPOINT_SHARE_TOKEN_REPLAY_DELAY_SECONDS
+        for attempt in range(1, ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS + 1):
+            if self._is_done or self._is_stopping:
+                self._endpoint_share_token_replay_pending = False
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            retry_delay: float | None = None
+            try:
+                response = await self._replay_create_for_endpoint_share_token(
+                    timeout=min(ENDPOINT_SHARE_TOKEN_REPLAY_RPC_TIMEOUT_SECONDS, remaining)
+                )
+            except grpc.RpcError as error:
+                translated = _translate_rpc_error(error, operation="Recover endpoint share token")
+                if not _is_retryable_transient_error(translated):
+                    logger.debug(
+                        "Share-token create replay stopped for sandbox %s: %s",
+                        self._sandbox_id,
+                        type(translated).__name__,
+                    )
+                    return
+                if translated.retry_delay is not None:
+                    retry_delay = translated.retry_delay.total_seconds()
+            else:
+                view = _SandboxView(response)
+                if str(view.sandbox_id) != self._sandbox_id:
+                    logger.warning(
+                        "Share-token create replay returned sandbox %s instead of %s",
+                        view.sandbox_id,
+                        self._sandbox_id,
+                    )
+                    self._endpoint_share_token_replay_pending = False
+                    return
+                status = SandboxStatus.from_proto(view.sandbox_status)
+                if status in _TERMINAL_STATUSES:
+                    self._state = self._apply_sandbox_info(view, source="query")
+                    self._endpoint_share_token_replay_pending = False
+                    logger.debug(
+                        "Share-token create replay stopped; sandbox %s is %s",
+                        self._sandbox_id,
+                        status,
+                    )
+                    return
+                self._apply_status_echo(view)
+                raw_share_token = view.endpoint_share_token
+                if raw_share_token is not None:
+                    self._endpoint_share_token = EndpointShareToken(raw_share_token)
+                    self._endpoint_share_token_replay_pending = False
+                    logger.debug("Recovered endpoint share token for sandbox %s", self._sandbox_id)
+                    return
+
+            if attempt == ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sleep_for = min(
+                retry_delay if retry_delay is not None and retry_delay > 0 else delay,
+                ENDPOINT_SHARE_TOKEN_REPLAY_MAX_DELAY_SECONDS,
+                remaining,
+            )
+            await asyncio.sleep(sleep_for)
+            delay = min(delay * 2, ENDPOINT_SHARE_TOKEN_REPLAY_MAX_DELAY_SECONDS)
+
+        logger.debug(
+            "Share-token create replay exhausted for sandbox %s; start() can retry",
+            self._sandbox_id,
+        )
 
     async def _create_with_optional_spillover(self) -> Any:
         """CreateSandbox with at most one placement-mode spillover retry.
@@ -5809,6 +5999,9 @@ class Sandbox:
 
         Does NOT wait for RUNNING status. Use wait() to block until ready.
         Call .result() to block until the start request is accepted.
+        If an accepted share-token create omitted its token, calling this
+        again replays the same idempotent request to recover it without
+        creating another sandbox.
 
         Returns:
             OperationRef[None]: Use .result() to block until backend accepts.
@@ -5964,8 +6157,9 @@ class Sandbox:
         Later stop() calls join the existing task.
         """
         sent_rpc = False
+        self._stop_endpoint_share_token_recovery()
 
-        # Acquire _start_lock to serialize with startup
+        # Acquire _start_lock to serialize with startup, not in-flight recovery.
         async with self._start_lock:
             if self._is_done:
                 return

@@ -182,7 +182,7 @@ Demonstrates:
 - Using `EndpointShareToken.as_headers()` to attach `X-Sandbox-Share-Token`
 - Redacted string/repr behavior for accidental-log protection
 - Logging the URL + "share token: received" only — never the raw token
-- Recovering a missing create-time token by deleting and recreating, not by polling Get
+- Replaying the same idempotent create with `start()` if bounded automatic recovery still misses
 
 ### TLS Passthrough (`tls_passthrough.py`)
 

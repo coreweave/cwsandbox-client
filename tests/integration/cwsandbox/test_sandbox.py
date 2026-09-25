@@ -1000,9 +1000,6 @@ def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
         raise
 
 
-_SHARE_TOKEN_CREATE_ATTEMPTS = 3
-
-
 def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
     """Share-token HTTPS is create-only; header/query work; bare GET is 401."""
     _require_service_visibility(ServiceVisibility.PUBLIC)
@@ -1012,36 +1009,26 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
         visibility=ServiceVisibility.PUBLIC,
         endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
     )
-    leftovers: list[Sandbox] = []
     sandbox: Sandbox | None = None
     try:
-        for _ in range(_SHARE_TOKEN_CREATE_ATTEMPTS):
-            try:
-                candidate = Sandbox.run(
-                    "python",
-                    "-m",
-                    "http.server",
-                    "8000",
-                    defaults=sandbox_defaults,
-                    services=[service],
-                )
-            except SandboxError as exc:
-                if exc.reason == CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED:
-                    pytest.skip(f"no runner advertises HTTPS share-token auth: {exc}")
-                raise
-            leftovers.append(candidate)
-            if candidate.endpoint_share_token:
-                leftovers.remove(candidate)
-                sandbox = candidate
-                break
-        if sandbox is None:
-            pytest.fail(
-                "Share-token missing on create after 3 attempts; "
-                "Get/from_id cannot recover the token"
+        try:
+            sandbox = Sandbox.run(
+                "python",
+                "-m",
+                "http.server",
+                "8000",
+                defaults=sandbox_defaults,
+                services=[service],
             )
+        except SandboxError as exc:
+            if exc.reason == CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED:
+                pytest.skip(f"no runner advertises HTTPS share-token auth: {exc}")
+            raise
 
         if sandbox.endpoint_share_token is None:
-            pytest.fail("create-time share token missing")
+            sandbox.start().result()
+        if sandbox.endpoint_share_token is None:
+            pytest.fail("same-request share-token recovery exhausted")
         token = sandbox.endpoint_share_token
         sandbox.wait()
         sandbox.get_status()
@@ -1085,8 +1072,6 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
     finally:
         if sandbox is not None:
             sandbox.stop(missing_ok=True).result()
-        for leftover in leftovers:
-            leftover.stop(missing_ok=True).result()
 
 
 def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:

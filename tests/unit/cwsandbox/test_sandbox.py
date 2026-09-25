@@ -8,6 +8,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import math
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import UTC
@@ -549,6 +550,96 @@ class TestSandboxRun:
         assert sandbox.endpoint_share_token.as_headers() == {"X-Sandbox-Share-Token": token}
         sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_replays_same_request_to_recover_endpoint_share_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        initial = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[initial, recovered])
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+
+        assert mock_stub.CreateSandbox.call_count == 2
+        first_request = mock_stub.CreateSandbox.call_args_list[0].args[0]
+        replay_request = mock_stub.CreateSandbox.call_args_list[1].args[0]
+        assert replay_request.SerializeToString() == first_request.SerializeToString()
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_start_retries_endpoint_share_token_recovery_on_same_handle(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[missing, missing, recovered])
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with (
+            patch.object(Sandbox, "_ensure_client", ensure_client),
+            patch("cwsandbox._sandbox.ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS", 1),
+        ):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+            assert sandbox.endpoint_share_token is None
+            sandbox.start().result()
+
+        assert mock_stub.CreateSandbox.call_count == 3
+        requests = [
+            call.args[0].SerializeToString() for call in mock_stub.CreateSandbox.call_args_list
+        ]
+        assert requests == [requests[0], requests[0], requests[0]]
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
     def test_create_empty_endpoint_share_token_is_none(self) -> None:
         from cwsandbox._proto import sandbox_pb2
 
@@ -571,18 +662,32 @@ class TestSandboxRun:
         assert sandbox.endpoint_share_token is None
         sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
 
-    def test_run_from_template_captures_endpoint_share_token(self) -> None:
+    def test_run_from_template_replays_to_recover_endpoint_share_token(self) -> None:
         from cwsandbox._proto import sandbox_pb2
 
         token = "create-only-token"
-        response = sandbox_pb2.Sandbox(
+        service = sandbox_pb2.Service(
+            port=8080,
+            visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+            endpoint=sandbox_pb2.EndpointSpec(
+                kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                auth=sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN,
+            ),
+        )
+        initial = sandbox_pb2.Sandbox(
+            sandbox_id="template-share-id",
+            spec=sandbox_pb2.SandboxSpec(services=[service]),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
             sandbox_id="template-share-id",
             endpoint_share_token=token,
+            spec=sandbox_pb2.SandboxSpec(services=[service]),
             status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
         )
         mock_stub = MagicMock()
         mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response())
-        mock_stub.CreateSandboxFromTemplate = AsyncMock(return_value=response)
+        mock_stub.CreateSandboxFromTemplate = AsyncMock(side_effect=[initial, recovered])
 
         async def ensure_client(sandbox: Sandbox) -> None:
             sandbox._channel = MagicMock()
@@ -590,21 +695,397 @@ class TestSandboxRun:
             sandbox._stub = mock_stub
 
         with patch.object(Sandbox, "_ensure_client", ensure_client):
-            sandbox = Sandbox.run_from_template(
-                "template-123",
+            sandbox = Sandbox.run_from_template("template-123")
+
+        mock_stub.CreateSandbox.assert_not_called()
+        assert mock_stub.CreateSandboxFromTemplate.call_count == 2
+        first_request = mock_stub.CreateSandboxFromTemplate.call_args_list[0].args[0]
+        replay_request = mock_stub.CreateSandboxFromTemplate.call_args_list[1].args[0]
+        assert replay_request.SerializeToString() == first_request.SerializeToString()
+        assert isinstance(sandbox.endpoint_share_token, EndpointShareToken)
+        assert sandbox.endpoint_share_token.get_secret_value() == token
+        sandbox._state = _Terminal(sandbox_id="template-share-id", status=SandboxStatus.COMPLETED)
+
+    def test_spillover_create_replays_spilled_request_for_share_token(self) -> None:
+        from cwsandbox._error_info import CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="spill-share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="spill-share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(
+            side_effect=[
+                _MockRpcErrorWithDetails(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    "capacity exhausted",
+                    reason=CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+                ),
+                missing,
+                recovered,
+            ]
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                placement_mode=PlacementMode.CKS,
+                placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
                 services=[
                     Service(
                         port=8080,
                         visibility=ServiceVisibility.PUBLIC,
-                        endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
                     )
                 ],
             )
 
+        assert mock_stub.CreateSandbox.call_count == 3
+        primary = mock_stub.CreateSandbox.call_args_list[0]
+        spilled = mock_stub.CreateSandbox.call_args_list[1]
+        replay = mock_stub.CreateSandbox.call_args_list[2]
+        assert primary.args[0].request_id != spilled.args[0].request_id
+        assert replay.args[0].SerializeToString() == spilled.args[0].SerializeToString()
+        assert replay.kwargs["timeout"] == 5.0
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="spill-share-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_does_not_replay_for_share_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        service = sandbox_pb2.Service(
+            port=8080,
+            visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+            endpoint=sandbox_pb2.EndpointSpec(
+                kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                auth=sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN,
+            ),
+        )
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="from-file-share-id",
+            spec=sandbox_pb2.SandboxSpec(services=[service]),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock()
+        mock_stub.CreateSandboxFromTemplate = AsyncMock()
+        mock_stub.CreateSandboxFromFile = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_file(
+                b"services:\n  main:\n    image: python:3.11\n",
+                primary_service="main",
+            )
+            sandbox.start().result()
+
         mock_stub.CreateSandbox.assert_not_called()
-        assert isinstance(sandbox.endpoint_share_token, EndpointShareToken)
-        assert sandbox.endpoint_share_token.get_secret_value() == token
-        sandbox._state = _Terminal(sandbox_id="template-share-id", status=SandboxStatus.COMPLETED)
+        mock_stub.CreateSandboxFromTemplate.assert_not_called()
+        assert mock_stub.CreateSandboxFromFile.call_count == 1
+        assert sandbox.endpoint_share_token is None
+        sandbox._state = _Terminal(sandbox_id="from-file-share-id", status=SandboxStatus.COMPLETED)
+
+    def test_share_token_recovery_retries_timeout_then_recovers(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(
+            side_effect=[
+                missing,
+                MockRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, "deadline exceeded"),
+                recovered,
+            ]
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with (
+            patch.object(Sandbox, "_ensure_client", ensure_client),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+
+        assert mock_stub.CreateSandbox.call_count == 3
+        assert mock_stub.CreateSandbox.call_args_list[0].kwargs["timeout"] == 300.0
+        assert mock_stub.CreateSandbox.call_args_list[1].kwargs["timeout"] == 5.0
+        assert mock_stub.CreateSandbox.call_args_list[2].kwargs["timeout"] == 5.0
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_share_token_recovery_keeps_pending_after_fatal_replay_error(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(
+            side_effect=[
+                missing,
+                MockRpcError(grpc.StatusCode.INTERNAL, "backend error"),
+                recovered,
+            ]
+        )
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+            assert sandbox.endpoint_share_token is None
+            assert sandbox._endpoint_share_token_replay_pending
+            sandbox.start().result()
+
+        assert mock_stub.CreateSandbox.call_count == 3
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_concurrent_start_coalesces_share_token_recovery(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[missing, missing])
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with (
+            patch.object(Sandbox, "_ensure_client", ensure_client),
+            patch("cwsandbox._sandbox.ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS", 1),
+        ):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+            assert sandbox.endpoint_share_token is None
+            assert mock_stub.CreateSandbox.call_count == 2
+
+            entered = threading.Event()
+            release = asyncio.Event()
+            replay_calls = 0
+
+            async def delayed_replay(*_args: Any, **_kwargs: Any) -> Any:
+                nonlocal replay_calls
+                replay_calls += 1
+                entered.set()
+                await release.wait()
+                return recovered
+
+            async def release_replay() -> None:
+                release.set()
+
+            mock_stub.CreateSandbox = AsyncMock(side_effect=delayed_replay)
+
+            def call_start() -> None:
+                sandbox.start().result()
+
+            first = threading.Thread(target=call_start)
+            second = threading.Thread(target=call_start)
+            first.start()
+            assert entered.wait(timeout=5)
+            second.start()
+            time.sleep(0.05)
+            sandbox._loop_manager.run_async(release_replay()).result()
+            first.join(timeout=5)
+            second.join(timeout=5)
+            assert not first.is_alive()
+            assert not second.is_alive()
+
+        assert replay_calls == 1
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_terminal_replay_stops_share_token_recovery(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        failed = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_FAILED),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[missing, failed])
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+            sandbox.start().result()
+
+        assert mock_stub.CreateSandbox.call_count == 2
+        assert sandbox.endpoint_share_token is None
+        assert not sandbox._endpoint_share_token_replay_pending
+        assert isinstance(sandbox._state, _Terminal)
+        assert sandbox._state.status == SandboxStatus.FAILED
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_stop_does_not_wait_for_share_token_recovery(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        hang: asyncio.Event | None = None
+        entered_replay = threading.Event()
+        create_calls = 0
+        mock_stub = MagicMock()
+
+        async def create(*_args: Any, **_kwargs: Any) -> Any:
+            nonlocal create_calls, hang
+            create_calls += 1
+            if create_calls == 1:
+                return missing
+            if hang is None:
+                hang = asyncio.Event()
+            entered_replay.set()
+            await hang.wait()
+            return recovered
+
+        mock_stub.CreateSandbox = AsyncMock(side_effect=create)
+        mock_stub.DeleteSandbox = AsyncMock(return_value=MagicMock())
+        mock_get = MagicMock()
+        mock_get.sandbox_status = sandbox_pb2.STATE_COMPLETED
+        mock_get.sandbox_id = "share-id"
+        mock_get.runner_id = ""
+        mock_get.runner_group_id = ""
+        mock_get.started_at_time = None
+        _prime_exit_code(mock_get)
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_get)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        sandbox = Sandbox(
+            services=[
+                Service(
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(
+                        kind=EndpointKind.HTTPS,
+                        auth=EndpointAuth.SHARE_TOKEN,
+                    ),
+                )
+            ],
+        )
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            started = threading.Thread(target=lambda: sandbox.start().result())
+            started.start()
+            assert entered_replay.wait(timeout=5)
+            t0 = time.monotonic()
+            sandbox.stop().result()
+            assert time.monotonic() - t0 < 2.0
+            started.join(timeout=5)
+            assert not started.is_alive()
+
+        mock_stub.DeleteSandbox.assert_called_once()
+        assert not sandbox._endpoint_share_token_replay_pending
 
     def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
         from cwsandbox._proto import sandbox_pb2

@@ -231,7 +231,8 @@ class EndpointShareToken:
     disclosure in logs and tracebacks. Use ``as_headers()`` to authenticate
     an HTTP request. Use ``get_secret_value()`` only when an integration
     explicitly needs the raw credential, such as the backend's query-parameter
-    fallback.
+    fallback. Both methods expose the raw credential; do not log their return
+    values.
 
     Args:
         value: Non-empty token returned by a sandbox create operation.
@@ -256,12 +257,16 @@ class EndpointShareToken:
         """Return the raw credential.
 
         Prefer ``as_headers()`` so the value does not enter caller-owned
-        intermediate strings or mappings unnecessarily.
+        intermediate strings or mappings unnecessarily. Do not log the
+        returned value.
         """
         return self.__value
 
     def as_headers(self) -> dict[str, str]:
-        """Return the HTTP header required by a share-token endpoint."""
+        """Return the HTTP header required by a share-token endpoint.
+
+        The returned dictionary contains the raw credential. Do not log it.
+        """
         return {"X-Sandbox-Share-Token": self.__value}
 
 
