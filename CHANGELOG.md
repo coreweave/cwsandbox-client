@@ -9,8 +9,8 @@
 
   Create and CreateSandboxFromTemplate may return an `EndpointShareToken` at
   `Sandbox.endpoint_share_token`. If the first response omits it while HTTPS URL
-  confirmation converges, the client replays the same idempotent create up to
-  three times; calling `start()` again retries recovery on the same handle
+  confirmation converges, the client replays the exact accepted create request
+  up to three times; calling `start()` again retries recovery on the same handle
   without creating a second sandbox. Get, list, and `from_id` omit the token. A
   live handle keeps a recovered value across `wait()` / `get_status()`. Empty
   string is `None`.
