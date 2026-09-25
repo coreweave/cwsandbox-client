@@ -1265,6 +1265,15 @@ def _volume_source_is_scratch(volume: sandbox_pb2.SandboxVolume) -> bool:
     return not volume.HasField("volume_id")
 
 
+def _https_endpoint_auth(proto_auth: int) -> EndpointAuth | None:
+    """Map a proto HTTPS auth value, or None when unspecified/unknown."""
+    if proto_auth == sandbox_pb2.ENDPOINT_AUTH_OPEN:
+        return EndpointAuth.OPEN
+    if proto_auth == sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN:
+        return EndpointAuth.SHARE_TOKEN
+    return None
+
+
 def _scratch_names_from_volumes(volumes: Sequence[Any]) -> tuple[str, ...]:
     """Collect scratch volume names; skip registered-volume mounts."""
     names: list[str] = []
@@ -5184,20 +5193,18 @@ class Sandbox:
                 if s.endpoint.url:
                     service_urls.append((s.port, s.name, s.endpoint.url))
                 if s.endpoint.request_timeout_seconds > 0:
-                    service_endpoints.append(
-                        HttpsEndpointStatus(
-                            port=s.port,
-                            name=s.name,
-                            kind=EndpointKind.HTTPS,
-                            auth=(
-                                EndpointAuth.SHARE_TOKEN
-                                if s.endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN
-                                else EndpointAuth.OPEN
-                            ),
-                            url=s.endpoint.url,
-                            request_timeout_seconds=s.endpoint.request_timeout_seconds,
+                    auth = _https_endpoint_auth(s.endpoint.auth)
+                    if auth is not None:
+                        service_endpoints.append(
+                            HttpsEndpointStatus(
+                                port=s.port,
+                                name=s.name,
+                                kind=EndpointKind.HTTPS,
+                                auth=auth,
+                                url=s.endpoint.url,
+                                request_timeout_seconds=s.endpoint.request_timeout_seconds,
+                            )
                         )
-                    )
             elif has_endpoint and kind == sandbox_pb2.ENDPOINT_KIND_TLS_PASSTHROUGH:
                 tls_rows.append((s.port, s.name, s.endpoint.address))
             elif not has_endpoint and s.url:

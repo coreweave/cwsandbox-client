@@ -46,21 +46,17 @@ def _wait_for_url(sandbox: Sandbox, *, timeout: float = 60.0) -> str:
 def _header_get(url: str, token: str) -> int:
     request = urllib.request.Request(url, headers={"X-Sandbox-Share-Token": token})
     deadline = time.monotonic() + 60.0
-    last_status: int | None = None
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status
         except urllib.error.HTTPError as exc:
-            last_status = exc.code
             if exc.code == 200:
                 return exc.code
         except (urllib.error.URLError, TimeoutError, OSError):
-            last_status = None
+            pass
         time.sleep(2)
-    if last_status is None:
-        raise SystemExit("Authenticated GET failed")
-    return last_status
+    raise SystemExit("Authenticated GET did not return 200")
 
 
 def main() -> None:
@@ -98,6 +94,8 @@ def main() -> None:
 
             ok_status = _header_get(url, token)
             print(f"Authenticated GET: {ok_status}")
+            if ok_status != 200:
+                raise SystemExit("Authenticated GET expected 200")
 
             try:
                 urllib.request.urlopen(url, timeout=10)
@@ -105,6 +103,8 @@ def main() -> None:
             except urllib.error.HTTPError as exc:
                 denied_status = exc.code
             print(f"Unauthenticated GET: {denied_status}")
+            if denied_status != 401:
+                raise SystemExit("Unauthenticated GET expected 401")
 
             reattached = Sandbox.from_id(sandbox.sandbox_id).result()
             if reattached.endpoint_share_token is not None:
