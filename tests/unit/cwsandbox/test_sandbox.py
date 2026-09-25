@@ -855,6 +855,48 @@ class TestSandboxRun:
         assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
         sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
 
+    def test_share_token_recovery_honors_short_request_timeout(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        missing = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        recovered = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="create-only-token",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(side_effect=[missing, recovered])
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                request_timeout_seconds=1.5,
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(
+                            kind=EndpointKind.HTTPS,
+                            auth=EndpointAuth.SHARE_TOKEN,
+                        ),
+                    )
+                ],
+            )
+
+        assert mock_stub.CreateSandbox.call_count == 2
+        assert mock_stub.CreateSandbox.call_args_list[0].kwargs["timeout"] == 1.5
+        assert mock_stub.CreateSandbox.call_args_list[1].kwargs["timeout"] == 1.5
+        assert sandbox.endpoint_share_token is not None
+        assert sandbox.endpoint_share_token.get_secret_value() == "create-only-token"
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
     def test_share_token_recovery_keeps_pending_after_fatal_replay_error(self) -> None:
         from cwsandbox._proto import sandbox_pb2
 

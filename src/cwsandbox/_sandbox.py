@@ -1321,7 +1321,8 @@ MAX_POLL_RETRY_HINTED_DELAY_SECONDS: float = 10.0
 # A successful create can omit a share token while the Gateway confirms the
 # HTTPS URL durably. Replaying the exact request_id/body asks the owning runner
 # for the existing token without creating another sandbox. Recovery is bounded
-# by a short overall budget so it cannot hold the create lock or block stop().
+# by a short overall budget, and each replay also honors the caller's API
+# request timeout, so it cannot hold the create lock or block stop().
 ENDPOINT_SHARE_TOKEN_REPLAY_ATTEMPTS: int = 3
 ENDPOINT_SHARE_TOKEN_REPLAY_DELAY_SECONDS: float = 1.0
 ENDPOINT_SHARE_TOKEN_REPLAY_MAX_DELAY_SECONDS: float = 5.0
@@ -1925,7 +1926,9 @@ class Sandbox:
             container_image: Container image to use (default: python:3.11)
             tags: Optional tags for the sandbox
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
-            request_timeout_seconds: Timeout for API requests (client-side, default: 300s)
+            request_timeout_seconds: Timeout for API requests (client-side,
+                default: 300s). Share-token recovery also caps each replay at
+                this value, 5s, and the remaining 15s recovery budget.
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to 0
                 to disable retry.
@@ -2380,9 +2383,12 @@ class Sandbox:
         data_plane_mode: DataPlaneMode | str | None = None,
         containers: Sequence[Container | Mapping[str, Any]] | None = None,
     ) -> Sandbox:
-        """Create and start a sandbox, return immediately once backend accepts.
+        """Create and start a sandbox.
 
-        Does NOT wait for RUNNING status. Use .wait() to block until ready.
+        Returns after the backend accepts the create request. If a share-token
+        response omits its token, this also waits through bounded recovery
+        (15s overall, up to 5s per replay). Does NOT wait for RUNNING status.
+        Use .wait() to block until ready.
         If positional args are provided, the first is the command and the rest
         are its arguments. If no args are provided, uses a shell-trapped
         keep-alive default that responds to SIGTERM on stop.
@@ -2393,7 +2399,8 @@ class Sandbox:
             container_image: Container image to use
             defaults: Optional SandboxDefaults to apply
             auth: Authentication mode or provider. Overrides ``defaults.auth``.
-            request_timeout_seconds: Timeout for API requests (client-side)
+            request_timeout_seconds: Timeout for API requests (client-side).
+                Share-token recovery replays are also capped at this value.
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
                 errors on the sandbox-status poll loop (default: 30s). Set to
                 0 to disable retry.
@@ -4737,7 +4744,11 @@ class Sandbox:
             retry_delay: float | None = None
             try:
                 response = await self._replay_create_for_endpoint_share_token(
-                    timeout=min(ENDPOINT_SHARE_TOKEN_REPLAY_RPC_TIMEOUT_SECONDS, remaining)
+                    timeout=min(
+                        ENDPOINT_SHARE_TOKEN_REPLAY_RPC_TIMEOUT_SECONDS,
+                        self._request_timeout_seconds,
+                        remaining,
+                    )
                 )
             except grpc.RpcError as error:
                 translated = _translate_rpc_error(error, operation="Recover endpoint share token")
@@ -6015,13 +6026,14 @@ class Sandbox:
         """Send StartSandbox to backend, return OperationRef immediately.
 
         Does NOT wait for RUNNING status. Use wait() to block until ready.
-        Call .result() to block until the start request is accepted.
-        If an accepted share-token create omitted its token, calling this
-        again replays the same idempotent request to recover it without
-        creating another sandbox.
+        Call .result() to block until the start request is accepted and any
+        needed share-token recovery finishes (15s overall, up to 5s per
+        replay). A later call retries recovery on the same idempotent request
+        without creating another sandbox.
 
         Returns:
-            OperationRef[None]: Use .result() to block until backend accepts.
+            OperationRef[None]: Use .result() to block until acceptance and
+                any needed share-token recovery finish.
 
         Examples:
             ```python
