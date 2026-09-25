@@ -1,17 +1,45 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.14.4 (2026-09-25)
 
 ### Bug Fixes
 
-- **cleanup**: Install atexit and signal handlers lazily on first owned sandbox
+- **cleanup**: Activate signal/atexit handlers on the calling thread for adopted and remote ops
+  ([`06cc519`](https://github.com/coreweave/cwsandbox-client/commit/06cc5191460bc1696fc3530ec4e21908a57b9f24))
 
-`import cwsandbox` no longer installs process-wide SIGINT/SIGTERM handlers. The same 1.x
-handlers now activate when a standalone `Sandbox` is constructed or a `Session` first
-owns or adopts a sandbox. Worker-thread import no longer raises `ValueError`.
+Move cleanup-handler activation into a dedicated `Session._activate_cleanup_handlers()` helper. Call
+  it from `Session.from_id(adopt=True)`, `Session.list(adopt=True)`, and `RemoteFunction.remote()`
+  before dispatching async work.
+
+This installs process-wide SIGINT/SIGTERM and atexit hooks on the thread that requests ownership,
+  rather than only when a sandbox is constructed.
+
+Add unit tests for `from_id(adopt=True)` and `RemoteFunction.remote()`.
+
+- **cleanup**: Install atexit and signal handlers lazily on first owned sandbox
+  ([`e515aff`](https://github.com/coreweave/cwsandbox-client/commit/e515afff7e10f9969ac04e84a057b970ec3ad090))
+
+`import cwsandbox` no longer registers process-wide SIGINT/SIGTERM handlers. Cleanup hooks now
+  activate the first time a standalone `Sandbox` is constructed or a `Session` owns or adopts a
+  sandbox. Worker-thread imports no longer raise `ValueError`.
 
 Fixes #136
+
+### Chores
+
+- **proto**: Regenerate stubs and map dns_name to https_hostname
+  ([`7b2da11`](https://github.com/coreweave/cwsandbox-client/commit/7b2da11ec9e1d4cc0c124c022a01faaf3b7ff89f))
+
+Vendors the latest v1 consumer stubs and remaps public EgressRule.dns_name onto the renamed wire
+  field so create/echo keep working.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+### Testing
+
+- **cleanup**: Add bounded fresh-process SIGTERM helper and deduplicate tests
+  ([`3d8d065`](https://github.com/coreweave/cwsandbox-client/commit/3d8d0657326c90effd76676285f9c2dcb750716b))
 
 
 ## v1.14.3 (2026-09-18)
