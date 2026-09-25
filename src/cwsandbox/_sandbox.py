@@ -3819,6 +3819,8 @@ class Sandbox:
         create omitted or sent ``0``). ``url`` can be empty after the API
         suppresses it on a terminal sandbox; the timeout remains. Empty when
         no HTTPS product endpoint was requested or the response omitted one.
+        Unspecified or unknown proto auth is omitted here; the matching URL
+        can still appear on ``service_urls``.
         """
         return self._service_endpoints
 

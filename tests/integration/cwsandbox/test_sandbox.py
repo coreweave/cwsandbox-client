@@ -1087,10 +1087,11 @@ def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
             time.sleep(2)
         assert header_status == 200
 
+        query_status: int | None = None
         try:
             query_status = httpx.get(url, params=secret.query_params(), timeout=10.0).status_code
         except httpx.HTTPError:
-            pytest.fail("query share-token GET failed")
+            query_status = None
         assert query_status == 200
 
         denied = httpx.get(url, timeout=10.0)

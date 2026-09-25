@@ -68,7 +68,7 @@ Properties:
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
 - `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `endpoint_share_token`: Create-only credential for `auth=SHARE_TOKEN` HTTPS URLs. Present on the create handle after Create / FromTemplate. Get, list, and `from_id` omit it. Do not log the value. Send as `X-Sandbox-Share-Token`.
-- `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression
+- `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression; unspecified/unknown proto auth is omitted (the matching URL can still appear on `service_urls`); unspecified/unknown proto auth is omitted (the matching URL can still appear on `service_urls`)
 - `service_addresses`: Tuple of `TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as `host:port`) for TLS passthrough endpoints. Create, Get, list, and `from_id` fill this. Use the host as TLS SNI. Empty after stop.
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
