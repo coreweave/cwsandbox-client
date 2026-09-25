@@ -1554,6 +1554,105 @@ async def _retry_transient_rpc(
             raise last_exc
 
 
+TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS: int = 3
+"""Total attempts (first try included) for ``_retry_transient_unavailable``."""
+
+TRANSIENT_UNAVAILABLE_JITTER: float = 0.2
+"""Upward-only jitter on the server's ``RetryInfo`` delay (never sleeps less)."""
+
+TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS: float = 5.0
+"""Time a retried attempt must still have after the backoff, or the last error is raised.
+
+Keeps a starved final attempt from failing with ``DEADLINE_EXCEEDED`` and
+hiding the server's ``UNAVAILABLE`` reason.
+"""
+
+
+def _transient_unavailable_hint(e: grpc.RpcError) -> tuple[float, str | None] | None:
+    """Return ``(delay_seconds, reason)`` when the server asked for a retry, else ``None``.
+
+    Eligible only when the raw gRPC status is ``UNAVAILABLE`` *and* the server
+    attached a usable, non-negative AIP-193 ``RetryInfo`` delay. The translated
+    exception class is not used: ``SandboxUnavailableError`` also covers bare
+    ``UNAVAILABLE`` (proxy, dead connection) and non-UNAVAILABLE statuses that
+    carry an unavailable reason, none of which this policy retries.
+    """
+    if e.code() != grpc.StatusCode.UNAVAILABLE:
+        return None
+    parsed = parse_error_info(e)
+    if parsed is None or parsed.retry_delay is None:
+        return None
+    delay = parsed.retry_delay.total_seconds()
+    if delay < 0:
+        return None
+    return delay, parsed.reason
+
+
+async def _retry_transient_unavailable(
+    attempt: Callable[[float], Awaitable[_T]],
+    *,
+    timeout: float,
+    operation: str,
+    enabled: bool = True,
+    max_attempts: int = TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS,
+    still_valid: Callable[[], bool] | None = None,
+) -> _T:
+    """Retry one idempotent unary RPC when the server says it is transiently unavailable.
+
+    ``attempt(rpc_timeout)`` performs exactly one raw stub call and lets
+    ``grpc.RpcError`` escape untranslated. ``timeout`` bounds the whole retry
+    sequence: the first call gets it unchanged, later calls get what is left.
+    A failure is retried only when ``enabled``, fewer than ``max_attempts``
+    calls have been made, the error matches ``_transient_unavailable_hint``,
+    the hint is at most ``MAX_POLL_RETRY_HINTED_DELAY_SECONDS`` (a longer one
+    is raised rather than slept or clamped below what the server asked), and
+    after the jittered delay at least ``TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS``
+    of ``timeout`` remains for the next call. After sleeping, ``still_valid`` (when
+    given) must still hold, e.g. the channel the attempt uses was not closed
+    by a concurrent stop. Otherwise the last raw ``grpc.RpcError`` is
+    re-raised for the call site to translate. Cancellation propagates.
+
+    This reads ``RetryInfo`` differently from ``_retry_transient_rpc`` on
+    purpose; keep the two in mind together when changing either. That helper
+    retries every translated transient error, with or without a hint, so it
+    clamps a long hint to its cap and treats a zero hint as missing and uses
+    its own backoff. This one retries only because the server supplied the
+    hint, so it never sleeps less than the hint: a zero hint retries at once,
+    and a hint above the cap is raised rather than clamped.
+    """
+    deadline = time.monotonic() + timeout
+    rpc_timeout = timeout
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return await attempt(rpc_timeout)
+        except grpc.RpcError as e:
+            hint = _transient_unavailable_hint(e) if enabled else None
+            if hint is None or attempts >= max_attempts:
+                raise
+            delay, reason = hint
+            if delay > MAX_POLL_RETRY_HINTED_DELAY_SECONDS:
+                raise
+            sleep_for = delay * random.uniform(1.0, 1.0 + TRANSIENT_UNAVAILABLE_JITTER)
+            if time.monotonic() + sleep_for + TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS > deadline:
+                raise
+            logger.info(
+                "Retrying %s after transient unavailability: reason=%s attempt=%d/%d delay=%.2fs",
+                operation,
+                reason,
+                attempts + 1,
+                max_attempts,
+                sleep_for,
+            )
+            await asyncio.sleep(sleep_for)
+            rpc_timeout = deadline - time.monotonic()
+            if rpc_timeout < TRANSIENT_UNAVAILABLE_MIN_ATTEMPT_SECONDS:
+                raise
+            if still_valid is not None and not still_valid():
+                raise
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle state types
 # ---------------------------------------------------------------------------
@@ -3032,6 +3131,10 @@ class Sandbox:
         This is a convenience method for cleanup scenarios where you
         don't need to perform other operations on the sandbox.
 
+        When the server returns ``UNAVAILABLE`` with a ``RetryInfo`` delay,
+        the delete is retried (up to 3 attempts, within ``timeout_seconds``);
+        a not-found answer on a retry counts as deleted.
+
         Args:
             sandbox_id: The sandbox ID to delete
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
@@ -3039,7 +3142,6 @@ class Sandbox:
             timeout_seconds: Request timeout (default: 300s)
             missing_ok: If True, suppress SandboxNotFoundError when sandbox
                 doesn't exist.
-
         Returns:
             OperationRef[None]: Use .result() to block until complete.
             Raises SandboxNotFoundError if not found (unless missing_ok=True),
@@ -3098,11 +3200,27 @@ class Sandbox:
 
         try:
             request = sandbox_pb2.DeleteSandboxRequest(sandbox_id=sandbox_id)
+            attempts = 0
+
+            async def _attempt(rpc_timeout: float) -> None:
+                nonlocal attempts
+                attempts += 1
+                await stub.DeleteSandbox(request, timeout=rpc_timeout, metadata=auth_metadata)
+
             try:
-                await stub.DeleteSandbox(request, timeout=timeout, metadata=auth_metadata)
+                await _retry_transient_unavailable(
+                    _attempt,
+                    timeout=timeout,
+                    operation="Delete sandbox",
+                )
             except grpc.RpcError as e:
                 parsed = parse_error_info(e)
-                if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
+                # NOT_FOUND after a transient failure means an earlier attempt
+                # likely committed before its response was lost; the sandbox
+                # is gone either way, which is what the caller asked for.
+                if (missing_ok or attempts > 1) and is_not_found(
+                    e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND
+                ):
                     return
                 raise _translate_rpc_error(
                     e, sandbox_id=sandbox_id, operation="Delete sandbox"
@@ -5873,24 +5991,49 @@ class Sandbox:
                 if snapshot_on_stop and request_id:
                     request.request_id = request_id
 
-                # Send Stop RPC first, then update state on success
-                try:
-                    response = await self._stub.DeleteSandbox(
+                # Send Stop RPC first, then update state on success. A plain
+                # stop retries transient UNAVAILABLE; a snapshot-on-stop never
+                # does (replaying it could archive twice or lose the IDs).
+                stub = self._stub
+                attempts = 0
+
+                async def _attempt(rpc_timeout: float) -> Any:
+                    nonlocal attempts
+                    attempts += 1
+                    return await stub.DeleteSandbox(
                         request,
-                        timeout=client_deadline,
+                        timeout=rpc_timeout,
                         metadata=self._auth_metadata,
+                    )
+
+                try:
+                    response = await _retry_transient_unavailable(
+                        _attempt,
+                        timeout=client_deadline,
+                        operation="Stop sandbox",
+                        enabled=not snapshot_on_stop,
+                        # A joiner cancelled during backoff closes the channel
+                        # and clears _stub; don't send the retry on it.
+                        still_valid=lambda: self._stub is stub,
                     )
                 except grpc.RpcError as e:
                     parsed = parse_error_info(e)
-                    if missing_ok and is_not_found(e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND):
+                    # NOT_FOUND on a retry: an earlier attempt likely stopped it
+                    # before its response was lost. Treat as stopped, exactly
+                    # like missing_ok=True.
+                    if (missing_ok or attempts > 1) and is_not_found(
+                        e, parsed, CWSANDBOX_SANDBOX_NOT_FOUND
+                    ):
                         if snapshot_on_stop:
                             raise SnapshotOnStopConflictError(
                                 "Cannot snapshot on stop: sandbox was not found.",
                                 file_system_snapshot_id=None,
                             ) from e
                         logger.debug(
-                            "Sandbox %s not found during stop (missing_ok=True)",
+                            "Sandbox %s not found during stop (missing_ok=%s, attempt=%d)",
                             sandbox_id,
+                            missing_ok,
+                            attempts,
                         )
                         self._state = _Terminal(
                             sandbox_id=sandbox_id,
@@ -7529,6 +7672,8 @@ class Sandbox:
             path=filepath,
         )
         _set_request_container(request, container)
+        # Each pass gets the full timeout, as before; the gateway path also
+        # retries transient UNAVAILABLE within the remaining attempts (3 total).
         for attempt in range(2):
             prepared = await self._prepare_data_plane_call(
                 sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE,
@@ -7536,9 +7681,17 @@ class Sandbox:
             )
             discard = False
             try:
-                response = await prepared.stub.ReadFile(
-                    request, timeout=timeout, metadata=prepared.metadata
-                )
+                if prepared.is_direct:
+                    response = await prepared.stub.ReadFile(
+                        request, timeout=timeout, metadata=prepared.metadata
+                    )
+                else:
+                    response = await self._read_file_gateway_async(
+                        prepared,
+                        request,
+                        timeout=timeout,
+                        max_attempts=TRANSIENT_UNAVAILABLE_MAX_ATTEMPTS - attempt,
+                    )
                 return bytes(response.content)
             except grpc.RpcError as e:
                 discard = prepared.is_direct and _is_unavailable_rpc_error(e)
@@ -7555,6 +7708,29 @@ class Sandbox:
             finally:
                 await prepared.release(discard=discard)
         raise AssertionError("unreachable")
+
+    async def _read_file_gateway_async(
+        self,
+        prepared: _PreparedDataPlaneCall,
+        request: Any,
+        *,
+        timeout: float,
+        max_attempts: int,
+    ) -> Any:
+        """Gateway ReadFile, retried on transient UNAVAILABLE; raw RpcError escapes."""
+        stub = prepared.stub
+
+        async def _attempt(rpc_timeout: float) -> Any:
+            return await stub.ReadFile(request, timeout=rpc_timeout, metadata=prepared.metadata)
+
+        return await _retry_transient_unavailable(
+            _attempt,
+            timeout=timeout,
+            operation="Read file",
+            max_attempts=max_attempts,
+            # A concurrent stop closes the channel and clears _stub.
+            still_valid=lambda: self._stub is stub,
+        )
 
     async def _read_file_via_exec_streaming(
         self,
