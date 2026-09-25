@@ -1,24 +1,45 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.16.0 (2026-09-25)
+
+### Bug Fixes
+
+- **sandbox**: Document omitted HTTPS endpoint auth and assert share-token query status
+  ([`b3db5ce`](https://github.com/coreweave/cwsandbox-client/commit/b3db5ce955c8553d98378a2670db972b1448a92b))
+
+- **sandbox**: Freeze accepted create request for share-token replay
+  ([`e5096a5`](https://github.com/coreweave/cwsandbox-client/commit/e5096a5a61499b5edb4e72a0459e47a8513bf98c))
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+- **sandbox**: Honor request timeout during share-token recovery
+  ([`ba99ad2`](https://github.com/coreweave/cwsandbox-client/commit/ba99ad2249c183505f5b6b9377c245e0b5755c8f))
+
+Clamp replay RPCs to the configured client timeout and document the bounded post-acceptance recovery
+  wait.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+- **sandbox**: Map HTTPS endpoint auth safely and redact share tokens in tests
+  ([`a315186`](https://github.com/coreweave/cwsandbox-client/commit/a3151862b99d8ee2330c3bca4c7d7235e5e471c3))
+
+- **sandbox**: Recover omitted share tokens via bounded create replay
+  ([`fa80cee`](https://github.com/coreweave/cwsandbox-client/commit/fa80cee6fe4e2e297f2e90c8ad85a72e10820da2))
+
+Replay the frozen create request when Gateway omits the create-only token, outside the start lock,
+  with a short overall budget. Concurrent start() calls join one recovery generation; terminal
+  replay stops recovery; run_from_file() does not replay.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
 
 ### Features
 
-- **sandbox**: Add HTTPS `auth=SHARE_TOKEN` and create-only `endpoint_share_token`
+- **sandbox**: Add HTTPS SHARE_TOKEN auth and create-only endpoint_share_token
+  ([`504f83d`](https://github.com/coreweave/cwsandbox-client/commit/504f83d7ea4c29e239fdd1df34724e7af6961af9))
 
-  Create and CreateSandboxFromTemplate may return an `EndpointShareToken` at
-  `Sandbox.endpoint_share_token`. If the first response omits it while HTTPS URL
-  confirmation converges, the client replays the exact accepted create request
-  up to three times within a 15-second budget. Each replay is capped at five
-  seconds and honors a lower `request_timeout_seconds`; calling `start()` again
-  retries recovery on the same handle without creating a second sandbox. Get,
-  list, and `from_id` omit the token. A live handle keeps a recovered value
-  across `wait()` / `get_status()`. Empty string is `None`.
-  String/repr are redacted; `as_headers()` returns the preferred
-  `X-Sandbox-Share-Token` header. The returned dictionary contains the raw token
-  and must not be logged. Fleet gap reason is
-  `CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED`.
+- **sandbox**: Wrap endpoint_share_token in EndpointShareToken with redacted repr and as_headers()
+  ([`df45998`](https://github.com/coreweave/cwsandbox-client/commit/df45998a409912d8ac4ce1925b4313e003a861e2))
 
 
 ## v1.15.1 (2026-09-25)
