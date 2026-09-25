@@ -212,18 +212,27 @@ class EndpointKind(StrEnum):
 
 
 class EndpointAuth(StrEnum):
-    """OPEN is the only supported endpoint auth (no token required)."""
+    """HTTPS product-endpoint auth.
+
+    ``OPEN`` requires no credential. ``SHARE_TOKEN`` requires the
+    create-only ``Sandbox.endpoint_share_token`` on requests
+    (``X-Sandbox-Share-Token``). Get, list, and ``from_id`` omit that
+    token; do not log it.
+    """
 
     OPEN = "open"
+    SHARE_TOKEN = "share_token"
 
 
 @dataclass(frozen=True, kw_only=True)
 class Endpoint:
     """Product endpoint on a PUBLIC service. Set at create time.
 
-    HTTPS + OPEN: CoreWeave terminates TLS. A URL in
+    HTTPS + OPEN or SHARE_TOKEN: CoreWeave terminates TLS. A URL in
     ``Sandbox.service_urls`` means the hostname was assigned, not that
-    the app is listening yet. ``auth`` is required.
+    the app is listening yet. ``auth`` is required. ``SHARE_TOKEN``
+    requires the create-only ``Sandbox.endpoint_share_token``; do not
+    log it.
 
     TLS_PASSTHROUGH: the platform forwards TLS by SNI to the container.
     ``auth`` and ``request_timeout_seconds`` must be unset. The assigned
@@ -237,8 +246,8 @@ class Endpoint:
 
     Attributes:
         kind: ``HTTPS`` or ``TLS_PASSTHROUGH``.
-        auth: ``OPEN`` when kind is HTTPS. Must be omitted for TLS
-            passthrough.
+        auth: ``OPEN`` or ``SHARE_TOKEN`` when kind is HTTPS. Must be
+            omitted for TLS passthrough.
         request_timeout_seconds: Seconds before the platform closes an
             in-flight HTTPS request. ``None`` or ``0`` selects the
             platform default (15s on serverless). The server accepts
@@ -288,7 +297,7 @@ class HttpsEndpointStatus:
         port: Container port for this service.
         name: Service name from status (may be empty).
         kind: ``HTTPS``.
-        auth: ``OPEN``.
+        auth: ``OPEN`` or ``SHARE_TOKEN``.
         url: Assigned HTTPS URL, or empty when suppressed.
         request_timeout_seconds: Applied HTTPS request timeout in seconds.
     """
@@ -337,9 +346,10 @@ class Service:
             stays empty unless the API reports a URL. The service still
             appears in ``exposed_ports``. Must be PUBLIC when ``endpoint``
             is set.
-        endpoint: Optional product endpoint. HTTPS/OPEN (optional
-            ``request_timeout_seconds``) or TLS_PASSTHROUGH (auth and
-            timeout unset). Omit for a plain TCP/UDP port.
+        endpoint: Optional product endpoint. HTTPS with ``OPEN`` or
+            ``SHARE_TOKEN`` (optional ``request_timeout_seconds``) or
+            TLS_PASSTHROUGH (auth and timeout unset). Omit for a plain
+            TCP/UDP port.
     """
 
     port: int

@@ -168,6 +168,21 @@ Demonstrates:
 - Why container-field overrides (`command`, `args`, `environment_variables`, ...) require `container_image`
 - Tags supplied via defaults are an override too, replacing the template's tags rather than merging with them
 
+### HTTPS Share Token (`https_share_token.py`)
+
+Create a public HTTPS endpoint that requires a platform share token:
+
+```bash
+python examples/https_share_token.py
+```
+
+Demonstrates:
+- Creating `Endpoint(kind=HTTPS, auth=SHARE_TOKEN)` on a PUBLIC service
+- Reading the create-only `Sandbox.endpoint_share_token` (Get/`from_id` omit it)
+- Caller-attached `X-Sandbox-Share-Token` (the SDK does not fetch for you)
+- Logging the URL + "share token: received" only — never the raw token
+- Recovering a missing create-time token by deleting and recreating, not by polling Get
+
 ### TLS Passthrough (`tls_passthrough.py`)
 
 Create a TLS passthrough product endpoint and reach it with SNI:

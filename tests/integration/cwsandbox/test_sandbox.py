@@ -21,6 +21,7 @@ from grpc.aio import UnaryStreamCall
 from cwsandbox import (
     DataPlaneMode,
     Endpoint,
+    EndpointAuth,
     EndpointKind,
     NetworkOptions,
     PlacementMode,
@@ -33,7 +34,10 @@ from cwsandbox import (
     Session,
     list_runners,
 )
-from cwsandbox._error_info import CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED
+from cwsandbox._error_info import (
+    CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED,
+    CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED,
+)
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._proto import sandbox_pb2 as streaming_pb2
 from cwsandbox._proto import sandbox_pb2_grpc as streaming_pb2_grpc
@@ -994,6 +998,90 @@ def test_sandbox_tls_passthrough(sandbox_defaults: SandboxDefaults) -> None:
         if exc.reason == CWSANDBOX_TLS_PASSTHROUGH_ENDPOINTS_NOT_SUPPORTED:
             pytest.skip(f"no runner advertises TLS passthrough: {exc}")
         raise
+
+
+_SHARE_TOKEN_CREATE_ATTEMPTS = 3
+
+
+def test_sandbox_https_share_token(sandbox_defaults: SandboxDefaults) -> None:
+    """Share-token HTTPS is create-only; header/query work; bare GET is 401."""
+    _require_service_visibility(ServiceVisibility.PUBLIC)
+    service = Service(
+        port=8000,
+        name="http",
+        visibility=ServiceVisibility.PUBLIC,
+        endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+    )
+    leftovers: list[Sandbox] = []
+    sandbox: Sandbox | None = None
+    try:
+        for _ in range(_SHARE_TOKEN_CREATE_ATTEMPTS):
+            try:
+                candidate = Sandbox.run(
+                    "python",
+                    "-m",
+                    "http.server",
+                    "8000",
+                    defaults=sandbox_defaults,
+                    services=[service],
+                )
+            except SandboxError as exc:
+                if exc.reason == CWSANDBOX_HTTPS_SHARE_TOKEN_NOT_SUPPORTED:
+                    pytest.skip(f"no runner advertises HTTPS share-token auth: {exc}")
+                raise
+            leftovers.append(candidate)
+            if candidate.endpoint_share_token:
+                leftovers.remove(candidate)
+                sandbox = candidate
+                break
+        if sandbox is None:
+            pytest.fail(
+                "Share-token missing on create after 3 attempts; "
+                "Get/from_id cannot recover the token"
+            )
+
+        token = sandbox.endpoint_share_token
+        assert token is not None
+        sandbox.wait()
+        sandbox.get_status()
+        assert sandbox.endpoint_share_token is not None
+        _wait_for_service_urls(sandbox)
+        url = sandbox.service_urls[0][2]
+
+        reattached = Sandbox.from_id(sandbox.sandbox_id).result()
+        reattached.get_status()
+        assert reattached.endpoint_share_token is None
+
+        header_status: int | None = None
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            try:
+                header_response = httpx.get(
+                    url,
+                    headers={"X-Sandbox-Share-Token": token},
+                    timeout=10.0,
+                )
+                header_status = header_response.status_code
+                if header_status == 200:
+                    break
+            except httpx.HTTPError:
+                header_status = None
+            time.sleep(2)
+        assert header_status == 200
+
+        try:
+            query_response = httpx.get(url, params={"share_token": token}, timeout=10.0)
+        except httpx.HTTPError:
+            pytest.fail("query share-token GET failed")
+        assert query_response.status_code == 200
+
+        denied = httpx.get(url, timeout=10.0)
+        assert denied.status_code == 401
+    finally:
+        if sandbox is not None:
+            sandbox.stop(missing_ok=True).result()
+        for leftover in leftovers:
+            leftover.stop(missing_ok=True).result()
 
 
 def test_stop_missing_ok_absent_sandbox(sandbox_defaults: SandboxDefaults) -> None:

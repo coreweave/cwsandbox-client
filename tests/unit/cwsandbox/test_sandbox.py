@@ -493,6 +493,115 @@ class TestSandboxRun:
         assert spec.services[0].endpoint.request_timeout_seconds == 0
         sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
 
+    def test_create_request_maps_https_share_token_endpoint(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_with_mock_stub(
+            "sleep",
+            "infinity",
+            services=[
+                Service(
+                    name="web",
+                    port=8080,
+                    visibility=ServiceVisibility.PUBLIC,
+                    endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+                ),
+            ],
+        )
+
+        request = stub.CreateSandbox.call_args.args[0]
+        assert request.sandbox.spec.services[0].endpoint.auth == (
+            sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN
+        )
+        sandbox._state = _Terminal(sandbox_id="matrix-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_captures_endpoint_share_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        token = "create-only-token"
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token=token,
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+                    )
+                ],
+            )
+
+        assert sandbox.endpoint_share_token == token
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_empty_endpoint_share_token_is_none(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run()
+
+        assert sandbox.endpoint_share_token is None
+        sandbox._state = _Terminal(sandbox_id="share-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_template_captures_endpoint_share_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        token = "create-only-token"
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="template-share-id",
+            endpoint_share_token=token,
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_PENDING),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=_create_sandbox_response())
+        mock_stub.CreateSandboxFromTemplate = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run_from_template(
+                "template-123",
+                services=[
+                    Service(
+                        port=8080,
+                        visibility=ServiceVisibility.PUBLIC,
+                        endpoint=Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN),
+                    )
+                ],
+            )
+
+        mock_stub.CreateSandbox.assert_not_called()
+        assert sandbox.endpoint_share_token == token
+        sandbox._state = _Terminal(sandbox_id="template-share-id", status=SandboxStatus.COMPLETED)
+
     def test_create_request_maps_https_open_endpoint_from_nested_dict(self) -> None:
         from cwsandbox._proto import sandbox_pb2
 
@@ -5115,6 +5224,163 @@ class TestSandboxFromId:
             sandbox = await Sandbox.from_id("tls-123")
 
         assert sandbox.service_addresses == ()
+
+
+class TestEndpointShareToken:
+    """Create-only endpoint_share_token capture and write-once retention."""
+
+    def test_live_handle_without_token_does_not_adopt_get_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        assert sandbox.endpoint_share_token is None
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            endpoint_share_token="should-not-leak",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.endpoint_share_token is None
+
+    def test_retained_token_is_not_replaced_by_get_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        token = "create-only-token"
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        sandbox._endpoint_share_token = token
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            endpoint_share_token="should-not-replace",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.endpoint_share_token == token
+
+    def test_from_sandbox_info_omits_proto_token(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        info = sandbox_pb2.Sandbox(
+            sandbox_id="share-id",
+            endpoint_share_token="should-not-leak",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            info,
+            base_url="https://test.example.com",
+            timeout_seconds=30.0,
+        )
+        assert sandbox.endpoint_share_token is None
+
+    def test_apply_sandbox_info_echoes_share_token_https_auth(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                services=[
+                    sandbox_pb2.ServiceStatus(
+                        port=8080,
+                        name="web",
+                        visibility=sandbox_pb2.VISIBILITY_PUBLIC,
+                        endpoint=sandbox_pb2.EndpointStatus(
+                            kind=sandbox_pb2.ENDPOINT_KIND_HTTPS,
+                            auth=sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN,
+                            url="https://8080-sb-1.example",
+                            request_timeout_seconds=120,
+                        ),
+                    )
+                ],
+            ),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.service_endpoints == (
+            HttpsEndpointStatus(
+                port=8080,
+                name="web",
+                kind=EndpointKind.HTTPS,
+                auth=EndpointAuth.SHARE_TOKEN,
+                url="https://8080-sb-1.example",
+                request_timeout_seconds=120,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_from_id_omits_proto_token(self, mock_api_key: str) -> None:
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_response = sandbox_pb2.Sandbox(
+            sandbox_id="share-123",
+            endpoint_share_token="should-not-leak",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.GetSandbox = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            sandbox = await Sandbox.from_id("share-123")
+
+        assert sandbox.endpoint_share_token is None
+
+    @pytest.mark.asyncio
+    async def test_list_omits_proto_token(self, mock_api_key: str) -> None:
+        from google.protobuf import timestamp_pb2
+
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_sandbox_info = sandbox_pb2.Sandbox(
+            sandbox_id="share-123",
+            endpoint_share_token="should-not-leak",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_RUNNING,
+                runner_id="tower-1",
+                start_time=timestamp_pb2.Timestamp(seconds=1234567890),
+            ),
+        )
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(sandboxes=[mock_sandbox_info])
+        )
+
+        with (
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub),
+        ):
+            sandboxes = await Sandbox.list()
+
+        assert len(sandboxes) == 1
+        assert sandboxes[0].endpoint_share_token is None
 
 
 class TestSandboxDeleteClassMethod:

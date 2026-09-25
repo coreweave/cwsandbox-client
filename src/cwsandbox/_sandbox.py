@@ -460,6 +460,11 @@ class _SandboxView:
             return self._sandbox.status.start_time
         return None
 
+    @property
+    def endpoint_share_token(self) -> str | None:
+        token = self._sandbox.endpoint_share_token
+        return token or None
+
     def HasField(self, field_name: str) -> bool:
         if field_name == "exit_code":
             return self._sandbox.status.HasField("exit_code")
@@ -1819,6 +1824,9 @@ class Sandbox:
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
         dns_egress_names: Hostnames granted at create (from status.effective_egress).
+        endpoint_share_token: Create-only share-token credential for
+            ``auth=SHARE_TOKEN`` HTTPS URLs. Get, list, and ``from_id``
+            omit it. Do not log the value.
     """
 
     def __init__(
@@ -2084,6 +2092,7 @@ class Sandbox:
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
         self._service_addresses: tuple[TlsPassthroughEndpointStatus, ...] = ()
+        self._endpoint_share_token: str | None = None
         self._dns_egress_names: tuple[str, ...] = ()
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
@@ -2763,6 +2772,7 @@ class Sandbox:
         sandbox._service_urls = ()
         sandbox._service_endpoints = ()
         sandbox._service_addresses = ()
+        sandbox._endpoint_share_token = None
         sandbox._dns_egress_names = ()
         sandbox._file_system_snapshot_id = None
         sandbox._file_system_snapshot_ids = ()
@@ -3780,6 +3790,19 @@ class Sandbox:
         return self._service_urls
 
     @property
+    def endpoint_share_token(self) -> str | None:
+        """Create-only share token for ``auth=SHARE_TOKEN`` HTTPS URLs.
+
+        Present only on the create handle after CreateSandbox or
+        CreateSandboxFromTemplate (CreateSandboxFromFile may also return
+        one). ``""`` is treated as absent. Get, list, and ``from_id``
+        cannot recover it. A live handle keeps a create-time value
+        across ``wait()`` / ``get_status()``. Do not log the value.
+        Send it as ``X-Sandbox-Share-Token``.
+        """
+        return self._endpoint_share_token
+
+    @property
     def service_endpoints(self) -> tuple[HttpsEndpointStatus, ...]:
         """HTTPS product endpoints echoed from create, Get, or list.
 
@@ -4549,6 +4572,7 @@ class Sandbox:
             self._sandbox_id = sandbox_id
             self._status_updated_at = datetime.now(UTC)
             self._state = _Starting(sandbox_id=sandbox_id)
+            self._endpoint_share_token = view.endpoint_share_token
             self._apply_status_echo(view)
             logger.debug("Sandbox %s created (pending)", sandbox_id)
             return sandbox_id
@@ -5165,7 +5189,11 @@ class Sandbox:
                             port=s.port,
                             name=s.name,
                             kind=EndpointKind.HTTPS,
-                            auth=EndpointAuth.OPEN,
+                            auth=(
+                                EndpointAuth.SHARE_TOKEN
+                                if s.endpoint.auth == sandbox_pb2.ENDPOINT_AUTH_SHARE_TOKEN
+                                else EndpointAuth.OPEN
+                            ),
                             url=s.endpoint.url,
                             request_timeout_seconds=s.endpoint.request_timeout_seconds,
                         )

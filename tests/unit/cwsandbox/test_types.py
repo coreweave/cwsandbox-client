@@ -301,6 +301,14 @@ class TestService:
         assert ep.kind == EndpointKind.HTTPS
         assert ep.auth == EndpointAuth.OPEN
 
+    def test_endpoint_share_token_enum_and_string_coercion(self) -> None:
+        assert EndpointAuth.SHARE_TOKEN == "share_token"
+        from_enum = Endpoint(kind=EndpointKind.HTTPS, auth=EndpointAuth.SHARE_TOKEN)
+        assert from_enum.auth == EndpointAuth.SHARE_TOKEN
+        from_string = Endpoint(kind="https", auth="share_token")
+        assert from_string.kind == EndpointKind.HTTPS
+        assert from_string.auth == EndpointAuth.SHARE_TOKEN
+
     def test_endpoint_unknown_auth_string(self) -> None:
         with pytest.raises(ValueError):
             Endpoint(kind="https", auth="token")
