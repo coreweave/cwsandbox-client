@@ -361,6 +361,18 @@ class TestExports:
         """set_auth_mode is in __all__."""
         assert "set_auth_mode" in cwsandbox.__all__
 
+    def test_disable_signal_handlers_exported(self) -> None:
+        """disable_signal_handlers is exported from cwsandbox module."""
+        from cwsandbox import disable_signal_handlers
+        from cwsandbox._cleanup import disable_signal_handlers as internal_disable
+
+        assert hasattr(cwsandbox, "disable_signal_handlers")
+        assert disable_signal_handlers is internal_disable
+
+    def test_disable_signal_handlers_in_all(self) -> None:
+        """disable_signal_handlers is in __all__."""
+        assert "disable_signal_handlers" in cwsandbox.__all__
+
     def test_container_types_in_all(self) -> None:
         assert "Container" in cwsandbox.__all__
         assert "VolumeMount" in cwsandbox.__all__

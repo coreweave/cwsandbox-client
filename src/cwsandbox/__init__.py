@@ -12,6 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from cwsandbox._auth import AuthConfig, AuthHeaders, AuthProvider, AuthStrategy, set_auth_mode
+from cwsandbox._cleanup import disable_signal_handlers
 from cwsandbox._defaults import SandboxDefaults
 from cwsandbox._discovery import (
     Runner,
@@ -370,6 +371,7 @@ __all__ = [
     "ServiceVisibility",
     "StorageMedium",
     "set_auth_mode",
+    "disable_signal_handlers",
     "Sandbox",
     "SandboxCommandTimeoutError",
     "SandboxDefaults",

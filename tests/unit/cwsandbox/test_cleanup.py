@@ -22,6 +22,7 @@ from cwsandbox._cleanup import (
     _install_handlers,
     _reset_for_testing,
     _signal_handler,
+    disable_signal_handlers,
 )
 
 
@@ -318,9 +319,11 @@ class TestResetForTesting:
 
         cleanup_module._atexit_registered = True
         cleanup_module._signals_installed = True
+        cleanup_module._signals_disabled = True
         _reset_for_testing()
         assert cleanup_module._atexit_registered is False
         assert cleanup_module._signals_installed is False
+        assert cleanup_module._signals_disabled is False
 
     def test_reset_unregisters_atexit_and_restores_handlers(self) -> None:
         """Test reset restores captured handlers and unregisters atexit."""
@@ -553,3 +556,152 @@ time.sleep(30)
 """
         result = _run_fresh_until_sigterm(script)
         assert result.returncode == 128 + signal.SIGTERM, result.stderr
+
+    @pytest.mark.skipif(not hasattr(signal, "SIGTERM") or os.name == "nt", reason="Unix SIGTERM")
+    def test_api_opt_out_lets_host_handle_sigterm(self) -> None:
+        """API disable lets a host SIGTERM handler run instead of SystemExit(143)."""
+        script = """
+import os
+import signal
+import time
+import cwsandbox
+from cwsandbox import Sandbox
+
+def host(signum, frame):
+    print("HOST", flush=True)
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, host)
+cwsandbox.disable_signal_handlers()
+Sandbox()
+print("READY", flush=True)
+time.sleep(30)
+"""
+        result = _run_fresh_until_sigterm(script)
+        assert result.returncode == 0, result.stderr
+        assert "HOST" in result.stdout
+
+    @pytest.mark.skipif(not hasattr(signal, "SIGTERM") or os.name == "nt", reason="Unix SIGTERM")
+    def test_env_opt_out_leaves_host_handlers_intact(self) -> None:
+        """Environment disable leaves host handlers in place after first sandbox."""
+        script = """
+import os
+import signal
+from cwsandbox import Sandbox
+from cwsandbox._cleanup import _signal_handler
+
+def host(signum, frame):
+    raise SystemExit(0)
+
+os.environ["CWSANDBOX_DISABLE_SIGNAL_HANDLERS"] = "1"
+signal.signal(signal.SIGINT, host)
+signal.signal(signal.SIGTERM, host)
+Sandbox()
+print(signal.getsignal(signal.SIGINT) is host)
+print(signal.getsignal(signal.SIGTERM) is host)
+print(signal.getsignal(signal.SIGTERM) is _signal_handler)
+"""
+        result = _run_fresh(script)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == ["True", "True", "False"]
+
+
+class TestDisableSignalHandlers:
+    """Tests for the public host signal-handler opt-out."""
+
+    def test_disable_before_activate_skips_signals_and_keeps_atexit(self) -> None:
+        """API disable before first sandbox skips signals but still registers atexit."""
+        import cwsandbox._cleanup as cleanup_module
+
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                disable_signal_handlers()
+                _activate_cleanup_handlers()
+
+                mock_register.assert_called_once_with(_cleanup)
+                mock_signal.assert_not_called()
+                assert cleanup_module._atexit_registered is True
+                assert cleanup_module._signals_installed is False
+                assert cleanup_module._signals_disabled is True
+
+    def test_repeated_disable_is_idempotent(self) -> None:
+        """Repeated disable calls are safe and remain disabled."""
+        import cwsandbox._cleanup as cleanup_module
+
+        disable_signal_handlers()
+        disable_signal_handlers()
+        disable_signal_handlers()
+        assert cleanup_module._signals_disabled is True
+        assert cleanup_module._signals_installed is False
+
+    def test_late_disable_raises_without_mutating_state(self) -> None:
+        """A late API call raises and leaves installed handlers unchanged."""
+        import cwsandbox._cleanup as cleanup_module
+
+        _activate_cleanup_handlers()
+        original_int = cleanup_module._original_sigint
+        original_term = cleanup_module._original_sigterm
+
+        with pytest.raises(RuntimeError, match="before"):
+            disable_signal_handlers()
+
+        assert cleanup_module._signals_disabled is False
+        assert cleanup_module._signals_installed is True
+        assert cleanup_module._original_sigint is original_int
+        assert cleanup_module._original_sigterm is original_term
+        assert signal.getsignal(signal.SIGINT) is _signal_handler
+        assert signal.getsignal(signal.SIGTERM) is _signal_handler
+
+    def test_late_env_change_does_not_uninstall(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Setting the environment variable after install does not restore handlers."""
+        import cwsandbox._cleanup as cleanup_module
+
+        with patch("cwsandbox._cleanup.atexit.register"):
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                _activate_cleanup_handlers()
+                assert mock_signal.call_count == 2
+                monkeypatch.setenv("CWSANDBOX_DISABLE_SIGNAL_HANDLERS", "1")
+                _activate_cleanup_handlers()
+
+        assert cleanup_module._signals_installed is True
+        assert cleanup_module._signals_disabled is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " Yes "])
+    def test_truthy_env_disables_signals(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Documented truthy environment values skip signal installation."""
+        import cwsandbox._cleanup as cleanup_module
+
+        monkeypatch.setenv("CWSANDBOX_DISABLE_SIGNAL_HANDLERS", value)
+        with patch("cwsandbox._cleanup.atexit.register") as mock_register:
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                _activate_cleanup_handlers()
+
+                mock_register.assert_called_once_with(_cleanup)
+                mock_signal.assert_not_called()
+                assert cleanup_module._signals_disabled is True
+                assert cleanup_module._signals_installed is False
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "off", "no"])
+    def test_falsy_env_preserves_default_install(
+        self, value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unset-style and false environment values keep the default install."""
+        import cwsandbox._cleanup as cleanup_module
+
+        monkeypatch.setenv("CWSANDBOX_DISABLE_SIGNAL_HANDLERS", value)
+        with patch("cwsandbox._cleanup.atexit.register"):
+            with patch("cwsandbox._cleanup.signal.signal") as mock_signal:
+                _activate_cleanup_handlers()
+
+                assert mock_signal.call_count == 2
+                assert cleanup_module._signals_disabled is False
+                assert cleanup_module._signals_installed is True
+
+    def test_reset_clears_api_disabled_state(self) -> None:
+        """Test reset clears the public disable flag so later tests can reinstall."""
+        import cwsandbox._cleanup as cleanup_module
+
+        disable_signal_handlers()
+        assert cleanup_module._signals_disabled is True
+        _reset_for_testing()
+        assert cleanup_module._signals_disabled is False

@@ -3,6 +3,17 @@
 
 ## v1.14.4 (2026-09-25)
 
+### Features
+
+- **cleanup**: Add `disable_signal_handlers()` and `CWSANDBOX_DISABLE_SIGNAL_HANDLERS`
+
+Embedded hosts can keep process-signal ownership. The API is process-wide and
+  sticky. Truthy environment values are `1`, `true`, `yes`, and `on`
+  (case-insensitive). `atexit` still registers when a sandbox becomes owned.
+  Configure the API or environment variable before first sandbox ownership.
+  A late API call raises. Changing the environment variable after
+  installation has no effect.
+
 ### Bug Fixes
 
 - **cleanup**: Activate signal/atexit handlers on the calling thread for adopted and remote ops
