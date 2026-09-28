@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.17.0 (2026-09-28)
+
+### Features
+
+- **sandbox**: Surface state_reason on SandboxFailedError
+  ([#184](https://github.com/coreweave/cwsandbox-client/pull/184),
+  [`f1d2977`](https://github.com/coreweave/cwsandbox-client/commit/f1d297796a3bbd0bdf04538a582bc8de342e986f))
+
+The backend reports why a sandbox FAILED in status.state_reason (for example "ErrImagePull: Failed
+  to pull image ..."), but the SDK dropped it and raised a fixed "Sandbox <id> failed to start"
+  message. Callers could not tell an infrastructure image-pull failure from a user error.
+
+Cache state_reason from every Get/list/create response, expose it as Sandbox.status_reason, and
+  carry it on SandboxFailedError as .status_reason (plus .sandbox_id), appended to the message. The
+  message is unchanged when the backend reports no reason.
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.16.0 (2026-09-25)
 
 ### Bug Fixes
