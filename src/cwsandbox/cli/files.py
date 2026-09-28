@@ -15,7 +15,14 @@ from cwsandbox import Sandbox
 
 @click.group()
 def files() -> None:
-    """Read and write files in a sandbox."""
+    """Read and write files in a sandbox.
+
+    Examples:
+
+        cwsandbox files read <sandbox-id> /tmp/data.json
+
+        cwsandbox files write <sandbox-id> /tmp/data.json data.json
+    """
 
 
 @files.command("read")
@@ -53,6 +60,12 @@ def read_file(
 
     SANDBOX_ID is the ID of the sandbox to read from.
     REMOTE_PATH is the file path inside the sandbox.
+
+    Examples:
+
+        cwsandbox files read <sandbox-id> /tmp/data.json
+
+        cwsandbox files read <sandbox-id> /tmp/data.json -o data.json
     """
     sandbox = Sandbox.from_id(sandbox_id).result()
     data = sandbox.read_file(
@@ -105,6 +118,12 @@ def write_file(
     SANDBOX_ID is the ID of the sandbox to write to.
     REMOTE_PATH is the destination path inside the sandbox.
     LOCAL_PATH is the local file to upload.
+
+    Examples:
+
+        cwsandbox files write <sandbox-id> /tmp/data.json data.json
+
+        cwsandbox files write <sandbox-id> /tmp/config.yaml config.yaml --quiet
     """
     data = local_path.read_bytes()
     sandbox = Sandbox.from_id(sandbox_id).result()

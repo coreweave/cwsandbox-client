@@ -37,6 +37,12 @@ def delete_sandbox(
     """Delete a sandbox.
 
     SANDBOX_ID is the ID of the sandbox to delete.
+
+    Examples:
+
+        cwsandbox delete <sandbox-id>
+
+        cwsandbox delete <sandbox-id> --missing-ok
     """
     Sandbox.delete(
         sandbox_id,

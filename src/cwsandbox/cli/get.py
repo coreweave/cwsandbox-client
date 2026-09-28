@@ -68,6 +68,12 @@ def get_sandbox(sandbox_id: str, output_format: str) -> None:
     """Show details for a sandbox.
 
     SANDBOX_ID is the ID of the sandbox to inspect.
+
+    Examples:
+
+        cwsandbox get <sandbox-id>
+
+        cwsandbox get <sandbox-id> --output json
     """
     sandbox = Sandbox.from_id(sandbox_id).result()
     details = _sandbox_details(sandbox)
