@@ -77,6 +77,7 @@ Properties:
 - `attached_volume_ids`: Registered Volume IDs attached to the sandbox
 - `containers`: Echoed create-time `Container` spec. `primary=True` is filled on the inferred primary so a clone of this list is a valid create.
 - `container_statuses`: Per-container observed state. Sandbox `status` / `returncode` stay primary-owned.
+- `status_reason`: Backend-reported `status.state_reason` from the last API response, or None. Set on FAILED sandboxes (e.g. `ErrImagePull: ...`) and while CREATING for actionable container errors. `SandboxFailedError` carries the same value as `.status_reason` and appends it to its message.
 - `resource_requests`, `resource_limits` - Confirmed resources from start response (None for discovered sandboxes)
 - `file_system_snapshot_id` - Snapshot ID produced by `stop(snapshot_on_stop=True)` once the stop resolves (None otherwise)
 
@@ -590,7 +591,7 @@ CWSandboxError
 │   ├── SandboxTerminalStateUnavailableError  # post-stop NOT_FOUND past retry budget (backend did not report terminal state)
 │   ├── SandboxProtocolError             # Get response could not be decoded (gRPC yields None); fatal, never retried
 │   ├── SandboxTerminatedError
-│   ├── SandboxFailedError
+│   ├── SandboxFailedError               # .sandbox_id, .status_reason attributes
 │   ├── SandboxNotFoundError             # .sandbox_id attribute
 │   ├── SandboxExecutionError            # .exec_result, .exception_type, .exception_message attributes
 │   ├── SandboxFileError                 # .filepath attribute
