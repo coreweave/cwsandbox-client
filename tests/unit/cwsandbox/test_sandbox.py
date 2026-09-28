@@ -4858,6 +4858,58 @@ class TestSandboxWaitForRunning:
             with pytest.raises(SandboxFailedError, match="failed to start"):
                 sandbox.wait()
 
+    def test_wait_failed_error_carries_status_reason(self) -> None:
+        """FAILED state_reason is exposed on the error, its message, and the sandbox."""
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox.exceptions import SandboxFailedError
+
+        reason = 'ErrImagePull: Failed to pull image "example.com/sidecar:v1"'
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "failing-sandbox-id"
+        sandbox._state = _Starting(sandbox_id="failing-sandbox-id")
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="failing-sandbox-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_FAILED, state_reason=reason),
+        )
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.GetSandbox = AsyncMock(return_value=response)
+
+            with pytest.raises(SandboxFailedError) as exc_info:
+                sandbox.wait()
+
+        assert str(exc_info.value) == f"Sandbox failing-sandbox-id failed to start: {reason}"
+        assert exc_info.value.status_reason == reason
+        assert exc_info.value.sandbox_id == "failing-sandbox-id"
+        assert sandbox.status_reason == reason
+
+    def test_wait_failed_error_without_status_reason(self) -> None:
+        """An empty state_reason keeps the plain message and a None status_reason."""
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox.exceptions import SandboxFailedError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "failing-sandbox-id"
+        sandbox._state = _Starting(sandbox_id="failing-sandbox-id")
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="failing-sandbox-id",
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_FAILED),
+        )
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            sandbox._channel = MagicMock()
+            sandbox._stub = MagicMock()
+            sandbox._stub.GetSandbox = AsyncMock(return_value=response)
+
+            with pytest.raises(SandboxFailedError) as exc_info:
+                sandbox.wait()
+
+        assert str(exc_info.value) == "Sandbox failing-sandbox-id failed to start"
+        assert exc_info.value.status_reason is None
+        assert sandbox.status_reason is None
+
     def test_wait_handles_fast_completion(self) -> None:
         """Test wait handles sandbox that completes during startup."""
         from cwsandbox._proto import sandbox_pb2

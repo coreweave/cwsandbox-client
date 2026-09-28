@@ -102,7 +102,29 @@ class SandboxTerminatedError(SandboxError):
 
 
 class SandboxFailedError(SandboxError):
-    """Raised when a sandbox fails to start or encounters a fatal error."""
+    """Raised when a sandbox fails to start or encounters a fatal error.
+
+    Attributes:
+        sandbox_id: The ID of the sandbox that failed, or None.
+        status_reason: Backend-reported ``status.state_reason`` for the FAILED
+            sandbox (e.g. ``"ErrImagePull: Failed to pull image ..."``), or
+            None when the backend did not report one. Also appended to the
+            exception message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        sandbox_id: str | None = None,
+        status_reason: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.sandbox_id = sandbox_id
+        self.status_reason = status_reason
 
 
 class SandboxNotFoundError(SandboxError):

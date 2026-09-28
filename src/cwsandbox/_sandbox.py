@@ -2144,6 +2144,7 @@ class Sandbox:
         self._file_system_snapshot_ids: tuple[str, ...] = ()
         self._spec_containers: tuple[Container, ...] = ()
         self._container_statuses: tuple[ContainerStatus, ...] = ()
+        self._status_reason: str | None = None
         # Use explicit resources or fall back to defaults, then normalize
         effective_resources = (
             None
@@ -2834,6 +2835,7 @@ class Sandbox:
         sandbox._file_system_snapshot_ids = ()
         sandbox._spec_containers = ()
         sandbox._container_statuses = ()
+        sandbox._status_reason = None
         sandbox._observed_file_op_cap_bytes = None
         sandbox._streaming_fallback_warned = False
         sandbox._start_lock = asyncio.Lock()
@@ -3905,6 +3907,16 @@ class Sandbox:
         return self._container_statuses
 
     @property
+    def status_reason(self) -> str | None:
+        """Backend-reported reason for the current status, or None.
+
+        Set on FAILED sandboxes (e.g. ``"ErrImagePull: ..."``) and, while
+        CREATING, for actionable container errors such as ``ImagePullBackOff``.
+        Cached from the last API response, like ``status``.
+        """
+        return self._status_reason
+
+    @property
     def dns_egress_names(self) -> tuple[str, ...]:
         """Hostnames granted at create, echoed from ``status.effective_egress``.
 
@@ -4005,6 +4017,13 @@ class Sandbox:
         """True when sandbox has reached a terminal state or was cancelled before start."""
         return isinstance(self._state, _Terminal) or self._is_cancelled
 
+    def _failed_error(self, sandbox_id: str, verb: str) -> SandboxFailedError:
+        """Build a SandboxFailedError carrying the backend-reported reason."""
+        message = f"Sandbox {sandbox_id} {verb}"
+        if self._status_reason:
+            message = f"{message}: {self._status_reason}"
+        return SandboxFailedError(message, sandbox_id=sandbox_id, status_reason=self._status_reason)
+
     def _raise_or_return_for_terminal(
         self, state: _Terminal, *, raise_on_termination: bool = True
     ) -> None:
@@ -4019,7 +4038,7 @@ class Sandbox:
         backend provides termination_reason metadata.
         """
         if state.status == SandboxStatus.FAILED:
-            raise SandboxFailedError(f"Sandbox {state.sandbox_id} failed")
+            raise self._failed_error(state.sandbox_id, "failed")
         if state.status == SandboxStatus.TERMINATED and raise_on_termination:
             raise SandboxTerminatedError(f"Sandbox {state.sandbox_id} was terminated")
         if self._stop_owned and raise_on_termination:
@@ -5408,6 +5427,7 @@ class Sandbox:
             if _volume_source_is_scratch(volume)
         )
         status = view._sandbox.status
+        self._status_reason = status.state_reason or None
         service_urls: list[tuple[int, str, str]] = []
         service_endpoints: list[HttpsEndpointStatus] = []
         tls_rows: list[tuple[int, str, str]] = []
@@ -5739,7 +5759,7 @@ class Sandbox:
             )
         elif isinstance(self._state, _Terminal):
             if self._state.status == SandboxStatus.FAILED:
-                raise SandboxFailedError(f"Sandbox {self._sandbox_id} failed to start")
+                raise self._failed_error(self._sandbox_id, "failed to start")
             if self._state.status == SandboxStatus.TERMINATED:
                 raise SandboxTerminatedError(f"Sandbox {self._sandbox_id} was terminated")
             logger.info("Sandbox %s completed during startup", self._sandbox_id)
