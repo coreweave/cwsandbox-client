@@ -19,6 +19,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from types import ModuleType
 from typing import Protocol, TypeAlias, runtime_checkable
 from urllib.parse import urlsplit
 
@@ -54,6 +55,31 @@ class AuthStrategy(StrEnum):
     WANDB = "wandb"
 
 
+@dataclass(frozen=True)
+class WandbAuth:
+    """W&B API-key authentication with an optional entity and project.
+
+    Credentials are discovered the same way as ``AuthStrategy.WANDB``. The
+    entity is taken from, in order: ``entity``, the active ``wandb.run``, and
+    W&B settings (``WANDB_ENTITY`` or settings files). When none is set, the
+    Sandbox API uses the viewer's default W&B entity. ``AuthStrategy.WANDB`` is
+    equivalent to ``WandbAuth()``.
+    """
+
+    entity: str | None = None
+    project: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.entity is not None and not self.entity.strip():
+            raise ValueError("WandbAuth entity must be a non-empty string or None")
+        if self.project is not None and not self.project.strip():
+            raise ValueError("WandbAuth project must be a non-empty string or None")
+
+    def resolve_auth(self, *, base_url: str) -> AuthHeaders:
+        """Resolve W&B headers; ``base_url`` is the Sandbox API, not the W&B host."""
+        return _resolve_wandb_auth(entity=self.entity, project=self.project)
+
+
 AuthConfig: TypeAlias = AuthStrategy | AuthProvider | AuthHeaders
 
 
@@ -84,7 +110,24 @@ def _wandb_missing_error() -> CWSandboxAuthenticationError:
     )
 
 
-def _resolve_wandb_auth() -> AuthHeaders:
+def _active_run_entity(wandb: ModuleType) -> str | None:
+    """Return the entity of the active W&B run, if any."""
+    run = getattr(wandb, "run", None)
+    if run is None:
+        return None
+    try:
+        entity = run.entity
+    except Exception:
+        logger.debug("Could not read entity from the active W&B run", exc_info=True)
+        return None
+    return entity or None
+
+
+def _resolve_wandb_auth(
+    *,
+    entity: str | None = None,
+    project: str | None = None,
+) -> AuthHeaders:
     """Resolve W&B API-key auth without importing W&B until it is needed."""
     try:
         import wandb
@@ -140,10 +183,14 @@ def _resolve_wandb_auth() -> AuthHeaders:
         headers["x-wandb-host"] = (
             f"{hostname}:{port}" if port is not None and port != default_port else hostname
         )
-    if settings.entity:
-        headers["x-entity-id"] = settings.entity
-    if settings.project:
-        headers["x-project-name"] = settings.project
+    # wandb.init() applies its entity to a copy of the global settings, so the
+    # active run is checked before falling back to the settings singleton.
+    entity = entity or _active_run_entity(wandb) or settings.entity
+    project = project or settings.project
+    if entity:
+        headers["x-entity-id"] = entity
+    if project:
+        headers["x-project-name"] = project
 
     return AuthHeaders(headers=headers, strategy="wandb_api_key")
 
@@ -197,7 +244,7 @@ def resolve_auth(
 
     Args:
         auth: An ``AuthStrategy``, resolved ``AuthHeaders``, or an
-            ``AuthProvider``. ``None`` preserves a legacy global override when
+            ``AuthProvider`` such as ``WandbAuth``. ``None`` preserves a legacy global override when
             installed and otherwise uses ``AuthStrategy.COREWEAVE_API_KEY``.
         base_url: Sandbox API endpoint passed to custom providers.
     """
