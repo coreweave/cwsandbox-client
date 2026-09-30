@@ -268,6 +268,36 @@ def network_to_proto(network: NetworkOptions) -> sandbox_pb2.NetworkOptions:
     return proto
 
 
+def network_from_proto(proto: sandbox_pb2.NetworkOptions) -> NetworkOptions:
+    """Map a stored NetworkOptions document to the SDK type.
+
+    Every mutable field is populated (deny flags as bools, rule lists as
+    tuples) so the result is a complete document: passing it back to an
+    update replaces all five fields with what was read. Rules with a
+    destination/source this SDK does not know are skipped, like the
+    ``effective_*`` echoes.
+    """
+    egress: list[EgressRule] = []
+    for egress_proto in proto.egress:
+        try:
+            egress.append(egress_rule_from_proto(egress_proto))
+        except ValueError:
+            continue
+    ingress: list[IngressRule] = []
+    for ingress_proto in proto.ingress:
+        try:
+            ingress.append(ingress_rule_from_proto(ingress_proto))
+        except ValueError:
+            continue
+    return NetworkOptions(
+        deny_egress=proto.deny_egress,
+        deny_ingress=proto.deny_ingress,
+        egress=tuple(egress),
+        ingress=tuple(ingress),
+        dns_egress=dns_egress_from_proto(proto.dns_egress),
+    )
+
+
 def dns_egress_from_proto(value: int) -> DNSEgressMode:
     """Map a proto ``DNSEgressMode`` to the SDK enum (unknown -> UNSPECIFIED)."""
     mode: DNSEgressMode = _DNS_EGRESS_FROM_PROTO.get(value, DNSEgressMode.UNSPECIFIED)  # type: ignore[call-overload]

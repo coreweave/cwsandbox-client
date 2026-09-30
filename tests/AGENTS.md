@@ -141,6 +141,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | `test_defaults.py` | SandboxDefaults configuration, merge_tags, with_overrides |
 | `test_exceptions.py` | Exception hierarchy, custom attributes |
 | `test_file_system_snapshot.py` | FSS types, error mapping, start/stop wiring, snapshot/fork/management methods |
+| `test_network_config.py` | NetworkConfig CRUD, update-mask derivation, etag, error mapping |
 | `test_function.py` | RemoteFunction class, decorator, .remote(), .map(), .local() |
 | `test_loop_manager.py` | _LoopManager singleton, run_sync, run_async |
 | `test_sandbox.py` | Sandbox class, status handling, exec, file ops |

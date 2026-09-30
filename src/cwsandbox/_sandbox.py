@@ -81,7 +81,9 @@ from cwsandbox._direct import (
 from cwsandbox._error_info import (
     CWSANDBOX_BACKEND_UNAVAILABLE,
     CWSANDBOX_COMMAND_TIMEOUT,
+    CWSANDBOX_DNS_EGRESS_UNAVAILABLE,
     CWSANDBOX_ERROR_DOMAIN,
+    CWSANDBOX_ETAG_MISMATCH,
     CWSANDBOX_FILE_IO_FAILED,
     CWSANDBOX_FILE_IS_DIRECTORY,
     CWSANDBOX_FILE_NOT_FOUND,
@@ -96,6 +98,8 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_SIZE_EXCEEDED,
     CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_INVALID_REQUEST,
+    CWSANDBOX_NETWORK_CONFIG_IN_USE,
+    CWSANDBOX_NETWORK_CONFIG_NOT_FOUND,
     CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
     CWSANDBOX_RUNNER_OVERLOADED,
@@ -200,6 +204,11 @@ from cwsandbox._types import (
 )
 from cwsandbox.exceptions import (
     CWSandboxError,
+    DNSEgressUnavailableError,
+    NetworkConfigError,
+    NetworkConfigEtagMismatchError,
+    NetworkConfigInUseError,
+    NetworkConfigNotFoundError,
     SandboxCommandTimeoutError,
     SandboxError,
     SandboxExecutionError,
@@ -935,6 +944,34 @@ def _translate_volume_reason(
     return None
 
 
+def _translate_network_config_reason(
+    reason: str,
+    *,
+    details: str,
+    operation: str,
+    network_config_id: str | None,
+    metadata: Mapping[str, str] | None,
+    retry_delay: timedelta | None,
+) -> CWSandboxError | None:
+    """Map a trusted NetworkConfig reason to a typed exception."""
+    network_config_classes: dict[str, type[NetworkConfigError]] = {
+        CWSANDBOX_NETWORK_CONFIG_NOT_FOUND: NetworkConfigNotFoundError,
+        CWSANDBOX_NETWORK_CONFIG_IN_USE: NetworkConfigInUseError,
+        CWSANDBOX_ETAG_MISMATCH: NetworkConfigEtagMismatchError,
+        CWSANDBOX_DNS_EGRESS_UNAVAILABLE: DNSEgressUnavailableError,
+    }
+    cls = network_config_classes.get(reason)
+    if cls is None:
+        return None
+    return cls(
+        f"{operation} failed ({reason}): {details}",
+        network_config_id=network_config_id,
+        reason=reason,
+        metadata=metadata,
+        retry_delay=retry_delay,
+    )
+
+
 def _is_runner_shard_retiring_error(error: grpc.RpcError) -> bool:
     parsed = parse_error_info(error)
     return (
@@ -967,6 +1004,7 @@ def _translate_rpc_error(
     filepath: str | None = None,
     file_system_snapshot_id: str | None = None,
     volume_id: str | None = None,
+    network_config_id: str | None = None,
 ) -> CWSandboxError:
     """Translate gRPC RpcError to appropriate CWSandbox exception.
 
@@ -1074,6 +1112,17 @@ def _translate_rpc_error(
         )
         if volume_exc is not None:
             return volume_exc
+        network_config_exc = _translate_network_config_reason(
+            reason,
+            details=details,
+            operation=operation,
+            network_config_id=network_config_id
+            or (parsed_metadata.get("network_config_id") if parsed_metadata else None),
+            metadata=metadata,
+            retry_delay=retry_delay,
+        )
+        if network_config_exc is not None:
+            return network_config_exc
 
     if code == grpc.StatusCode.NOT_FOUND:
         # An FSS operation carries a snapshot ID, not a sandbox ID. Map a bare
@@ -1092,6 +1141,14 @@ def _translate_rpc_error(
             return VolumeNotFoundError(
                 f"Volume '{volume_id}' not found",
                 volume_id=volume_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if network_config_id is not None:
+            return NetworkConfigNotFoundError(
+                f"NetworkConfig '{network_config_id}' not found",
+                network_config_id=network_config_id,
                 reason=reason,
                 metadata=metadata,
                 retry_delay=retry_delay,
