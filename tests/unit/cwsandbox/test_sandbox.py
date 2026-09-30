@@ -24,6 +24,7 @@ from cwsandbox import (
     AuthHeaders,
     AuthStrategy,
     CidrBlock,
+    DNSEgressMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -1935,7 +1936,34 @@ class TestSandboxRun:
         assert sandbox.effective_egress[0].dns_name == "pypi.org"
         assert sandbox.effective_egress[1].any is True
         assert sandbox.effective_ingress[0].any is True
+        assert sandbox.effective_dns_egress is None
         sandbox._state = _Terminal(sandbox_id="echo-id", status=SandboxStatus.COMPLETED)
+
+    def test_create_maps_dns_egress_and_echoes_effective_mode(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="dns-mode-id",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_PENDING,
+                effective_dns_egress=sandbox_pb2.DNS_EGRESS_MODE_DENY,
+            ),
+        )
+        mock_stub = MagicMock()
+        mock_stub.CreateSandbox = AsyncMock(return_value=response)
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = mock_stub
+
+        with patch.object(Sandbox, "_ensure_client", ensure_client):
+            sandbox = Sandbox.run(network={"dns_egress": "deny"})
+
+        request = mock_stub.CreateSandbox.call_args.args[0]
+        assert request.sandbox.spec.network.dns_egress == sandbox_pb2.DNS_EGRESS_MODE_DENY
+        assert sandbox.effective_dns_egress is DNSEgressMode.DENY
+        sandbox._state = _Terminal(sandbox_id="dns-mode-id", status=SandboxStatus.COMPLETED)
 
     def test_create_request_maps_image_pull_credentials(self) -> None:
         sandbox, stub = self._run_with_mock_stub(

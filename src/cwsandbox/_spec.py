@@ -11,6 +11,7 @@ from typing import Any
 from cwsandbox._proto import sandbox_pb2
 from cwsandbox._types import (
     CidrBlock,
+    DNSEgressMode,
     EgressRule,
     IngressRule,
     NetworkOptions,
@@ -35,6 +36,13 @@ _TENANT_TO_PROTO = {
     TenantScope.SANDBOX_NETWORK: sandbox_pb2.TENANT_SCOPE_SANDBOX_NETWORK,
 }
 _TENANT_FROM_PROTO = {value: key for key, value in _TENANT_TO_PROTO.items()}
+
+_DNS_EGRESS_TO_PROTO = {
+    DNSEgressMode.UNSPECIFIED: sandbox_pb2.DNS_EGRESS_MODE_UNSPECIFIED,
+    DNSEgressMode.ALLOW: sandbox_pb2.DNS_EGRESS_MODE_ALLOW,
+    DNSEgressMode.DENY: sandbox_pb2.DNS_EGRESS_MODE_DENY,
+}
+_DNS_EGRESS_FROM_PROTO = {value: key for key, value in _DNS_EGRESS_TO_PROTO.items()}
 
 _MEDIUM_TO_PROTO = {
     StorageMedium.UNSPECIFIED: sandbox_pb2.STORAGE_MEDIUM_UNSPECIFIED,
@@ -255,7 +263,15 @@ def network_to_proto(network: NetworkOptions) -> sandbox_pb2.NetworkOptions:
             ingress_rule if isinstance(ingress_rule, IngressRule) else IngressRule(**ingress_rule)
         )
         proto.ingress.append(ingress_rule_to_proto(ingress))
+    if network.dns_egress is not None:
+        proto.dns_egress = _DNS_EGRESS_TO_PROTO[DNSEgressMode(network.dns_egress)]
     return proto
+
+
+def dns_egress_from_proto(value: int) -> DNSEgressMode:
+    """Map a proto ``DNSEgressMode`` to the SDK enum (unknown -> UNSPECIFIED)."""
+    mode: DNSEgressMode = _DNS_EGRESS_FROM_PROTO.get(value, DNSEgressMode.UNSPECIFIED)  # type: ignore[call-overload]
+    return mode
 
 
 def object_storage_to_proto(access: ObjectStorageAccess) -> sandbox_pb2.ObjectStorageAccess:

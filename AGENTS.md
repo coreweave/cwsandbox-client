@@ -78,6 +78,7 @@ Properties:
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
 - `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
 - `effective_egress` / `effective_ingress`: Full echoed rule sets from status
+- `effective_dns_egress`: `DNSEgressMode` (port-53 DNS) echoed from status, or None when unreported
 - `effective_runtime_class`: Runtime class applied by the backend
 - `control`: `SandboxControl` echoed from create/Get/list (None before the first response). `UNSPECIFIED` and `PLATFORM` both mean platform control; compare against `CONTAINER_ENGINE`.
 - `attached_volume_ids`: Registered Volume IDs attached to the sandbox
@@ -241,7 +242,7 @@ sandbox = Sandbox.run(
 )
 ```
 
-**`NetworkOptions`** / **`EgressRule`** / **`IngressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`) plus create-time grants via `egress` and `ingress`. `EgressRule` requires exactly one destination (`dns_name`, `cidr`, `tenant`, `any`, or `selector`). DNS names are HTTPS (TCP 443) grants: exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. `IngressRule` requires exactly one source (`cidr`, `tenant`, or `any`) and applies to CUSTOM-visibility ports. Port exposure is via `services=`, not this type.
+**`NetworkOptions`** / **`EgressRule`** / **`IngressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`), grants via `egress` and `ingress`, and `dns_egress` (`DNSEgressMode` ALLOW/DENY for port-53 DNS; None inherits policy). `EgressRule` requires exactly one destination (`dns_name`, `cidr`, `tenant`, `any`, or `selector`). DNS names are HTTPS (TCP 443) grants: exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. `IngressRule` requires exactly one source (`cidr`, `tenant`, or `any`) and applies to CUSTOM-visibility ports. Port exposure is via `services=`, not this type.
 
 ```python
 from cwsandbox import EgressRule, NetworkOptions, Sandbox

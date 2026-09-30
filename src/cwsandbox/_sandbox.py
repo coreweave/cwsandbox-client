@@ -137,6 +137,7 @@ from cwsandbox._proto import (
 from cwsandbox._resources import normalize_resources
 from cwsandbox._spec import (
     coerce_security_context,
+    dns_egress_from_proto,
     egress_rule_from_proto,
     ingress_rule_from_proto,
     network_to_proto,
@@ -149,6 +150,7 @@ from cwsandbox._spec import (
 from cwsandbox._types import (
     Container,
     DataPlaneMode,
+    DNSEgressMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -2280,6 +2282,7 @@ class Sandbox:
         self._attached_volume_ids: tuple[str, ...] = ()
         self._effective_egress: tuple[EgressRule, ...] = ()
         self._effective_ingress: tuple[IngressRule, ...] = ()
+        self._effective_dns_egress: DNSEgressMode | None = None
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
@@ -2994,6 +2997,7 @@ class Sandbox:
         sandbox._attached_volume_ids = ()
         sandbox._effective_egress = ()
         sandbox._effective_ingress = ()
+        sandbox._effective_dns_egress = None
         sandbox._scratch_volume_names = (
             tuple(
                 volume.name
@@ -4337,6 +4341,14 @@ class Sandbox:
     def effective_ingress(self) -> tuple[IngressRule, ...]:
         """Effective ingress rules echoed from ``status.effective_ingress``."""
         return self._effective_ingress
+
+    @property
+    def effective_dns_egress(self) -> DNSEgressMode | None:
+        """Port-53 DNS mode echoed from ``status.effective_dns_egress``.
+
+        None until a create/Get/list response reports a mode.
+        """
+        return self._effective_dns_egress
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
@@ -5969,6 +5981,8 @@ class Sandbox:
             except ValueError:
                 continue
         self._effective_ingress = tuple(ingress_rules)
+        dns_mode = dns_egress_from_proto(status.effective_dns_egress)
+        self._effective_dns_egress = None if dns_mode == DNSEgressMode.UNSPECIFIED else dns_mode
         if status.services:
             self._exposed_ports = tuple(
                 (s.port, s.name)
