@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v1.18.0 (2026-10-01)
+
+### Documentation
+
+- Add CLI usage examples ([#174](https://github.com/coreweave/cwsandbox-client/pull/174),
+  [`8b742d3`](https://github.com/coreweave/cwsandbox-client/commit/8b742d3b3bf3df956811b2c7301dff40fd0352e1))
+
+### Features
+
+- **auth**: Add WandbAuth with explicit entity and project
+  ([#186](https://github.com/coreweave/cwsandbox-client/pull/186),
+  [`5ac58e2`](https://github.com/coreweave/cwsandbox-client/commit/5ac58e23f1d506f5d83771d408361d4f8e4754ec))
+
+AuthStrategy.WANDB takes no arguments, so the W&B entity could only be chosen through WANDB_ENTITY
+  or W&B settings files. Users who belong to several teams or organizations fell back to their
+  default entity with no way to choose another in code.
+
+Add WandbAuth(entity=..., project=...), an AuthProvider that resolves W&B credentials the same way
+  as AuthStrategy.WANDB. The entity is now taken from the explicit argument, then the active
+  wandb.run, then W&B settings. wandb.init(entity=...) applies to a copy of the global settings, so
+  it was previously ignored. When no entity is set, the request still omits it and the default
+  entity is used.
+
+AuthStrategy.WANDB is equivalent to WandbAuth().
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.17.0 (2026-09-28)
 
 ### Features
