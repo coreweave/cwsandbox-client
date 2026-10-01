@@ -12,7 +12,9 @@ import pytest
 
 from cwsandbox._auth import (
     AuthHeaders,
+    AuthProvider,
     AuthStrategy,
+    WandbAuth,
     _reset_auth_mode_for_testing,
     resolve_auth,
     resolve_auth_metadata,
@@ -220,6 +222,105 @@ class TestResolveAuth:
             assert "x-wandb-host" not in auth.headers
         else:
             assert auth.headers["x-wandb-host"] == expected_host
+
+    def test_wandb_auth_is_auth_provider(self) -> None:
+        assert isinstance(WandbAuth(entity="team-a"), AuthProvider)
+
+    def test_wandb_auth_passes_entity_and_project(self) -> None:
+        expected = AuthHeaders(headers={"x-wandb-api-key": "k"}, strategy="wandb_api_key")
+
+        with patch("cwsandbox._auth._resolve_wandb_auth", return_value=expected) as resolver:
+            auth = resolve_auth(WandbAuth(entity="team-a", project="proj"))
+
+        assert auth is expected
+        resolver.assert_called_once_with(entity="team-a", project="proj")
+
+    @pytest.mark.parametrize("field", ("entity", "project"))
+    @pytest.mark.parametrize("value", ("", "   "))
+    def test_wandb_auth_rejects_blank_values(self, field: str, value: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            WandbAuth(**{field: value})
+
+    @pytest.mark.parametrize(
+        ("auth", "run_entity", "settings_entity", "expected_entity"),
+        (
+            (AuthStrategy.WANDB, None, None, None),
+            (AuthStrategy.WANDB, None, "settings-team", "settings-team"),
+            (AuthStrategy.WANDB, "run-team", "settings-team", "run-team"),
+            (AuthStrategy.WANDB, "", "settings-team", "settings-team"),
+            (WandbAuth(entity="explicit-team"), "run-team", "settings-team", "explicit-team"),
+            (WandbAuth(), "run-team", None, "run-team"),
+        ),
+    )
+    def test_wandb_entity_precedence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        auth: AuthStrategy | WandbAuth,
+        run_entity: str | None,
+        settings_entity: str | None,
+        expected_entity: str | None,
+    ) -> None:
+        """Explicit entity wins, then the active run, then W&B settings."""
+        pytest.importorskip("wandb")
+        import wandb
+        from wandb.sdk import wandb_setup
+        from wandb.sdk.lib import wbauth
+
+        monkeypatch.setenv("WANDB_API_KEY", "d" * 40)
+        settings = SimpleNamespace(
+            base_url="https://api.wandb.ai",
+            app_url=None,
+            entity=settings_entity,
+            project=None,
+        )
+        run = None if run_entity is None else SimpleNamespace(entity=run_entity)
+        monkeypatch.setattr(wandb, "run", run)
+        wbauth.unauthenticate_session(update_settings=False)
+
+        try:
+            with patch.object(
+                wandb_setup,
+                "singleton",
+                return_value=SimpleNamespace(settings=settings),
+            ):
+                resolved = resolve_auth(auth)
+        finally:
+            wbauth.unauthenticate_session(update_settings=False)
+
+        assert resolved.headers.get("x-entity-id") == expected_entity
+
+    def test_wandb_explicit_project_overrides_settings(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pytest.importorskip("wandb")
+        import wandb
+        from wandb.sdk import wandb_setup
+        from wandb.sdk.lib import wbauth
+
+        monkeypatch.setenv("WANDB_API_KEY", "e" * 40)
+        monkeypatch.setattr(wandb, "run", None)
+        settings = SimpleNamespace(
+            base_url="https://api.wandb.ai",
+            app_url=None,
+            entity=None,
+            project="settings-project",
+        )
+        wbauth.unauthenticate_session(update_settings=False)
+
+        try:
+            with patch.object(
+                wandb_setup,
+                "singleton",
+                return_value=SimpleNamespace(settings=settings),
+            ):
+                default = resolve_auth(AuthStrategy.WANDB)
+                explicit = resolve_auth(WandbAuth(project="explicit-project"))
+        finally:
+            wbauth.unauthenticate_session(update_settings=False)
+
+        assert default.headers["x-project-name"] == "settings-project"
+        assert explicit.headers["x-project-name"] == "explicit-project"
 
     def test_registered_auth_mode_overrides_built_in_api_key_auth(
         self,

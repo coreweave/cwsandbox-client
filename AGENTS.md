@@ -369,7 +369,7 @@ with Sandbox.run(
 
 `_auth.py` resolves auth per Sandbox, Session, or class-level operation:
 1. Omitted auth selection defaults to CoreWeave: `CWSANDBOX_API_KEY` is sent as a Bearer token, or requests are unauthenticated when it is absent.
-2. `AuthStrategy.WANDB` explicitly delegates credential discovery to the optional W&B SDK (session, `WANDB_API_KEY`, or host-scoped `.netrc`) and sends `x-wandb-api-key`.
+2. `AuthStrategy.WANDB` explicitly delegates credential discovery to the optional W&B SDK (session, `WANDB_API_KEY`, or host-scoped `.netrc`) and sends `x-wandb-api-key`. `WandbAuth(entity=..., project=...)` is the parameterized form; entity precedence is explicit arg, active `wandb.run`, then W&B settings, else the server uses the viewer default entity.
 3. `AuthHeaders` and `AuthProvider` support explicit custom per-instance auth.
 
 The legacy process-global `set_auth_mode()` hook remains for compatibility. New integrations should pass `auth=` and must not send a W&B API key as a CoreWeave Bearer token.

@@ -102,6 +102,21 @@ with Sandbox.run(auth=AuthStrategy.WANDB) as sb:
     ...
 ```
 
+Sandboxes are created in your default W&B entity unless you choose one. To pick
+an entity (for example, a team in a different organization) or a project, pass
+`WandbAuth`:
+
+```python
+from cwsandbox import Sandbox, WandbAuth
+
+with Sandbox.run(auth=WandbAuth(entity="my-team")) as sb:
+    ...
+```
+
+The entity is resolved in this order: `WandbAuth(entity=...)`, the active
+`wandb.run`, then W&B settings such as `WANDB_ENTITY`. `AuthStrategy.WANDB`
+is the same as `WandbAuth()`.
+
 W&B authentication is sent in the `x-wandb-api-key` header; it is not treated
 as a CoreWeave Bearer token.
 
