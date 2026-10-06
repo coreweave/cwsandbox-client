@@ -27,6 +27,7 @@ _DIRECT_AUTO_TIMEOUT_SECONDS = 1.0
 _DIRECT_CONNECT_TIMEOUT_SECONDS = 10.0
 _DIRECT_CREDENTIAL_RPC_TIMEOUT_SECONDS = 5.0
 _DIRECT_RETRY_COOLDOWN_SECONDS = 30.0
+_DIRECT_UNSUPPORTED_COOLDOWN_MAX_SECONDS = 600.0
 _DIRECT_EXPIRY_SKEW = timedelta(seconds=30)
 _MAX_IDLE_DIRECT_CHANNELS = 64
 
@@ -207,6 +208,10 @@ class DirectDataPlaneClient:
         self._credentials: dict[int, _CredentialBundle] = {}
         self._lock = asyncio.Lock()
         self._retry_at = 0.0
+        # Backoff for new credential requests after the API reports direct
+        # access unsupported. Cached credentials stay usable.
+        self._unsupported_cooldown = 0.0
+        self._unsupported_retry_at = 0.0
 
     async def acquire(
         self,
@@ -285,6 +290,8 @@ class DirectDataPlaneClient:
             credentials = self._credentials.get(permission)
             if credentials is not None and credentials.expires_at > now + _DIRECT_EXPIRY_SKEW:
                 return credentials
+            if not strict and time.monotonic() < self._unsupported_retry_at:
+                raise DirectDataPlaneUnavailable("Direct data-plane access is not supported")
 
             old_cache_key = credentials.cache_key if credentials is not None else None
             private_key = ec.generate_private_key(ec.SECP256R1())
@@ -324,7 +331,7 @@ class DirectDataPlaneClient:
                         metadata=auth_metadata,
                     )
                     if not inspect.isawaitable(pending_response):
-                        self._defer_retry()
+                        self._defer_unsupported()
                         raise DirectDataPlaneUnavailable(
                             "The API does not support direct data-plane connections"
                         )
@@ -341,6 +348,11 @@ class DirectDataPlaneClient:
                         await asyncio.sleep(retry_delay)
                         retry_delay = min(retry_delay * 2, 1.0)
                         continue
+                    if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+                        self._defer_unsupported()
+                        raise DirectDataPlaneUnavailable(
+                            "Direct data-plane access is not supported"
+                        ) from exc
                     self._defer_retry()
                     raise DirectDataPlaneUnavailable(
                         "The direct data-plane endpoint is not currently available"
@@ -352,6 +364,7 @@ class DirectDataPlaneClient:
                 self._defer_retry()
                 raise
             self._credentials[permission] = bundle
+            self._unsupported_cooldown = 0.0
             if old_cache_key is not None and old_cache_key != bundle.cache_key:
                 await _CHANNEL_POOL.discard(old_cache_key)
             return bundle
@@ -361,11 +374,20 @@ class DirectDataPlaneClient:
             credentials = tuple(self._credentials.values())
             self._credentials.clear()
             self._retry_at = 0.0
+            self._unsupported_cooldown = 0.0
+            self._unsupported_retry_at = 0.0
         for bundle in credentials:
             await _CHANNEL_POOL.discard(bundle.cache_key)
 
     def _defer_retry(self) -> None:
         self._retry_at = time.monotonic() + _DIRECT_RETRY_COOLDOWN_SECONDS
+
+    def _defer_unsupported(self) -> None:
+        self._unsupported_cooldown = min(
+            max(self._unsupported_cooldown * 2, _DIRECT_RETRY_COOLDOWN_SECONDS),
+            _DIRECT_UNSUPPORTED_COOLDOWN_MAX_SECONDS,
+        )
+        self._unsupported_retry_at = time.monotonic() + self._unsupported_cooldown
 
 
 def _credential_bundle(

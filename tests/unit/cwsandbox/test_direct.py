@@ -392,6 +392,103 @@ async def test_non_awaitable_connect_rpc_is_treated_as_unavailable() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_unimplemented_connect_backs_off_exponentially() -> None:
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        side_effect=_DirectAioRpcError(grpc.StatusCode.UNIMPLEMENTED)
+    )
+    client = DirectDataPlaneClient()
+    now = 1000.0
+
+    async def attempt(at: float) -> int:
+        nonlocal now
+        now = at
+        with pytest.raises(DirectDataPlaneUnavailable, match="not supported"):
+            await client.acquire(
+                control_stub=control_stub,
+                sandbox_id="sandbox-1",
+                auth_metadata=(),
+                permission=sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
+                request_timeout=5,
+            )
+        return control_stub.ConnectSandbox.await_count
+
+    with patch("cwsandbox._direct.time.monotonic", side_effect=lambda: now):
+        assert await attempt(1000) == 1
+        assert await attempt(1029) == 1  # 30s cooldown
+        assert await attempt(1031) == 2
+        assert await attempt(1090) == 2  # 60s cooldown
+        assert await attempt(1092) == 3
+        for _ in range(10):
+            await attempt(now + 10_000)
+        assert await attempt(now + 599) == 13  # capped at 600s
+        assert await attempt(now + 2) == 14
+
+
+@pytest.mark.asyncio
+async def test_unimplemented_connect_keeps_cached_credentials_and_resets_on_success() -> None:
+    stream_exec = sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC
+    read_file = sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        side_effect=[
+            _connection_response(stream_exec),
+            _DirectAioRpcError(grpc.StatusCode.UNIMPLEMENTED),
+            _connection_response(read_file),
+        ]
+    )
+    lease = MagicMock()
+    client = DirectDataPlaneClient()
+    now = 1000.0
+
+    async def acquire(permission: int) -> MagicMock:
+        return await client.acquire(
+            control_stub=control_stub,
+            sandbox_id="sandbox-1",
+            auth_metadata=(),
+            permission=permission,
+            request_timeout=5,
+        )
+
+    with (
+        patch("cwsandbox._direct.time.monotonic", side_effect=lambda: now),
+        patch("cwsandbox._direct.grpc.ssl_channel_credentials", return_value=MagicMock()),
+        patch("cwsandbox._direct._CHANNEL_POOL.acquire", AsyncMock(return_value=lease)),
+    ):
+        assert await acquire(stream_exec) is lease
+        with pytest.raises(DirectDataPlaneUnavailable, match="not supported"):
+            await acquire(read_file)
+        assert await acquire(stream_exec) is lease
+        now += 31
+        assert await acquire(read_file) is lease
+
+    assert control_stub.ConnectSandbox.await_count == 3
+    assert client._unsupported_cooldown == 0
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_still_requests_after_unimplemented() -> None:
+    control_stub = MagicMock()
+    control_stub.ConnectSandbox = AsyncMock(
+        side_effect=_DirectAioRpcError(grpc.StatusCode.UNIMPLEMENTED)
+    )
+    client = DirectDataPlaneClient()
+
+    for strict in (False, True):
+        with pytest.raises(DirectDataPlaneUnavailable):
+            await client.acquire(
+                control_stub=control_stub,
+                sandbox_id="sandbox-1",
+                auth_metadata=(),
+                permission=sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC,
+                request_timeout=5,
+                strict=strict,
+            )
+
+    assert control_stub.ConnectSandbox.await_count == 2
+
+
 def _running_sandbox(mode: DataPlaneMode) -> Sandbox:
     sandbox = Sandbox(data_plane_mode=mode)
     sandbox._sandbox_id = "sandbox-1"
