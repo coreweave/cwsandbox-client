@@ -351,6 +351,7 @@ class Session:
         resources: ResourceOptions | dict[str, Any] | None = None,
         mounted_files: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        network_config_id: str | None = None,
         services: list[Service] | tuple[Service, ...] | None = None,
         volumes: (
             list[ScratchVolumeOptions | RegisteredVolumeOptions | dict[str, Any]]
@@ -403,6 +404,8 @@ class Session:
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
             network: ``NetworkOptions`` (or dict) with deny flags and optional
                 create-time hostname grants. Port exposure uses ``services=``.
+            network_config_id: Bind an existing unbound ``NetworkConfig``
+                instead of ``network`` (mutually exclusive).
             file_system_snapshot: Convenience single-mount FSS options
                 (``FileSystemSnapshotOptions`` or dict). Prefer ``volumes=`` for
                 multi-volume setups.
@@ -484,6 +487,7 @@ class Session:
             resources=resources,
             mounted_files=mounted_files,
             network=network,
+            network_config_id=network_config_id,
             services=services,
             volumes=volumes,
             file_system_snapshot=file_system_snapshot,

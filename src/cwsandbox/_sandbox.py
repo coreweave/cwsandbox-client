@@ -132,6 +132,7 @@ from cwsandbox._network import (
     parse_grpc_target,
     translate_grpc_error,
 )
+from cwsandbox._network_config import NetworkConfig, _update_network_config_async
 from cwsandbox._proto import (
     sandbox_pb2,
     sandbox_pb2_grpc,
@@ -2083,6 +2084,7 @@ class Sandbox:
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        network_config_id: str | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         placement_mode: PlacementMode | str | None = None,
@@ -2146,7 +2148,12 @@ class Sandbox:
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
             network: ``NetworkOptions`` (or dict) with deny flags and optional
                 create-time hostname grants (``egress=[EgressRule(dns_name=...)]``).
-                Port exposure uses ``services=``.
+                Port exposure uses ``services=``. The backend stores it as a
+                platform-managed NetworkConfig that ``update_network()`` edits.
+            network_config_id: Bind an existing unbound ``NetworkConfig`` instead
+                of sending ``network``. Mutually exclusive with ``network``;
+                ``SandboxDefaults.network`` is not applied. Templates accept it
+                as an override; ``run_from_file`` and ``@session.function`` do not.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict`` (no create retry). Non-strict modes retry CreateSandbox
@@ -2190,6 +2197,17 @@ class Sandbox:
                 raise TypeError(
                     f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
                 )
+
+        if network_config_id is not None:
+            if not isinstance(network_config_id, str) or not network_config_id:
+                raise ValueError("network_config_id must be a non-empty string")
+            if network is not None:
+                raise ValueError(
+                    "network and network_config_id are mutually exclusive; "
+                    "set the rules on the NetworkConfig instead"
+                )
+            if _from_file is not None:
+                raise TypeError("network_config_id cannot be combined with run_from_file")
 
         self._defaults = defaults or SandboxDefaults()
         self._session = _session
@@ -2340,6 +2358,8 @@ class Sandbox:
         self._effective_egress: tuple[EgressRule, ...] = ()
         self._effective_ingress: tuple[IngressRule, ...] = ()
         self._effective_dns_egress: DNSEgressMode | None = None
+        self._requested_network_config_id: str | None = network_config_id
+        self._network_config_id: str | None = network_config_id
         self._scratch_volume_names: tuple[str, ...] = ()
         self._service_urls: tuple[tuple[int, str, str], ...] = ()
         self._service_endpoints: tuple[HttpsEndpointStatus, ...] = ()
@@ -2376,7 +2396,9 @@ class Sandbox:
             raise TypeError("ports was removed in cwsandbox 1.x")
         # Use explicit network or fall back to defaults
         effective_network = (
-            network if network is not None or from_template else self._defaults.network
+            network
+            if network is not None or from_template or network_config_id is not None
+            else self._defaults.network
         )
         if effective_network is not None:
             self._start_kwargs["network"] = effective_network
@@ -2573,6 +2595,7 @@ class Sandbox:
         s3_mount: dict[str, Any] | None = None,
         ports: list[dict[str, Any]] | None = None,
         network: NetworkOptions | dict[str, Any] | None = None,
+        network_config_id: str | None = None,
         file_system_snapshot: FileSystemSnapshotOptions | dict[str, Any] | None = None,
         max_timeout_seconds: int | None = None,
         placement_mode: PlacementMode | str | None = None,
@@ -2638,7 +2661,12 @@ class Sandbox:
             ports: Removed in 1.x; use ``services=[Service(...)]`` instead.
             network: ``NetworkOptions`` (or dict) with deny flags and optional
                 create-time hostname grants (``egress=[EgressRule(dns_name=...)]``).
-                Port exposure uses ``services=``.
+                Port exposure uses ``services=``. The backend stores it as a
+                platform-managed NetworkConfig that ``update_network()`` edits.
+            network_config_id: Bind an existing unbound ``NetworkConfig`` instead
+                of sending ``network``. Mutually exclusive with ``network``;
+                ``SandboxDefaults.network`` is not applied. Templates accept it
+                as an override; ``run_from_file`` and ``@session.function`` do not.
             placement_mode: ``PlacementMode`` or string (``serverless`` / ``cks``).
             placement_spillover: ``PlacementSpillover`` or string. Default
                 ``strict``. See ``Sandbox.__init__``.
@@ -2723,6 +2751,7 @@ class Sandbox:
             s3_mount=s3_mount,
             ports=ports,
             network=network,
+            network_config_id=network_config_id,
             file_system_snapshot=file_system_snapshot,
             max_timeout_seconds=max_timeout_seconds,
             placement_mode=placement_mode,
@@ -3055,6 +3084,8 @@ class Sandbox:
         sandbox._effective_egress = ()
         sandbox._effective_ingress = ()
         sandbox._effective_dns_egress = None
+        sandbox._requested_network_config_id = None
+        sandbox._network_config_id = None
         sandbox._scratch_volume_names = (
             tuple(
                 volume.name
@@ -4362,7 +4393,7 @@ class Sandbox:
 
     @property
     def dns_egress_names(self) -> tuple[str, ...]:
-        """Hostnames granted at create, echoed from ``status.effective_egress``.
+        """Hostnames granted to the sandbox, echoed from ``status.effective_egress``.
 
         Empty until a create/Get/list response reports name rules, or when
         none were requested. Terminal sandboxes keep the last echoed names.
@@ -4406,6 +4437,17 @@ class Sandbox:
         None until a create/Get/list response reports a mode.
         """
         return self._effective_dns_egress
+
+    @property
+    def network_config_id(self) -> str | None:
+        """ID of the NetworkConfig bound to this sandbox.
+
+        Echoed from create/Get/list. A sandbox created without
+        ``network_config_id`` gets a platform-managed config (``nc-`` prefix)
+        that is deleted when the sandbox ends. None until a response reports
+        one, and for sandboxes created before NetworkConfig existed.
+        """
+        return self._network_config_id
 
     @property
     def exposed_ports(self) -> tuple[tuple[int, str], ...] | None:
@@ -5739,6 +5781,8 @@ class Sandbox:
             spec.annotations.update(self._annotations)
         if network_proto is not None:
             spec.network.CopyFrom(network_proto)
+        if self._requested_network_config_id:
+            spec.network_config_id = self._requested_network_config_id
         if self._runtime_class:
             spec.runtime_class = self._runtime_class
         if self._object_storage_access is not None:
@@ -5841,6 +5885,8 @@ class Sandbox:
             overrides.mode = spec.mode
         if "network" in explicit_keys and spec.HasField("network"):
             overrides.network.CopyFrom(spec.network)
+        if self._requested_network_config_id:
+            overrides.network_config_id = self._requested_network_config_id
         if self._runtime_class:
             overrides.runtime_class = self._runtime_class
         if self._object_storage_access is not None:
@@ -6038,6 +6084,8 @@ class Sandbox:
             except ValueError:
                 continue
         self._effective_ingress = tuple(ingress_rules)
+        if view._sandbox.spec.network_config_id:
+            self._network_config_id = view._sandbox.spec.network_config_id
         dns_mode = dns_egress_from_proto(status.effective_dns_egress)
         self._effective_dns_egress = None if dns_mode == DNSEgressMode.UNSPECIFIED else dns_mode
         if status.services:
@@ -7345,6 +7393,96 @@ class Sandbox:
                 request_id=request_id,
                 retry_budget_seconds=retry_budget_seconds,
             )
+        )
+        return OperationRef(future)
+
+    async def _update_network_async(
+        self,
+        network: NetworkOptions | Mapping[str, Any],
+        *,
+        update_mask: Sequence[str] | None,
+        etag: str | None,
+    ) -> NetworkConfig:
+        """Internal async: update the bound NetworkConfig, then refresh status."""
+        await self._ensure_started_async()
+        await self._wait_until_running_async()
+        if self._network_config_id is None:
+            await self._get_status_async()
+        if self._network_config_id is None:
+            raise SandboxError(
+                f"Sandbox {self._sandbox_id} has no NetworkConfig, so its network "
+                "cannot be changed live (the backend did not report one)"
+            )
+        config = await _update_network_config_async(
+            self._network_config_id,
+            network,
+            update_mask=update_mask,
+            etag=etag,
+            base_url=self._base_url,
+            timeout_seconds=self._request_timeout_seconds,
+            auth=self._auth,
+        )
+        # The update already succeeded; a failed echo refresh must not hide
+        # that. effective_* catches up on the next get_status().
+        try:
+            await self._get_status_async()
+        except CWSandboxError as exc:
+            logger.debug("Status refresh after network update failed: %s", exc)
+        return config
+
+    def update_network(
+        self,
+        network: NetworkOptions | Mapping[str, Any],
+        *,
+        update_mask: Sequence[str] | None = None,
+        etag: str | None = None,
+    ) -> OperationRef[NetworkConfig]:
+        """Change this sandbox's network policy while it runs.
+
+        Updates the sandbox's bound ``NetworkConfig`` and returns once the
+        runner has applied it. Starts the sandbox first if needed and waits
+        for RUNNING. Then refreshes ``effective_egress`` / ``effective_ingress``
+        / ``effective_dns_egress`` / ``dns_egress_names`` from the backend.
+
+        Only the fields in the update mask change. By default that is every
+        field set (not None) on ``network``: ``NetworkOptions(egress=[])``
+        clears egress to the policy default and leaves ingress alone. Leave
+        ``dns_egress`` as None to keep the current DNS mode.
+
+        Args:
+            network: Fields to write (``NetworkOptions`` or dict).
+            update_mask: Explicit paths (``"egress"``, ``"ingress"``,
+                ``"deny_egress"``, ``"deny_ingress"``, ``"dns_egress"``, or
+                ``"*"`` for all five). ``[]`` is a no-op.
+            etag: Reject the update if the config changed since this etag was
+                read (``NetworkConfigEtagMismatchError``). Get it from
+                ``NetworkConfig.get(sb.network_config_id)``.
+
+        Returns:
+            OperationRef[NetworkConfig]: the stored document after the update.
+
+        Raises:
+            NetworkConfigError: Update rejected (see subclasses).
+            DNSEgressUnavailableError: A new hostname cannot be served yet;
+                retried within the transient budget first.
+            SandboxError: ``CWSANDBOX_INVALID_REQUEST`` when the change is
+                outside the runner policy, adds the first hostname to a sandbox
+                that cannot add one live, or the runner cannot update networks
+                live (``SandboxValidationError`` when the backend names fields).
+                The stored config is left unchanged.
+
+        Examples:
+            ```python
+            with Sandbox.run() as sb:
+                sb.update_network(
+                    NetworkOptions(egress=[EgressRule(dns_name="pypi.org")])
+                ).result()
+                sb.exec(["pip", "install", "requests"]).result()
+                sb.update_network(NetworkOptions(egress=[])).result()
+            ```
+        """
+        future = self._loop_manager.run_async(
+            self._update_network_async(network, update_mask=update_mask, etag=etag)
         )
         return OperationRef(future)
 

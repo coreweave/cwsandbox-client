@@ -142,6 +142,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 | `test_exceptions.py` | Exception hierarchy, custom attributes |
 | `test_file_system_snapshot.py` | FSS types, error mapping, start/stop wiring, snapshot/fork/management methods |
 | `test_network_config.py` | NetworkConfig CRUD, update-mask derivation, etag, error mapping |
+| `test_sandbox_network_config.py` | `network_config_id` on create/template/session, echo, `update_network()` |
 | `test_function.py` | RemoteFunction class, decorator, .remote(), .map(), .local() |
 | `test_loop_manager.py` | _LoopManager singleton, run_sync, run_async |
 | `test_sandbox.py` | Sandbox class, status handling, exec, file ops |
@@ -156,6 +157,7 @@ Any test path that may create a sandbox - directly via `Sandbox.run()`, indirect
 |------|----------|
 | `test_sandbox.py` | Sandbox lifecycle, file ops, exec, working_dir, scratch volume, runtime_class, TLS passthrough, HTTPS share-token. Uses `require_auth`; TLS and share-token skip when no runner advertises them. |
 | `test_dns_egress.py` | DNS-name HTTPS egress. Uses `require_auth`; skips when no runner admits names. |
+| `test_network_config.py` | NetworkConfig CRUD, precreate bind / IN_USE, live `update_network()` hostname add/remove. Uses `require_auth`; skips when the backend does not serve NetworkConfig or cannot grant names live. |
 | `test_session.py` | Session management, function execution. Uses `require_auth`. |
 | `test_file_system_snapshot.py` | FSS snapshot/fork/restore/management. Uses `require_auth`; skips gracefully on `SnapshotNotSupportedError` when the org is not FSS-enabled. |
 | `test_wandb.py` | W&B metrics logging. Uses `require_auth`; live checks also need `WANDB_API_KEY`. |
