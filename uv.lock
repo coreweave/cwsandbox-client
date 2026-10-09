@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11, <4"
 resolution-markers = [
     "sys_platform == 'linux'",
@@ -407,7 +407,7 @@ wheels = [
 
 [[package]]
 name = "cwsandbox"
-version = "1.18.0"
+version = "1.19.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

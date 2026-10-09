@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.19.0 (2026-10-09)
+
+### Features
+
+- **cli**: Add --auth option for W&B authentication
+  ([`8530fb0`](https://github.com/coreweave/cwsandbox-client/commit/8530fb00443e4e40fe3f9dd7422b3a15dd6f352f))
+
+Add a global --auth option (env: CWSANDBOX_AUTH) to the cwsandbox CLI that selects coreweave_api_key
+  or wandb for the whole CLI process. The W&B entity and project come from WANDB_ENTITY and
+  WANDB_PROJECT via W&B settings, so no per-command flags are needed. Omitting --auth keeps the
+  existing behavior.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.18.0 (2026-10-01)
 
 ### Documentation
