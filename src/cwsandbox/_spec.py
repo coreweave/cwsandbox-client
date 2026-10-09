@@ -70,6 +70,25 @@ def security_context_to_proto(ctx: SecurityContext) -> sandbox_pb2.SecurityConte
     return proto
 
 
+def security_context_from_proto(proto: sandbox_pb2.SecurityContext) -> SecurityContext:
+    return SecurityContext(
+        run_as_user=proto.run_as_user if proto.HasField("run_as_user") else None,
+        run_as_group=proto.run_as_group if proto.HasField("run_as_group") else None,
+        privileged=proto.privileged if proto.HasField("privileged") else None,
+        allow_privilege_escalation=(
+            proto.allow_privilege_escalation
+            if proto.HasField("allow_privilege_escalation")
+            else None
+        ),
+        read_only_root_filesystem=(
+            proto.read_only_root_filesystem if proto.HasField("read_only_root_filesystem") else None
+        ),
+        capabilities_add=tuple(proto.capabilities_add) or None,
+        capabilities_drop=tuple(proto.capabilities_drop) or None,
+        seccomp_profile=proto.seccomp_profile or None,
+    )
+
+
 def volume_mount_to_proto(
     volume: str,
     mount_path: str,

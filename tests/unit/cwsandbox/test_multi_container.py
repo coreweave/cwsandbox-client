@@ -21,6 +21,7 @@ from cwsandbox import (
     SandboxDefaults,
     ScratchVolumeOptions,
     Secret,
+    SecurityContext,
     VolumeMount,
 )
 from cwsandbox._proto import sandbox_pb2
@@ -106,6 +107,25 @@ class TestContainerValidation:
             volume_mounts=[{"volume": "workspace", "mount_path": "/workspace"}],
         )
         assert row.volume_mounts == (VolumeMount(volume="workspace", mount_path="/workspace"),)
+
+    def test_security_context_dict_coercion(self) -> None:
+        row = Container(image="python:3.11", security_context={"privileged": True})
+        assert row.security_context == SecurityContext(privileged=True)
+
+    def test_security_context_rejects_bad_type(self) -> None:
+        with pytest.raises(TypeError, match="security_context must be"):
+            Container(image="python:3.11", security_context="privileged")  # type: ignore[arg-type]
+
+    def test_security_context_validates_fields(self) -> None:
+        with pytest.raises(TypeError, match="SecurityContext.privileged"):
+            Container(image="python:3.11", security_context={"privileged": "yes"})
+
+    def test_from_dict_coerces_container_security_context(self) -> None:
+        defaults = SandboxDefaults.from_dict(
+            {"containers": [{"image": "busybox", "security_context": {"run_as_user": 1000}}]}
+        )
+        assert defaults.containers is not None
+        assert defaults.containers[0].security_context == SecurityContext(run_as_user=1000)
 
     def test_string_args_are_rejected(self) -> None:
         with pytest.raises(TypeError, match="Container.args"):
@@ -220,6 +240,13 @@ class TestContainerValidation:
                 container_image="python:3.12",
             )
 
+    def test_top_level_security_context_conflicts_with_containers(self) -> None:
+        with pytest.raises(TypeError, match=r"security_context.*set them on each Container"):
+            Sandbox(
+                containers=[Container(image="python:3.11")],
+                security_context={"privileged": True},
+            )
+
     def test_defaults_containers_conflict_with_container_image(self) -> None:
         defaults = SandboxDefaults(
             containers=[
@@ -284,6 +311,33 @@ class TestCreateRequest:
         assert spec.volumes[0].name == "workspace"
         assert [fd.name for fd, _ in spec.ListFields() if fd.name == "primary_container"] == []
 
+    def test_security_context_maps_to_its_own_row(self) -> None:
+        _, stub = _run(
+            containers=[
+                Container(
+                    image="debian:trixie",
+                    name="main",
+                    primary=True,
+                    resources=_cpu(),
+                    security_context={"privileged": True, "capabilities_add": ["SYS_ADMIN"]},
+                ),
+                Container(image="debian:trixie", name="side", resources=_cpu()),
+                Container(
+                    image="debian:trixie",
+                    name="nobody",
+                    resources=_cpu(),
+                    security_context=SecurityContext(run_as_user=65534, privileged=False),
+                ),
+            ]
+        )
+        main, side, nobody = stub.CreateSandbox.call_args.args[0].sandbox.spec.containers
+        assert main.security_context.privileged is True
+        assert list(main.security_context.capabilities_add) == ["SYS_ADMIN"]
+        assert not side.HasField("security_context")
+        assert nobody.security_context.run_as_user == 65534
+        assert nobody.security_context.HasField("privileged")
+        assert nobody.security_context.privileged is False
+
     def test_declare_only_volume_does_not_mount(self) -> None:
         _, stub = _run(volumes=[ScratchVolumeOptions(name="cache")])
         spec = stub.CreateSandbox.call_args.args[0].sandbox.spec
@@ -323,7 +377,13 @@ class TestCreateRequest:
         sandbox, stub = TestSandboxRun._run_with_mock_stub(
             template_id="template-123",
             containers=[
-                Container(image="python:3.11", name="main", primary=True, resources=_cpu()),
+                Container(
+                    image="python:3.11",
+                    name="main",
+                    primary=True,
+                    resources=_cpu(),
+                    security_context={"privileged": True},
+                ),
                 Container(image="redis:7", name="cache", resources=_cpu()),
             ],
         )
@@ -332,6 +392,8 @@ class TestCreateRequest:
         assert [row.name for row in request.overrides.containers] == ["main", "cache"]
         assert request.overrides.containers[0].primary is True
         assert request.overrides.containers[0].image == "python:3.11"
+        assert request.overrides.containers[0].security_context.privileged is True
+        assert not request.overrides.containers[1].HasField("security_context")
 
 
 class TestContainerTarget:
@@ -549,6 +611,41 @@ class TestStatusEcho:
         assert sandbox.containers[0].working_dir == "/"
         assert sandbox.containers[0].primary is True
         assert sandbox.containers[1].primary is False
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
+
+    def test_echoes_per_container_security_context(self) -> None:
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            spec=sandbox_pb2.SandboxSpec(
+                containers=[
+                    sandbox_pb2.Container(
+                        name="main",
+                        image="debian:trixie",
+                        primary=True,
+                        security_context=sandbox_pb2.SecurityContext(
+                            privileged=True,
+                            run_as_user=0,
+                            capabilities_drop=["NET_RAW"],
+                            seccomp_profile="Unconfined",
+                        ),
+                    ),
+                    sandbox_pb2.Container(name="side", image="debian:trixie"),
+                ]
+            ),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox = Sandbox._from_sandbox_info(
+            _SandboxView(proto),
+            base_url="https://api.cwsandbox.com",
+            timeout_seconds=30.0,
+        )
+        assert sandbox.containers[0].security_context == SecurityContext(
+            privileged=True,
+            run_as_user=0,
+            capabilities_drop=("NET_RAW",),
+            seccomp_profile="Unconfined",
+        )
+        assert sandbox.containers[1].security_context is None
         sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
 
     def test_preserves_explicit_primary_on_helper(self) -> None:
