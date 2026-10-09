@@ -138,6 +138,7 @@ from cwsandbox._spec import (
     network_to_proto,
     object_storage_to_proto,
     scratch_volume_to_proto,
+    security_context_from_proto,
     security_context_to_proto,
     volume_mount_to_proto,
     volumes_to_proto,
@@ -184,6 +185,7 @@ from cwsandbox._types import (
     VolumeMount,
     _coerce_container,
     _coerce_object_storage_access,
+    _coerce_security_context,
     _coerce_volume_mount,
     _unique_secrets_by_env_var,
     _validate_containers,
@@ -600,7 +602,10 @@ def _validate_container_compute(containers: Sequence[Container]) -> None:
 
 def _containers_conflict_message(conflicts: Sequence[str]) -> str:
     listed = ", ".join(conflicts)
-    return f"containers= is mutually exclusive with single-container kwargs ({listed})"
+    return (
+        f"containers= is mutually exclusive with single-container kwargs ({listed}); "
+        "set them on each Container instead"
+    )
 
 
 async def _create_snapshot_via_stub(
@@ -1962,7 +1967,9 @@ class Sandbox:
             volumes: Scratch or registered volumes (``ScratchVolumeOptions``,
                 ``RegisteredVolumeOptions``, or a ``volume_id`` dict).
             runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
-            security_context: In-guest privilege for the primary container.
+            security_context: In-guest privilege for the single-container
+                path. With ``containers=``, set ``Container.security_context``
+                per row instead.
             working_dir: Working directory for the primary container command.
             object_storage_access: Temporary object-storage credentials.
             file_system_snapshot: Convenience single-mount FSS options
@@ -1985,7 +1992,8 @@ class Sandbox:
                 ``environment_variables``, ``security_context``, and
                 ``working_dir``. This list replaces those single-container
                 fields, including the same names on ``SandboxDefaults``.
-                Put secrets, env, and working_dir on each ``Container``.
+                Put secrets, env, security_context, and working_dir on
+                each ``Container``.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -2431,7 +2439,9 @@ class Sandbox:
             volumes: Scratch or registered volumes (``ScratchVolumeOptions``,
                 ``RegisteredVolumeOptions``, or a ``volume_id`` dict).
             runtime_class: Optional runtime-class pin (e.g. ``"gvisor"``).
-            security_context: In-guest privilege for the primary container.
+            security_context: In-guest privilege for the single-container
+                path. With ``containers=``, set ``Container.security_context``
+                per row instead.
             working_dir: Working directory for the primary container command.
             object_storage_access: Temporary object-storage credentials.
             file_system_snapshot: Convenience single-mount FSS options
@@ -2455,7 +2465,7 @@ class Sandbox:
                 ``security_context``, and ``working_dir``. This list
                 replaces those single-container fields, including the
                 same names on ``SandboxDefaults``. Put secrets, env,
-                and working_dir on each ``Container``.
+                security_context, and working_dir on each ``Container``.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -5004,6 +5014,9 @@ class Sandbox:
             container.environment_variables.update(row.environment_variables)
         if row.working_dir:
             container.working_dir = row.working_dir
+        security_context = _coerce_security_context(row.security_context)
+        if security_context is not None:
+            container.security_context.CopyFrom(security_context_to_proto(security_context))
         if row.primary:
             container.primary = True
         self._apply_resource_options(container, row.resources)
@@ -5599,6 +5612,11 @@ class Sandbox:
             volume_mounts=mounts or None,
             secrets=secrets or None,
             working_dir=proto.working_dir or None,
+            security_context=(
+                security_context_from_proto(proto.security_context)
+                if proto.HasField("security_context")
+                else None
+            ),
             image_pull_credentials=ipc,
             primary=proto.HasField("primary") and proto.primary,
         )
