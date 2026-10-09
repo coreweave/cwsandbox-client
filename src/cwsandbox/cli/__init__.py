@@ -23,6 +23,7 @@ except ModuleNotFoundError as e:
         ) from e
     raise
 
+from cwsandbox._auth import AuthStrategy, resolve_auth, set_auth_mode
 from cwsandbox.cli.delete import delete_sandbox
 from cwsandbox.cli.exec import exec_command
 from cwsandbox.cli.files import files
@@ -51,8 +52,25 @@ class _CWSandboxCLI(click.Group):
 
 @click.group(cls=_CWSandboxCLI)
 @click.version_option(package_name="cwsandbox")
-def cli() -> None:
+@click.option(
+    "--auth",
+    "auth_strategy",
+    type=click.Choice([strategy.value for strategy in AuthStrategy], case_sensitive=False),
+    envvar="CWSANDBOX_AUTH",
+    default=None,
+    help=(
+        "Authentication strategy [env: CWSANDBOX_AUTH]. Defaults to "
+        "coreweave_api_key (CWSANDBOX_API_KEY). wandb uses your W&B credentials "
+        "from WANDB_API_KEY or `wandb login`; set the entity and project with "
+        "WANDB_ENTITY and WANDB_PROJECT."
+    ),
+)
+def cli(auth_strategy: str | None) -> None:
     """CWSandbox CLI."""
+    if auth_strategy is None:
+        return
+    strategy = AuthStrategy(auth_strategy.lower())
+    set_auth_mode(strategy.value, lambda: resolve_auth(strategy))
 
 
 cli.add_command(list_sandboxes, "ls")

@@ -372,7 +372,7 @@ with Sandbox.run(
 2. `AuthStrategy.WANDB` explicitly delegates credential discovery to the optional W&B SDK (session, `WANDB_API_KEY`, or host-scoped `.netrc`) and sends `x-wandb-api-key`. `WandbAuth(entity=..., project=...)` is the parameterized form; entity precedence is explicit arg, active `wandb.run`, then W&B settings, else the server uses the viewer default entity.
 3. `AuthHeaders` and `AuthProvider` support explicit custom per-instance auth.
 
-The legacy process-global `set_auth_mode()` hook remains for compatibility. New integrations should pass `auth=` and must not send a W&B API key as a CoreWeave Bearer token.
+The legacy process-global `set_auth_mode()` hook remains for compatibility. The CLI's global `--auth` option (`CWSANDBOX_AUTH`) uses it to select a strategy for the whole CLI process; W&B entity/project come from `WANDB_ENTITY` / `WANDB_PROJECT`. New integrations should pass `auth=` and must not send a W&B API key as a CoreWeave Bearer token.
 
 ### Function Execution (`_function.py`)
 

@@ -50,6 +50,15 @@ cwsandbox logs "$SANDBOX_ID" --tail 100 --timestamps
 cwsandbox stop "$SANDBOX_ID"
 ```
 
+To authenticate with W&B instead, install `cwsandbox[cli,wandb]` and pass
+`--auth wandb` (or set `CWSANDBOX_AUTH=wandb`). Credentials come from
+`WANDB_API_KEY` or `wandb login`; choose the entity and project with
+`WANDB_ENTITY` and `WANDB_PROJECT`:
+
+```bash
+WANDB_ENTITY=my-team cwsandbox --auth wandb ls
+```
+
 The CLI operates on sandboxes created with the Python SDK or another client. Run
 `cwsandbox --help` or `cwsandbox <command> --help` for all commands and options.
 
