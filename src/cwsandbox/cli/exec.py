@@ -11,7 +11,7 @@ import threading
 
 import click
 
-from cwsandbox import Sandbox
+from cwsandbox import DataPlaneMode, Sandbox
 
 
 @click.command(context_settings={"ignore_unknown_options": True})
@@ -36,12 +36,20 @@ from cwsandbox import Sandbox
     default=None,
     help="Container name. Omit to target the primary.",
 )
+@click.option(
+    "--data-plane-mode",
+    type=click.Choice([mode.value for mode in DataPlaneMode], case_sensitive=False),
+    default=DataPlaneMode.AUTO.value,
+    show_default=True,
+    help="Data connection: auto falls back to the gateway; direct requires direct access.",
+)
 def exec_command(
     sandbox_id: str,
     command: tuple[str, ...],
     cwd: str | None,
     timeout_seconds: float | None,
     container: str | None,
+    data_plane_mode: str,
 ) -> None:
     """Execute a command in a sandbox.
 
@@ -55,7 +63,7 @@ def exec_command(
 
         cwsandbox exec <sandbox-id> --cwd /app python script.py
     """
-    sandbox = Sandbox.from_id(sandbox_id).result()
+    sandbox = Sandbox.from_id(sandbox_id, data_plane_mode=data_plane_mode).result()
 
     try:
         process = sandbox.exec(

@@ -18,7 +18,7 @@ from types import FrameType
 
 import click
 
-from cwsandbox import Sandbox
+from cwsandbox import DataPlaneMode, Sandbox
 from cwsandbox.exceptions import CWSandboxError
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,14 @@ def _validate_cmd(ctx: click.Context, param: click.Parameter, value: str) -> str
     default=None,
     help="Container name. Omit to target the primary.",
 )
-def shell(sandbox_id: str, cmd: str, container: str | None) -> None:
+@click.option(
+    "--data-plane-mode",
+    type=click.Choice([mode.value for mode in DataPlaneMode], case_sensitive=False),
+    default=DataPlaneMode.AUTO.value,
+    show_default=True,
+    help="Data connection: auto falls back to the gateway; direct requires direct access.",
+)
+def shell(sandbox_id: str, cmd: str, container: str | None, data_plane_mode: str) -> None:
     """Open an interactive shell in a sandbox.
 
     SANDBOX_ID is the ID of the sandbox to connect to.
@@ -76,7 +83,7 @@ def shell(sandbox_id: str, cmd: str, container: str | None) -> None:
     import termios
     import tty
 
-    sandbox = Sandbox.from_id(sandbox_id).result()
+    sandbox = Sandbox.from_id(sandbox_id, data_plane_mode=data_plane_mode).result()
 
     # Pass initial size so remote PTY matches local terminal
     size = shutil.get_terminal_size()

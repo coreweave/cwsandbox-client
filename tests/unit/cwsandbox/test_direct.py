@@ -26,7 +26,7 @@ from cwsandbox._direct import (
 from cwsandbox._proto import sandbox_pb2
 from cwsandbox._sandbox import Sandbox
 from cwsandbox._types import DataPlaneMode
-from cwsandbox.exceptions import SandboxUnavailableError
+from cwsandbox.exceptions import CWSandboxError, SandboxUnavailableError
 
 
 class _FakeChannel:
@@ -400,6 +400,60 @@ def _running_sandbox(mode: DataPlaneMode) -> Sandbox:
     return sandbox
 
 
+@pytest.mark.parametrize("mode", [DataPlaneMode.AUTO, DataPlaneMode.DIRECT])
+@pytest.mark.parametrize(
+    ("permission", "streaming"),
+    [
+        (sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_EXEC, True),
+        (sandbox_pb2.SANDBOX_DATA_PERMISSION_STREAM_LOGS, True),
+        (sandbox_pb2.SANDBOX_DATA_PERMISSION_READ_FILE, False),
+        (sandbox_pb2.SANDBOX_DATA_PERMISSION_WRITE_FILE, False),
+    ],
+)
+@pytest.mark.parametrize(
+    "code",
+    [
+        grpc.StatusCode.INTERNAL,
+        grpc.StatusCode.UNAUTHENTICATED,
+        grpc.StatusCode.PERMISSION_DENIED,
+        grpc.StatusCode.NOT_FOUND,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ],
+)
+@pytest.mark.asyncio
+async def test_connect_error_fallback_is_limited_to_auto_internal(
+    mode: DataPlaneMode, code: grpc.StatusCode, permission: int, streaming: bool
+) -> None:
+    sandbox = _running_sandbox(mode)
+    connect = AsyncMock(side_effect=_DirectAioRpcError(code, details="connect failed"))
+    sandbox._stub.ConnectSandbox = connect
+    gateway_stub = MagicMock()
+    gateway_channel = AsyncMock()
+
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        patch.object(sandbox, "_get_or_create_streaming_channel", gateway_channel),
+        patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=gateway_stub),
+        patch("cwsandbox._direct._CHANNEL_POOL.acquire", AsyncMock()) as direct_channel,
+    ):
+        if mode == DataPlaneMode.AUTO and code == grpc.StatusCode.INTERNAL:
+            for _ in range(2):
+                prepared = await sandbox._prepare_data_plane_call(permission, streaming=streaming)
+                assert prepared.stub is (gateway_stub if streaming else sandbox._stub)
+                assert prepared.metadata == sandbox._auth_metadata
+            assert gateway_channel.await_count == (2 if streaming else 0)
+        else:
+            with pytest.raises(CWSandboxError):
+                await sandbox._prepare_data_plane_call(permission, streaming=streaming)
+            gateway_channel.assert_not_awaited()
+        direct_channel.assert_not_awaited()
+
+    # AUTO reuses its existing cooldown instead of hammering ConnectSandbox.
+    connect.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_auto_mode_falls_back_to_gateway_without_forwarding_direct_credentials() -> None:
     sandbox = _running_sandbox(DataPlaneMode.AUTO)
@@ -630,14 +684,18 @@ async def test_direct_exec_retry_connection_failure_closes_streams() -> None:
     assert await stderr_queue.get() is None
 
 
+@pytest.mark.parametrize("mode", [DataPlaneMode.AUTO, DataPlaneMode.DIRECT])
+@pytest.mark.parametrize("code", [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.INTERNAL])
 @pytest.mark.asyncio
-async def test_direct_exec_does_not_retry_after_first_response() -> None:
-    sandbox = _running_sandbox(DataPlaneMode.DIRECT)
+async def test_direct_exec_does_not_retry_after_first_response(
+    mode: DataPlaneMode, code: grpc.StatusCode
+) -> None:
+    sandbox = _running_sandbox(mode)
     stub = MagicMock()
     stub.StreamExec = MagicMock(
         return_value=_FakeExecCall(
             [sandbox_pb2.ExecStreamResponse(ready=sandbox_pb2.ExecStreamReady())],
-            error=_DirectAioRpcError(grpc.StatusCode.UNAVAILABLE),
+            error=_DirectAioRpcError(code),
         )
     )
     lease = MagicMock(stub=stub)
@@ -651,11 +709,13 @@ async def test_direct_exec_does_not_retry_after_first_response() -> None:
         patch.object(sandbox, "_ensure_started_async", AsyncMock()),
         patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
         patch.object(sandbox, "_ensure_client", AsyncMock()),
-        pytest.raises(SandboxUnavailableError),
+        patch.object(sandbox, "_get_or_create_streaming_channel", AsyncMock()) as gateway_channel,
+        pytest.raises(CWSandboxError),
     ):
         await sandbox._exec_streaming_async(["echo", "ok"], stdout_queue, stderr_queue)
 
     sandbox._direct_data_plane.acquire.assert_awaited_once()
+    gateway_channel.assert_not_awaited()
 
 
 @pytest.mark.asyncio

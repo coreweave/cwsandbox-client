@@ -70,7 +70,9 @@ generates the private key in memory, sends only a certificate signing request,
 and never sends API bearer credentials to the sandbox data endpoint.
 
 The default `auto` policy uses a short direct-connect budget, then falls back to
-the API gateway. You can require either path for validation or rollback:
+the API gateway. It also falls back if direct credential negotiation returns an
+`INTERNAL` error, before sending the data operation. Authentication and permission
+errors remain fatal. You can require either path for validation or rollback:
 
 ```python
 from cwsandbox import DataPlaneMode, Sandbox, SandboxDefaults
@@ -89,6 +91,19 @@ Direct credentials are scoped to the requested operation and created lazily.
 Active streams retain their connection, while a process-wide bounded
 idle-channel cache prevents large collections of inactive sandbox objects from
 retaining one socket per sandbox.
+
+The CLI accepts `--data-plane-mode=auto|direct|gateway` on `exec`, `logs`, `sh`,
+`files read`, and `files write`, with `auto` as the default. Use `gateway` to skip
+direct credential negotiation, or `direct` to require a direct connection:
+
+```bash
+cwsandbox exec --data-plane-mode=gateway "$SANDBOX_ID" -- nvidia-smi
+cwsandbox logs --data-plane-mode=gateway "$SANDBOX_ID" --tail 100
+cwsandbox sh --data-plane-mode=direct "$SANDBOX_ID"
+cwsandbox files read --data-plane-mode=gateway "$SANDBOX_ID" /tmp/output.txt
+```
+
+For `exec`, put CLI options before `--` and the remote command after it.
 
 ## Authentication
 

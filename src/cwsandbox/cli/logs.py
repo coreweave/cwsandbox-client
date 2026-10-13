@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import click
 
-from cwsandbox import Sandbox
+from cwsandbox import DataPlaneMode, Sandbox
 
 
 @click.command()
@@ -38,6 +38,13 @@ from cwsandbox import Sandbox
     default=None,
     help="Container name. Omit to target the primary.",
 )
+@click.option(
+    "--data-plane-mode",
+    type=click.Choice([mode.value for mode in DataPlaneMode], case_sensitive=False),
+    default=DataPlaneMode.AUTO.value,
+    show_default=True,
+    help="Data connection: auto falls back to the gateway; direct requires direct access.",
+)
 def logs(
     sandbox_id: str,
     follow: bool,
@@ -45,6 +52,7 @@ def logs(
     since_time: datetime | None,
     timestamps: bool,
     container: str | None,
+    data_plane_mode: str,
 ) -> None:
     """Stream logs from a sandbox's main process.
 
@@ -68,7 +76,7 @@ def logs(
     if since_time is not None and since_time.tzinfo is None:
         since_time = since_time.replace(tzinfo=UTC)
 
-    sandbox = Sandbox.from_id(sandbox_id).result()
+    sandbox = Sandbox.from_id(sandbox_id, data_plane_mode=data_plane_mode).result()
 
     reader = sandbox.stream_logs(
         follow=follow,

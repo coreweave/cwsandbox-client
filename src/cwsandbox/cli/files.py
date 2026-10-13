@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from cwsandbox import Sandbox
+from cwsandbox import DataPlaneMode, Sandbox
 
 
 @click.group()
@@ -49,12 +49,20 @@ def files() -> None:
     default=None,
     help="Container name. Omit to target the primary.",
 )
+@click.option(
+    "--data-plane-mode",
+    type=click.Choice([mode.value for mode in DataPlaneMode], case_sensitive=False),
+    default=DataPlaneMode.AUTO.value,
+    show_default=True,
+    help="Data connection: auto falls back to the gateway; direct requires direct access.",
+)
 def read_file(
     sandbox_id: str,
     remote_path: str,
     output_path: Path | None,
     timeout_seconds: float | None,
     container: str | None,
+    data_plane_mode: str,
 ) -> None:
     """Read a file from a sandbox.
 
@@ -67,7 +75,7 @@ def read_file(
 
         cwsandbox files read <sandbox-id> /tmp/data.json -o data.json
     """
-    sandbox = Sandbox.from_id(sandbox_id).result()
+    sandbox = Sandbox.from_id(sandbox_id, data_plane_mode=data_plane_mode).result()
     data = sandbox.read_file(
         remote_path,
         timeout_seconds=timeout_seconds,
@@ -105,6 +113,13 @@ def read_file(
     default=None,
     help="Container name. Omit to target the primary.",
 )
+@click.option(
+    "--data-plane-mode",
+    type=click.Choice([mode.value for mode in DataPlaneMode], case_sensitive=False),
+    default=DataPlaneMode.AUTO.value,
+    show_default=True,
+    help="Data connection: auto falls back to the gateway; direct requires direct access.",
+)
 def write_file(
     sandbox_id: str,
     remote_path: str,
@@ -112,6 +127,7 @@ def write_file(
     timeout_seconds: float | None,
     quiet: bool,
     container: str | None,
+    data_plane_mode: str,
 ) -> None:
     """Write a local file into a sandbox.
 
@@ -126,7 +142,7 @@ def write_file(
         cwsandbox files write <sandbox-id> /tmp/config.yaml config.yaml --quiet
     """
     data = local_path.read_bytes()
-    sandbox = Sandbox.from_id(sandbox_id).result()
+    sandbox = Sandbox.from_id(sandbox_id, data_plane_mode=data_plane_mode).result()
     sandbox.write_file(
         remote_path,
         data,
