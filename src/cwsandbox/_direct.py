@@ -331,7 +331,11 @@ class DirectDataPlaneClient:
                     response = await pending_response
                     break
                 except grpc.RpcError as exc:
-                    if exc.code() not in _FALLBACK_CONNECT_CODES:
+                    # Credential negotiation has not sent a data operation yet.
+                    # AUTO can use the gateway on INTERNAL; DIRECT preserves it.
+                    if exc.code() not in _FALLBACK_CONNECT_CODES and not (
+                        not strict and exc.code() == grpc.StatusCode.INTERNAL
+                    ):
                         raise
                     if (
                         strict
