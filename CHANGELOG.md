@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.19.1 (2026-10-13)
+
+### Bug Fixes
+
+- **client**: Fall back on negotiation errors and expose CLI transport
+  ([`afa2d9f`](https://github.com/coreweave/cwsandbox-client/commit/afa2d9f4e68909fa6d5484e728fa527be3ab9acf))
+
+
 ## v1.19.0 (2026-10-09)
 
 ### Features
