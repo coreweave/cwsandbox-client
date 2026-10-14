@@ -89,7 +89,7 @@ Advanced configuration kwargs (for `run()`, `run_from_template()`, `Session.sand
 - `network` - `NetworkOptions` deny flags (`deny_egress` / `deny_ingress`) plus create-time `egress` / `ingress` grants (`EgressRule` / `IngressRule`), or dict
 - `volumes` - Scratch (`ScratchVolumeOptions`) or registered (`RegisteredVolumeOptions`) volumes. `mount_path` is optional on scratch (omit to declare without mounting). A set `mount_path` is a convenience mount on the primary.
 - `runtime_class` - Optional runtime-class pin (e.g. `"gvisor"`), clamped by policy
-- `security_context` - In-guest privilege for the primary container (`SecurityContext` or dict). Mutually exclusive with `containers=`.
+- `security_context` - In-guest privilege for the primary container (`SecurityContext` or dict). Mutually exclusive with `containers=` (set it per row on `Container` instead).
 - `working_dir` - Working directory for the primary container command. Mutually exclusive with `containers=` (set it on `Container` instead).
 - `object_storage_access` - Temporary object-storage credentials (`ObjectStorageAccess` or dict)
 - `file_system_snapshot` - Convenience single-mount FSS via `FileSystemSnapshotOptions` or dict (optional `mount_path`, optional `size`, optional `file_system_snapshot_id`, optional `name` default `"workspace"`). Omit `mount_path` to declare without mounting.
@@ -272,7 +272,7 @@ sandbox = Sandbox.run(
 )
 ```
 
-**`Container`** / **`VolumeMount`** / **`ContainerStatus`**: Multi-container create and echo. Pass `containers=[Container(...), ...]` to `Sandbox.run()` / `session.sandbox()`. Volumes stay sandbox-level; sharing is two containers listing the same volume name in `volume_mounts`. The kwargs path (`Sandbox.run("echo", "hello")`) still sends one container named `"main"` with `primary` unset.
+**`Container`** / **`VolumeMount`** / **`ContainerStatus`**: Multi-container create and echo. Pass `containers=[Container(...), ...]` to `Sandbox.run()` / `session.sandbox()`. Volumes stay sandbox-level; sharing is two containers listing the same volume name in `volume_mounts`. `Container.security_context` applies to that row only; other rows do not inherit it. The kwargs path (`Sandbox.run("echo", "hello")`) still sends one container named `"main"` with `primary` unset.
 
 ```python
 from cwsandbox import Container, ResourceOptions, Sandbox, ScratchVolumeOptions, VolumeMount

@@ -1244,7 +1244,7 @@ class Container:
     ``command``/``args``, ``resources``, ``mounted_files``, ``secrets``,
     ``image_pull_credentials``, ``environment_variables``,
     ``security_context``, ``working_dir``) and does not inherit those
-    same fields from ``SandboxDefaults``.
+    same fields from ``SandboxDefaults``; set them on each row instead.
 
     One container: ``primary`` may be omitted or False (that row is primary).
     More than one: exactly one row must set ``primary=True``, and every row
@@ -1265,6 +1265,9 @@ class Container:
         secrets: Secret-store inject for this container only.
         working_dir: Working directory for the command. Must be absolute
             when set.
+        security_context: In-guest privilege for this container only
+            (``SecurityContext`` or dict). Rows without one get the runner
+            policy default; nothing is inherited from the primary.
         image_pull_credentials: Private-registry pull credentials.
         primary: When True, this container owns sandbox lifecycle and is
             the default exec/logs/files target.
@@ -1280,6 +1283,7 @@ class Container:
     volume_mounts: Sequence[VolumeMount | Mapping[str, Any]] | None = None
     secrets: Sequence[Secret | Mapping[str, Any]] | None = None
     working_dir: str | None = None
+    security_context: SecurityContext | Mapping[str, Any] | None = None
     image_pull_credentials: ImagePullCredentials | Mapping[str, Any] | None = None
     primary: bool = False
     # Status echo only. Create-time name/cwd/image checks do not apply to
@@ -1325,6 +1329,9 @@ class Container:
                     tuple(s if isinstance(s, Secret) else Secret(**s) for s in self.secrets)
                 ),
             )
+        object.__setattr__(
+            self, "security_context", _coerce_security_context(self.security_context)
+        )
         if self.image_pull_credentials is not None and not isinstance(
             self.image_pull_credentials, ImagePullCredentials
         ):
