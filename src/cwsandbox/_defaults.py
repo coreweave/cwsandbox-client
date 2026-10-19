@@ -121,7 +121,7 @@ DEFAULT_POLL_RPC_TIMEOUT_SECONDS: float = 15.0
 # If not set, the backend controls the default lifetime of the sandboxes
 DEFAULT_MAX_LIFETIME_SECONDS: float | None = None
 
-# Buffer to add to client-side timeout for exec and stop requests
+# Buffer to add to client-side timeout for stop and read-budget requests
 DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS: float = 5.0
 
 # Timeout ceiling for the truncation integrity check's `stat` exec. `stat` is
