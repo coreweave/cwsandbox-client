@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.19.2 (2026-10-19)
+
+### Bug Fixes
+
+- **streams**: Preserve pending items across reader cancellation
+  ([`4976470`](https://github.com/coreweave/cwsandbox-client/commit/4976470b9541b7578491b4e588a7f6850b8cd2c2))
+
+- **streams**: Wake async readers on their owning event loop
+  ([`48ca570`](https://github.com/coreweave/cwsandbox-client/commit/48ca570ec6214215bd1f9a4f2000d138b7a5c388))
+
+
 ## v1.19.1 (2026-10-13)
 
 ### Bug Fixes
