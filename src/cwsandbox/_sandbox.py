@@ -7346,28 +7346,19 @@ class Sandbox:
                 # Now safe to send stdin data.  Cache the shutdown task across
                 # iterations since it only completes once.
                 shutdown_task = asyncio.create_task(shutdown_event.wait())
-                while not shutdown_event.is_set():
-                    # Wait for either queue data or shutdown signal
-                    get_task = asyncio.create_task(stdin_queue.get())
-                    try:
-                        done, pending = await asyncio.wait(
+                get_task: asyncio.Task[bytes | None] | None = None
+                try:
+                    while not shutdown_event.is_set():
+                        get_task = asyncio.create_task(stdin_queue.get())
+                        done, _ = await asyncio.wait(
                             [get_task, shutdown_task],
                             return_when=asyncio.FIRST_COMPLETED,
                         )
-                        # Cancel pending tasks
-                        for task in pending:
-                            if task is shutdown_task:
-                                continue  # Reuse across iterations
-                            task.cancel()
-                            with contextlib.suppress(asyncio.CancelledError):
-                                await task
-
-                        # Check if shutdown was triggered
                         if shutdown_task in done:
                             return
 
-                        # Process queue data
                         data = get_task.result()
+                        get_task = None
                         if data is None:  # EOF sentinel - close stdin
                             yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
                             return
@@ -7376,8 +7367,13 @@ class Sandbox:
                         for i in range(0, len(data), STDIN_CHUNK_SIZE):
                             chunk = data[i : i + STDIN_CHUNK_SIZE]
                             yield sandbox_pb2.ExecStreamRequest(stdin=chunk)
-                    except asyncio.CancelledError:
-                        return
+                finally:
+                    # RPC cancellation also cancels this generator. Its child
+                    # tasks must not survive and consume stdin after shutdown.
+                    tasks = [task for task in (shutdown_task, get_task) if task is not None]
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
         # Create the bidirectional streaming call with request iterator
         # StreamExec has no separate server-side execution timer: its RPC
@@ -7778,6 +7774,7 @@ class Sandbox:
         filepath: str | None = None,
         _retry_retiring: bool = True,
         container: str | None = None,
+        _deadline: float | None = None,
     ) -> tuple[int, bytes, bytes]:
         """Run one non-TTY StreamExec and return raw stdout/stderr bytes.
 
@@ -7785,12 +7782,19 @@ class Sandbox:
         keep handshake/timeout/error-translation in sync between the two.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
-        deadline = time.monotonic() + timeout if timeout is not None else None
+        deadline = _deadline
+        if deadline is None and timeout is not None:
+            deadline = time.monotonic() + timeout
 
         if not command:
             raise ValueError("Command cannot be empty")
 
-        prepared = await self._prepare_streaming_call()
+        try:
+            prepared = await asyncio.wait_for(
+                self._prepare_streaming_call(), timeout=self._remaining_budget(deadline)
+            )
+        except TimeoutError as exc:
+            raise SandboxTimeoutError(f"{operation} timed out while connecting") from exc
         stub = prepared.stub
         # Narrow for closure capture: _prepare_streaming_call() raised if
         # _sandbox_id was None, but mypy cannot propagate that narrowing
@@ -7941,6 +7945,7 @@ class Sandbox:
                 operation=operation,
                 filepath=filepath,
                 _retry_retiring=False,
+                _deadline=deadline,
                 container=container,
             )
 

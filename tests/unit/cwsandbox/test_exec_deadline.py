@@ -6,7 +6,8 @@
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import suppress
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
 import pytest
@@ -171,3 +172,116 @@ async def test_cancelled_exec_cancels_transport_and_closes_streams():
     calls[0].cancel.assert_called_once()
     assert stdout.get_nowait() is None
     assert stderr.get_nowait() is None
+
+
+@pytest.mark.asyncio
+async def test_binary_preparation_is_bounded_by_deadline():
+    sandbox, prepared, _ = sandbox_with_transport()
+    cancelled = asyncio.Event()
+
+    async def prepare():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    sandbox._prepare_streaming_call.side_effect = prepare
+    with pytest.raises(SandboxTimeoutError):
+        await asyncio.wait_for(
+            sandbox._exec_streaming_binary_async(
+                ["true"], timeout_seconds=0.02, operation="Read file"
+            ),
+            timeout=1,
+        )
+    assert cancelled.is_set()
+    prepared.stub.StreamExec.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow_reconnect", [False, True])
+async def test_binary_retry_preserves_deadline(slow_reconnect):
+    sandbox, prepared, calls = sandbox_with_transport(duration=0.01, unavailable=True)
+    attempts = 0
+
+    async def prepare():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            await asyncio.sleep(1 if slow_reconnect else 0.01)
+            prepared.stub.StreamExec.side_effect = lambda **kw: DeadlineCall(
+                kw["timeout"], duration=0
+            )
+        return prepared
+
+    sandbox._prepare_streaming_call.side_effect = prepare
+    with patch("cwsandbox._sandbox._is_runner_shard_retiring_error", return_value=True):
+        operation = sandbox._exec_streaming_binary_async(
+            ["true"], timeout_seconds=0.2, operation="Read file"
+        )
+        if slow_reconnect:
+            with pytest.raises(SandboxTimeoutError, match="connecting"):
+                await asyncio.wait_for(operation, timeout=2)
+        else:
+            assert (await operation)[0] == 0
+            first, second = prepared.stub.StreamExec.call_args_list
+            assert 0 < second.kwargs["timeout"] < first.kwargs["timeout"] <= 0.2
+    assert attempts == 2
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_exec", [False, True])
+async def test_exec_cleans_up_pending_stdin_read(cancel_exec):
+    sandbox, prepared, _ = sandbox_with_transport()
+    stdin = asyncio.Queue()
+    baseline = asyncio.all_tasks()
+    sender = None
+
+    class StdinCall(DeadlineCall):
+        async def responses(self):
+            yield sandbox_pb2.ExecStreamResponse(ready=sandbox_pb2.ExecStreamReady())
+            async for response in super().responses():
+                yield response
+
+    async def consume_requests(iterator):
+        async for _ in iterator:
+            pass
+
+    def stream(**kwargs):
+        nonlocal sender
+        sender = asyncio.create_task(consume_requests(kwargs["request_iterator"]))
+        call = StdinCall(kwargs["timeout"], duration=10)
+        call.cancel.side_effect = sender.cancel
+        return call
+
+    prepared.stub.StreamExec.side_effect = stream
+    task = asyncio.create_task(
+        sandbox._exec_streaming_async(
+            ["cat"],
+            asyncio.Queue(),
+            asyncio.Queue(),
+            stdin_queue=stdin,
+            timeout_seconds=1 if cancel_exec else 0.05,
+        )
+    )
+    try:
+        if cancel_exec:
+
+            async def wait_for_stdin():
+                while not stdin._getters:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_stdin(), timeout=1)
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel_exec else SandboxTimeoutError):
+            await asyncio.wait_for(task, timeout=2)
+        assert sender is not None
+        with suppress(asyncio.CancelledError):
+            await sender
+        assert not stdin._getters
+        assert not (asyncio.all_tasks() - baseline)
+    finally:
+        remaining = asyncio.all_tasks() - baseline
+        for pending in remaining:
+            pending.cancel()
+        await asyncio.gather(*remaining, return_exceptions=True)
