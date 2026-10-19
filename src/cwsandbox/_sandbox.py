@@ -7266,13 +7266,23 @@ class Sandbox:
         None in stdin_queue signals EOF. Uses done_writing() for proper half-close.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
-        if _deadline is None and timeout is not None:
-            _deadline = time.monotonic() + timeout
 
         if not command:
             raise ValueError("Command cannot be empty")
 
-        prepared = await self._prepare_streaming_call()
+        # The first readiness wait is outside the execution budget. A retry
+        # must reuse that budget, including time spent reconnecting.
+        if _deadline is None:
+            prepared = await self._prepare_streaming_call()
+            if timeout is not None:
+                _deadline = time.monotonic() + timeout
+        else:
+            try:
+                prepared = await asyncio.wait_for(
+                    self._prepare_streaming_call(), timeout=self._remaining_budget(_deadline)
+                )
+            except TimeoutError as exc:
+                raise SandboxTimeoutError("Command timed out while reconnecting") from exc
         stub = prepared.stub
         auth_metadata = prepared.metadata
         # Narrow for closure capture: _prepare_streaming_call() raised if
@@ -7370,9 +7380,9 @@ class Sandbox:
                         return
 
         # Create the bidirectional streaming call with request iterator
-        call_timeout = (
-            timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
-        )
+        # StreamExec has no separate server-side execution timer: its RPC
+        # deadline is the command deadline, with no additional grace buffer.
+        call_timeout = self._remaining_budget(_deadline)
         try:
             call: grpc.aio.StreamStreamCall[
                 sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
@@ -7497,6 +7507,8 @@ class Sandbox:
             # Signal request generator to stop consuming stdin queue
             shutdown_event.set()
             # Cancel collector task
+            with contextlib.suppress(Exception):
+                call.cancel()
             collect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await collect_task
@@ -7845,9 +7857,7 @@ class Sandbox:
 
             yield sandbox_pb2.ExecStreamRequest(close=sandbox_pb2.ExecStreamClose())
 
-        call_timeout = (
-            timeout + DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS if timeout is not None else None
-        )
+        call_timeout = self._remaining_budget(deadline)
         try:
             call: grpc.aio.StreamStreamCall[
                 sandbox_pb2.ExecStreamRequest, sandbox_pb2.ExecStreamResponse
