@@ -173,7 +173,7 @@ Key constants (from `_defaults.py`):
 - `DEFAULT_GRACEFUL_SHUTDOWN_SECONDS = 10.0`
 - `DEFAULT_TEMP_DIR = "/tmp"`
 - Polling: `DEFAULT_POLL_INTERVAL_SECONDS = 0.2`, `DEFAULT_POLL_BACKOFF_FACTOR = 1.5`, `DEFAULT_MAX_POLL_INTERVAL_SECONDS = 2.0`
-- `DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS = 5.0` - Buffer added to exec timeout
+- `DEFAULT_CLIENT_TIMEOUT_BUFFER_SECONDS = 5.0` - Buffer added to stop and read-budget requests
 
 **`OperationRef[T]`** (`_types.py`): Generic wrapper for async operations with lazy result retrieval. Bridges `concurrent.futures.Future` to asyncio for the sync/async hybrid API.
 
