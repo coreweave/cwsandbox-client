@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.19.3 (2026-10-19)
+
+### Bug Fixes
+
+- **exec**: Bound preparation and clean up stdin tasks
+  ([`ab12ae1`](https://github.com/coreweave/cwsandbox-client/commit/ab12ae1a737b91dc232921d1f3c3411cc951c749))
+
+- **exec**: Enforce execution deadlines without extra grace
+  ([`1e05453`](https://github.com/coreweave/cwsandbox-client/commit/1e054534f1bb084ec7a9e8d842dfc7bfa19aa001))
+
+### Documentation
+
+- **timeouts**: Clarify remaining client buffer usage
+  ([`24a869e`](https://github.com/coreweave/cwsandbox-client/commit/24a869ed123b091387c1082299645b2a92692150))
+
+
 ## v1.19.2 (2026-10-19)
 
 ### Bug Fixes
