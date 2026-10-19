@@ -130,3 +130,41 @@ async def test_reader_also_works_on_producer_loop(manager):
         return await anext(StreamReader(queue, manager))
 
     assert await asyncio.wrap_future(manager.run_async(consume())) == "same loop"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["last line", None, ValueError("producer failed")])
+@pytest.mark.parametrize("resume_sync", [False, True])
+async def test_cancel_after_dequeue_preserves_item(manager, value, resume_sync):
+    queue = await asyncio.wrap_future(manager.run_async(bound_queue()))
+    reader = StreamReader(queue, manager)
+    consumer = asyncio.create_task(anext(reader))
+    await asyncio.wait_for(
+        asyncio.wrap_future(manager.run_async(wait_for_getter(queue))), timeout=2
+    )
+    # Let the owner loop dequeue while this loop cannot deliver the result.
+    manager.run_async(queue.put(value)).result(timeout=2)
+    manager.run_async(asyncio.sleep(0)).result(timeout=2)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+
+    # A distinct following item makes loss fail without a blocked reader.
+    await asyncio.wrap_future(manager.run_async(queue.put("unexpected" if value is None else None)))
+    if resume_sync:
+        if value is None:
+            with pytest.raises(StopIteration):
+                next(reader)
+        elif isinstance(value, Exception):
+            with pytest.raises(ValueError, match="producer failed"):
+                next(reader)
+        else:
+            assert next(reader) == value
+    elif value is None:
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(reader), timeout=2)
+    elif isinstance(value, Exception):
+        with pytest.raises(ValueError, match="producer failed"):
+            await asyncio.wait_for(anext(reader), timeout=2)
+    else:
+        assert await asyncio.wait_for(anext(reader), timeout=2) == value

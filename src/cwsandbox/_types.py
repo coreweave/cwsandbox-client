@@ -1622,6 +1622,7 @@ class StreamReader(Generic[_S]):
         self._loop_manager = loop_manager
         self._exhausted = False
         self._cancel = cancel
+        self._pending_read: concurrent.futures.Future[_S | Exception | None] | None = None
 
     def __iter__(self) -> StreamReader[_S]:
         """Return self as iterator for sync iteration."""
@@ -1639,7 +1640,11 @@ class StreamReader(Generic[_S]):
         """
         if self._exhausted:
             raise StopIteration
-        item = self._loop_manager.run_sync(self._queue.get())
+        if self._pending_read is None:
+            item = self._loop_manager.run_sync(self._queue.get())
+        else:
+            item = self._loop_manager.run_sync(self._read_pending())
+            self._pending_read = None
         if self._exhausted or item is None:
             self._exhausted = True
             raise StopIteration
@@ -1664,9 +1669,8 @@ class StreamReader(Generic[_S]):
         """
         if self._exhausted:
             raise StopAsyncIteration
-        # Queue operations belong to the producer's background loop. Bridge its
-        # future so delivery and cancellation wake the caller's loop safely.
-        item = await asyncio.wrap_future(self._loop_manager.run_async(self._queue.get()))
+        item = await self._read_pending()
+        self._pending_read = None
         if self._exhausted or item is None:
             self._exhausted = True
             raise StopAsyncIteration
@@ -1674,6 +1678,15 @@ class StreamReader(Generic[_S]):
             self._exhausted = True
             raise item
         return item
+
+    async def _read_pending(self) -> _S | Exception | None:
+        # Keep the owner-loop read until the caller receives it. Cancellation
+        # can race with delivery after queue.get() has already removed an item;
+        # shielding and retaining the future preserves data, errors, and EOF
+        # for the next sync or async read.
+        if self._pending_read is None:
+            self._pending_read = self._loop_manager.run_async(self._queue.get())
+        return await asyncio.shield(asyncio.wrap_future(self._pending_read))
 
     def close(self) -> None:
         """Cancel the background producer and mark the stream as exhausted.
