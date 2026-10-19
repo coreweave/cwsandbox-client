@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
     CidrBlock,
     EgressRule,
@@ -474,6 +475,15 @@ class TestProcessResult:
 class TestStreamReader:
     """Tests for StreamReader class."""
 
+    @pytest.fixture(autouse=True)
+    def reset_loop_manager(self):
+        yield
+        manager = _LoopManager._instance
+        loop = manager._loop if manager is not None else None
+        _LoopManager._reset_for_testing()
+        if loop is not None:
+            loop.close()
+
     def _create_mock_loop_manager(self) -> MagicMock:
         """Create a mock _LoopManager for testing."""
         mock = MagicMock()
@@ -538,7 +548,7 @@ class TestStreamReader:
         await queue.put("async_line2")
         await queue.put(None)  # Sentinel
 
-        mock_manager = MagicMock()
+        mock_manager = _LoopManager.get()
         reader = StreamReader(queue, mock_manager)
 
         lines = [line async for line in reader]
@@ -551,7 +561,7 @@ class TestStreamReader:
         await queue.put("single")
         await queue.put(None)
 
-        mock_manager = MagicMock()
+        mock_manager = _LoopManager.get()
         reader = StreamReader(queue, mock_manager)
 
         lines = [line async for line in reader]
@@ -563,7 +573,7 @@ class TestStreamReader:
         queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
         await queue.put(None)
 
-        mock_manager = MagicMock()
+        mock_manager = _LoopManager.get()
         reader = StreamReader(queue, mock_manager)
 
         # Exhaust the reader
@@ -602,7 +612,7 @@ class TestStreamReader:
         await queue.put(ValueError("async stream error"))
         await queue.put(None)
 
-        mock_manager = MagicMock()
+        mock_manager = _LoopManager.get()
         reader = StreamReader(queue, mock_manager)
 
         # First item succeeds

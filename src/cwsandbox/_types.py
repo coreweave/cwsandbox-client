@@ -1640,7 +1640,7 @@ class StreamReader(Generic[_S]):
         if self._exhausted:
             raise StopIteration
         item = self._loop_manager.run_sync(self._queue.get())
-        if item is None:
+        if self._exhausted or item is None:
             self._exhausted = True
             raise StopIteration
         if isinstance(item, Exception):
@@ -1664,8 +1664,10 @@ class StreamReader(Generic[_S]):
         """
         if self._exhausted:
             raise StopAsyncIteration
-        item = await self._queue.get()
-        if item is None:
+        # Queue operations belong to the producer's background loop. Bridge its
+        # future so delivery and cancellation wake the caller's loop safely.
+        item = await asyncio.wrap_future(self._loop_manager.run_async(self._queue.get()))
+        if self._exhausted or item is None:
             self._exhausted = True
             raise StopAsyncIteration
         if isinstance(item, Exception):
@@ -1687,9 +1689,11 @@ class StreamReader(Generic[_S]):
         self._exhausted = True
         if self._cancel is not None:
             self._cancel()
-        # Wake any consumer blocked on queue.get() — put_nowait is fine here
-        # because we only need *one* sentinel and the queue may have space;
-        # if it's full the consumer will drain an item and see _exhausted.
+        self._loop_manager.get_loop().call_soon_threadsafe(self._wake_reader)
+
+    def _wake_reader(self) -> None:
+        # Run on the queue's owner loop, including for synchronous close(). If
+        # the queue is full, the pending read sees _exhausted after taking data.
         try:
             self._queue.put_nowait(None)
         except asyncio.QueueFull:
