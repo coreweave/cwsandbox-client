@@ -407,7 +407,7 @@ wheels = [
 
 [[package]]
 name = "cwsandbox"
-version = "1.19.3"
+version = "1.19.4"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

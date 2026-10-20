@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.19.4 (2026-10-20)
+
+### Bug Fixes
+
+- **client**: Back off direct connection retries after UNIMPLEMENTED
+  ([`6d01092`](https://github.com/coreweave/cwsandbox-client/commit/6d0109282e32607e21c9fa489f9aeae7365924c6))
+
+
 ## v1.19.3 (2026-10-19)
 
 ### Bug Fixes
