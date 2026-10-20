@@ -7252,15 +7252,46 @@ class Sandbox:
         stdin_queue: asyncio.Queue[bytes | None] | None = None,
         stdin_writer: StreamWriter | None = None,
         container: str | None = None,
+    ) -> ProcessResult:
+        """Own stream completion across preparation, execution, and retries."""
+        try:
+            return await self._exec_streaming_attempt_async(
+                command,
+                stdout_queue,
+                stderr_queue,
+                cwd=cwd,
+                check=check,
+                timeout_seconds=timeout_seconds,
+                stdin_queue=stdin_queue,
+                container=container,
+            )
+        finally:
+            if stdin_writer is not None:
+                stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
+            # These queues are unbounded. Finish both even if preparation or
+            # retry cleanup fails, before callers attempt to consume the result.
+            stdout_queue.put_nowait(None)
+            stderr_queue.put_nowait(None)
+
+    async def _exec_streaming_attempt_async(
+        self,
+        command: Sequence[str],
+        stdout_queue: asyncio.Queue[str | Exception | None],
+        stderr_queue: asyncio.Queue[str | Exception | None],
+        *,
+        cwd: str | None = None,
+        check: bool = False,
+        timeout_seconds: float | None = None,
+        stdin_queue: asyncio.Queue[bytes | None] | None = None,
+        container: str | None = None,
         _retry_transient: bool = True,
         _deadline: float | None = None,
-        _signal_completion: bool = True,
     ) -> ProcessResult:
         """Internal async: Execute command using StreamExec RPC, push output to queues.
 
         Uses gRPC bidirectional streaming to receive stdout/stderr as they arrive.
         Buffers output while also pushing to queues for real-time streaming.
-        Signals end-of-stream with None sentinel when command completes.
+        The caller owns end-of-stream signaling across all attempts.
 
         When stdin_queue is provided, data from it is sent to the process's stdin.
         None in stdin_queue signals EOF. Uses done_writing() for proper half-close.
@@ -7508,13 +7539,6 @@ class Sandbox:
             collect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await collect_task
-            if retry_error is None and _signal_completion:
-                # Signal stdin writer that process has exited (prevents writes to exited process)
-                if stdin_writer is not None:
-                    stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
-                # Signal end-of-stream
-                await stdout_queue.put(None)
-                await stderr_queue.put(None)
 
         if retry_error is not None:
             # A transient rejection before the runner emitted any frame is safe
@@ -7522,26 +7546,18 @@ class Sandbox:
             # the sandbox's current endpoint instead of reusing a stale channel.
             await prepared.discard()
             await prepared.release(discard=True)
-            try:
-                return await self._exec_streaming_async(
-                    command,
-                    stdout_queue,
-                    stderr_queue,
-                    cwd=cwd,
-                    check=check,
-                    timeout_seconds=retry_timeout,
-                    stdin_queue=stdin_queue,
-                    stdin_writer=stdin_writer,
-                    container=container,
-                    _retry_transient=False,
-                    _deadline=_deadline,
-                    _signal_completion=False,
-                )
-            finally:
-                if stdin_writer is not None:
-                    stdin_writer.set_exception(SandboxExecutionError("Process has exited"))
-                await stdout_queue.put(None)
-                await stderr_queue.put(None)
+            return await self._exec_streaming_attempt_async(
+                command,
+                stdout_queue,
+                stderr_queue,
+                cwd=cwd,
+                check=check,
+                timeout_seconds=retry_timeout,
+                stdin_queue=stdin_queue,
+                container=container,
+                _retry_transient=False,
+                _deadline=_deadline,
+            )
 
         # Propagate any error from request_generator (gRPC swallows generator exceptions)
         if request_error is not None:
