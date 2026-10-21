@@ -2603,6 +2603,45 @@ class TestSandboxExec:
             with pytest.raises(SandboxExecutionError, match="Connection lost"):
                 process.result()
 
+    def test_exec_stream_ends_without_exit_raises(self) -> None:
+        """A stream that closes without an exit or error frame is not a success.
+
+        The command's outcome is unknown, so exec() must raise rather than
+        report returncode 0.
+        """
+
+        from cwsandbox._proto import sandbox_pb2 as streaming_pb2
+        from cwsandbox.exceptions import SandboxExecutionError
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "test-id"
+        sandbox._state = _Running(sandbox_id="test-id")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+
+        output_response = MagicMock()
+        output_response.HasField = lambda field: field == "output"
+        output_response.output.data = b"partial\n"
+        output_response.output.stream = streaming_pb2.ExecStreamOutput.STREAM_STDOUT
+
+        mock_call = MockStreamCall(responses=[output_response])  # No exit frame.
+        mock_channel, mock_stub = create_mock_channel_and_stub(mock_call)
+
+        with (
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=()),
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("localhost:443", True)),
+            patch("cwsandbox._sandbox.create_channel", return_value=mock_channel),
+            patch(
+                "cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub",
+                return_value=mock_stub,
+            ),
+        ):
+            process = sandbox.exec(["sleep", "60"])
+            assert list(process.stdout) == ["partial\n"]
+            with pytest.raises(SandboxExecutionError, match="ended without an exit status"):
+                process.result()
+
     def test_exec_cwd_empty_string_raises_error(self) -> None:
         """Test exec with empty cwd raises ValueError."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
