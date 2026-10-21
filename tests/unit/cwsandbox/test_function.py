@@ -6,8 +6,11 @@
 
 import ast
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from functools import lru_cache, wraps
+from pathlib import Path
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -624,6 +627,65 @@ class TestRemoteFunction:
             mock_sandbox.read_file.assert_called_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "directory_name",
+        [
+            "with spaces",
+            "single'and\"double-quotes",
+            r"literal\nbackslash",
+            "line\nbreak",
+            "unicode-\u03bb",
+            'injected"; raise RuntimeError("SAND262_INJECTED"); unused="',
+        ],
+        ids=["spaces", "quotes", "backslash", "newline", "unicode", "injection"],
+    )
+    async def test_execute_async_treats_temp_dir_as_data(
+        self, tmp_path: Path, directory_name: str
+    ) -> None:
+        """Path contents cannot change the Python executed for a remote function."""
+        from cwsandbox import Session
+
+        session = Session()
+        temp_dir = tmp_path / directory_name
+
+        @session.function(temp_dir=str(temp_dir))
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        def write_file(path: str, content: bytes) -> OperationRef[None]:
+            file = Path(path)
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
+            return make_operation_ref(None)
+
+        def execute(command: list[str]) -> Any:
+            # Execute the SDK's actual command locally, without starting a sandbox.
+            proc = subprocess.run(
+                [sys.executable, *command[1:]],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            return make_process(returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.__aenter__ = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox.__aexit__ = AsyncMock(return_value=None)
+        mock_sandbox._start_async = AsyncMock(return_value=None)
+        mock_sandbox.write_file.side_effect = write_file
+        mock_sandbox.exec.side_effect = execute
+        mock_sandbox.read_file.side_effect = lambda path: make_operation_ref(
+            Path(path).read_bytes()
+        )
+        mock_sandbox.stop.return_value = make_operation_ref(None)
+
+        with patch("cwsandbox._sandbox.Sandbox", return_value=mock_sandbox):
+            assert await add._execute_async(2, 3) == 5
+
+        assert len(list(temp_dir.glob("sandbox_result_*.json"))) == 1
+
+    @pytest.mark.asyncio
     async def test_execute_async_clears_session_container_defaults(self) -> None:
         """@session.function() ignores session containers= defaults."""
         from cwsandbox import Container, ResourceOptions, SandboxDefaults, Session
@@ -875,7 +937,7 @@ class TestRemoteFunctionResourceOptions:
 class TestJsonReturnContract:
     """Sandbox-side JSON return handling.
 
-    These tests run the real ``_FUNCTION_EXECUTION_TEMPLATE`` script in a
+    These tests run the real ``_FUNCTION_EXECUTION_SCRIPT`` script in a
     subprocess to validate the round-trip without booting a sandbox.
     """
 
@@ -887,12 +949,9 @@ class TestJsonReturnContract:
         args: list[Any],
         kwargs: dict[str, Any],
     ) -> tuple[int, str, str | None]:
-        """Run _FUNCTION_EXECUTION_TEMPLATE for the given function and capture result."""
-        import subprocess
-        import sys
-
+        """Run _FUNCTION_EXECUTION_SCRIPT for the given function and capture result."""
         from cwsandbox._function import (
-            _FUNCTION_EXECUTION_TEMPLATE,
+            _FUNCTION_EXECUTION_SCRIPT,
             _create_function_payload,
         )
 
@@ -908,14 +967,15 @@ class TestJsonReturnContract:
             )
         )
 
-        script = _FUNCTION_EXECUTION_TEMPLATE.format(
-            payload_file=str(payload_file),
-            result_file=str(result_file),
-            temp_dir=str(tmp_path),
-        )
-
         proc = subprocess.run(
-            [sys.executable, "-c", script],
+            [
+                sys.executable,
+                "-c",
+                _FUNCTION_EXECUTION_SCRIPT,
+                str(tmp_path),
+                str(payload_file),
+                str(result_file),
+            ],
             capture_output=True,
             text=True,
             check=False,

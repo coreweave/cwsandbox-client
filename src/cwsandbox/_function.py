@@ -108,7 +108,8 @@ class RemoteFunction(Generic[P, R]):
             fn: The function to wrap for remote execution
             session: The sandbox session to use for execution
             container_image: Override container image for this function
-            temp_dir: Directory for temporary payload/result files in sandbox
+            temp_dir: Directory for temporary payload/result files in sandbox.
+                The path is used literally, including quotes and backslashes.
             runner_ids: Optional list of runner IDs
             resources: Resource configuration. Accepts ResourceOptions for separate
                 requests/limits, or a flat dict for backward-compatible Guaranteed QoS.
@@ -267,12 +268,6 @@ class RemoteFunction(Generic[P, R]):
             source, self._fn.__name__, merged_vars, args, kwargs
         )
 
-        execution_script = _FUNCTION_EXECUTION_TEMPLATE.format(
-            payload_file=payload_file,
-            result_file=result_file,
-            temp_dir=self._temp_dir,
-        )
-
         sandbox_kwargs: dict[str, Any] = {}
         if self._runner_ids is not None:
             sandbox_kwargs["runner_ids"] = self._runner_ids
@@ -338,7 +333,17 @@ class RemoteFunction(Generic[P, R]):
                 self._fn.__name__,
                 sandbox.sandbox_id,
             )
-            exec_result = await sandbox.exec(["python", "-c", execution_script])
+            # Keep caller-controlled paths out of the Python source (SAND-262).
+            exec_result = await sandbox.exec(
+                [
+                    "python",
+                    "-c",
+                    _FUNCTION_EXECUTION_SCRIPT,
+                    self._temp_dir,
+                    payload_file,
+                    result_file,
+                ]
+            )
 
             if exec_result.returncode != 0:
                 stderr = exec_result.stderr
@@ -578,14 +583,12 @@ def _create_function_payload(
         raise TypeError(f"Function arguments are not JSON-serializable: {exc}") from exc
 
 
-_FUNCTION_EXECUTION_TEMPLATE = """
+_FUNCTION_EXECUTION_SCRIPT = """
 import json
 import os
 import sys
 
-temp_dir = "{temp_dir}"
-payload_file = "{payload_file}"
-result_file = "{result_file}"
+temp_dir, payload_file, result_file = sys.argv[1:]
 
 os.makedirs(temp_dir, exist_ok=True)
 
