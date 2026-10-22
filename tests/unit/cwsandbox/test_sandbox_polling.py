@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import grpc
@@ -2397,3 +2399,154 @@ class TestExitCodeGraceRepoll:
 
         assert call_count == 2
         assert sandbox.returncode == 0
+
+
+@dataclass
+class _StartupPollClock:
+    now: float = 1000.0
+    sleeps: list[float] = field(default_factory=list)
+
+
+class TestStartupPollCadence:
+    """Detect a ready sandbox promptly without increasing long-wait traffic."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> _StartupPollClock:
+        state = _StartupPollClock()
+        real_sleep = asyncio.sleep
+
+        def now() -> float:
+            return state.now
+
+        async def sleep(seconds: float) -> None:
+            state.sleeps.append(seconds)
+            state.now = now() + seconds
+            await real_sleep(0)
+
+        monkeypatch.setattr("cwsandbox._sandbox.time", SimpleNamespace(monotonic=now))
+        monkeypatch.setattr("cwsandbox._sandbox.asyncio.sleep", sleep)
+        monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_POLL_INTERVAL_SECONDS", 0.2)
+        monkeypatch.setattr("cwsandbox._sandbox.DEFAULT_MAX_POLL_INTERVAL_SECONDS", 2.0)
+        return state
+
+    @pytest.mark.asyncio
+    async def test_running_detected_without_two_second_sleep(
+        self, clock: _StartupPollClock
+    ) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = 1000.0
+        calls = 0
+
+        async def get(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal calls
+            calls += 1
+            status = sandbox_pb2.STATE_RUNNING if clock.now >= 1005 else sandbox_pb2.STATE_CREATING
+            return _get_response(status)
+
+        sandbox._stub.GetSandbox = get
+        await sandbox._wait_until_running_async()
+
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert 1005 <= clock.now < 1005.5
+        assert max(clock.sleeps) <= 0.5
+        assert calls <= 14
+
+    @pytest.mark.asyncio
+    async def test_slow_start_returns_to_normal_backoff(self, clock: _StartupPollClock) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = 1000.0
+        calls = 0
+
+        async def get(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal calls
+            calls += 1
+            status = sandbox_pb2.STATE_RUNNING if clock.now >= 1020 else sandbox_pb2.STATE_CREATING
+            return _get_response(status)
+
+        sandbox._stub.GetSandbox = get
+        await sandbox._wait_until_running_async()
+
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert clock.sleeps[-3:] == [2.0, 2.0, 2.0]
+        assert calls < 38
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "accepted_at,recorded", [(None, False), (980.0, False), (1000.0, True)]
+    )
+    async def test_adopted_delayed_and_already_running_keep_backoff(
+        self, clock: _StartupPollClock, accepted_at: float | None, recorded: bool
+    ) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = accepted_at
+        sandbox._startup_recorded = recorded
+        sandbox._stub.GetSandbox = AsyncMock(
+            side_effect=[
+                *[_get_response(sandbox_pb2.STATE_CREATING) for _ in range(7)],
+                _get_response(sandbox_pb2.STATE_RUNNING),
+            ]
+        )
+
+        await sandbox._wait_until_running_async()
+
+        assert clock.sleeps == pytest.approx([0.2, 0.3, 0.45, 0.675, 1.0125, 1.51875, 2.0])
+
+    @pytest.mark.asyncio
+    async def test_new_poll_loop_does_not_restart_window(self, clock: _StartupPollClock) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = 1000.0
+        sandbox._stub.GetSandbox = AsyncMock(
+            side_effect=[
+                *[_get_response(sandbox_pb2.STATE_CREATING) for _ in range(5)],
+                _get_response(sandbox_pb2.STATE_RUNNING),
+            ]
+        )
+        await sandbox._poll_until_stable()
+        assert max(clock.sleeps) <= 0.5
+
+        # A retry/re-entry after the original create's window has elapsed.
+        clock.now = 1016.0
+        clock.sleeps = []
+        sandbox._stub.GetSandbox = AsyncMock(
+            side_effect=[
+                *[_get_response(sandbox_pb2.STATE_CREATING) for _ in range(7)],
+                _get_response(sandbox_pb2.STATE_RUNNING),
+            ]
+        )
+        await sandbox._poll_until_stable()
+        assert clock.sleeps[-1] == 2.0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_owned", [False, True])
+    async def test_stopping_does_not_use_startup_cadence(
+        self, clock: _StartupPollClock, stop_owned: bool
+    ) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = 1000.0
+        if stop_owned:
+            sandbox._stop_owned = True
+        else:
+            sandbox._state = _Stopping(sandbox_id="test-sandbox")
+        sandbox._stub.GetSandbox = AsyncMock(
+            side_effect=[
+                *[_get_response(sandbox_pb2.STATE_CREATING) for _ in range(7)],
+                _get_response(sandbox_pb2.STATE_COMPLETED),
+            ]
+        )
+        await sandbox._poll_until_stable()
+        assert clock.sleeps[-1] == 2.0
+
+    @pytest.mark.asyncio
+    async def test_server_retry_hint_is_not_shortened(self, clock: _StartupPollClock) -> None:
+        sandbox = _make_sandbox()
+        sandbox._start_accepted_at = 1000.0
+        sandbox._stub.GetSandbox = AsyncMock(
+            side_effect=[
+                SandboxUnavailableError("busy", retry_delay=timedelta(seconds=5)),
+                _get_response(sandbox_pb2.STATE_CREATING),
+                _get_response(sandbox_pb2.STATE_RUNNING),
+            ]
+        )
+        await sandbox._wait_until_running_async()
+        assert clock.sleeps == pytest.approx([5.0, 0.2])
+        assert sandbox.status == SandboxStatus.RUNNING
