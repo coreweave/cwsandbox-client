@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.19.5 (2026-10-22)
+
+### Bug Fixes
+
+- **sandbox**: Reduce startup status detection delay
+  ([`6f551e4`](https://github.com/coreweave/cwsandbox-client/commit/6f551e43399336450c3afa42c8e4aa903aac3d31))
+
+
 ## v1.19.4 (2026-10-20)
 
 ### Bug Fixes
