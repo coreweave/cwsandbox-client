@@ -234,6 +234,9 @@ if TYPE_CHECKING:
 
     from cwsandbox._session import Session
 
+_STARTUP_POLL_WINDOW_SECONDS = 15.0
+_STARTUP_POLL_MAX_INTERVAL_SECONDS = 0.5
+
 logger = logging.getLogger(__name__)
 
 
@@ -4459,8 +4462,20 @@ class Sandbox:
             ):
                 return response
 
-            # Transient states - keep polling
-            await asyncio.sleep(poll_interval)
+            # Newly created sandboxes often become ready in a few seconds.
+            # Avoid sleeping for up to two seconds after RUNNING is available,
+            # but bound the extra Get traffic by the original create clock so
+            # retries and delayed waiters cannot restart the faster window.
+            sleep_interval = poll_interval
+            if (
+                isinstance(self._state, _Starting)
+                and not self._stop_owned
+                and self._start_accepted_at is not None
+                and not self._startup_recorded
+                and time.monotonic() - self._start_accepted_at < _STARTUP_POLL_WINDOW_SECONDS
+            ):
+                sleep_interval = min(sleep_interval, _STARTUP_POLL_MAX_INTERVAL_SECONDS)
+            await asyncio.sleep(sleep_interval)
             poll_interval = min(
                 poll_interval * DEFAULT_POLL_BACKOFF_FACTOR,
                 DEFAULT_MAX_POLL_INTERVAL_SECONDS,
