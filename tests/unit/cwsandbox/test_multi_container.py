@@ -86,9 +86,10 @@ class TestContainerValidation:
         with pytest.raises(ValueError, match="Container.working_dir"):
             Container(image="python:3.11", working_dir="app")
 
-    def test_reserved_name_raises(self) -> None:
+    @pytest.mark.parametrize("name", ["dns-egress", "cws-engine"])
+    def test_reserved_name_raises(self, name: str) -> None:
         with pytest.raises(ValueError, match="reserved"):
-            Container(image="python:3.11", name="dns-egress")
+            Container(image="python:3.11", name=name)
 
     def test_reserved_prefix_raises(self) -> None:
         with pytest.raises(ValueError, match="reserved"):
