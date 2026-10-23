@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.19.6 (2026-10-23)
+
+### Bug Fixes
+
+- **exec**: Raise when the stream ends without an exit status
+  ([`cfc36e6`](https://github.com/coreweave/cwsandbox-client/commit/cfc36e64dd661ba962d72cd5b8244b6ec778800a))
+
+exec() reported returncode 0 when the stream closed with no exit or error frame, so a command
+  interrupted before it exited looked successful, even with check=True. It now raises
+  SandboxExecutionError, matching the binary exec and streaming file-read paths.
+
+Callers that got returncode 0 from an interrupted stream now get an exception instead. That result
+  was wrong: the command may not have finished.
+
+
 ## v1.19.5 (2026-10-22)
 
 ### Bug Fixes
