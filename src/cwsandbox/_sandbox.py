@@ -1715,6 +1715,8 @@ class _NotStarted:
 class _Starting:
     sandbox_id: str
     status: SandboxStatus = SandboxStatus.PENDING
+    runner_id: str | None = None
+    runner_group_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1830,7 +1832,12 @@ def _lifecycle_state_from_info(
             runner_group_id=runner_group_id,
             started_at=started_at,
         )
-    return _Starting(sandbox_id=sandbox_id, status=status)
+    return _Starting(
+        sandbox_id=sandbox_id,
+        status=status,
+        runner_id=runner_id,
+        runner_group_id=runner_group_id,
+    )
 
 
 class Sandbox:
@@ -3782,8 +3789,12 @@ class Sandbox:
 
     @property
     def runner_id(self) -> str | None:
-        """Runner where sandbox is running, or None if not started."""
-        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
+        """Assigned runner, or None if the API has not reported one.
+
+        An assignment can be available before the sandbox reaches RUNNING.
+        Use status or wait() to check readiness.
+        """
+        if isinstance(self._state, (_Starting, _Running, _Stopping, _Terminal)):
             return self._state.runner_id
         return None
 
@@ -3831,8 +3842,8 @@ class Sandbox:
 
     @property
     def runner_group_id(self) -> str | None:
-        """Runner group ID where the sandbox is running."""
-        if isinstance(self._state, (_Running, _Stopping, _Terminal)):
+        """Assigned runner group, or None if the API has not reported one."""
+        if isinstance(self._state, (_Starting, _Running, _Stopping, _Terminal)):
             return self._state.runner_group_id
         return None
 
@@ -4675,7 +4686,11 @@ class Sandbox:
                 sandbox_id = str(view.sandbox_id)
                 self._sandbox_id = sandbox_id
                 self._status_updated_at = datetime.now(UTC)
-                self._state = _Starting(sandbox_id=sandbox_id)
+                self._state = _Starting(
+                    sandbox_id=sandbox_id,
+                    runner_id=view.runner_id or None,
+                    runner_group_id=view.runner_group_id or None,
+                )
                 raw_share_token = view.endpoint_share_token
                 self._endpoint_share_token = (
                     EndpointShareToken(raw_share_token) if raw_share_token is not None else None
@@ -6338,9 +6353,13 @@ class Sandbox:
                         self._state = _Terminal(
                             sandbox_id=sandbox_id,
                             status=SandboxStatus.TERMINATED,
-                            runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                            runner_id=(
+                                prev.runner_id if isinstance(prev, (_Starting, _Running)) else None
+                            ),
                             runner_group_id=(
-                                prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                                prev.runner_group_id
+                                if isinstance(prev, (_Starting, _Running))
+                                else None
                             ),
                             started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
                         )
@@ -6383,9 +6402,13 @@ class Sandbox:
                     self._state = _Terminal(
                         sandbox_id=sandbox_id,
                         status=SandboxStatus.TERMINATED,
-                        runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                        runner_id=(
+                            prev.runner_id if isinstance(prev, (_Starting, _Running)) else None
+                        ),
                         runner_group_id=(
-                            prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                            prev.runner_group_id
+                            if isinstance(prev, (_Starting, _Running))
+                            else None
                         ),
                         started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
                     )
@@ -6402,9 +6425,9 @@ class Sandbox:
                 # RPC succeeded: transition to _Stopping
                 self._state = _Stopping(
                     sandbox_id=sandbox_id,
-                    runner_id=(prev.runner_id if isinstance(prev, (_Running,)) else None),
+                    runner_id=(prev.runner_id if isinstance(prev, (_Starting, _Running)) else None),
                     runner_group_id=(
-                        prev.runner_group_id if isinstance(prev, (_Running,)) else None
+                        prev.runner_group_id if isinstance(prev, (_Starting, _Running)) else None
                     ),
                     started_at=(prev.started_at if isinstance(prev, (_Running,)) else None),
                 )
