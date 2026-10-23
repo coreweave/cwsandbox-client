@@ -7565,14 +7565,22 @@ class Sandbox:
         # Combine buffers into final output
         stdout_bytes = b"".join(stdout_buffer)
         stderr_bytes = b"".join(stderr_buffer)
-        final_exit_code = exit_code if exit_code is not None else 0
 
-        logger.debug("Command completed with exit code %d", final_exit_code)
+        # A stream that closes without an exit or error frame leaves the
+        # command's outcome unknown. Reporting 0 would turn an interrupted
+        # command into a success.
+        if exit_code is None:
+            raise SandboxExecutionError(
+                f"Command {shlex.join(command)} ended without an exit status from the "
+                "sandbox; it may not have finished"
+            )
+
+        logger.debug("Command completed with exit code %d", exit_code)
 
         result = ProcessResult(
             stdout=stdout_bytes.decode("utf-8", errors="replace"),
             stderr=stderr_bytes.decode("utf-8", errors="replace"),
-            returncode=final_exit_code,
+            returncode=exit_code,
             stdout_bytes=stdout_bytes,
             stderr_bytes=stderr_bytes,
             command=list(command),
