@@ -166,6 +166,25 @@ class SandboxFileType(StrEnum):
     COMPOSE = "compose"
 
 
+class SandboxControl(StrEnum):
+    """Who controls a sandbox's containers.
+
+    Used by ``Sandbox.run_from_file(control=...)`` and reported by
+    ``Sandbox.control``.
+
+    Attributes:
+        UNSPECIFIED: Leave unset; the backend uses ``PLATFORM``.
+        PLATFORM: The platform creates, runs, and reports each container.
+        CONTAINER_ENGINE: The Compose file runs as written under Docker Compose
+            in a container named ``cws-engine``, which the caller drives with
+            ``docker compose`` and ``docker``.
+    """
+
+    UNSPECIFIED = "unspecified"
+    PLATFORM = "platform"
+    CONTAINER_ENGINE = "container_engine"
+
+
 class DataPlaneMode(StrEnum):
     """Transport policy for sandbox data operations.
 
@@ -436,6 +455,7 @@ _RESERVED_CONTAINER_NAMES = frozenset(
     {
         "cw-object-store-agent",
         "cw-object-store-agent-restore",
+        "cws-engine",
         "dns-egress",
         "dns-egress-probe",
     }

@@ -41,6 +41,7 @@ from cwsandbox import (
     RegisteredVolumeOptions,
     ResourceOptions,
     Sandbox,
+    SandboxControl,
     SandboxDefaults,
     SandboxFileType,
     ScratchVolumeOptions,
@@ -2179,6 +2180,8 @@ class TestSandboxRun:
     @staticmethod
     def _run_from_file_with_mock_stub(
         contents: str | Path | bytes,
+        *,
+        response: Any = None,
         **kwargs: Any,
     ) -> tuple[Sandbox, MagicMock]:
         mock_stub = MagicMock()
@@ -2187,7 +2190,7 @@ class TestSandboxRun:
             return_value=_create_sandbox_response("template-id")
         )
         mock_stub.CreateSandboxFromFile = AsyncMock(
-            return_value=_create_sandbox_response("from-file-id")
+            return_value=response or _create_sandbox_response("from-file-id")
         )
 
         async def ensure_client(sandbox: Sandbox) -> None:
@@ -2351,6 +2354,147 @@ class TestSandboxRun:
         assert request.type == sandbox_pb2.SANDBOX_FILE_TYPE_COMPOSE
         assert SandboxFileType.COMPOSE == "compose"
         sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_leaves_control_and_credentials_unset_by_default(self) -> None:
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        set_fields = {field.name for field, _ in request.ListFields()}
+        assert "control" not in set_fields
+        assert "image_pull_credentials" not in set_fields
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    @pytest.mark.parametrize(
+        "control",
+        [SandboxControl.CONTAINER_ENGINE, "container_engine", "CONTAINER_ENGINE"],
+    )
+    def test_run_from_file_engine_control_without_primary_service(
+        self, control: SandboxControl | str
+    ) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: alpine:3\n",
+            control=control,
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.control == sandbox_pb2.CONTROL_CONTAINER_ENGINE
+        assert request.primary_service == ""
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_sends_explicit_platform_control(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: python:3.11\n",
+            primary_service="main",
+            control="platform",
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert request.control == sandbox_pb2.CONTROL_PLATFORM
+        assert request.primary_service == "main"
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    def test_run_from_file_platform_control_requires_primary_service(self) -> None:
+        with pytest.raises(ValueError, match="primary_service is required"):
+            Sandbox.run_from_file(b"services: {}\n", control=SandboxControl.PLATFORM)
+
+    def test_run_from_file_rejects_unknown_control(self) -> None:
+        with pytest.raises(ValueError, match="kubernetes"):
+            Sandbox.run_from_file(b"services: {}\n", control="kubernetes")
+
+    def test_run_from_file_maps_image_pull_credentials_in_order(self) -> None:
+        sandbox, stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: ghcr.io/org/private:1\n",
+            control=SandboxControl.CONTAINER_ENGINE,
+            image_pull_credentials=[
+                ImagePullCredentials(
+                    registry="ghcr.io", store="wandb", name="ghcr-creds", field="token"
+                ),
+                {"registry": "registry-1.docker.io", "store": "wandb", "name": "hub-creds"},
+            ],
+        )
+        request = stub.CreateSandboxFromFile.call_args.args[0]
+        assert [
+            (c.registry, c.credentials.store_name, c.credentials.path, c.credentials.field)
+            for c in request.image_pull_credentials
+        ] == [
+            ("ghcr.io", "wandb", "ghcr-creds", "token"),
+            ("registry-1.docker.io", "wandb", "hub-creds", ""),
+        ]
+        sandbox._state = _Terminal(sandbox_id="from-file-id", status=SandboxStatus.COMPLETED)
+
+    @pytest.mark.parametrize(
+        "credentials",
+        [
+            ImagePullCredentials(registry="ghcr.io", store="wandb", name="ghcr-creds"),
+            {"registry": "ghcr.io", "store": "wandb", "name": "ghcr-creds"},
+            "ghcr.io",
+        ],
+    )
+    def test_run_from_file_rejects_single_image_pull_credential(self, credentials: Any) -> None:
+        with pytest.raises(TypeError, match="must be a list"):
+            Sandbox.run_from_file(
+                b"services: {}\n",
+                control=SandboxControl.CONTAINER_ENGINE,
+                image_pull_credentials=credentials,
+            )
+
+    def test_run_from_file_rejects_invalid_image_pull_credential_entry(self) -> None:
+        with pytest.raises(TypeError, match="entries must be"):
+            Sandbox.run_from_file(
+                b"services: {}\n",
+                control=SandboxControl.CONTAINER_ENGINE,
+                image_pull_credentials=["ghcr.io"],
+            )
+
+    def test_run_from_file_echoes_engine_control(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="engine-id",
+            control=sandbox_pb2.CONTROL_CONTAINER_ENGINE,
+            spec=sandbox_pb2.SandboxSpec(containers=[sandbox_pb2.Container(name="cws-engine")]),
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_CREATING),
+        )
+        sandbox, _stub = self._run_from_file_with_mock_stub(
+            b"services:\n  main:\n    image: alpine:3\n",
+            response=response,
+            control=SandboxControl.CONTAINER_ENGINE,
+        )
+        assert sandbox.control == SandboxControl.CONTAINER_ENGINE
+        assert [row.name for row in sandbox.containers] == ["cws-engine"]
+        sandbox._state = _Terminal(sandbox_id="engine-id", status=SandboxStatus.COMPLETED)
+
+    @pytest.mark.parametrize(
+        ("wire", "expected"),
+        [
+            (0, SandboxControl.UNSPECIFIED),
+            (1, SandboxControl.PLATFORM),
+            (2, SandboxControl.CONTAINER_ENGINE),
+            (99, SandboxControl.UNSPECIFIED),
+        ],
+    )
+    def test_control_echo_maps_wire_values(self, wire: int, expected: SandboxControl) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._state = _Running(sandbox_id="sb-1")
+        assert sandbox.control is None
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="sb-1",
+            control=wire,  # type: ignore[arg-type]
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+        sandbox._apply_sandbox_info(_SandboxView(proto), source="query")
+
+        assert sandbox.control == expected
+        sandbox._state = _Terminal(sandbox_id="sb-1", status=SandboxStatus.COMPLETED)
 
     @pytest.mark.parametrize(
         ("kwargs", "message"),

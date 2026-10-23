@@ -172,6 +172,7 @@ from cwsandbox._types import (
     ProcessResult,
     RegisteredVolumeOptions,
     ResourceOptions,
+    SandboxControl,
     SandboxFileType,
     ScratchVolumeOptions,
     Secret,
@@ -1190,7 +1191,6 @@ _FROM_FILE_UNSUPPORTED_KWARGS = frozenset(
         "containers",
         "environment_variables",
         "file_system_snapshot",
-        "image_pull_credentials",
         "instance_type",
         "mounted_files",
         "network_ids",
@@ -1212,17 +1212,21 @@ class _FromFileCreate:
 
     contents: bytes
     file_type: SandboxFileType
-    primary_service: str
+    primary_service: str | None
     image_overrides: dict[str, str]
     default_resources: ResourceOptions | None
+    control: SandboxControl
+    image_pull_credentials: tuple[ImagePullCredentials, ...]
 
     def __repr__(self) -> str:
         return (
             f"_FromFileCreate(file_type={self.file_type!r}, "
+            f"control={self.control!r}, "
             f"primary_service={self.primary_service!r}, "
             f"contents=<{len(self.contents)} bytes>, "
             f"image_overrides={self.image_overrides!r}, "
-            f"default_resources={self.default_resources!r})"
+            f"default_resources={self.default_resources!r}, "
+            f"image_pull_credentials={self.image_pull_credentials!r})"
         )
 
 
@@ -1238,6 +1242,44 @@ def _coerce_sandbox_file_type(file_type: SandboxFileType | str) -> SandboxFileTy
     if not isinstance(file_type, SandboxFileType):
         raise TypeError(f"file_type must be SandboxFileType or str, got {type(file_type).__name__}")
     return file_type
+
+
+_SANDBOX_CONTROL_FROM_PROTO = {
+    sandbox_pb2.CONTROL_PLATFORM: SandboxControl.PLATFORM,
+    sandbox_pb2.CONTROL_CONTAINER_ENGINE: SandboxControl.CONTAINER_ENGINE,
+}
+
+
+def _coerce_sandbox_control(control: SandboxControl | str) -> SandboxControl:
+    if isinstance(control, str):
+        return SandboxControl(control.lower())
+    if not isinstance(control, SandboxControl):
+        raise TypeError(f"control must be SandboxControl or str, got {type(control).__name__}")
+    return control
+
+
+def _coerce_from_file_pull_credentials(
+    credentials: Sequence[ImagePullCredentials | dict[str, Any]] | None,
+) -> tuple[ImagePullCredentials, ...]:
+    if credentials is None:
+        return ()
+    if isinstance(credentials, (ImagePullCredentials, Mapping, str, bytes)):
+        raise TypeError(
+            "run_from_file() image_pull_credentials must be a list of "
+            "ImagePullCredentials (one per registry), got a single "
+            f"{type(credentials).__name__}"
+        )
+    coerced: list[ImagePullCredentials] = []
+    for item in credentials:
+        if isinstance(item, Mapping):
+            item = ImagePullCredentials(**item)
+        elif not isinstance(item, ImagePullCredentials):
+            raise TypeError(
+                "image_pull_credentials entries must be ImagePullCredentials or dict, "
+                f"got {type(item).__name__}"
+            )
+        coerced.append(item)
+    return tuple(coerced)
 
 
 def _is_spillover_eligible(error: grpc.RpcError) -> bool:
@@ -2153,6 +2195,7 @@ class Sandbox:
         self._working_dir: str | None = None
         self._object_storage_access: ObjectStorageAccess | None = None
         self._effective_runtime_class: str | None = None
+        self._control: SandboxControl | None = None
         self._attached_volume_ids: tuple[str, ...] = ()
         self._effective_egress: tuple[EgressRule, ...] = ()
         self._effective_ingress: tuple[IngressRule, ...] = ()
@@ -2623,8 +2666,10 @@ class Sandbox:
         contents: str | Path | bytes,
         /,
         *,
-        primary_service: str,
+        primary_service: str | None = None,
         file_type: SandboxFileType | str = SandboxFileType.COMPOSE,
+        control: SandboxControl | str = SandboxControl.UNSPECIFIED,
+        image_pull_credentials: Sequence[ImagePullCredentials | dict[str, Any]] | None = None,
         image_overrides: Mapping[str, str] | None = None,
         default_resources: ResourceOptions | dict[str, Any] | None = None,
         defaults: SandboxDefaults | None = None,
@@ -2657,13 +2702,27 @@ class Sandbox:
         Compose ``build:`` is ``CWSANDBOX_NOT_IMPLEMENTED``. Skip-build by
         setting ``image:`` in the YAML or ``image_overrides``.
 
+        With ``control=SandboxControl.CONTAINER_ENGINE``, the file runs as
+        written under Docker Compose in a container named ``cws-engine``.
+        ``wait()`` returns once ``docker compose up --wait`` succeeds. Exec,
+        shell, logs, and file calls all reach ``cws-engine``; manage services
+        with ``exec(["docker", "compose", ...])``. Engine startup can take
+        longer than the default ``request_timeout_seconds``, so pass explicit
+        ``wait(timeout=...)`` and ``exec(..., timeout_seconds=...)`` values.
+
         Args:
             contents: Compose file path (``str`` / ``Path``) or raw YAML bytes.
                 A ``str`` is always opened as a path; pass Compose text as
                 ``bytes`` (``.encode("utf-8")``). Cap is 256 KiB. Bytes are
                 sent as-is.
             primary_service: Compose service that is the sandbox primary.
+                Required unless ``control`` is ``CONTAINER_ENGINE``, where the
+                backend rejects it.
             file_type: Document type. Defaults to ``compose``.
+            control: Who controls the containers. Defaults to the platform.
+                ``CONTAINER_ENGINE`` runs the file under Docker Compose.
+            image_pull_credentials: Registry credentials for image pulls, one
+                per registry, as a list of ``ImagePullCredentials`` or dicts.
             image_overrides: Per-service pullable image refs. Keys must be
                 services in ``contents``.
             default_resources: CPU/memory copied onto each service that omitted
@@ -2677,8 +2736,8 @@ class Sandbox:
                 explicit non-strict keyword argument raises.
             request_id: Optional idempotency token. Auto-generated when omitted.
             **kwargs: Rejected. This RPC does not accept volumes, published
-                services, ``runtime_class``, ``image_pull_credentials``,
-                ``network_ids``, or ``build_contexts``.
+                services, ``runtime_class``, ``network_ids``, or
+                ``build_contexts``.
 
         Returns:
             Sandbox handle (create accepted; may still be starting).
@@ -2691,12 +2750,14 @@ class Sandbox:
                     "CreateSandboxFromFile does not accept "
                     + ", ".join(extra)
                     + "; use Sandbox.run() for volumes, published services, "
-                    "runtime_class, and image_pull_credentials"
+                    "and runtime_class"
                 )
             raise TypeError(f"run_from_file() got unexpected keyword argument(s): {bad}")
 
-        if not primary_service:
-            raise ValueError("primary_service is required")
+        control = _coerce_sandbox_control(control)
+        if not primary_service and control != SandboxControl.CONTAINER_ENGINE:
+            raise ValueError("primary_service is required unless control is CONTAINER_ENGINE")
+        pull_credentials = _coerce_from_file_pull_credentials(image_pull_credentials)
 
         file_type = _coerce_sandbox_file_type(file_type)
         raw = _read_from_file_contents(contents)
@@ -2733,6 +2794,8 @@ class Sandbox:
                 primary_service=primary_service,
                 image_overrides=overrides,
                 default_resources=resources_opt,
+                control=control,
+                image_pull_credentials=pull_credentials,
             ),
         )
         if request_id:
@@ -2846,6 +2909,7 @@ class Sandbox:
         sandbox._working_dir = None
         sandbox._object_storage_access = None
         sandbox._effective_runtime_class = None
+        sandbox._control = None
         sandbox._attached_volume_ids = ()
         sandbox._effective_egress = ()
         sandbox._effective_ingress = ()
@@ -3952,7 +4016,9 @@ class Sandbox:
         """Create-time container spec echoed from the sandbox resource.
 
         Empty until create/Get/list populates it. ``primary=True`` is filled
-        on the inferred primary so a clone of this list is a valid create.
+        on the inferred primary so a clone of this list is a valid create,
+        except on engine sandboxes (``control == CONTAINER_ENGINE``), which
+        echo a single image-less ``cws-engine`` row.
         """
         return self._spec_containers
 
@@ -3984,6 +4050,16 @@ class Sandbox:
     def effective_runtime_class(self) -> str | None:
         """Runtime class applied by the backend, echoed from status."""
         return self._effective_runtime_class
+
+    @property
+    def control(self) -> SandboxControl | None:
+        """Who controls the sandbox's containers, echoed from the backend.
+
+        None until a create/Get/list response arrives. ``UNSPECIFIED`` and
+        ``PLATFORM`` both mean platform control, so compare against
+        ``SandboxControl.CONTAINER_ENGINE``.
+        """
+        return self._control
 
     @property
     def attached_volume_ids(self) -> tuple[str, ...]:
@@ -4686,8 +4762,9 @@ class Sandbox:
                         request_id=self._create_request_id,
                     )
                     logger.debug(
-                        "Creating sandbox from file (type=%s, primary_service=%s)",
+                        "Creating sandbox from file (type=%s, control=%s, primary_service=%s)",
                         self._from_file.file_type,
+                        self._from_file.control,
                         self._from_file.primary_service,
                     )
                     try:
@@ -5066,19 +5143,23 @@ class Sandbox:
             )
 
     @staticmethod
+    def _image_pull_credentials_to_proto(
+        ipc: ImagePullCredentials,
+    ) -> sandbox_pb2.ImagePullCredentials:
+        return sandbox_pb2.ImagePullCredentials(
+            registry=ipc.registry,
+            credentials=sandbox_pb2.SecretSource(
+                store_name=ipc.store, path=ipc.name, field=ipc.field
+            ),
+        )
+
+    @staticmethod
     def _apply_image_pull_credentials(container: sandbox_pb2.Container, ipc: Any) -> None:
         if ipc is None:
             return
         if isinstance(ipc, dict):
             ipc = ImagePullCredentials(**ipc)
-        container.image_pull_credentials.CopyFrom(
-            sandbox_pb2.ImagePullCredentials(
-                registry=ipc.registry,
-                credentials=sandbox_pb2.SecretSource(
-                    store_name=ipc.store, path=ipc.name, field=ipc.field
-                ),
-            )
-        )
+        container.image_pull_credentials.CopyFrom(Sandbox._image_pull_credentials_to_proto(ipc))
 
     @staticmethod
     def _apply_mounted_files(container: sandbox_pb2.Container, mounted_files: Any) -> None:
@@ -5473,6 +5554,12 @@ class Sandbox:
         )
         if spec.primary_service:
             request.primary_service = spec.primary_service
+        if spec.control != SandboxControl.UNSPECIFIED:
+            proto_control = sandbox_pb2.Control.Value(f"CONTROL_{spec.control.name}")
+            request.control = cast(sandbox_pb2.Control, proto_control)
+        request.image_pull_credentials.extend(
+            self._image_pull_credentials_to_proto(c) for c in spec.image_pull_credentials
+        )
         if spec.image_overrides:
             request.image_overrides.update(spec.image_overrides)
         if spec.default_resources is not None:
@@ -5602,6 +5689,9 @@ class Sandbox:
             rule.https_hostname for rule in status.effective_egress if rule.https_hostname
         )
         self._effective_runtime_class = status.effective_runtime_class or None
+        self._control = _SANDBOX_CONTROL_FROM_PROTO.get(
+            view._sandbox.control, SandboxControl.UNSPECIFIED
+        )
         self._attached_volume_ids = tuple(status.attached_volume_ids)
         egress_rules: list[EgressRule] = []
         for egress_proto in status.effective_egress:

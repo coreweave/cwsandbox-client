@@ -49,6 +49,9 @@ PROTO_FILES=(
     volume_pb2.py
     volume_pb2.pyi
     volume_pb2_grpc.py
+    runtime_class_pb2.py
+    runtime_class_pb2.pyi
+    runtime_class_pb2_grpc.py
 )
 
 # Legacy beta stubs to delete on refresh
