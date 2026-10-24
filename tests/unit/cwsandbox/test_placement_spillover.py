@@ -662,3 +662,190 @@ class TestSpilloverCreatePath:
     ) -> None:
         error = _MockRpcErrorWithDetails(code, reason=reason)
         assert _create_attempt_definitely_rejected(error) is rejected
+
+
+class TestCapacityRetries:
+    @pytest.mark.parametrize(
+        "reason", [CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED, CWSANDBOX_RUNNER_OVERLOADED]
+    )
+    def test_opt_in_reuses_request_and_succeeds(self, reason: str) -> None:
+        with patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock):
+            sandbox, stub, err = _run_with_create_side_effect(
+                [_capacity_error(reason), _create_sandbox_response()],
+                create_retry_budget_seconds=60,
+            )
+        assert err is None
+        assert sandbox is not None
+        calls = stub.CreateSandbox.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args[0] == calls[1].args[0]
+        assert calls[0].args[0].request_id
+        assert 0 < calls[1].kwargs["timeout"] <= 60
+
+    def test_disabled_by_default(self) -> None:
+        _, stub, err = _run_with_create_side_effect(_capacity_error())
+        assert isinstance(err, SandboxResourceExhaustedError)
+        assert stub.CreateSandbox.call_count == 1
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _MockRpcErrorWithDetails(grpc.StatusCode.UNAVAILABLE),
+            _MockRpcErrorWithDetails(grpc.StatusCode.DEADLINE_EXCEEDED),
+            _MockRpcErrorWithDetails(grpc.StatusCode.RESOURCE_EXHAUSTED),
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.PERMISSION_DENIED, reason=CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED
+            ),
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.RESOURCE_EXHAUSTED, reason="CWSANDBOX_QUOTA_EXCEEDED"
+            ),
+            _MockRpcErrorWithDetails(
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                reason=CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+                domain="untrusted.example",
+            ),
+        ],
+    )
+    def test_does_not_retry_other_failures(self, error: grpc.RpcError) -> None:
+        with patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            _, stub, err = _run_with_create_side_effect(error, create_retry_budget_seconds=60)
+        assert err is not None
+        assert stub.CreateSandbox.call_count == 1
+        sleep.assert_not_called()
+
+    def test_budget_exhaustion_does_not_dispatch_another_request(self) -> None:
+        clock = MagicMock()
+        clock.monotonic.return_value = 0.0
+
+        async def sleep(delay: float) -> None:
+            clock.monotonic.return_value += delay
+
+        with (
+            patch("cwsandbox._sandbox.time", clock),
+            patch("cwsandbox._sandbox.asyncio.sleep", side_effect=sleep),
+        ):
+            _, stub, err = _run_with_create_side_effect(
+                _capacity_error(), create_retry_budget_seconds=0.01
+            )
+        assert isinstance(err, SandboxResourceExhaustedError)
+        assert stub.CreateSandbox.call_count == 1
+
+    def test_defaults_and_explicit_zero_override(self) -> None:
+        from cwsandbox import SandboxDefaults
+
+        defaults = SandboxDefaults(create_retry_budget_seconds=60)
+        assert Sandbox(defaults=defaults)._create_retry_budget_seconds == 60
+        assert (
+            Sandbox(defaults=defaults, create_retry_budget_seconds=0)._create_retry_budget_seconds
+            == 0
+        )
+        assert (
+            SandboxDefaults.from_dict(
+                {"create_retry_budget_seconds": None}
+            ).create_retry_budget_seconds
+            == 0
+        )
+        assert (
+            SandboxDefaults.from_dict(
+                {"create_retry_budget_seconds": 30}
+            ).create_retry_budget_seconds
+            == 30
+        )
+
+    @pytest.mark.parametrize("budget", [-1, float("nan"), float("inf"), float("-inf")])
+    def test_invalid_budgets(self, budget: float) -> None:
+        from cwsandbox import SandboxDefaults
+
+        with pytest.raises(ValueError, match="create_retry_budget_seconds"):
+            Sandbox(create_retry_budget_seconds=budget)
+        with pytest.raises(ValueError, match="create_retry_budget_seconds"):
+            SandboxDefaults(create_retry_budget_seconds=budget)
+
+    def test_spillover_after_primary_budget_expires(self) -> None:
+        clock = MagicMock()
+        clock.monotonic.return_value = 0.0
+
+        async def sleep(delay: float) -> None:
+            clock.monotonic.return_value += delay
+
+        with (
+            patch("cwsandbox._sandbox.time", clock),
+            patch("cwsandbox._sandbox.asyncio.sleep", side_effect=sleep),
+        ):
+            sandbox, stub, err = _run_with_create_side_effect(
+                [_capacity_error(), _create_sandbox_response()],
+                create_retry_budget_seconds=0.01,
+                placement_spillover=PlacementSpillover.CKS_THEN_SERVERLESS,
+            )
+        assert err is None
+        assert sandbox is not None
+        calls = stub.CreateSandbox.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args[0].request_id != calls[1].args[0].request_id
+
+    @pytest.mark.parametrize("kind", ["template", "file"])
+    def test_capacity_retries_cover_other_create_factories(self, kind: str) -> None:
+        stub = MagicMock()
+        rpc = AsyncMock(side_effect=[_capacity_error(), _create_sandbox_response()])
+        if kind == "template":
+            stub.CreateSandboxFromTemplate = rpc
+        else:
+            stub.CreateSandboxFromFile = rpc
+
+        async def ensure_client(sandbox: Sandbox) -> None:
+            sandbox._channel = MagicMock()
+            sandbox._channel.close = AsyncMock()
+            sandbox._stub = stub
+
+        with (
+            patch.object(Sandbox, "_ensure_client", ensure_client),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            if kind == "template":
+                sandbox = Sandbox.run_from_template("template-id", create_retry_budget_seconds=60)
+            else:
+                sandbox = Sandbox.run_from_file(
+                    b"services:\n  main:\n    image: python:3.11\n",
+                    primary_service="main",
+                    create_retry_budget_seconds=60,
+                )
+        assert rpc.call_count == 2
+        assert rpc.call_args_list[0].args[0] == rpc.call_args_list[1].args[0]
+        sandbox._state = _Terminal(sandbox_id="spill-ok", status=SandboxStatus.COMPLETED)
+
+    def test_retry_info_delay_is_honored(self) -> None:
+        from google.protobuf import any_pb2
+        from google.rpc import error_details_pb2, status_pb2
+
+        error = _capacity_error()
+        status = status_pb2.Status.FromString(error._trailing[0][1])
+        hint = error_details_pb2.RetryInfo()
+        hint.retry_delay.seconds = 5
+        packed = any_pb2.Any()
+        packed.Pack(hint)
+        status.details.append(packed)
+        error._trailing = [("grpc-status-details-bin", status.SerializeToString())]
+        with patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            _, _, err = _run_with_create_side_effect(
+                [error, _create_sandbox_response()], create_retry_budget_seconds=60
+            )
+        assert err is None
+        sleep.assert_awaited_once_with(5)
+
+    def test_capacity_wait_does_not_consume_startup_poll_grace(self) -> None:
+        clock = MagicMock()
+        clock.monotonic.return_value = 0.0
+
+        async def sleep(delay: float) -> None:
+            clock.monotonic.return_value = 30.0
+
+        with (
+            patch("cwsandbox._sandbox.time", clock),
+            patch("cwsandbox._sandbox.asyncio.sleep", side_effect=sleep),
+        ):
+            sandbox, _, err = _run_with_create_side_effect(
+                [_capacity_error(), _create_sandbox_response()], create_retry_budget_seconds=60
+            )
+        assert err is None
+        assert sandbox is not None
+        assert sandbox._start_accepted_at == 30.0

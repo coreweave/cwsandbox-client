@@ -283,6 +283,10 @@ class SandboxDefaults:
             ``AuthStrategy.COREWEAVE_API_KEY``.
         request_timeout_seconds: Client-side HTTP timeout in seconds for most
             RPCs. Poll Get RPCs use ``poll_rpc_timeout_seconds`` instead.
+        create_retry_budget_seconds: Opt-in capacity retry budget per create
+            placement attempt. Defaults to zero (no capacity retries).
+            Retries only trusted runner-capacity/overload rejections, preserving
+            the request ID. Does not retry quota, auth, or transport failures.
         poll_retry_budget_seconds: Wall-clock budget per retry burst (one trip
             to a stable status).  The budget resets on any successful response,
             so a long-lived sandbox that hits a transient error, recovers, then
@@ -358,6 +362,7 @@ class SandboxDefaults:
     base_url: str = DEFAULT_BASE_URL
     auth: AuthConfig | None = field(default=None, repr=False)
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
+    create_retry_budget_seconds: float = 0.0
     poll_retry_budget_seconds: float = DEFAULT_POLL_RETRY_BUDGET_SECONDS
     poll_rpc_timeout_seconds: float = DEFAULT_POLL_RPC_TIMEOUT_SECONDS
     max_lifetime_seconds: float | None = DEFAULT_MAX_LIFETIME_SECONDS
@@ -383,6 +388,11 @@ class SandboxDefaults:
 
     def __post_init__(self) -> None:
         """Validate numeric poll configuration fields."""
+        if (
+            not math.isfinite(self.create_retry_budget_seconds)
+            or self.create_retry_budget_seconds < 0
+        ):
+            raise ValueError("create_retry_budget_seconds must be finite and nonnegative")
         _validate_poll_config(
             self.poll_retry_budget_seconds,
             self.poll_rpc_timeout_seconds,
@@ -462,6 +472,7 @@ class SandboxDefaults:
             "args",
             "base_url",
             "request_timeout_seconds",
+            "create_retry_budget_seconds",
             "poll_retry_budget_seconds",
             "poll_rpc_timeout_seconds",
             "temp_dir",

@@ -95,6 +95,8 @@ from cwsandbox._error_info import (
     CWSANDBOX_FSS_WAIT_TIMEOUT,
     CWSANDBOX_INVALID_REQUEST,
     CWSANDBOX_RESOURCE_CEILING_EXCEEDED,
+    CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+    CWSANDBOX_RUNNER_OVERLOADED,
     CWSANDBOX_RUNNER_SHARD_RETIRING,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     CWSANDBOX_VOLUME_BACKEND_NOT_FOUND,
@@ -1883,6 +1885,7 @@ class Sandbox:
         tags: list[str] | None = None,
         base_url: str | None = None,
         request_timeout_seconds: float | None = None,
+        create_retry_budget_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
@@ -1929,6 +1932,10 @@ class Sandbox:
             container_image: Container image to use (default: python:3.11)
             tags: Optional tags for the sandbox
             base_url: API URL (default: CWSANDBOX_BASE_URL env or localhost)
+            create_retry_budget_seconds: Opt-in capacity retry budget per placement
+                attempt, in seconds (default 0, disabled). Retries trusted runner
+                capacity/overload rejections with backoff and the same request ID.
+                Does not retry quota, auth, or ambiguous transport failures.
             request_timeout_seconds: Timeout for API requests (client-side,
                 default: 300s). Share-token recovery also caps each replay at
                 this value, 5s, and the remaining 15s recovery budget.
@@ -2075,6 +2082,16 @@ class Sandbox:
             else effective_data_plane_mode
         )
         self._direct_data_plane = DirectDataPlaneClient()
+        self._create_retry_budget_seconds = (
+            self._defaults.create_retry_budget_seconds
+            if create_retry_budget_seconds is None
+            else create_retry_budget_seconds
+        )
+        if (
+            not math.isfinite(self._create_retry_budget_seconds)
+            or self._create_retry_budget_seconds < 0
+        ):
+            raise ValueError("create_retry_budget_seconds must be finite and nonnegative")
         self._poll_retry_budget_seconds = (
             poll_retry_budget_seconds
             if poll_retry_budget_seconds is not None
@@ -2353,6 +2370,7 @@ class Sandbox:
         defaults: SandboxDefaults | None = None,
         auth: AuthConfig | None = None,
         request_timeout_seconds: float | None = None,
+        create_retry_budget_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
@@ -2403,6 +2421,10 @@ class Sandbox:
             container_image: Container image to use
             defaults: Optional SandboxDefaults to apply
             auth: Authentication mode or provider. Overrides ``defaults.auth``.
+            create_retry_budget_seconds: Opt-in capacity retry budget per placement
+                attempt, in seconds (default 0, disabled). Retries trusted runner
+                capacity/overload rejections with backoff and the same request ID.
+                Does not retry quota, auth, or ambiguous transport failures.
             request_timeout_seconds: Timeout for API requests (client-side).
                 Share-token recovery replays are also capped at this value.
             poll_retry_budget_seconds: Wall-clock budget for retrying transient
@@ -2498,6 +2520,7 @@ class Sandbox:
             defaults=defaults,
             auth=auth,
             request_timeout_seconds=request_timeout_seconds,
+            create_retry_budget_seconds=create_retry_budget_seconds,
             poll_retry_budget_seconds=poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
@@ -2601,6 +2624,7 @@ class Sandbox:
         defaults: SandboxDefaults | None = None,
         auth: AuthConfig | None = None,
         request_timeout_seconds: float | None = None,
+        create_retry_budget_seconds: float | None = None,
         poll_retry_budget_seconds: float | None = None,
         poll_rpc_timeout_seconds: float | None = None,
         max_lifetime_seconds: float | None = None,
@@ -2685,6 +2709,7 @@ class Sandbox:
             defaults=defaults,
             auth=auth,
             request_timeout_seconds=request_timeout_seconds,
+            create_retry_budget_seconds=create_retry_budget_seconds,
             poll_retry_budget_seconds=poll_retry_budget_seconds,
             poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
             max_lifetime_seconds=max_lifetime_seconds,
@@ -2767,6 +2792,7 @@ class Sandbox:
         sandbox._status_updated_at = datetime.now(UTC)
         sandbox._base_url = base_url
         sandbox._request_timeout_seconds = timeout_seconds
+        sandbox._create_retry_budget_seconds = 0.0
         sandbox._poll_retry_budget_seconds = poll_retry_budget_seconds
         sandbox._poll_rpc_timeout_seconds = poll_rpc_timeout_seconds
         _validate_poll_config(
@@ -4639,10 +4665,8 @@ class Sandbox:
                         self._from_file.primary_service,
                     )
                     try:
-                        response = await self._stub.CreateSandboxFromFile(
-                            from_file_request,
-                            timeout=self._request_timeout_seconds,
-                            metadata=self._auth_metadata,
+                        response = await self._create_with_capacity_retry(
+                            self._stub.CreateSandboxFromFile, from_file_request
                         )
                     except grpc.RpcError as e:
                         raise _translate_rpc_error(e, operation="Create sandbox from file") from e
@@ -4656,10 +4680,8 @@ class Sandbox:
                     )
                     logger.debug("Creating sandbox from template %s", template_id)
                     try:
-                        response = await self._stub.CreateSandboxFromTemplate(
-                            template_request,
-                            timeout=self._request_timeout_seconds,
-                            metadata=self._auth_metadata,
+                        response = await self._create_with_capacity_retry(
+                            self._stub.CreateSandboxFromTemplate, template_request
                         )
                     except grpc.RpcError as e:
                         raise _translate_rpc_error(
@@ -4843,6 +4865,62 @@ class Sandbox:
             self._sandbox_id,
         )
 
+    async def _create_with_capacity_retry(
+        self, rpc: Callable[..., Awaitable[Any]], request: Any
+    ) -> Any:
+        """Retry definite pool-busy rejections without changing the create body/key."""
+        deadline: float | None = None
+        delay = DEFAULT_POLL_INTERVAL_SECONDS
+        timeout = self._request_timeout_seconds
+        while True:
+            # Capacity waits must not consume the post-create NOT_FOUND grace
+            # period or inflate the startup time of the accepted attempt.
+            if deadline is not None:
+                self._start_accepted_at = time.monotonic()
+            try:
+                return await rpc(request, timeout=timeout, metadata=self._auth_metadata)
+            except grpc.RpcError as exc:
+                parsed = parse_error_info(exc)
+                if (
+                    self._create_retry_budget_seconds <= 0
+                    or parsed is None
+                    or parsed.domain != CWSANDBOX_ERROR_DOMAIN
+                    or parsed.reason
+                    not in {
+                        CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
+                        CWSANDBOX_RUNNER_OVERLOADED,
+                    }
+                    or exc.code()
+                    not in (grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.UNAVAILABLE)
+                ):
+                    raise
+                if deadline is None:
+                    deadline = time.monotonic() + self._create_retry_budget_seconds
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                translated = _translate_rpc_error(exc, operation="Create sandbox")
+                hint = translated.retry_delay
+                delay = (
+                    min(hint.total_seconds(), MAX_POLL_RETRY_HINTED_DELAY_SECONDS)
+                    if hint is not None and hint.total_seconds() > 0
+                    else random.uniform(
+                        DEFAULT_POLL_INTERVAL_SECONDS,
+                        max(
+                            DEFAULT_POLL_INTERVAL_SECONDS,
+                            min(
+                                DEFAULT_MAX_POLL_INTERVAL_SECONDS,
+                                delay * DEFAULT_POLL_BACKOFF_FACTOR,
+                            ),
+                        ),
+                    )
+                )
+                await asyncio.sleep(min(delay, remaining))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                timeout = min(self._request_timeout_seconds, remaining)
+
     async def _create_with_optional_spillover(self) -> Any:
         """CreateSandbox with at most one placement-mode spillover retry.
 
@@ -4876,11 +4954,7 @@ class Sandbox:
                 attempt,
             )
             try:
-                response = await self._stub.CreateSandbox(
-                    request,
-                    timeout=self._request_timeout_seconds,
-                    metadata=self._auth_metadata,
-                )
+                response = await self._create_with_capacity_retry(self._stub.CreateSandbox, request)
             except grpc.RpcError as e:
                 translated = _translate_rpc_error(e, operation="Create sandbox")
                 if (
