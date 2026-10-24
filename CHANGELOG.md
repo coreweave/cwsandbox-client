@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.21.0 (2026-10-24)
+
+### Bug Fixes
+
+- **snapshot**: Unify typed failures and expose retry budget
+  ([`bd3c7b8`](https://github.com/coreweave/cwsandbox-client/commit/bd3c7b89b80c8b82c2dc55ae7de73817b79eef21))
+
+### Features
+
+- **sandbox**: Add opt-in capacity retries for create
+  ([`dfae951`](https://github.com/coreweave/cwsandbox-client/commit/dfae9511c91a48abdf17935c369fe9d069db5402))
+
+
 ## v1.20.0 (2026-10-24)
 
 ### Features
