@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.20.0 (2026-10-24)
+
+### Features
+
+- **sandbox**: Expose tags and creation time on discovered sandboxes
+  ([`ea6b822`](https://github.com/coreweave/cwsandbox-client/commit/ea6b822d17dcf07ab2fb71a15d779a36366530c5))
+
+
 ## v1.19.6 (2026-10-23)
 
 ### Bug Fixes
