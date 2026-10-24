@@ -32,6 +32,7 @@ from cwsandbox.exceptions import (
     SandboxValidationError,
     SnapshotBackendThrottledError,
     SnapshotBucketMismatchError,
+    SnapshotBucketProvisioningError,
     SnapshotNotFoundError,
     SnapshotNotReadyError,
     SnapshotNotSupportedError,
@@ -83,12 +84,15 @@ class TestExceptionHierarchy:
             SnapshotSizeExceededError,
             SnapshotQuotaExceededError,
             SnapshotBucketMismatchError,
+            SnapshotBucketProvisioningError,
         ):
             assert issubclass(cls, SandboxSnapshotError)
-        # Transient throttling is a retryable SandboxUnavailableError, NOT a
-        # SandboxSnapshotError; wait-timeout is a SandboxTimeoutError.
+        # Snapshot-specific failures share a family without losing legacy catches.
         assert issubclass(SnapshotBackendThrottledError, SandboxUnavailableError)
-        assert not issubclass(SnapshotBackendThrottledError, SandboxSnapshotError)
+        assert issubclass(SnapshotBackendThrottledError, SandboxSnapshotError)
+        assert issubclass(SnapshotBucketProvisioningError, SandboxSnapshotError)
+        assert issubclass(SnapshotBucketProvisioningError, SandboxUnavailableError)
+        assert issubclass(SnapshotWaitTimeoutError, SandboxSnapshotError)
         assert issubclass(SnapshotWaitTimeoutError, SandboxTimeoutError)
 
     def test_snapshot_error_carries_snapshot_id(self) -> None:

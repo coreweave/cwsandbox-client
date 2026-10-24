@@ -35,6 +35,7 @@ from cwsandbox._defaults import (
 from cwsandbox._error_info import (
     CWSANDBOX_FSS_BACKEND_THROTTLED,
     CWSANDBOX_FSS_BUCKET_MISMATCH,
+    CWSANDBOX_FSS_BUCKET_PROVISIONING,
     CWSANDBOX_FSS_INFLIGHT_LIMIT,
     CWSANDBOX_FSS_NOT_FOUND,
     CWSANDBOX_FSS_NOT_READY,
@@ -55,6 +56,7 @@ from cwsandbox.exceptions import (
     SandboxUnavailableError,
     SnapshotBackendThrottledError,
     SnapshotBucketMismatchError,
+    SnapshotBucketProvisioningError,
     SnapshotNotFoundError,
     SnapshotNotReadyError,
     SnapshotNotSupportedError,
@@ -264,6 +266,7 @@ class TestSnapshotErrorMapping:
             (CWSANDBOX_FSS_SIZE_EXCEEDED, SnapshotSizeExceededError),
             (CWSANDBOX_FSS_QUOTA_EXCEEDED, SnapshotQuotaExceededError),
             (CWSANDBOX_FSS_BUCKET_MISMATCH, SnapshotBucketMismatchError),
+            (CWSANDBOX_FSS_BUCKET_PROVISIONING, SnapshotBucketProvisioningError),
             (CWSANDBOX_FSS_RESTORE_FAILED, SandboxSnapshotError),
         ],
     )
@@ -291,6 +294,8 @@ class TestSnapshotErrorMapping:
         )
         assert isinstance(exc, SnapshotWaitTimeoutError)
         assert isinstance(exc, SandboxTimeoutError)
+        assert isinstance(exc, SandboxSnapshotError)
+        assert exc.file_system_snapshot_id == "fss-9"
         assert not isinstance(exc, sandbox_module._RETRYABLE_POLL_EXCEPTIONS)
 
     @pytest.mark.parametrize(
@@ -1016,14 +1021,20 @@ class TestBucketConfig:
 class TestTransientRetry:
     """The FSS RPCs retry transient backend errors with a bounded budget."""
 
-    def test_snapshot_retries_transient_then_succeeds(self) -> None:
+    @pytest.mark.parametrize("provisioning", [False, True])
+    def test_snapshot_retries_transient_then_succeeds(self, provisioning: bool) -> None:
         """A transient UNAVAILABLE on create is retried; the same auto-key reused."""
         sandbox = Sandbox(command="sleep", args=["infinity"])
         sandbox._sandbox_id = "sb-1"
         sandbox._stub = MagicMock()
         ok = _ready_snapshot_proto("fss-1")
         sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
-            side_effect=[_bare_rpc_error(grpc.StatusCode.UNAVAILABLE), ok]
+            side_effect=[
+                _fss_rpc_error(CWSANDBOX_FSS_BUCKET_PROVISIONING, code=grpc.StatusCode.UNAVAILABLE)
+                if provisioning
+                else _bare_rpc_error(grpc.StatusCode.UNAVAILABLE),
+                ok,
+            ]
         )
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
@@ -1091,10 +1102,9 @@ class TestTransientRetry:
         with (
             patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
             patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
-            patch("cwsandbox._sandbox.DEFAULT_FSS_RETRY_BUDGET_SECONDS", 0.0),
         ):
             with pytest.raises(SandboxUnavailableError):
-                sandbox.snapshot(wait_for_ready=False).result()
+                sandbox.snapshot(wait_for_ready=False, retry_budget_seconds=0).result()
         assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
 
     def test_snapshot_does_not_retry_deadline_exceeded(self) -> None:
@@ -1141,3 +1151,64 @@ class TestTransientRetry:
             snap = Sandbox.get_snapshot("fss-2").result()
         assert snap.file_system_snapshot_id == "fss-2"
         assert mock_stub.GetFileSystemSnapshot.call_count == 2
+
+
+class TestSnapshotRetryBudget:
+    @pytest.mark.parametrize("budget", [-1, float("inf"), float("-inf"), float("nan")])
+    def test_invalid_budget_rejected_before_rpc(self, budget: float) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        with patch.object(sandbox, "_snapshot_async", new_callable=AsyncMock) as snapshot:
+            with pytest.raises(ValueError, match="retry_budget_seconds"):
+                sandbox.snapshot(retry_budget_seconds=budget)
+            snapshot.assert_not_called()
+
+    def test_custom_budget_reaches_retry_loop(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch(
+                "cwsandbox._sandbox._retry_transient_rpc",
+                new_callable=AsyncMock,
+                return_value="fss-1",
+            ) as retry,
+        ):
+            assert sandbox.snapshot(retry_budget_seconds=300).result() == "fss-1"
+        assert retry.call_args.kwargs["budget_seconds"] == 300
+
+    def test_provisioning_error_preserves_retry_contract_and_source(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            side_effect=_fss_rpc_error(
+                CWSANDBOX_FSS_BUCKET_PROVISIONING, code=grpc.StatusCode.UNAVAILABLE
+            )
+        )
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch.object(sandbox, "stop") as stop,
+        ):
+            with pytest.raises(SandboxSnapshotError) as caught:
+                sandbox.snapshot(
+                    request_id="same-build", wait_for_ready=False, retry_budget_seconds=0
+                ).result()
+            assert isinstance(caught.value, SnapshotBucketProvisioningError)
+            assert isinstance(caught.value, SandboxUnavailableError)
+            assert caught.value.reason == CWSANDBOX_FSS_BUCKET_PROVISIONING
+            stop.assert_not_called()
+            sandbox._stub.CreateFileSystemSnapshot.side_effect = None
+            sandbox._stub.CreateFileSystemSnapshot.return_value = _ready_snapshot_proto("fss-1")
+            assert (
+                sandbox.snapshot(
+                    request_id="same-build", wait_for_ready=False, retry_budget_seconds=0
+                ).result()
+                == "fss-1"
+            )
+        assert all(
+            call.args[0].request_id == "same-build"
+            for call in sandbox._stub.CreateFileSystemSnapshot.call_args_list
+        )

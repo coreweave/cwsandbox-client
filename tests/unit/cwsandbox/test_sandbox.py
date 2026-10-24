@@ -986,6 +986,7 @@ class TestSandboxRun:
 
             entered = threading.Event()
             two_waiters = threading.Event()
+            second_ref_ready = threading.Event()
             cancelled = threading.Event()
             release: asyncio.Event | None = None
             replay_calls = 0
@@ -1018,6 +1019,7 @@ class TestSandboxRun:
             def call_second() -> None:
                 nonlocal second_ref
                 second_ref = sandbox.start()
+                second_ref_ready.set()
                 try:
                     second_ref.result()
                 except concurrent.futures.CancelledError:
@@ -1030,20 +1032,26 @@ class TestSandboxRun:
                 assert entered.wait(timeout=5)
                 recovery_task = sandbox._endpoint_share_token_recovery_task
                 second.start()
-                assert two_waiters.wait(timeout=5)
-                assert second_ref is not None
-                assert second_ref._future.cancel()
-                assert cancelled.wait(timeout=5)
-                assert recovery_task is not None
-                assert not recovery_task.done()
+                try:
+                    assert two_waiters.wait(timeout=5)
+                    # The background coroutine can reach shield before start()
+                    # returns its OperationRef to the calling thread.
+                    assert second_ref_ready.wait(timeout=5)
+                    assert second_ref is not None
+                    assert second_ref._future.cancel()
+                    assert cancelled.wait(timeout=5)
+                    assert recovery_task is not None
+                    assert not recovery_task.done()
+                finally:
+                    # Release the shared task even on assertion failure, or the
+                    # worker thread prevents pytest from exiting.
+                    async def release_replay() -> None:
+                        assert release is not None
+                        release.set()
 
-                async def release_replay() -> None:
-                    assert release is not None
-                    release.set()
-
-                sandbox._loop_manager.run_async(release_replay()).result()
-                first.join(timeout=5)
-                second.join(timeout=5)
+                    sandbox._loop_manager.run_async(release_replay()).result(timeout=5)
+                    first.join(timeout=5)
+                    second.join(timeout=5)
                 assert not first.is_alive()
                 assert not second.is_alive()
 

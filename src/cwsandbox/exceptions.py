@@ -462,7 +462,7 @@ class SnapshotBucketMismatchError(SandboxSnapshotError):
     """
 
 
-class SnapshotWaitTimeoutError(SandboxTimeoutError):
+class SnapshotWaitTimeoutError(SandboxTimeoutError, SandboxSnapshotError):
     """Raised when ``wait_for_ready`` exceeded its budget before the snapshot was READY.
 
     Emitted for ``CWSANDBOX_FSS_WAIT_TIMEOUT``. The snapshot may still complete
@@ -485,7 +485,16 @@ class SnapshotWaitTimeoutError(SandboxTimeoutError):
         self.file_system_snapshot_id = file_system_snapshot_id
 
 
-class SnapshotBackendThrottledError(SandboxUnavailableError):
+class SnapshotBucketProvisioningError(SandboxUnavailableError, SandboxSnapshotError):
+    """Raised while the organization's snapshot bucket is being provisioned.
+
+    Emitted for ``CWSANDBOX_FSS_BUCKET_PROVISIONING``. Retry with backoff while
+    keeping the source sandbox running. This is both a snapshot error and a
+    retryable ``SandboxUnavailableError``; it does not mean the sandbox stopped.
+    """
+
+
+class SnapshotBackendThrottledError(SandboxUnavailableError, SandboxSnapshotError):
     """Raised when the snapshot backend is transiently throttled or at capacity.
 
     Emitted for ``CWSANDBOX_FSS_BACKEND_THROTTLED`` and

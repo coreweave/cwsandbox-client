@@ -87,6 +87,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_FILE_TOO_LARGE,
     CWSANDBOX_FILE_TRUNCATED,
     CWSANDBOX_FSS_BUCKET_MISMATCH,
+    CWSANDBOX_FSS_BUCKET_PROVISIONING,
     CWSANDBOX_FSS_NOT_FOUND,
     CWSANDBOX_FSS_NOT_READY,
     CWSANDBOX_FSS_NOT_SUPPORTED,
@@ -209,6 +210,7 @@ from cwsandbox.exceptions import (
     SandboxUnavailableError,
     SnapshotBackendThrottledError,
     SnapshotBucketMismatchError,
+    SnapshotBucketProvisioningError,
     SnapshotNotFoundError,
     SnapshotNotReadyError,
     SnapshotNotSupportedError,
@@ -824,9 +826,8 @@ def _translate_snapshot_reason(
     """Map a trusted FSS ``CWSANDBOX_FSS_*`` reason to a typed exception.
 
     Returns ``None`` when ``reason`` is not a known FSS reason, so the caller
-    can fall through to status-code mapping. The ``file_system_snapshot_id`` is attached
-    only to ``SandboxSnapshotError`` variants; the transient and wait-timeout
-    classes inherit non-snapshot parents and do not carry it.
+    can fall through to status-code mapping. All mapped exceptions belong to
+    ``SandboxSnapshotError`` and carry the snapshot ID when known.
     """
     snapshot_classes: dict[str, type[SandboxSnapshotError]] = {
         CWSANDBOX_FSS_NOT_FOUND: SnapshotNotFoundError,
@@ -835,6 +836,7 @@ def _translate_snapshot_reason(
         CWSANDBOX_FSS_SIZE_EXCEEDED: SnapshotSizeExceededError,
         CWSANDBOX_FSS_QUOTA_EXCEEDED: SnapshotQuotaExceededError,
         CWSANDBOX_FSS_BUCKET_MISMATCH: SnapshotBucketMismatchError,
+        CWSANDBOX_FSS_BUCKET_PROVISIONING: SnapshotBucketProvisioningError,
     }
     cls = snapshot_classes.get(reason)
     if cls is not None:
@@ -856,6 +858,7 @@ def _translate_snapshot_reason(
     if reason == CWSANDBOX_FSS_WAIT_TIMEOUT:
         return SnapshotWaitTimeoutError(
             f"{operation} timed out waiting for snapshot ready ({reason}): {details}",
+            file_system_snapshot_id=file_system_snapshot_id,
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
@@ -863,6 +866,7 @@ def _translate_snapshot_reason(
     if reason in SNAPSHOT_TRANSIENT_REASONS:
         return SnapshotBackendThrottledError(
             f"Snapshot backend throttled ({reason}): {details}",
+            file_system_snapshot_id=file_system_snapshot_id,
             reason=reason,
             metadata=metadata,
             retry_delay=retry_delay,
@@ -6664,6 +6668,7 @@ class Sandbox:
         *,
         wait_for_ready: bool,
         request_id: str | None,
+        retry_budget_seconds: float | None = None,
     ) -> str:
         """Internal async: create a mid-life snapshot and return its ID."""
         await self._ensure_started_async()
@@ -6708,7 +6713,11 @@ class Sandbox:
                 timeout=create_timeout,
                 scratch_volume_name=names[0] if names else None,
             ),
-            budget_seconds=DEFAULT_FSS_RETRY_BUDGET_SECONDS,
+            budget_seconds=(
+                DEFAULT_FSS_RETRY_BUDGET_SECONDS
+                if retry_budget_seconds is None
+                else retry_budget_seconds
+            ),
             operation="Create file-system snapshot",
             # The create timeout is the snapshot's ceiling (it blocks on the
             # archive), so a client DEADLINE_EXCEEDED is the ceiling being hit,
@@ -6725,6 +6734,7 @@ class Sandbox:
         *,
         wait_for_ready: bool = True,
         request_id: str | None = None,
+        retry_budget_seconds: float | None = None,
     ) -> OperationRef[str]:
         """Capture a file-system snapshot (FSS) of the configured mount.
 
@@ -6742,7 +6752,11 @@ class Sandbox:
                 before returning. When False, returns once the snapshot is
                 created (likely still CREATING).
             request_id: Optional client-supplied key to deduplicate the
-                request on retries.
+                request on retries. Reuse it when retrying an ambiguous failure.
+            retry_budget_seconds: Budget for retrying transient RPC failures,
+                in seconds. Defaults to 30; zero disables retries. Must be
+                finite and nonnegative. This is separate from the archive
+                timeout: an in-flight snapshot can outlive the retry budget.
 
         Returns:
             OperationRef[str]: Use .result() to block (or await) for the new
@@ -6764,10 +6778,15 @@ class Sandbox:
                 snap = Sandbox.get_snapshot(snapshot_id).result()
             ```
         """
+        if retry_budget_seconds is not None and (
+            not math.isfinite(retry_budget_seconds) or retry_budget_seconds < 0
+        ):
+            raise ValueError("retry_budget_seconds must be finite and nonnegative")
         future = self._loop_manager.run_async(
             self._snapshot_async(
                 wait_for_ready=wait_for_ready,
                 request_id=request_id,
+                retry_budget_seconds=retry_budget_seconds,
             )
         )
         return OperationRef(future)
