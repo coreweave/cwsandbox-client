@@ -2094,6 +2094,8 @@ class Sandbox:
             self._max_lifetime_seconds = self._defaults.max_lifetime_seconds
 
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
+        self._observed_tags: tuple[str, ...] = tuple(self._tags or ())
+        self._created_at: datetime | None = None
         self._environment_variables = (
             {}
             if using_containers
@@ -2778,6 +2780,8 @@ class Sandbox:
         sandbox._args = None
         sandbox._container_image = None
         sandbox._tags = None
+        sandbox._observed_tags = ()
+        sandbox._created_at = None
         sandbox._max_lifetime_seconds = None
         sandbox._runner_ids = None
         sandbox._environment_variables = {}
@@ -3758,6 +3762,24 @@ class Sandbox:
         if not isinstance(self._state, _NotStarted):
             return self._state.sandbox_id
         return self._sandbox_id
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """Tags from the latest create, get, or list response.
+
+        Before creation, contains the requested tags, including defaults.
+        The returned tuple cannot mutate the sandbox's tags.
+        """
+        return self._observed_tags
+
+    @property
+    def created_at(self) -> datetime | None:
+        """Server creation timestamp in UTC, distinct from container start time.
+
+        Available after a create, get, or list response includes ``create_time``.
+        None before creation or when the server omits the timestamp.
+        """
+        return self._created_at
 
     @property
     def returncode(self) -> int | None:
@@ -5436,6 +5458,8 @@ class Sandbox:
 
     def _apply_status_echo(self, view: _SandboxView) -> None:
         """Refresh property echoes from a v1 Sandbox resource (create/Get/list)."""
+        self._observed_tags = tuple(view._sandbox.spec.tags)
+        self._created_at = _proto_timestamp_to_datetime(view._sandbox.status, "create_time")
         self._scratch_volume_names = tuple(
             volume.name
             for volume in view._sandbox.spec.volumes
