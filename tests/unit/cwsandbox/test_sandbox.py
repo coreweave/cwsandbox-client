@@ -11,7 +11,7 @@ import math
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -5862,7 +5862,9 @@ class TestSandboxList:
 
         mock_sandbox_info = sandbox_pb2.Sandbox(
             sandbox_id="test-123",
+            spec=sandbox_pb2.SandboxSpec(tags=["team:ml", "seed"]),
             status=sandbox_pb2.SandboxStatus(
+                create_time=timestamp_pb2.Timestamp(seconds=1234567800),
                 state=sandbox_pb2.STATE_RUNNING,
                 runner_id="tower-1",
                 runner_group_id="group-1",
@@ -5890,6 +5892,8 @@ class TestSandboxList:
             assert isinstance(sandboxes[0], Sandbox)
             assert sandboxes[0].sandbox_id == "test-123"
             assert sandboxes[0].status == "running"
+            assert sandboxes[0].tags == ("team:ml", "seed")
+            assert sandboxes[0].created_at == datetime.fromtimestamp(1234567800, UTC)
             call_kwargs = mock_stub.ListSandboxes.call_args[1]
             assert call_kwargs["metadata"] == expected_metadata
 
@@ -10838,3 +10842,37 @@ class TestCleanupActivation:
 
         assert sandbox.sandbox_id == "test-123"
         mock_activate.assert_not_called()
+
+
+class TestSandboxMetadata:
+    def test_requested_tags_before_create(self, mock_api_key: str) -> None:
+        requested = ["seed"]
+        sandbox = Sandbox(tags=requested)
+        requested.append("changed")
+        assert sandbox.tags == ("seed",)
+        assert sandbox.created_at is None
+
+    def test_metadata_refresh_and_missing_timestamp(self, mock_api_key: str) -> None:
+        from google.protobuf.timestamp_pb2 import Timestamp
+
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._sandbox import _SandboxView
+
+        proto = sandbox_pb2.Sandbox(
+            sandbox_id="metadata-test",
+            spec=sandbox_pb2.SandboxSpec(tags=["original"]),
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_CREATING, create_time=Timestamp(seconds=1234567800)
+            ),
+        )
+        sandbox = Sandbox._from_sandbox_info(proto, base_url="localhost:50051", timeout_seconds=30)
+        assert sandbox.tags == ("original",)
+        assert sandbox.created_at == datetime.fromtimestamp(1234567800, UTC)
+        proto.spec.tags[:] = ["updated"]
+        sandbox._apply_status_echo(_SandboxView(proto))
+        assert sandbox.tags == ("updated",)
+        proto.spec.ClearField("tags")
+        proto.status.ClearField("create_time")
+        sandbox._apply_status_echo(_SandboxView(proto))
+        assert sandbox.tags == ()
+        assert sandbox.created_at is None

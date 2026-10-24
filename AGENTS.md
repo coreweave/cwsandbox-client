@@ -65,6 +65,8 @@ Key methods:
 Properties:
 - `status`: Cached status from last API call (use `get_status()` for fresh)
 - `status_updated_at`: When status was last fetched
+- `tags`: Immutable tuple of tags from the latest create/get/list response; requested tags before creation
+- `created_at`: UTC server creation timestamp, or None when absent (distinct from container start time)
 - `sandbox_id`, `runner_id`, `runner_group_id`, `returncode`, `started_at`
 - `service_urls`: Tuple of `(port, name, url)` from typed services once assigned (CREATING or RUNNING; not serving)
 - `endpoint_share_token`: Create-only `EndpointShareToken` for `auth=SHARE_TOKEN` HTTPS URLs. Present on the create handle after Create / FromTemplate. The client replays an accepted create up to three times when the first response omits it, within a 15s budget and with a 5s per-RPC cap; `start()` retries recovery on the same handle. Get, list, and `from_id` omit it. String/repr are redacted; use `as_headers()` to authenticate requests, but do not log the returned dictionary because it contains the raw token.
