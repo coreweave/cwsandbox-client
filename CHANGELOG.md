@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.22.0 (2026-10-26)
+
+### Features
+
+- **sandbox**: Support Compose container engine mode in run_from_file
+  ([#199](https://github.com/coreweave/cwsandbox-client/pull/199),
+  [`4709243`](https://github.com/coreweave/cwsandbox-client/commit/4709243e298ff1ec0401b31045618f1eb8a02760))
+
+Sandbox.run_from_file accepts control=SandboxControl.CONTAINER_ENGINE, which runs the Compose file
+  as written under Docker Compose in the cws-engine container. primary_service is now required only
+  for platform control. image_pull_credentials is accepted as a list, one credential per registry,
+  in both modes. Sandbox.control reports the backend's value from create, Get, list, and from_id
+  responses.
+
+Regenerate the v1 stubs and vendor runtime_class_pb2, which sandbox.proto now imports. Reserve the
+  cws-engine container name.
+
+
 ## v1.21.0 (2026-10-24)
 
 ### Bug Fixes
