@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2025 CoreWeave, Inc.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: cwsandbox-client
+from cwsandbox._proto import runtime_class_pb2 as _runtime_class_pb2
 from google.api import annotations_pb2 as _annotations_pb2
 from google.api import field_behavior_pb2 as _field_behavior_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
@@ -87,6 +88,18 @@ class SandboxFileType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SANDBOX_FILE_TYPE_UNSPECIFIED: _ClassVar[SandboxFileType]
     SANDBOX_FILE_TYPE_COMPOSE: _ClassVar[SandboxFileType]
 
+class Control(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    CONTROL_UNSPECIFIED: _ClassVar[Control]
+    CONTROL_PLATFORM: _ClassVar[Control]
+    CONTROL_CONTAINER_ENGINE: _ClassVar[Control]
+
+class SortDirection(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SORT_DIRECTION_UNSPECIFIED: _ClassVar[SortDirection]
+    SORT_DIRECTION_DESCENDING: _ClassVar[SortDirection]
+    SORT_DIRECTION_ASCENDING: _ClassVar[SortDirection]
+
 class SnapshotState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     SNAPSHOT_STATE_UNSPECIFIED: _ClassVar[SnapshotState]
@@ -161,6 +174,12 @@ OBJECT_STORAGE_PERMISSION_READ: ObjectStoragePermission
 OBJECT_STORAGE_PERMISSION_READ_WRITE: ObjectStoragePermission
 SANDBOX_FILE_TYPE_UNSPECIFIED: SandboxFileType
 SANDBOX_FILE_TYPE_COMPOSE: SandboxFileType
+CONTROL_UNSPECIFIED: Control
+CONTROL_PLATFORM: Control
+CONTROL_CONTAINER_ENGINE: Control
+SORT_DIRECTION_UNSPECIFIED: SortDirection
+SORT_DIRECTION_DESCENDING: SortDirection
+SORT_DIRECTION_ASCENDING: SortDirection
 SNAPSHOT_STATE_UNSPECIFIED: SnapshotState
 SNAPSHOT_STATE_CREATING: SnapshotState
 SNAPSHOT_STATE_READY: SnapshotState
@@ -181,7 +200,7 @@ SANDBOX_DATA_PROTOCOL_UNSPECIFIED: SandboxDataProtocol
 SANDBOX_DATA_PROTOCOL_CONNECT_H2_V1: SandboxDataProtocol
 
 class Sandbox(_message.Message):
-    __slots__ = ("sandbox_id", "spec", "status", "source_template_id", "source_template_revision", "display_name", "endpoint_share_token")
+    __slots__ = ("sandbox_id", "spec", "status", "source_template_id", "source_template_revision", "display_name", "endpoint_share_token", "control")
     SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
     SPEC_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -189,6 +208,7 @@ class Sandbox(_message.Message):
     SOURCE_TEMPLATE_REVISION_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     ENDPOINT_SHARE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    CONTROL_FIELD_NUMBER: _ClassVar[int]
     sandbox_id: str
     spec: SandboxSpec
     status: SandboxStatus
@@ -196,10 +216,11 @@ class Sandbox(_message.Message):
     source_template_revision: int
     display_name: str
     endpoint_share_token: str
-    def __init__(self, sandbox_id: _Optional[str] = ..., spec: _Optional[_Union[SandboxSpec, _Mapping]] = ..., status: _Optional[_Union[SandboxStatus, _Mapping]] = ..., source_template_id: _Optional[str] = ..., source_template_revision: _Optional[int] = ..., display_name: _Optional[str] = ..., endpoint_share_token: _Optional[str] = ...) -> None: ...
+    control: Control
+    def __init__(self, sandbox_id: _Optional[str] = ..., spec: _Optional[_Union[SandboxSpec, _Mapping]] = ..., status: _Optional[_Union[SandboxStatus, _Mapping]] = ..., source_template_id: _Optional[str] = ..., source_template_revision: _Optional[int] = ..., display_name: _Optional[str] = ..., endpoint_share_token: _Optional[str] = ..., control: _Optional[_Union[Control, str]] = ...) -> None: ...
 
 class SandboxSpec(_message.Message):
-    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
+    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class", "network_config_id", "runtime_class_selection")
     class AnnotationsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -220,6 +241,8 @@ class SandboxSpec(_message.Message):
     INSTANCE_TYPE_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_CLASS_FIELD_NUMBER: _ClassVar[int]
+    NETWORK_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_CLASS_SELECTION_FIELD_NUMBER: _ClassVar[int]
     containers: _containers.RepeatedCompositeFieldContainer[Container]
     volumes: _containers.RepeatedCompositeFieldContainer[SandboxVolume]
     services: _containers.RepeatedCompositeFieldContainer[Service]
@@ -233,7 +256,9 @@ class SandboxSpec(_message.Message):
     instance_type: str
     mode: SandboxMode
     runtime_class: str
-    def __init__(self, containers: _Optional[_Iterable[_Union[Container, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
+    network_config_id: str
+    runtime_class_selection: _runtime_class_pb2.RuntimeClass
+    def __init__(self, containers: _Optional[_Iterable[_Union[Container, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ..., network_config_id: _Optional[str] = ..., runtime_class_selection: _Optional[_Union[_runtime_class_pb2.RuntimeClass, str]] = ...) -> None: ...
 
 class SecurityContext(_message.Message):
     __slots__ = ("run_as_user", "run_as_group", "privileged", "allow_privilege_escalation", "read_only_root_filesystem", "capabilities_add", "capabilities_drop", "seccomp_profile")
@@ -352,7 +377,7 @@ class PartialContainer(_message.Message):
     def __init__(self, name: _Optional[str] = ..., image: _Optional[str] = ..., command: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., resources: _Optional[_Union[Resources, _Mapping]] = ..., files: _Optional[_Iterable[_Union[FileMount, _Mapping]]] = ..., volume_mounts: _Optional[_Iterable[_Union[VolumeMount, _Mapping]]] = ..., secret_stores: _Optional[_Iterable[_Union[SecretStoreReference, _Mapping]]] = ..., working_dir: _Optional[str] = ..., resource_requirements: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., security_context: _Optional[_Union[SecurityContext, _Mapping]] = ..., image_pull_credentials: _Optional[_Union[ImagePullCredentials, _Mapping]] = ..., primary: bool = ..., startup_probe: _Optional[_Union[Probe, _Mapping]] = ...) -> None: ...
 
 class PartialSandboxSpec(_message.Message):
-    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class")
+    __slots__ = ("containers", "volumes", "services", "max_lifetime_seconds", "network_ids", "object_storage_access", "tags", "runner_ids", "network", "annotations", "instance_type", "mode", "runtime_class", "network_config_id", "runtime_class_selection")
     class AnnotationsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -373,6 +398,8 @@ class PartialSandboxSpec(_message.Message):
     INSTANCE_TYPE_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_CLASS_FIELD_NUMBER: _ClassVar[int]
+    NETWORK_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_CLASS_SELECTION_FIELD_NUMBER: _ClassVar[int]
     containers: _containers.RepeatedCompositeFieldContainer[PartialContainer]
     volumes: _containers.RepeatedCompositeFieldContainer[SandboxVolume]
     services: _containers.RepeatedCompositeFieldContainer[Service]
@@ -386,7 +413,9 @@ class PartialSandboxSpec(_message.Message):
     instance_type: str
     mode: SandboxMode
     runtime_class: str
-    def __init__(self, containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ...) -> None: ...
+    network_config_id: str
+    runtime_class_selection: _runtime_class_pb2.RuntimeClass
+    def __init__(self, containers: _Optional[_Iterable[_Union[PartialContainer, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[SandboxVolume, _Mapping]]] = ..., services: _Optional[_Iterable[_Union[Service, _Mapping]]] = ..., max_lifetime_seconds: _Optional[int] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., tags: _Optional[_Iterable[str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., instance_type: _Optional[str] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., runtime_class: _Optional[str] = ..., network_config_id: _Optional[str] = ..., runtime_class_selection: _Optional[_Union[_runtime_class_pb2.RuntimeClass, str]] = ...) -> None: ...
 
 class SandboxStatus(_message.Message):
     __slots__ = ("state", "state_reason", "create_time", "start_time", "end_time", "services", "resource_usage", "exit_code", "effective_resources", "effective_max_lifetime_seconds", "container_statuses", "runner_id", "runner_group_id", "effective_ingress", "effective_egress", "effective_resource_requirements", "attached_volume_ids", "effective_runtime_class", "effective_dns_egress")
@@ -724,7 +753,7 @@ class CreateSandboxFromTemplateRequest(_message.Message):
     def __init__(self, template_id: _Optional[str] = ..., overrides: _Optional[_Union[PartialSandboxSpec, _Mapping]] = ..., request_id: _Optional[str] = ..., display_name: _Optional[str] = ...) -> None: ...
 
 class CreateSandboxFromFileRequest(_message.Message):
-    __slots__ = ("type", "contents", "primary_service", "image_overrides", "build_contexts", "default_resources", "mode", "max_lifetime_seconds", "tags", "network", "network_ids", "object_storage_access", "annotations", "runner_ids", "request_id", "display_name", "build_context_objects", "builder_sizes")
+    __slots__ = ("type", "contents", "primary_service", "image_overrides", "build_contexts", "default_resources", "mode", "max_lifetime_seconds", "tags", "network", "network_ids", "object_storage_access", "annotations", "runner_ids", "request_id", "display_name", "build_context_objects", "builder_sizes", "control", "image_pull_credentials")
     class ImageOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -778,6 +807,8 @@ class CreateSandboxFromFileRequest(_message.Message):
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     BUILD_CONTEXT_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     BUILDER_SIZES_FIELD_NUMBER: _ClassVar[int]
+    CONTROL_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_PULL_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     type: SandboxFileType
     contents: bytes
     primary_service: str
@@ -796,7 +827,9 @@ class CreateSandboxFromFileRequest(_message.Message):
     display_name: str
     build_context_objects: _containers.MessageMap[str, BuildContextObject]
     builder_sizes: _containers.ScalarMap[str, str]
-    def __init__(self, type: _Optional[_Union[SandboxFileType, str]] = ..., contents: _Optional[bytes] = ..., primary_service: _Optional[str] = ..., image_overrides: _Optional[_Mapping[str, str]] = ..., build_contexts: _Optional[_Mapping[str, bytes]] = ..., default_resources: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., max_lifetime_seconds: _Optional[int] = ..., tags: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., request_id: _Optional[str] = ..., display_name: _Optional[str] = ..., build_context_objects: _Optional[_Mapping[str, BuildContextObject]] = ..., builder_sizes: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    control: Control
+    image_pull_credentials: _containers.RepeatedCompositeFieldContainer[ImagePullCredentials]
+    def __init__(self, type: _Optional[_Union[SandboxFileType, str]] = ..., contents: _Optional[bytes] = ..., primary_service: _Optional[str] = ..., image_overrides: _Optional[_Mapping[str, str]] = ..., build_contexts: _Optional[_Mapping[str, bytes]] = ..., default_resources: _Optional[_Union[ResourceRequirements, _Mapping]] = ..., mode: _Optional[_Union[SandboxMode, str]] = ..., max_lifetime_seconds: _Optional[int] = ..., tags: _Optional[_Iterable[str]] = ..., network: _Optional[_Union[NetworkOptions, _Mapping]] = ..., network_ids: _Optional[_Iterable[str]] = ..., object_storage_access: _Optional[_Union[ObjectStorageAccess, _Mapping]] = ..., annotations: _Optional[_Mapping[str, str]] = ..., runner_ids: _Optional[_Iterable[str]] = ..., request_id: _Optional[str] = ..., display_name: _Optional[str] = ..., build_context_objects: _Optional[_Mapping[str, BuildContextObject]] = ..., builder_sizes: _Optional[_Mapping[str, str]] = ..., control: _Optional[_Union[Control, str]] = ..., image_pull_credentials: _Optional[_Iterable[_Union[ImagePullCredentials, _Mapping]]] = ...) -> None: ...
 
 class BuildContextObject(_message.Message):
     __slots__ = ("location", "bucket", "key", "version_id")
@@ -816,8 +849,24 @@ class GetSandboxRequest(_message.Message):
     sandbox_id: str
     def __init__(self, sandbox_id: _Optional[str] = ...) -> None: ...
 
+class GetSandboxBuildLogsRequest(_message.Message):
+    __slots__ = ("sandbox_id", "service")
+    SANDBOX_ID_FIELD_NUMBER: _ClassVar[int]
+    SERVICE_FIELD_NUMBER: _ClassVar[int]
+    sandbox_id: str
+    service: str
+    def __init__(self, sandbox_id: _Optional[str] = ..., service: _Optional[str] = ...) -> None: ...
+
+class GetSandboxBuildLogsResponse(_message.Message):
+    __slots__ = ("url", "expire_time")
+    URL_FIELD_NUMBER: _ClassVar[int]
+    EXPIRE_TIME_FIELD_NUMBER: _ClassVar[int]
+    url: str
+    expire_time: _timestamp_pb2.Timestamp
+    def __init__(self, url: _Optional[str] = ..., expire_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
 class ListSandboxesRequest(_message.Message):
-    __slots__ = ("page_size", "page_token", "tags", "state", "show_terminated", "runner_ids", "volume_ids")
+    __slots__ = ("page_size", "page_token", "tags", "state", "show_terminated", "runner_ids", "volume_ids", "sort_direction")
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     TAGS_FIELD_NUMBER: _ClassVar[int]
@@ -825,6 +874,7 @@ class ListSandboxesRequest(_message.Message):
     SHOW_TERMINATED_FIELD_NUMBER: _ClassVar[int]
     RUNNER_IDS_FIELD_NUMBER: _ClassVar[int]
     VOLUME_IDS_FIELD_NUMBER: _ClassVar[int]
+    SORT_DIRECTION_FIELD_NUMBER: _ClassVar[int]
     page_size: int
     page_token: str
     tags: _containers.RepeatedScalarFieldContainer[str]
@@ -832,7 +882,8 @@ class ListSandboxesRequest(_message.Message):
     show_terminated: bool
     runner_ids: _containers.RepeatedScalarFieldContainer[str]
     volume_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., state: _Optional[_Union[State, str]] = ..., show_terminated: bool = ..., runner_ids: _Optional[_Iterable[str]] = ..., volume_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+    sort_direction: SortDirection
+    def __init__(self, page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., state: _Optional[_Union[State, str]] = ..., show_terminated: bool = ..., runner_ids: _Optional[_Iterable[str]] = ..., volume_ids: _Optional[_Iterable[str]] = ..., sort_direction: _Optional[_Union[SortDirection, str]] = ...) -> None: ...
 
 class ListSandboxesResponse(_message.Message):
     __slots__ = ("sandboxes", "next_page_token")
