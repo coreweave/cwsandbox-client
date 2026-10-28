@@ -91,6 +91,11 @@ MAX_FILE_UNARY_BYTES: int = DEFAULT_GRPC_MAX_MESSAGE_LENGTH_BYTES - 1024 * 1024
 # read_file_streaming explicitly.
 MAX_AUTO_FALLBACK_BYTES: int = 256 * 1024 * 1024
 
+# Max in-flight file RPCs for one read_files/write_files batch. The runner
+# limits concurrent file requests per sandbox and rejects the excess with
+# CWSANDBOX_RUNNER_OVERLOADED; two stays under that limit.
+MAX_CONCURRENT_FILE_REQUESTS_PER_BATCH: int = 2
+
 # Chunk size used by write_file_streaming when given a bytes object.
 STREAMING_WRITE_CHUNK_SIZE: int = 1024 * 1024
 
