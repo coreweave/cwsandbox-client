@@ -15,14 +15,17 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY before running.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
 import pytest
 
 from cwsandbox import (
+    FileSystemSnapshot,
     FileSystemSnapshotOptions,
     FileSystemSnapshotStatus,
+    FileSystemSnapshotTrigger,
     Sandbox,
     SandboxDefaults,
 )
@@ -49,6 +52,16 @@ def _fss_options(**overrides: object) -> FileSystemSnapshotOptions:
     kwargs: dict[str, object] = {"mount_path": MOUNT_PATH, "size": "1Gi"}
     kwargs.update(overrides)
     return FileSystemSnapshotOptions(**kwargs)  # type: ignore[arg-type]
+
+
+def _wait_until_settled(snapshot_id: str, timeout: float = 300.0) -> FileSystemSnapshot:
+    """Poll get_snapshot until the snapshot leaves CREATING."""
+    deadline = time.monotonic() + timeout
+    while True:
+        record = Sandbox.get_snapshot(snapshot_id).result()
+        if record.status != FileSystemSnapshotStatus.CREATING or time.monotonic() > deadline:
+            return record
+        time.sleep(2)
 
 
 @pytest.fixture
@@ -93,6 +106,44 @@ def test_snapshot_and_restore(fss_defaults: SandboxDefaults) -> None:
         finally:
             if created_snapshot_id:
                 Sandbox.delete_snapshot(created_snapshot_id, missing_ok=True).result()
+
+
+def test_create_snapshot_returns_record(fss_defaults: SandboxDefaults) -> None:
+    """create_snapshot() returns the full record, READY when waited on."""
+    created_snapshot_ids: list[str] = []
+    with skip_if_fss_unsupported():
+        with Sandbox.run(
+            "sleep",
+            "infinity",
+            defaults=fss_defaults,
+            file_system_snapshot=_fss_options(),
+        ) as source:
+            try:
+                source.exec(["sh", "-c", f"echo record > {MOUNT_PATH}/record.txt"]).result()
+
+                ready = source.create_snapshot().result()
+                created_snapshot_ids.append(ready.file_system_snapshot_id)
+                assert ready.file_system_snapshot_id
+                assert ready.status == FileSystemSnapshotStatus.READY
+                assert ready.source_sandbox_id == source.sandbox_id
+                assert ready.trigger == FileSystemSnapshotTrigger.MANUAL
+
+                pending = source.create_snapshot(wait_for_ready=False).result()
+                created_snapshot_ids.append(pending.file_system_snapshot_id)
+                assert pending.file_system_snapshot_id
+                assert pending.file_system_snapshot_id != ready.file_system_snapshot_id
+                assert pending.status in (
+                    FileSystemSnapshotStatus.CREATING,
+                    FileSystemSnapshotStatus.READY,
+                )
+                assert pending.source_sandbox_id == source.sandbox_id
+                # The backend rejects deleting a CREATING snapshot, and stopping
+                # the source mid-archive fails it, so let it settle first.
+                settled = _wait_until_settled(pending.file_system_snapshot_id)
+                assert settled.status == FileSystemSnapshotStatus.READY
+            finally:
+                for snapshot_id in created_snapshot_ids:
+                    Sandbox.delete_snapshot(snapshot_id, missing_ok=True).result()
 
 
 def test_snapshot_on_stop(fss_defaults: SandboxDefaults) -> None:

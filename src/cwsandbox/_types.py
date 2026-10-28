@@ -1493,8 +1493,9 @@ class FileSystemSnapshotOptions:
 class FileSystemSnapshot:
     """An immutable, org-scoped file-system snapshot record.
 
-    Returned by ``Sandbox.get_snapshot()`` and ``Sandbox.list_snapshots()``
-    (``Sandbox.snapshot()`` returns just the snapshot ID). To restore, pass the
+    Returned by ``Sandbox.create_snapshot()``, ``Sandbox.get_snapshot()`` and
+    ``Sandbox.list_snapshots()`` (``Sandbox.snapshot()`` returns just the
+    snapshot ID). To restore, pass the
     ``file_system_snapshot_id`` to ``ScratchVolumeOptions`` /
     ``FileSystemSnapshotOptions`` on create.
 

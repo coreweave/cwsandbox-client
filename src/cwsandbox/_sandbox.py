@@ -621,10 +621,12 @@ async def _create_snapshot_via_stub(
     auth_metadata: tuple[tuple[str, str], ...],
     timeout: float,
     scratch_volume_name: str | None = None,
-) -> str:
-    """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot ID.
+) -> FileSystemSnapshot:
+    """Call CreateFileSystemSnapshot on ``stub``; return the new snapshot record.
 
-    When ``wait_for_ready`` is True, poll GetFileSystemSnapshot until READY/FAILED.
+    When ``wait_for_ready`` is False, return the record from the create response
+    (likely still CREATING). When True, poll GetFileSystemSnapshot until
+    READY/FAILED and return the READY record.
     """
     request = sandbox_pb2.CreateFileSystemSnapshotRequest(sandbox_id=sandbox_id)
     if request_id:
@@ -639,17 +641,16 @@ async def _create_snapshot_via_stub(
         raise _translate_rpc_error(
             e, sandbox_id=sandbox_id, operation="Create file-system snapshot"
         ) from e
-    snapshot_id = str(response.file_system_snapshot_id)
+    created = _snapshot_from_proto(response)
     if not wait_for_ready:
-        return snapshot_id
+        return created
 
-    await _wait_for_snapshot_via_stub(
+    return await _wait_for_snapshot_via_stub(
         stub,
-        snapshot_id,
+        created.file_system_snapshot_id,
         auth_metadata=auth_metadata,
         timeout=timeout,
     )
-    return snapshot_id
 
 
 async def _wait_for_snapshot_via_stub(
@@ -658,8 +659,8 @@ async def _wait_for_snapshot_via_stub(
     *,
     auth_metadata: tuple[tuple[str, str], ...],
     timeout: float,
-) -> None:
-    """Poll an existing snapshot until READY or FAILED."""
+) -> FileSystemSnapshot:
+    """Poll an existing snapshot until READY or FAILED; return the READY record."""
     deadline = time.monotonic() + max(0.0, timeout)
     interval = DEFAULT_POLL_INTERVAL_SECONDS
     while True:
@@ -685,7 +686,7 @@ async def _wait_for_snapshot_via_stub(
             operation="Wait for file-system snapshot",
         )
         if snap.status == FileSystemSnapshotStatus.READY:
-            return
+            return snap
         if snap.status == FileSystemSnapshotStatus.FAILED:
             raise SandboxSnapshotError(
                 f"Snapshot {snapshot_id} failed: {snap.status_reason or 'unknown error'}",
@@ -715,6 +716,14 @@ async def _get_snapshot_via_stub(
             file_system_snapshot_id=file_system_snapshot_id,
         ) from e
     return _snapshot_from_proto(proto)
+
+
+def _validate_snapshot_retry_budget(retry_budget_seconds: float | None) -> None:
+    """Reject a non-finite or negative snapshot retry budget before any RPC."""
+    if retry_budget_seconds is not None and (
+        not math.isfinite(retry_budget_seconds) or retry_budget_seconds < 0
+    ):
+        raise ValueError("retry_budget_seconds must be finite and nonnegative")
 
 
 def _validate_cwd(cwd: str | None) -> None:
@@ -7077,8 +7086,8 @@ class Sandbox:
         wait_for_ready: bool,
         request_id: str | None,
         retry_budget_seconds: float | None = None,
-    ) -> str:
-        """Internal async: create a mid-life snapshot and return its ID."""
+    ) -> FileSystemSnapshot:
+        """Internal async: create a mid-life snapshot and return its record."""
         await self._ensure_started_async()
         # Snapshotting requires a running sandbox (the backend archives the live
         # mount), so wait for RUNNING like exec/read_file/write_file do; calling
@@ -7155,6 +7164,9 @@ class Sandbox:
         Requires the sandbox to have been started with a ``file_system_snapshot``
         mount and the organization to be enabled for FSS.
 
+        Prefer ``create_snapshot()`` in new code: it takes the same arguments
+        and returns the full ``FileSystemSnapshot`` record instead of the ID.
+
         Args:
             wait_for_ready: Block until the snapshot reaches READY (or FAILED)
                 before returning. When False, returns once the snapshot is
@@ -7168,8 +7180,8 @@ class Sandbox:
 
         Returns:
             OperationRef[str]: Use .result() to block (or await) for the new
-            snapshot's ID. Call ``Sandbox.get_snapshot(id)`` for the full record
-            (status, size, timestamps).
+            snapshot's ID. Use ``create_snapshot()`` to get the full record
+            (status, size, timestamps) from the same call.
 
         Raises:
             SandboxSnapshotError: If the snapshot fails (see subclasses for
@@ -7182,14 +7194,71 @@ class Sandbox:
             ) as sb:
                 sb.exec(["sh", "-c", "echo hi > /workspace/note.txt"]).result()
                 snapshot_id = sb.snapshot().result()
-                # Inspect the full record if needed:
-                snap = Sandbox.get_snapshot(snapshot_id).result()
             ```
         """
-        if retry_budget_seconds is not None and (
-            not math.isfinite(retry_budget_seconds) or retry_budget_seconds < 0
-        ):
-            raise ValueError("retry_budget_seconds must be finite and nonnegative")
+        _validate_snapshot_retry_budget(retry_budget_seconds)
+
+        async def _snapshot_id() -> str:
+            snap = await self._snapshot_async(
+                wait_for_ready=wait_for_ready,
+                request_id=request_id,
+                retry_budget_seconds=retry_budget_seconds,
+            )
+            return snap.file_system_snapshot_id
+
+        return OperationRef(self._loop_manager.run_async(_snapshot_id()))
+
+    def create_snapshot(
+        self,
+        *,
+        wait_for_ready: bool = True,
+        request_id: str | None = None,
+        retry_budget_seconds: float | None = None,
+    ) -> OperationRef[FileSystemSnapshot]:
+        """Capture a file-system snapshot (FSS) and return its record.
+
+        Snapshots the configured scratch volume (``volumes=`` or
+        ``file_system_snapshot``) on the running sandbox, without stopping it.
+        Starts the sandbox first if it has not been started. Restore the
+        snapshot into a new sandbox via
+        ``Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(...,
+        file_system_snapshot_id=<id>))``.
+
+        Requires the sandbox to have been started with a single scratch volume
+        and the organization to be enabled for FSS.
+
+        Args:
+            wait_for_ready: Block until the snapshot reaches READY (or FAILED)
+                before returning. When True, returns the READY record. When
+                False, returns the record from the create call (likely still
+                CREATING); poll ``Sandbox.get_snapshot(id)`` for later status.
+            request_id: Optional client-supplied key to deduplicate the
+                request on retries. Reuse it when retrying an ambiguous failure.
+            retry_budget_seconds: Budget for retrying transient RPC failures,
+                in seconds. Defaults to 30; zero disables retries. Must be
+                finite and nonnegative. This is separate from the archive
+                timeout: an in-flight snapshot can outlive the retry budget.
+
+        Returns:
+            OperationRef[FileSystemSnapshot]: Use .result() to block (or await)
+            for the snapshot record (ID, status, size, source sandbox,
+            timestamps).
+
+        Raises:
+            SandboxSnapshotError: If the snapshot fails (see subclasses for
+                ``NOT_SUPPORTED`` when the org is not enabled, quota/size, etc.).
+
+        Examples:
+            ```python
+            with Sandbox.run(
+                file_system_snapshot=FileSystemSnapshotOptions(mount_path="/workspace"),
+            ) as sb:
+                sb.exec(["sh", "-c", "echo hi > /workspace/note.txt"]).result()
+                snap = sb.create_snapshot().result()
+                print(snap.file_system_snapshot_id, snap.status, snap.size_bytes)
+            ```
+        """
+        _validate_snapshot_retry_budget(retry_budget_seconds)
         future = self._loop_manager.run_async(
             self._snapshot_async(
                 wait_for_ready=wait_for_ready,
