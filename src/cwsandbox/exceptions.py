@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import timedelta
 
-    from cwsandbox._types import ProcessResult
+    from cwsandbox._types import LogCursor, ProcessResult
 
 
 class CWSandboxError(Exception):
@@ -295,6 +295,27 @@ class SandboxStreamTruncatedError(SandboxExecutionError):
             metadata=metadata,
             retry_delay=retry_delay,
         )
+        self.stream_code = stream_code
+
+
+class SandboxLogReplayGapError(SandboxError):
+    """Raised when a log stream cannot resume from the requested cursor.
+
+    The server no longer retains the bytes at ``cursor.offset`` (they fell
+    out of the session's replay window), so resuming would skip lines. To
+    continue anyway, start a new stream without ``resume`` (for example with
+    ``since_time`` or ``tail_lines``) and accept the gap.
+
+    Attributes:
+        cursor: The ``LogCursor`` the stream tried to resume from.
+        stream_code: The terminal ``LogStreamError.code`` (``"REPLAY_GAP"``).
+            This is a streaming-channel code, not an AIP-193 ErrorInfo
+            ``reason``, so ``.reason`` is ``None``.
+    """
+
+    def __init__(self, message: str, *, cursor: LogCursor, stream_code: str) -> None:
+        super().__init__(message)
+        self.cursor = cursor
         self.stream_code = stream_code
 
 

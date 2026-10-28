@@ -2027,6 +2027,54 @@ def test_stream_logs_reconnects_with_timestamps(
             pass
 
 
+def test_stream_logs_resumes_from_saved_cursor(sandbox_defaults: SandboxDefaults) -> None:
+    """A cursor saved from one reader resumes in a new reader with no gap or repeat."""
+    sandbox = Sandbox.run(
+        "sh",
+        "-c",
+        "i=0; while true; do echo line-$i; i=$((i+1)); sleep 0.2; done",
+        defaults=sandbox_defaults,
+    )
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        reader = sandbox.stream_logs(follow=True)
+        seen: list[int] = []
+        try:
+            for line in reader:
+                seen.append(int(line.strip().split("-", 1)[1]))
+                if len(seen) >= 10:
+                    break
+            cursor = reader.cursor
+        finally:
+            reader.close()
+
+        assert seen == list(range(seen[0], seen[0] + 10))
+        assert cursor is not None, "follow stream must expose a resume cursor"
+
+        time.sleep(2.0)
+
+        resumed = sandbox.stream_logs(follow=True, resume=cursor)
+        after: list[int] = []
+        try:
+            for line in resumed:
+                after.append(int(line.strip().split("-", 1)[1]))
+                if len(after) >= 5:
+                    break
+        finally:
+            resumed.close()
+
+        assert after == list(range(seen[-1] + 1, seen[-1] + 6)), (
+            f"resume must continue at line-{seen[-1] + 1}; first={seen}, resumed={after}"
+        )
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
 def test_stream_logs_reconnects_after_transient_disconnect(
     sandbox_defaults: SandboxDefaults,
 ) -> None:
