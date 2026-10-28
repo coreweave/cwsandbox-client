@@ -1929,6 +1929,21 @@ def _lifecycle_state_from_info(
     return _Starting(sandbox_id=sandbox_id, status=status)
 
 
+@dataclass(frozen=True, kw_only=True)
+class SandboxPage:
+    """One page of sandboxes from ``Sandbox.list_page()``.
+
+    Attributes:
+        sandboxes: Sandbox handles on this page, in server order. May be
+            empty even when ``next_page_token`` is set.
+        next_page_token: Pass as ``page_token`` to fetch the next page, or
+            ``None`` when this is the last page.
+    """
+
+    sandboxes: list[Sandbox]
+    next_page_token: str | None = None
+
+
 class Sandbox:
     """CWSandbox client with sync/async hybrid API.
 
@@ -3057,6 +3072,9 @@ class Sandbox:
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
+        Follows every page before resolving. Use ``list_page()`` to fetch one
+        page at a time.
+
         Args:
             tags: Filter by tags (sandboxes must have ALL specified tags)
             status: Filter by status ("running", "completed", "failed", etc.)
@@ -3120,6 +3138,91 @@ class Sandbox:
         return OperationRef(future)
 
     @classmethod
+    def list_page(
+        cls,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        tags: builtins.list[str] | None = None,
+        status: str | None = None,
+        runner_ids: builtins.list[str] | None = None,
+        show_terminated: bool = False,
+        base_url: str | None = None,
+        auth: AuthConfig | None = None,
+        timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
+    ) -> OperationRef[SandboxPage]:
+        """Fetch one page of existing sandboxes.
+
+        Makes a single ListSandboxes call, unlike ``list()``, which follows
+        every page. Use it to walk large result sets without holding them in
+        memory. Filters match ``list()`` and are all applied by the server.
+        Keep the same filters for every page of one walk.
+
+        Args:
+            page_size: Maximum sandboxes on the page. ``None`` uses the
+                server default. The server may return fewer.
+            page_token: ``next_page_token`` from the previous page. ``None``
+                or ``""`` fetches the first page.
+            tags: Filter by tags (sandboxes must have ALL specified tags)
+            status: Filter by status ("running", "completed", "failed", etc.)
+            runner_ids: Filter by runner IDs
+            volume_ids: Filter to sandboxes attached to these registered Volume IDs
+            show_terminated: If True, include terminal sandboxes (completed,
+                failed, terminated). Defaults to False.
+            base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
+            auth: Authentication strategy, resolved headers, or provider for this request.
+            timeout_seconds: Request timeout (default: 300s)
+            poll_retry_budget_seconds: Applied to returned Sandbox instances,
+                as in ``list()``.
+            poll_rpc_timeout_seconds: Applied to returned Sandbox instances,
+                as in ``list()``.
+            data_plane_mode: Transport policy applied to returned sandboxes.
+
+        Returns:
+            OperationRef[SandboxPage]: Resolves to the page's sandboxes and
+            the token for the next page (``None`` on the last page).
+
+        Raises:
+            ValueError: If ``page_size`` is not a positive integer.
+
+        Examples:
+            ```python
+            token = None
+            while True:
+                page = Sandbox.list_page(
+                    tags=["my-batch-job"], page_size=100, page_token=token
+                ).result()
+                for sb in page.sandboxes:
+                    print(sb.sandbox_id)
+                token = page.next_page_token
+                if token is None:
+                    break
+            ```
+        """
+        future = _LoopManager.get().run_async(
+            cls._list_page_async(
+                page_size=page_size,
+                page_token=page_token,
+                tags=tags,
+                status=status,
+                runner_ids=runner_ids,
+                show_terminated=show_terminated,
+                base_url=base_url,
+                auth=auth,
+                timeout_seconds=timeout_seconds,
+                poll_retry_budget_seconds=poll_retry_budget_seconds,
+                poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+                data_plane_mode=data_plane_mode,
+                volume_ids=volume_ids,
+            )
+        )
+        return OperationRef(future)
+
+    @classmethod
     async def _list_async(
         cls,
         *,
@@ -3138,6 +3241,86 @@ class Sandbox:
         volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
     ) -> builtins.list[Sandbox]:
         """Internal async: List existing sandboxes with optional filters."""
+        page = await cls._list_sandboxes_rpc(
+            all_pages=True,
+            tags=tags,
+            status=status,
+            profile_ids=profile_ids,
+            profile_names=profile_names,
+            runner_ids=runner_ids,
+            show_terminated=show_terminated,
+            base_url=base_url,
+            auth=auth,
+            timeout_seconds=timeout_seconds,
+            poll_retry_budget_seconds=poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+            data_plane_mode=data_plane_mode,
+            volume_ids=volume_ids,
+        )
+        return page.sandboxes
+
+    @classmethod
+    async def _list_page_async(
+        cls,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        tags: builtins.list[str] | None = None,
+        status: str | None = None,
+        runner_ids: builtins.list[str] | None = None,
+        show_terminated: bool = False,
+        base_url: str | None = None,
+        auth: AuthConfig | None = None,
+        timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
+    ) -> SandboxPage:
+        """Internal async: Fetch one page of sandboxes."""
+        if page_size is not None and (
+            not isinstance(page_size, int) or isinstance(page_size, bool) or page_size < 1
+        ):
+            raise ValueError(f"page_size must be a positive integer, got {page_size!r}")
+        return await cls._list_sandboxes_rpc(
+            all_pages=False,
+            page_size=page_size,
+            page_token=page_token,
+            tags=tags,
+            status=status,
+            runner_ids=runner_ids,
+            show_terminated=show_terminated,
+            base_url=base_url,
+            auth=auth,
+            timeout_seconds=timeout_seconds,
+            poll_retry_budget_seconds=poll_retry_budget_seconds,
+            poll_rpc_timeout_seconds=poll_rpc_timeout_seconds,
+            data_plane_mode=data_plane_mode,
+            volume_ids=volume_ids,
+        )
+
+    @classmethod
+    async def _list_sandboxes_rpc(
+        cls,
+        *,
+        all_pages: bool,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        tags: builtins.list[str] | None = None,
+        status: str | None = None,
+        profile_ids: builtins.list[str] | None = None,
+        profile_names: builtins.list[str] | None = None,
+        runner_ids: builtins.list[str] | None = None,
+        show_terminated: bool = False,
+        base_url: str | None = None,
+        auth: AuthConfig | None = None,
+        timeout_seconds: float | None = None,
+        poll_retry_budget_seconds: float | None = None,
+        poll_rpc_timeout_seconds: float | None = None,
+        data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
+        volume_ids: builtins.list[str] | tuple[str, ...] | None = None,
+    ) -> SandboxPage:
+        """Run ListSandboxes once, or across every page when ``all_pages``."""
         normalized_tags = _normalize_tags(tags)
         effective_base_url = (
             base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
@@ -3182,20 +3365,32 @@ class Sandbox:
 
             if show_terminated:
                 request_kwargs["show_terminated"] = True
+            if page_size is not None:
+                request_kwargs["page_size"] = page_size
+            if page_token:
+                request_kwargs["page_token"] = page_token
             request = sandbox_pb2.ListSandboxesRequest(**request_kwargs)
+            next_page_token: str | None = None
             try:
-                sandbox_infos = await paginate_async(
-                    stub.ListSandboxes,
-                    request,
-                    "sandboxes",
-                    auth_metadata,
-                    timeout,
-                    operation="List sandboxes",
-                )
+                if all_pages:
+                    sandbox_infos = await paginate_async(
+                        stub.ListSandboxes,
+                        request,
+                        "sandboxes",
+                        auth_metadata,
+                        timeout,
+                        operation="List sandboxes",
+                    )
+                else:
+                    response = await stub.ListSandboxes(
+                        request, metadata=auth_metadata, timeout=timeout
+                    )
+                    sandbox_infos = list(response.sandboxes)
+                    next_page_token = response.next_page_token or None
             except grpc.RpcError as e:
                 raise _translate_rpc_error(e, operation="List sandboxes") from e
 
-            return [
+            sandboxes = [
                 cls._from_sandbox_info(
                     _as_sandbox_view(sb),
                     base_url=effective_base_url,
@@ -3208,6 +3403,7 @@ class Sandbox:
                 )
                 for sb in sandbox_infos
             ]
+            return SandboxPage(sandboxes=sandboxes, next_page_token=next_page_token)
         finally:
             await channel.close(grace=None)
 

@@ -1606,6 +1606,42 @@ def test_sandbox_list_terminal_status_filter(sandbox_defaults: SandboxDefaults) 
     assert found, f"Sandbox {sandbox_id} not found with status='completed' filter"
 
 
+def test_sandbox_list_page_walks_pages(sandbox_defaults: SandboxDefaults) -> None:
+    """Test that list_page(page_size=1) returns one sandbox per page.
+
+    Creates three sandboxes with a unique tag, then follows
+    next_page_token until it is None.
+    """
+    unique_tag = f"e2e-list-page-{uuid.uuid4().hex[:8]}"
+    sandboxes = [Sandbox.run(defaults=sandbox_defaults, tags=[unique_tag]) for _ in range(3)]
+    try:
+        created_ids = {sb.sandbox_id for sb in sandboxes}
+        assert None not in created_ids
+
+        pages: list[list[str]] = []
+        for _ in range(15):
+            pages = []
+            token: str | None = None
+            while True:
+                page = Sandbox.list_page(
+                    tags=[unique_tag], show_terminated=True, page_size=1, page_token=token
+                ).result()
+                pages.append([sb.sandbox_id for sb in page.sandboxes if sb.sandbox_id])
+                token = page.next_page_token
+                if token is None:
+                    break
+                assert len(pages) <= 10, "too many pages"
+            if {sid for ids in pages for sid in ids} == created_ids:
+                break
+            time.sleep(1)
+
+        assert [len(ids) for ids in pages] == [1, 1, 1]
+        assert {ids[0] for ids in pages} == created_ids
+    finally:
+        for sb in sandboxes:
+            sb.stop(missing_ok=True).result()
+
+
 def test_sandbox_from_id_returns_stopped(sandbox_defaults: SandboxDefaults) -> None:
     """Test that from_id() returns stopped sandboxes.
 
