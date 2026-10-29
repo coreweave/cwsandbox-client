@@ -530,7 +530,7 @@ class Session:
 
         By default, only active (non-terminal) sandboxes are returned.
         Set ``show_terminated=True`` to widen the search to include terminal
-        sandboxes (completed, failed, terminated).
+        sandboxes (completed, failed, and legacy terminated).
         A terminal status filter (e.g. ``status="completed"``) also widens
         the search automatically.
 
@@ -542,7 +542,7 @@ class Session:
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
             volume_ids: Filter to sandboxes attached to these registered Volume IDs
             show_terminated: If True, include terminal sandboxes (completed,
-                failed, terminated). Defaults to False.
+                failed, and legacy terminated). Defaults to False.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
 
