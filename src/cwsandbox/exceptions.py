@@ -98,13 +98,13 @@ class SandboxTimeoutError(SandboxError):
 
 
 class SandboxTerminatedError(SandboxError):
-    """Raised by default for this client's stop or legacy TERMINATED; not for external COMPLETED.
+    """Raised by default on this client's stop or legacy ``TERMINATED``, not external ``COMPLETED``.
 
-    By default, wait_until_complete() raises this error when this client
-    stopped the sandbox or the backend reports legacy TERMINATED status.
-    Set raise_on_termination=False to suppress this error.
+    By default, ``wait_until_complete()`` raises this error when this client
+    stopped the sandbox or the backend reports legacy ``TERMINATED`` status.
+    Set ``raise_on_termination=False`` to suppress this error.
 
-    External stops that result in COMPLETED do not raise this error.
+    External stops that result in ``COMPLETED`` don't raise this error.
     """
 
 
