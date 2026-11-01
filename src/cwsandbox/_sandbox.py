@@ -55,6 +55,7 @@ from cwsandbox._defaults import (
     DEFAULT_POLL_RPC_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_AUTO_FALLBACK_BYTES,
+    MAX_CONCURRENT_FILE_REQUESTS_PER_BATCH,
     MAX_FILE_UNARY_BYTES,
     MAX_LINE_BUFFER_BYTES,
     STAT_INTEGRITY_TIMEOUT_SECONDS,
@@ -1747,6 +1748,53 @@ async def _retry_transient_unavailable(
                 raise
             if still_valid is not None and not still_valid():
                 raise
+
+
+_R = TypeVar("_R")
+
+
+def _validate_batch_paths(paths: Iterable[str], method: str) -> None:
+    """Require every batch path to be non-empty, absolute, and unique."""
+    seen: set[str] = set()
+    for path in paths:
+        if not path:
+            raise ValueError(f"{method} path must not be empty")
+        if not path.startswith("/"):
+            raise ValueError(f"{method} path must be absolute, got: {path!r}")
+        if path in seen:
+            raise ValueError(f"{method} contains duplicate path: {path!r}")
+        seen.add(path)
+
+
+async def _map_file_batch(
+    items: Sequence[_T],
+    operation: Callable[[_T], Awaitable[_R]],
+) -> list[_R]:
+    """Run ``operation`` per item with capped concurrency, in input order.
+
+    At most ``MAX_CONCURRENT_FILE_REQUESTS_PER_BATCH`` calls are in flight.
+    After the first failure no new item starts; in-flight calls are left to
+    finish, then the first error is raised.
+    """
+    results: list[_R | None] = [None] * len(items)
+    errors: list[Exception] = []
+    pending = iter(enumerate(items))
+
+    async def worker() -> None:
+        for index, item in pending:
+            if errors:
+                return
+            try:
+                results[index] = await operation(item)
+            except Exception as e:
+                errors.append(e)
+                return
+
+    workers = min(MAX_CONCURRENT_FILE_REQUESTS_PER_BATCH, len(items))
+    await asyncio.gather(*(worker() for _ in range(workers)))
+    if errors:
+        raise errors[0]
+    return cast(list[_R], results)
 
 
 # ---------------------------------------------------------------------------
@@ -8537,6 +8585,112 @@ class Sandbox:
         )
         return OperationRef(future)
 
+    async def _read_files_async(
+        self,
+        filepaths: Sequence[str],
+        timeout: float,
+        *,
+        container: str | None = None,
+    ) -> dict[str, bytes]:
+        async def read_one(filepath: str) -> bytes:
+            return await self._read_file_async(filepath, timeout, container=container)
+
+        contents = await _map_file_batch(filepaths, read_one)
+        return dict(zip(filepaths, contents, strict=True))
+
+    def read_files(
+        self,
+        filepaths: Iterable[str],
+        *,
+        timeout_seconds: float | None = None,
+        container: str | None = None,
+    ) -> OperationRef[dict[str, bytes]]:
+        """Read several files from the sandbox, return OperationRef immediately.
+
+        Each file is read exactly as ``read_file`` would read it, with at most
+        two reads in flight at a time so the batch does not overload the
+        sandbox's runner.
+
+        Args:
+            filepaths: Absolute paths in the sandbox. Must be unique.
+            timeout_seconds: Timeout for each file read.
+            container: Container to read from. Empty/None targets the primary.
+
+        Returns:
+            OperationRef[dict[str, bytes]]: Use .result() to block and retrieve
+            a mapping of path to contents, in the order the paths were given.
+
+        Raises:
+            ValueError: Raised immediately if a path is empty, not absolute,
+                or repeated. No file is read.
+
+        Behavior:
+            If any read fails, ``.result()`` raises that error and no partial
+            result is returned. No new reads start after the first failure;
+            reads already in flight finish first. Size limits and the
+            streaming fallback are the same as ``read_file``.
+
+        Examples:
+            ```python
+            files = sb.read_files(["/output/a.txt", "/output/b.txt"]).result()
+            print(files["/output/a.txt"])
+            ```
+        """
+        paths = list(filepaths)
+        _validate_batch_paths(paths, "read_files")
+        timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        future = self._loop_manager.run_async(
+            self._read_files_async(paths, timeout, container=container)
+        )
+        return OperationRef(future)
+
+    async def _read_text_async(
+        self,
+        filepath: str,
+        encoding: str,
+        timeout: float,
+        *,
+        container: str | None = None,
+    ) -> str:
+        data = await self._read_file_async(filepath, timeout, container=container)
+        return data.decode(encoding)
+
+    def read_text(
+        self,
+        filepath: str,
+        *,
+        encoding: str = "utf-8",
+        timeout_seconds: float | None = None,
+        container: str | None = None,
+    ) -> OperationRef[str]:
+        """Read a file from the sandbox as text, return OperationRef immediately.
+
+        Reads the file exactly as ``read_file`` does, then decodes it.
+
+        Args:
+            filepath: Path to file in sandbox
+            encoding: Text encoding used to decode the file.
+            timeout_seconds: Timeout for the operation
+            container: Container to read from. Empty/None targets the primary.
+
+        Returns:
+            OperationRef[str]: Use .result() to block and retrieve the text.
+
+        Raises:
+            UnicodeDecodeError: If the file is not valid in ``encoding``.
+            LookupError: If ``encoding`` is not a known codec.
+
+        Examples:
+            ```python
+            text = sb.read_text("/output/result.txt").result()
+            ```
+        """
+        timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        future = self._loop_manager.run_async(
+            self._read_text_async(filepath, encoding, timeout, container=container)
+        )
+        return OperationRef(future)
+
     async def _write_file_unary_async(
         self,
         filepath: str,
@@ -8857,6 +9011,68 @@ class Sandbox:
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(
             self._write_file_async(filepath, contents, timeout, container=container)
+        )
+        return OperationRef(future)
+
+    async def _write_files_async(
+        self,
+        files: Sequence[tuple[str, bytes]],
+        timeout: float,
+        *,
+        container: str | None = None,
+    ) -> None:
+        async def write_one(file: tuple[str, bytes]) -> None:
+            filepath, contents = file
+            await self._write_file_async(filepath, contents, timeout, container=container)
+
+        await _map_file_batch(files, write_one)
+
+    def write_files(
+        self,
+        files: Mapping[str, bytes | str],
+        *,
+        timeout_seconds: float | None = None,
+        container: str | None = None,
+    ) -> OperationRef[None]:
+        """Write several files to the sandbox, return OperationRef immediately.
+
+        Each file is written exactly as ``write_file`` would write it, with at
+        most two writes in flight at a time so the batch does not overload the
+        sandbox's runner.
+
+        Args:
+            files: Mapping of absolute sandbox path to contents. ``str``
+                contents are encoded as UTF-8.
+            timeout_seconds: Timeout for each file write.
+            container: Container to write into. Empty/None targets the primary.
+
+        Returns:
+            OperationRef[None]: Use .result() to block until complete.
+
+        Raises:
+            ValueError: Raised immediately if a path is empty or not absolute.
+                No file is written.
+
+        Behavior:
+            The batch is not atomic. If any write fails, ``.result()`` raises
+            that error; files already written stay written. No new writes start
+            after the first failure; writes already in flight finish first.
+            Size limits and the streaming fallback are the same as
+            ``write_file``.
+
+        Examples:
+            ```python
+            sb.write_files({"/input/a.txt": "hello", "/input/b.bin": b"\x00\x01"}).result()
+            ```
+        """
+        _validate_batch_paths(files, "write_files")
+        items = [
+            (path, contents.encode("utf-8") if isinstance(contents, str) else contents)
+            for path, contents in files.items()
+        ]
+        timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
+        future = self._loop_manager.run_async(
+            self._write_files_async(items, timeout, container=container)
         )
         return OperationRef(future)
 

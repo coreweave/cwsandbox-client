@@ -189,6 +189,31 @@ def test_sandbox_file_operations(sandbox_defaults: SandboxDefaults) -> None:
         assert content == test_content
 
 
+def test_sandbox_batch_file_operations(sandbox_defaults: SandboxDefaults) -> None:
+    """Test write_files / read_files / read_text round-trip and failure."""
+    from cwsandbox.exceptions import SandboxFileError
+
+    with Sandbox.run("sleep", "infinity", defaults=sandbox_defaults) as sandbox:
+        base = f"/tmp/batch_{uuid.uuid4().hex}"
+        files: dict[str, bytes | str] = {f"{base}_{i}.txt": f"file {i}\n" for i in range(20)}
+        files[f"{base}_bin"] = bytes(range(256))
+
+        sandbox.write_files(files).result()
+
+        paths = list(files)
+        contents = sandbox.read_files(paths).result()
+        assert list(contents) == paths
+        for path, expected in files.items():
+            assert contents[path] == (expected.encode() if isinstance(expected, str) else expected)
+
+        assert sandbox.read_text(f"{base}_3.txt").result() == "file 3\n"
+
+        missing = f"{base}_missing.txt"
+        with pytest.raises(SandboxFileError) as exc_info:
+            sandbox.read_files([paths[0], missing, paths[1]]).result()
+        assert exc_info.value.filepath == missing
+
+
 def test_sandbox_large_file_operations(sandbox_defaults: SandboxDefaults) -> None:
     """Test file operations above grpcio's historical 4 MiB default."""
     defaults = sandbox_defaults.with_overrides(max_lifetime_seconds=150)

@@ -3533,6 +3533,278 @@ class TestSandboxFileOpErrorTranslation:
         assert exc_info.value.metadata == {"filepath": "/backend-normalized-path"}
 
 
+class TestSandboxBatchFileOps:
+    """Tests for read_files, write_files, and read_text."""
+
+    @staticmethod
+    def _recording_fake(
+        *,
+        delays: dict[str, float] | None = None,
+        fail: dict[str, Exception] | None = None,
+    ) -> tuple[Callable[..., Any], dict[str, Any]]:
+        """Fake single-file op that records starts, finishes, and peak concurrency."""
+        state: dict[str, Any] = {
+            "in_flight": 0,
+            "peak": 0,
+            "started": [],
+            "finished": [],
+            "calls": [],
+        }
+
+        async def fake(filepath: str, *args: Any, **kwargs: Any) -> bytes:
+            state["calls"].append((filepath, args, kwargs))
+            state["started"].append(filepath)
+            state["in_flight"] += 1
+            state["peak"] = max(state["peak"], state["in_flight"])
+            try:
+                await asyncio.sleep((delays or {}).get(filepath, 0.01))
+                if fail and filepath in fail:
+                    raise fail[filepath]
+                state["finished"].append(filepath)
+                return filepath.encode()
+            finally:
+                state["in_flight"] -= 1
+
+        return fake, state
+
+    def test_read_files_caps_concurrency_at_two(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+        paths = [f"/tmp/{i}.txt" for i in range(6)]
+
+        with patch.object(sandbox, "_read_file_async", side_effect=fake):
+            sandbox.read_files(paths).result()
+
+        assert state["peak"] == 2
+        assert state["started"] == paths
+
+    def test_write_files_caps_concurrency_at_two(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+        files = {f"/tmp/{i}.txt": b"x" for i in range(6)}
+
+        with patch.object(sandbox, "_write_file_async", side_effect=fake):
+            assert sandbox.write_files(files).result() is None
+
+        assert state["peak"] == 2
+        assert state["started"] == list(files)
+
+    def test_read_files_preserves_input_order(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        paths = ["/tmp/c.txt", "/tmp/a.txt", "/tmp/b.txt"]
+        fake, state = self._recording_fake(delays={"/tmp/c.txt": 0.05, "/tmp/a.txt": 0.0})
+
+        with patch.object(sandbox, "_read_file_async", side_effect=fake):
+            result = sandbox.read_files(paths).result()
+
+        assert state["finished"][0] != "/tmp/c.txt"
+        assert list(result) == paths
+        assert result == {p: p.encode() for p in paths}
+
+    def test_read_files_failure_raises_first_error_and_stops_new_reads(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        error = SandboxFileError("missing", filepath="/tmp/1.txt")
+        fake, state = self._recording_fake(
+            delays={"/tmp/0.txt": 0.05, "/tmp/1.txt": 0.0},
+            fail={"/tmp/1.txt": error},
+        )
+        paths = [f"/tmp/{i}.txt" for i in range(5)]
+
+        with (
+            patch.object(sandbox, "_read_file_async", side_effect=fake),
+            pytest.raises(SandboxFileError) as exc_info,
+        ):
+            sandbox.read_files(paths).result()
+
+        assert exc_info.value is error
+        # The in-flight read finished before the error surfaced; nothing new started.
+        assert state["finished"] == ["/tmp/0.txt"]
+        assert state["started"] == ["/tmp/0.txt", "/tmp/1.txt"]
+        assert state["in_flight"] == 0
+
+    def test_write_files_failure_raises_and_keeps_earlier_writes(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        error = SandboxFileError("denied", filepath="/tmp/2.txt")
+        fake, state = self._recording_fake(delays={"/tmp/2.txt": 0.0}, fail={"/tmp/2.txt": error})
+        files = {f"/tmp/{i}.txt": b"x" for i in range(5)}
+
+        with (
+            patch.object(sandbox, "_write_file_async", side_effect=fake),
+            pytest.raises(SandboxFileError),
+        ):
+            sandbox.write_files(files).result()
+
+        assert "/tmp/0.txt" in state["finished"]
+        assert "/tmp/4.txt" not in state["started"]
+
+    def test_batch_passes_container_and_timeout_through(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        read_fake, read_state = self._recording_fake()
+        write_fake, write_state = self._recording_fake()
+
+        with (
+            patch.object(sandbox, "_read_file_async", side_effect=read_fake),
+            patch.object(sandbox, "_write_file_async", side_effect=write_fake),
+        ):
+            sandbox.read_files(["/a"], timeout_seconds=7, container="side").result()
+            sandbox.read_text("/b", timeout_seconds=8, container="side").result()
+            sandbox.write_files({"/c": "hi"}, timeout_seconds=9, container="side").result()
+
+        assert read_state["calls"] == [
+            ("/a", (7,), {"container": "side"}),
+            ("/b", (8,), {"container": "side"}),
+        ]
+        assert write_state["calls"] == [("/c", (b"hi", 9), {"container": "side"})]
+
+    def test_batch_defaults_timeout_and_primary_container(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"], request_timeout_seconds=42)
+        fake, state = self._recording_fake()
+
+        with patch.object(sandbox, "_read_file_async", side_effect=fake):
+            sandbox.read_files(["/a"]).result()
+
+        assert state["calls"] == [("/a", (42,), {"container": None})]
+
+    def test_read_files_goes_through_single_file_read(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        sandbox._sandbox_id = "sb-batch"
+        sandbox._state = _Running(sandbox_id="sb-batch")
+        sandbox._channel = MagicMock()
+        sandbox._stub = MagicMock()
+        sandbox._auth_metadata = ()
+
+        async def read(request: Any, **kwargs: Any) -> MagicMock:
+            response = MagicMock()
+            response.content = request.path.encode()
+            return response
+
+        sandbox._stub.ReadFile = AsyncMock(side_effect=read)
+
+        with patch.object(sandbox, "_ensure_client", new_callable=AsyncMock):
+            result = sandbox.read_files(["/a", "/b"], container="side").result()
+
+        assert result == {"/a": b"/a", "/b": b"/b"}
+        requests = [c.args[0] for c in sandbox._stub.ReadFile.await_args_list]
+        assert sorted(r.path for r in requests) == ["/a", "/b"]
+        assert {r.container for r in requests} == {"side"}
+
+    async def test_batch_ops_are_awaitable(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        read_fake, _ = self._recording_fake()
+        write_fake, write_state = self._recording_fake()
+
+        with (
+            patch.object(sandbox, "_read_file_async", side_effect=read_fake),
+            patch.object(sandbox, "_write_file_async", side_effect=write_fake),
+        ):
+            await sandbox.write_files({"/a": b"1", "/b": b"2"})
+            result = await sandbox.read_files(["/a", "/b"])
+            text = await sandbox.read_text("/a")
+
+        assert write_state["started"] == ["/a", "/b"]
+        assert result == {"/a": b"/a", "/b": b"/b"}
+        assert text == "/a"
+
+    def test_write_files_encodes_str_as_utf8(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+
+        with patch.object(sandbox, "_write_file_async", side_effect=fake):
+            sandbox.write_files({"/a": "caf\u00e9", "/b": b"\x00\xff"}).result()
+
+        assert [c[1][0] for c in state["calls"]] == ["caf\u00e9".encode(), b"\x00\xff"]
+
+    def test_empty_batches_make_no_calls(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+
+        with (
+            patch.object(sandbox, "_read_file_async", side_effect=fake),
+            patch.object(sandbox, "_write_file_async", side_effect=fake),
+        ):
+            assert sandbox.read_files([]).result() == {}
+            assert sandbox.write_files({}).result() is None
+
+        assert state["calls"] == []
+
+    @pytest.mark.parametrize(
+        ("paths", "match"),
+        [
+            (["/tmp/a.txt", "/tmp/a.txt"], "duplicate path"),
+            (["tmp/a.txt"], "must be absolute"),
+            ([""], "must not be empty"),
+        ],
+    )
+    def test_read_files_rejects_invalid_paths_before_any_read(
+        self, paths: list[str], match: str
+    ) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+
+        with (
+            patch.object(sandbox, "_read_file_async", side_effect=fake),
+            pytest.raises(ValueError, match=match),
+        ):
+            sandbox.read_files(["/tmp/ok.txt", *paths])
+
+        assert state["calls"] == []
+
+    @pytest.mark.parametrize(
+        ("path", "match"), [("tmp/a.txt", "must be absolute"), ("", "must not be empty")]
+    )
+    def test_write_files_rejects_invalid_paths_before_any_write(
+        self, path: str, match: str
+    ) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        fake, state = self._recording_fake()
+
+        with (
+            patch.object(sandbox, "_write_file_async", side_effect=fake),
+            pytest.raises(ValueError, match=match),
+        ):
+            sandbox.write_files({"/tmp/ok.txt": b"x", path: b"y"})
+
+        assert state["calls"] == []
+
+    def test_read_text_decodes_with_encoding(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        data = "caf\u00e9"
+
+        with patch.object(
+            sandbox, "_read_file_async", new_callable=AsyncMock, return_value=data.encode()
+        ):
+            assert sandbox.read_text("/a").result() == data
+
+        with patch.object(
+            sandbox,
+            "_read_file_async",
+            new_callable=AsyncMock,
+            return_value=data.encode("latin-1"),
+        ):
+            assert sandbox.read_text("/a", encoding="latin-1").result() == data
+
+    def test_read_text_invalid_bytes_raise_unicode_decode_error(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+
+        with (
+            patch.object(sandbox, "_read_file_async", new_callable=AsyncMock, return_value=b"\xff"),
+            pytest.raises(UnicodeDecodeError),
+        ):
+            sandbox.read_text("/a").result()
+
+    def test_read_text_propagates_read_errors(self) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        error = SandboxFileError("missing", filepath="/a")
+
+        with (
+            patch.object(sandbox, "_read_file_async", new_callable=AsyncMock, side_effect=error),
+            pytest.raises(SandboxFileError) as exc_info,
+        ):
+            sandbox.read_text("/a").result()
+
+        assert exc_info.value is error
+
+
 class TestSandboxFileOperationFallback:
     """Tests for large file operation exec-streaming fallback."""
 
