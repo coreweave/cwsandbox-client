@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.23.0 (2026-11-01)
+
+### Features
+
+- **sandbox**: Add read_files, write_files, and read_text
+  ([#204](https://github.com/coreweave/cwsandbox-client/pull/204),
+  [`24e29e8`](https://github.com/coreweave/cwsandbox-client/commit/24e29e83999076dc345e8dfabb570266295e9928))
+
+
 ## v1.22.0 (2026-10-26)
 
 ### Features
