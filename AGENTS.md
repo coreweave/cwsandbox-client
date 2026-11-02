@@ -659,6 +659,7 @@ The `examples/` directory contains runnable scripts demonstrating common pattern
 - `discover_infrastructure.py` - Runner discovery, visibilities, capacity filters, placement tips
 - `quick_start.py`, `basic_execution.py`, `streaming_exec.py`, `stdin_streaming.py` - Sandbox creation and execution
 - `resource_configuration.py` - ResourceOptions, flat dict, nested dict, GPU, and response properties
+- `audio_transcription.py` - Single-GPU (`rtxp6000-8x`) Qwen3-ASR transcription of a local audio file
 - `function_decorator.py` - Remote function execution with `@session.function()`
 - `multiple_sandboxes.py` - Session-based parallel execution
 - `interactive_streaming_sandbox.py` - Log streaming with `stream_logs()` and CLI interaction (`exec`, `sh`, `logs`)

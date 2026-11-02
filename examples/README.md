@@ -135,6 +135,18 @@ Demonstrates:
 - Inspecting confirmed resources from the sandbox response
 - Sharing resource defaults across sandboxes via `SandboxDefaults`
 
+### Audio Transcription (`audio_transcription.py`)
+
+Transcribe a local audio file with Qwen3-ASR-1.7B on one RTX PRO 6000 GPU:
+
+```bash
+python examples/audio_transcription.py path/to/audio.wav
+```
+
+Demonstrates:
+- Requesting a single GPU by type with `ResourceOptions(gpu=...)`
+- Uploading input with `write_file()` and running inference with `exec()`
+
 ### Run from File (`run_from_file/run_from_file.py`)
 
 Create a sandbox from a Compose YAML file (pull-only images):
