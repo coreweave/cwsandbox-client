@@ -1739,8 +1739,11 @@ class LogCursor:
 
     Read it from ``LogStreamReader.cursor`` and pass it back as
     ``Sandbox.stream_logs(follow=True, resume=cursor)`` to continue from the
-    line after the last one you received. The cursor is only valid while the
-    server still retains the session's replay window.
+    line after the last one you received. The cursor is only valid within
+    the server's resume window (it keeps an orphaned session for 30 seconds
+    by default) and while the bytes at ``offset`` are still in the session's
+    replay buffer; otherwise the resumed stream raises
+    ``SandboxLogResumeError``.
 
     Attributes:
         session_id: Server log session ID.
@@ -1782,9 +1785,11 @@ class LogStreamReader(StreamReader[str]):
     from it neither skips nor repeats lines.
 
     Attributes:
-        cursor: ``LogCursor`` for the last yielded line, the ``resume``
-            cursor passed to ``stream_logs()`` until a line arrives, or None
-            when the server provides no session (``follow=False``).
+        cursor: ``LogCursor`` for the last yielded line, or the ``resume``
+            cursor passed to ``stream_logs()`` until a line is yielded. None
+            until the first line is yielded on a stream started without
+            ``resume``, and always None for ``follow=False`` or when the
+            server provides no session.
 
     Examples:
         ```python

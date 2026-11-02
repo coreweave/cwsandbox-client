@@ -25,8 +25,8 @@ from cwsandbox._direct import (
 )
 from cwsandbox._proto import sandbox_pb2
 from cwsandbox._sandbox import Sandbox
-from cwsandbox._types import DataPlaneMode
-from cwsandbox.exceptions import CWSandboxError, SandboxUnavailableError
+from cwsandbox._types import DataPlaneMode, LogCursor
+from cwsandbox.exceptions import CWSandboxError, SandboxLogResumeError, SandboxUnavailableError
 
 
 class _FakeChannel:
@@ -72,6 +72,7 @@ class _DirectAioRpcError(grpc.aio.AioRpcError):
         *,
         reason: str | None = None,
         details: str = "transient failure",
+        metadata: dict[str, str] | None = None,
     ) -> None:
         self._code = code
         self._details = details
@@ -80,6 +81,7 @@ class _DirectAioRpcError(grpc.aio.AioRpcError):
             info = error_details_pb2.ErrorInfo(
                 reason=reason,
                 domain="cwsandbox.com",
+                metadata=metadata or {},
             )
             detail = any_pb2.Any()
             detail.Pack(info)
@@ -914,3 +916,45 @@ async def test_stream_logs_resume_cancels_and_releases_direct_lease() -> None:
     assert calls[1].cancel.call_count == 1
     assert lease.release.await_count == 2
     assert sandbox._direct_data_plane.acquire.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_wrong_shard_on_caller_cursor_raises_resume_error() -> None:
+    """Retrying a caller cursor on the same direct path would hit the same wrong shard."""
+    sandbox = _running_sandbox(DataPlaneMode.AUTO)
+    wrong_shard = _DirectAioRpcError(
+        grpc.StatusCode.UNAVAILABLE,
+        reason="CWSANDBOX_BACKEND_UNAVAILABLE",
+        metadata={"local_shard_id": "shard-2", "owner_shard_id": "shard-1"},
+    )
+
+    class _FailingLogCall(_FakeLogCall):
+        async def __anext__(self) -> object:
+            raise wrong_shard
+
+    calls = [_FailingLogCall([])]
+    stub = MagicMock()
+    stub.StreamLogs = MagicMock(side_effect=calls)
+    lease = MagicMock(stub=stub)
+    lease.release = AsyncMock()
+    lease.discard = AsyncMock()
+    sandbox._direct_data_plane.acquire = AsyncMock(return_value=lease)
+
+    resume = LogCursor("s1", 42)
+    output_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    with (
+        patch.object(sandbox, "_ensure_started_async", AsyncMock()),
+        patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
+        patch.object(sandbox, "_ensure_client", AsyncMock()),
+        patch("cwsandbox._sandbox.asyncio.sleep", AsyncMock()),
+    ):
+        await sandbox._stream_logs_async(output_queue, follow=True, resume=resume)
+
+    assert stub.StreamLogs.call_count == 1
+    assert stub.StreamLogs.call_args.args[0].resume_log_session_id == "s1"
+    error = output_queue.get_nowait()
+    assert type(error) is SandboxLogResumeError
+    assert error.cursor == resume
+    assert error.stream_code is None
+    assert error.__cause__ is wrong_shard
+    lease.discard.assert_awaited_once()

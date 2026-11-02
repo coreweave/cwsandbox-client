@@ -67,6 +67,7 @@ from cwsandbox.exceptions import (
     SandboxError,
     SandboxFileError,
     SandboxLogReplayGapError,
+    SandboxLogResumeError,
     SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxProtocolError,
@@ -11283,6 +11284,28 @@ class TestStreamLogsCursor:
         assert items[0] == "\u00e9\n"
         assert items[0].cursor == LogCursor("s1", 3)
 
+    @pytest.mark.asyncio
+    async def test_trailing_partial_line_gets_end_of_stream_cursor(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [[_data_frame(b"a\nbc", session_id="s1", offset=4), _complete_frame()]]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert items == ["a\n", "bc", None]
+        assert [items[0].cursor, items[1].cursor] == [LogCursor("s1", 2), LogCursor("s1", 4)]
+
+    @pytest.mark.asyncio
+    async def test_invalid_utf8_is_replaced_not_raised(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        programmed = _ProgrammedStreamLogs(
+            [[_data_frame(b"\xffok\n", session_id="s1", offset=4), _complete_frame()]]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed)
+
+        assert items == ["\ufffdok\n", None]
+        assert items[0].cursor == LogCursor("s1", 4)
+
     def test_reader_cursor_advances_per_yielded_line_not_per_buffered_entry(self) -> None:
         sandbox = _build_sandbox_for_log_stream()
         entries = [
@@ -11312,6 +11335,28 @@ class TestStreamLogsCursor:
             finally:
                 reader.close()
 
+    @pytest.mark.asyncio
+    async def test_async_reader_cursor_advances_per_yielded_line(self) -> None:
+        sandbox = _build_sandbox_for_log_stream()
+        entries = [
+            _data_frame(b"one\ntwo\n", session_id="s1", offset=8),
+            _data_frame(b"three\n", session_id="s1", offset=14),
+        ]
+        with _patched_log_stub(sandbox, entries):
+            reader = sandbox.stream_logs(follow=True)
+            try:
+                assert reader.cursor is None
+                seen: list[tuple[Any, LogCursor | None]] = []
+                async for line in reader:
+                    seen.append((type(line), reader.cursor))
+                assert seen == [
+                    (str, LogCursor("s1", 4)),
+                    (str, LogCursor("s1", 8)),
+                    (str, LogCursor("s1", 14)),
+                ]
+            finally:
+                reader.close()
+
     def test_reader_starts_at_resume_cursor(self) -> None:
         sandbox = _build_sandbox_for_log_stream()
         resume = LogCursor("s1", 42)
@@ -11319,12 +11364,29 @@ class TestStreamLogsCursor:
             reader = sandbox.stream_logs(follow=True, resume=resume)
             try:
                 assert reader.cursor == resume
+                assert list(reader) == []
+                assert reader.cursor == resume
             finally:
                 reader.close()
 
     def test_reader_cursor_stays_none_without_server_session(self) -> None:
         sandbox = _build_sandbox_for_log_stream()
         with _patched_log_stub(sandbox, [_data_frame(b"x\n"), _data_frame(b"tail")]):
+            reader = sandbox.stream_logs(follow=False)
+            try:
+                assert list(reader) == ["x\n", "tail"]
+                assert reader.cursor is None
+            finally:
+                reader.close()
+
+    def test_follow_false_reader_has_no_cursor_even_with_server_session(self) -> None:
+        """The server sends a session id on every entry, but only follow streams resume."""
+        sandbox = _build_sandbox_for_log_stream()
+        entries = [
+            _data_frame(b"x\n", session_id="s1", offset=2),
+            _data_frame(b"tail", session_id="s1", offset=6),
+        ]
+        with _patched_log_stub(sandbox, entries):
             reader = sandbox.stream_logs(follow=False)
             try:
                 assert list(reader) == ["x\n", "tail"]
@@ -11368,16 +11430,51 @@ class TestStreamLogsCursor:
         assert "below replay window" in str(error)
 
     @pytest.mark.asyncio
-    async def test_session_loss_on_caller_cursor_is_terminal(self) -> None:
-        """A fresh init would replay or skip lines, so it is raised instead."""
+    async def test_replay_gap_after_empty_entry_on_caller_cursor_raises_typed_error(
+        self,
+    ) -> None:
         sandbox = _build_sandbox_for_log_stream()
-        programmed = _ProgrammedStreamLogs([[_error_frame("SESSION_NOT_FOUND", "expired")]])
-        items, _ = await _drive_stream_logs(sandbox, programmed, resume=LogCursor("sess-9", 42))
+        resume = LogCursor("sess-9", 42)
+        programmed = _ProgrammedStreamLogs(
+            [
+                [
+                    _data_frame(b"", session_id="sess-9", offset=42),
+                    _error_frame("REPLAY_GAP", "below replay window"),
+                ]
+            ]
+        )
+        items, _ = await _drive_stream_logs(sandbox, programmed, resume=resume)
 
         assert programmed.call_count == 1
-        assert isinstance(items[0], SandboxError)
-        assert not isinstance(items[0], SandboxLogReplayGapError)
-        assert "expired" in str(items[0])
+        assert len(items) == 1
+        assert isinstance(items[0], SandboxLogReplayGapError)
+        assert items[0].cursor == resume
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "SESSION_NOT_FOUND",
+            "RUNNER_UNAVAILABLE",
+            "RUNNER_DRAINING",
+            "INVALID_RESUME_OFFSET",
+        ],
+    )
+    async def test_session_loss_on_caller_cursor_is_terminal(self, code: str) -> None:
+        """A fresh init would replay or skip lines, so it is raised instead."""
+        sandbox = _build_sandbox_for_log_stream()
+        resume = LogCursor("sess-9", 42)
+        programmed = _ProgrammedStreamLogs([[_error_frame(code, "expired")]])
+        items, _ = await _drive_stream_logs(sandbox, programmed, resume=resume)
+
+        assert programmed.call_count == 1
+        assert len(items) == 1
+        error = items[0]
+        assert type(error) is SandboxLogResumeError
+        assert error.cursor == resume
+        assert error.stream_code == code
+        assert error.reason is None
+        assert "expired" in str(error)
 
     @pytest.mark.asyncio
     async def test_transport_error_before_data_retries_with_caller_cursor(self) -> None:
@@ -11395,8 +11492,20 @@ class TestStreamLogsCursor:
         assert programmed.init_messages[1].resume_log_offset == 42
 
     @pytest.mark.asyncio
-    async def test_replay_gap_after_resumed_data_keeps_internal_fallback(self) -> None:
-        """Once data flows, a resumed stream auto-resumes like any follow stream."""
+    @pytest.mark.parametrize(
+        ("code", "error_type"),
+        [
+            ("SESSION_NOT_FOUND", SandboxLogResumeError),
+            ("REPLAY_GAP", SandboxLogReplayGapError),
+        ],
+    )
+    async def test_session_loss_after_resumed_data_raises(
+        self, code: str, error_type: type[SandboxLogResumeError]
+    ) -> None:
+        """A resumed stream never re-inits fresh, even after data has flowed.
+
+        Transient disconnects still resume the same session.
+        """
         sandbox = _build_sandbox_for_log_stream()
         programmed = _ProgrammedStreamLogs(
             [
@@ -11404,17 +11513,28 @@ class TestStreamLogsCursor:
                     _data_frame(b"x\n", session_id="sess-9", offset=44),
                     MockAioRpcError(grpc.StatusCode.UNAVAILABLE, "flap"),
                 ],
-                [_error_frame("REPLAY_GAP", "below replay window")],
+                [
+                    # "z" is a partial line, never handed to the caller.
+                    _data_frame(b"y\nz", session_id="sess-9", offset=47),
+                    _error_frame("STREAM_INTERRUPTED", "restart"),
+                ],
+                [_error_frame(code, "gone")],
                 [_data_frame(b"head\n", session_id="sess-10", offset=5), _complete_frame()],
             ]
         )
         items, _ = await _drive_stream_logs(sandbox, programmed, resume=LogCursor("sess-9", 42))
 
-        assert items == ["x\n", "head\n", None]
+        assert programmed.call_count == 3
+        assert items[:2] == ["x\n", "y\n"]
         assert programmed.init_messages[1].resume_log_session_id == "sess-9"
         assert programmed.init_messages[1].resume_log_offset == 44
-        assert programmed.init_messages[2].resume_log_session_id == ""
-        assert items[1].cursor == LogCursor("sess-10", 5)
+        assert programmed.init_messages[2].resume_log_session_id == "sess-9"
+        assert programmed.init_messages[2].resume_log_offset == 47
+        assert len(items) == 3
+        error = items[2]
+        assert type(error) is error_type
+        assert error.cursor == LogCursor("sess-9", 46)
+        assert error.stream_code == code
 
     @pytest.mark.asyncio
     async def test_internal_resume_keeps_partial_line_and_cursor(self) -> None:
@@ -11448,6 +11568,8 @@ class TestStreamLogsCursor:
             ({"resume": LogCursor("s1", -1)}, "offset"),
             ({"resume": LogCursor("s1", True)}, "offset"),
             ({"resume": LogCursor("s1", "4")}, "offset"),  # type: ignore[arg-type]
+            ({"resume": LogCursor("s1", 2**64)}, "offset"),
+            ({"resume": LogCursor(123, 4)}, "session_id"),  # type: ignore[arg-type]
         ],
     )
     def test_invalid_resume_raises_value_error_before_any_rpc(

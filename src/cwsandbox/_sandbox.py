@@ -204,6 +204,7 @@ from cwsandbox.exceptions import (
     SandboxFailedError,
     SandboxFileError,
     SandboxLogReplayGapError,
+    SandboxLogResumeError,
     SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxProtocolError,
@@ -1431,13 +1432,17 @@ _RETRYABLE_POLL_EXCEPTIONS: tuple[type[CWSandboxError], ...] = (
 #
 #   SESSION_NOT_FOUND / REPLAY_GAP / RUNNER_UNAVAILABLE / RUNNER_DRAINING
 #       reconnect with a FRESH init (no resume_session_id / resume_offset)
-#       to pick up the live tail from the current head.
+#       to pick up the live tail from the current head. On a stream started
+#       from a caller cursor (stream_logs(resume=...)), raise
+#       SandboxLogResumeError instead (SandboxLogReplayGapError for
+#       REPLAY_GAP), at any point in the stream.
 #   STREAM_INTERRUPTED
 #       reconnect and RESUME (keep session_id / offset). The server still
 #       holds the session; this is emitted on routine restarts/deploys.
 #   INVALID_RESUME_OFFSET
 #       terminal, no retry — the echoed offset is corrupt and reconnecting
-#       with the same state would just reproduce the failure.
+#       with the same state would just reproduce the failure. Raised as
+#       SandboxLogResumeError on a stream started from a caller cursor.
 #   SANDBOX_NOT_FOUND / PERMISSION_DENIED / other unknown codes
 #       terminal, no retry — surface to the caller as a SandboxError.
 _STREAMING_SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
@@ -7041,10 +7046,10 @@ class Sandbox:
 
             session_id = resume.session_id if resume is not None else ""
             last_offset = resume.offset if resume is not None else 0
-            # True until the first data arrives on a stream resumed from a
-            # caller cursor. Dropping the session before then would replay or
-            # skip lines, so session loss is raised instead of re-initing.
-            caller_resume_pending = resume is not None
+            # A stream started from a caller cursor never re-inits fresh: that
+            # would drop the original timestamps/container and replay or skip
+            # lines, so session loss is raised as SandboxLogResumeError.
+            caller_resumed = resume is not None
             pending = bytearray()
             attempt = 0
             done = False
@@ -7069,8 +7074,9 @@ class Sandbox:
                     request.resume_log_session_id = session_id
                     request.resume_log_offset = last_offset
                 else:
-                    # Fresh init (first attempt or after SESSION_NOT_FOUND /
-                    # REPLAY_GAP / runner loss). Re-send timestamps so
+                    # Fresh init on a stream started without resume (first
+                    # attempt or after SESSION_NOT_FOUND / REPLAY_GAP /
+                    # runner loss). Re-send timestamps so
                     # formatting survives a session reset. Re-send the
                     # caller window until any data arrives; after that,
                     # follow mode advances since_time to now to avoid
@@ -7101,14 +7107,25 @@ class Sandbox:
                             if entry.HasField("error") and entry.error.code:
                                 code = entry.error.code
                                 msg = entry.error.message or code
+                                if caller_resumed and (
+                                    code in _STREAMING_FRESH_REINIT_CODES
+                                    or code == _STREAMING_INVALID_RESUME_OFFSET
+                                ):
+                                    error_cls = (
+                                        SandboxLogReplayGapError
+                                        if code == _STREAMING_REPLAY_GAP
+                                        else SandboxLogResumeError
+                                    )
+                                    # Report the last complete line, which is
+                                    # what reader.cursor shows when this
+                                    # error is raised.
+                                    raise error_cls(
+                                        f"Log stream error: {msg}",
+                                        cursor=LogCursor(session_id, last_offset - len(pending)),
+                                        stream_code=code,
+                                    )
                                 if code in _STREAMING_FRESH_REINIT_CODES:
-                                    if caller_resume_pending and code == _STREAMING_REPLAY_GAP:
-                                        raise SandboxLogReplayGapError(
-                                            f"Log stream error: {msg}",
-                                            cursor=LogCursor(session_id, last_offset),
-                                            stream_code=code,
-                                        )
-                                    if not follow or caller_resume_pending:
+                                    if not follow:
                                         raise SandboxError(f"Log stream error: {msg}")
                                     session_id = ""
                                     last_offset = 0
@@ -7128,7 +7145,6 @@ class Sandbox:
                             data = entry.data
                             if not data:
                                 continue
-                            caller_resume_pending = False
                             if follow:
                                 attempt = 0
                                 last_transport_error = None
@@ -7146,7 +7162,7 @@ class Sandbox:
                                     )
                                 line_cursor = (
                                     LogCursor(entry.log_session_id, entry_start + newline + 1)
-                                    if entry.log_session_id
+                                    if follow and entry.log_session_id
                                     else None
                                 )
                                 line = pending.decode("utf-8", errors="replace")
@@ -7161,7 +7177,9 @@ class Sandbox:
                         else:
                             if pending:
                                 line_cursor = (
-                                    LogCursor(session_id, last_offset) if session_id else None
+                                    LogCursor(session_id, last_offset)
+                                    if follow and session_id
+                                    else None
                                 )
                                 line = pending.decode("utf-8", errors="replace")
                                 pending.clear()
@@ -7173,9 +7191,11 @@ class Sandbox:
                         if direct_unavailable:
                             await prepared.discard()
                             if is_resume and _is_log_session_wrong_shard_error(exc):
-                                if caller_resume_pending:
-                                    raise _translate_rpc_error(
-                                        exc, sandbox_id=sandbox_id, operation="Stream logs"
+                                if caller_resumed:
+                                    raise SandboxLogResumeError(
+                                        f"Log stream for sandbox {sandbox_id} could not"
+                                        " resume: the log session is on another shard",
+                                        cursor=LogCursor(session_id, last_offset - len(pending)),
                                     ) from exc
                                 session_id = ""
                                 last_offset = 0
@@ -9497,12 +9517,18 @@ class Sandbox:
         data arrives.
 
         In follow mode, ``reader.cursor`` is a ``LogCursor`` pointing just
-        past the last line the reader handed to you. Save it and pass it as
+        past the last line the reader handed to you (``None`` until the
+        first line is yielded on a stream started without ``resume``;
+        ``follow=False`` readers have no cursor). Save it and pass it as
         ``resume`` to a later ``stream_logs(follow=True, resume=cursor)``
-        call, even from another process, to continue with the next line: no
-        gaps and no duplicates. The server keeps a bounded replay window per
-        session; if the cursor has fallen out of it, the stream raises
-        ``SandboxLogReplayGapError``.
+        call, possibly from another process, to continue with the next line
+        without gaps or duplicates. This only works within the server's
+        resume window (it keeps an orphaned session for 30 seconds by
+        default) and while the bytes at the cursor are still in its replay
+        buffer. If the session cannot be resumed, at any point
+        in the resumed stream, iteration raises ``SandboxLogResumeError``
+        (``SandboxLogReplayGapError`` if the cursor fell out of the replay
+        buffer) rather than silently re-initing and skipping lines.
 
         Args:
             follow: If True, continuously stream new logs (like ``tail -f``).
@@ -9536,8 +9562,12 @@ class Sandbox:
                 ``since_time`` or ``timestamps=True``.
             SandboxNotRunningError: If ``follow=True`` and the sandbox has
                 been stopped.
+            SandboxLogResumeError: If a stream started from ``resume``
+                cannot continue the session, for example because it expired
+                or its runner went away (raised during iteration, carries
+                ``.cursor`` and ``.stream_code``).
             SandboxLogReplayGapError: If the server no longer retains the
-                logs at ``resume`` (raised during iteration).
+                logs at ``resume`` (a ``SandboxLogResumeError`` subclass).
             SandboxError: If the log stream encounters an error.
 
         Example:
@@ -9560,7 +9590,7 @@ class Sandbox:
                 print(line, end="")
                 if should_pause():
                     break
-            cursor = reader.cursor
+            cursor = reader.cursor  # None if no line was read: resume=None starts fresh
             reader.close()
             for line in sandbox.stream_logs(follow=True, resume=cursor):
                 print(line, end="")
@@ -9569,14 +9599,14 @@ class Sandbox:
         if resume is not None:
             if not isinstance(resume, LogCursor):
                 raise ValueError("resume must be a LogCursor")
-            if not resume.session_id or not resume.session_id.strip():
+            if not isinstance(resume.session_id, str) or not resume.session_id.strip():
                 raise ValueError("resume.session_id must be a non-empty string")
             if (
                 isinstance(resume.offset, bool)
                 or not isinstance(resume.offset, int)
-                or resume.offset < 0
+                or not 0 <= resume.offset <= 2**64 - 1
             ):
-                raise ValueError("resume.offset must be a non-negative integer")
+                raise ValueError("resume.offset must be an integer in [0, 2**64 - 1]")
             if not follow:
                 raise ValueError("resume requires follow=True")
             if tail_lines is not None or since_time is not None or timestamps:
