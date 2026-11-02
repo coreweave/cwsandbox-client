@@ -1752,16 +1752,20 @@ def test_concurrent_stop_and_wait_until_complete(sandbox_defaults: SandboxDefaul
 #
 # These tests cover the wire-additive log session ID / offset fields the
 # server emits on every LogEntry, the in-band SESSION_NOT_FOUND
-# reject contract on a resume init with an unknown session_id, and the
-# SDK's transparent auto-reconnect on a transient transport disconnect.
+# reject contract on a resume init with an unknown session_id, the
+# SDK's transparent auto-reconnect on a transient transport disconnect,
+# and resuming a new stream from a caller-saved LogCursor.
 #
 # The wire protocol is unconditional on supporting servers; the reattach
-# behavior is rolled out separately, so any test that depends on a
-# *successful* resume must tolerate the registry-miss path
-# (SESSION_NOT_FOUND in-band → SDK falls back to a fresh init).
+# behavior is rolled out separately, so the auto-reconnect tests must
+# tolerate the registry-miss path (SESSION_NOT_FOUND in-band → SDK falls
+# back to a fresh init). The saved-cursor test cannot: a stream started
+# from a caller cursor raises SandboxLogResumeError on session loss
+# instead of re-initing.
 #
-# All three tests use a noisy sandbox that emits a deterministic counter
-# to stdout so we can assert on byte-level ordering and gaps.
+# Most tests use a noisy sandbox that emits a deterministic counter to
+# stdout so we can assert on byte-level ordering and gaps; the
+# saved-cursor test runs its own shell counter.
 
 _LOG_PRODUCER = (
     "import sys, time\n"
@@ -2042,25 +2046,36 @@ def test_stream_logs_resumes_from_saved_cursor(sandbox_defaults: SandboxDefaults
         reader = sandbox.stream_logs(follow=True)
         seen: list[int] = []
         try:
+            start = time.monotonic()
             for line in reader:
                 seen.append(int(line.strip().split("-", 1)[1]))
                 if len(seen) >= 10:
+                    break
+                if time.monotonic() - start > 30.0:
                     break
             cursor = reader.cursor
         finally:
             reader.close()
 
+        assert len(seen) >= 10, f"follow stream should yield 10 lines in 30s; got {seen}"
         assert seen == list(range(seen[0], seen[0] + 10))
-        assert cursor is not None, "follow stream must expose a resume cursor"
+        if cursor is None:
+            pytest.skip(
+                "server does not advertise log_session_id on LogEntry;"
+                " streaming-resume wire protocol not deployed in this env"
+            )
 
         time.sleep(2.0)
 
         resumed = sandbox.stream_logs(follow=True, resume=cursor)
         after: list[int] = []
         try:
+            start = time.monotonic()
             for line in resumed:
                 after.append(int(line.strip().split("-", 1)[1]))
                 if len(after) >= 5:
+                    break
+                if time.monotonic() - start > 30.0:
                     break
         finally:
             resumed.close()
