@@ -784,6 +784,163 @@ class TestSnapshotMethod:
                 sandbox.snapshot(wait_for_ready=True).result()
 
 
+class TestCreateSnapshotMethod:
+    def _sandbox(self) -> Sandbox:
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi")],
+        )
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        return sandbox
+
+    def test_no_wait_returns_create_response_record(self) -> None:
+        sandbox = self._sandbox()
+        create_resp = sandbox_pb2.FileSystemSnapshot(
+            file_system_snapshot_id="fss-1",
+            state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+            source_sandbox_id="sb-1",
+            source_volume_name="data",
+            trigger=sandbox_pb2.SNAPSHOT_TRIGGER_MANUAL,
+            request_id="k",
+        )
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(return_value=create_resp)
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(
+                sandbox, "_wait_until_running_async", new_callable=AsyncMock
+            ) as wait_running,
+        ):
+            snap = sandbox.create_snapshot(request_id="k", wait_for_ready=False).result()
+        wait_running.assert_awaited()
+        assert snap.file_system_snapshot_id == "fss-1"
+        assert snap.status == FileSystemSnapshotStatus.CREATING
+        assert snap.source_sandbox_id == "sb-1"
+        assert snap.source_volume_name == "data"
+        assert snap.trigger == FileSystemSnapshotTrigger.MANUAL
+        assert snap.request_id == "k"
+        # The create response already carries the record; no extra get call.
+        sandbox._stub.GetFileSystemSnapshot.assert_not_called()
+        create_req = sandbox._stub.CreateFileSystemSnapshot.call_args[0][0]
+        assert create_req.sandbox_id == "sb-1"
+        assert create_req.request_id == "k"
+        assert create_req.scratch_volume_name == "data"
+
+    def test_wait_returns_ready_record_from_poll(self) -> None:
+        sandbox = self._sandbox()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+            )
+        )
+        ready = _ready_snapshot_proto("fss-1")
+        ready.size_bytes = 4096
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            side_effect=[
+                sandbox_pb2.FileSystemSnapshot(
+                    file_system_snapshot_id="fss-1",
+                    state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+                ),
+                ready,
+            ]
+        )
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+            patch("cwsandbox._sandbox.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            snap = sandbox.create_snapshot().result()
+        assert snap.file_system_snapshot_id == "fss-1"
+        assert snap.status == FileSystemSnapshotStatus.READY
+        assert snap.size_bytes == 4096
+        assert snap.source_sandbox_id == "sb-1"
+        assert sandbox._stub.GetFileSystemSnapshot.call_count == 2
+        get_req = sandbox._stub.GetFileSystemSnapshot.call_args[0][0]
+        assert get_req.file_system_snapshot_id == "fss-1"
+
+    def test_snapshot_returns_id_after_wait(self) -> None:
+        sandbox = self._sandbox()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+            )
+        )
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(return_value=_ready_snapshot_proto("fss-1"))
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            assert sandbox.snapshot().result() == "fss-1"
+
+    def test_failed_raises_snapshot_error(self) -> None:
+        sandbox = self._sandbox()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_CREATING,
+            )
+        )
+        sandbox._stub.GetFileSystemSnapshot = AsyncMock(
+            return_value=sandbox_pb2.FileSystemSnapshot(
+                file_system_snapshot_id="fss-1",
+                state=sandbox_pb2.SNAPSHOT_STATE_FAILED,
+                state_reason="nope",
+            )
+        )
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            with pytest.raises(SandboxSnapshotError, match="nope") as exc_info:
+                sandbox.create_snapshot().result()
+        assert exc_info.value.file_system_snapshot_id == "fss-1"
+
+    def test_not_supported_raises_typed_error(self) -> None:
+        sandbox = self._sandbox()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock(
+            side_effect=_fss_rpc_error(CWSANDBOX_FSS_NOT_SUPPORTED)
+        )
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            with pytest.raises(SnapshotNotSupportedError):
+                sandbox.create_snapshot(wait_for_ready=False).result()
+        assert sandbox._stub.CreateFileSystemSnapshot.call_count == 1
+
+    def test_raises_when_multiple_scratch_volumes(self) -> None:
+        sandbox = Sandbox(
+            command="sleep",
+            args=["infinity"],
+            volumes=[
+                ScratchVolumeOptions(name="data", mount_path="/data", size="10Gi"),
+                ScratchVolumeOptions(name="cache", mount_path="/cache", size="1Gi"),
+            ],
+        )
+        sandbox._sandbox_id = "sb-1"
+        sandbox._stub = MagicMock()
+        sandbox._stub.CreateFileSystemSnapshot = AsyncMock()
+        with (
+            patch.object(sandbox, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sandbox, "_wait_until_running_async", new_callable=AsyncMock),
+        ):
+            with pytest.raises(SandboxSnapshotError, match="multiple scratch volumes"):
+                sandbox.create_snapshot(wait_for_ready=False).result()
+        sandbox._stub.CreateFileSystemSnapshot.assert_not_called()
+
+    @pytest.mark.parametrize("budget", [-1, float("inf"), float("nan")])
+    def test_invalid_budget_rejected_before_rpc(self, budget: float) -> None:
+        sandbox = Sandbox(command="sleep", args=["infinity"])
+        with patch.object(sandbox, "_snapshot_async", new_callable=AsyncMock) as snapshot:
+            with pytest.raises(ValueError, match="retry_budget_seconds"):
+                sandbox.create_snapshot(retry_budget_seconds=budget)
+            snapshot.assert_not_called()
+
+
 class TestManagementClassmethods:
     def _patch_channel(self, mock_stub: MagicMock):  # type: ignore[no-untyped-def]
         mock_channel = MagicMock()
@@ -1172,7 +1329,7 @@ class TestSnapshotRetryBudget:
             patch(
                 "cwsandbox._sandbox._retry_transient_rpc",
                 new_callable=AsyncMock,
-                return_value="fss-1",
+                return_value=sandbox_module._snapshot_from_proto(_ready_snapshot_proto("fss-1")),
             ) as retry,
         ):
             assert sandbox.snapshot(retry_budget_seconds=300).result() == "fss-1"
