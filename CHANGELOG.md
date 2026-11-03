@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.26.0 (2026-11-03)
+
+### Features
+
+- **sandbox**: Expose log resume cursor on stream_logs
+  ([#205](https://github.com/coreweave/cwsandbox-client/pull/205),
+  [`3b686b1`](https://github.com/coreweave/cwsandbox-client/commit/3b686b1bae82b536d2945a27c8978df33bf07aef))
+
+
 ## v1.25.0 (2026-11-03)
 
 ### Features
