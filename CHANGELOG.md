@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.25.0 (2026-11-03)
+
+### Features
+
+- **snapshot**: Add create_snapshot() returning the full record
+  ([#208](https://github.com/coreweave/cwsandbox-client/pull/208),
+  [`e4d882a`](https://github.com/coreweave/cwsandbox-client/commit/e4d882a690e67c551187d1aac3adf94cf3475a42))
+
+Signed-off-by: scott-cw <171452645+scott-cw@users.noreply.github.com>
+
+
 ## v1.24.0 (2026-11-03)
 
 ### Documentation
