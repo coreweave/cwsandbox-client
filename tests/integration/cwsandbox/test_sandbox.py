@@ -10,6 +10,7 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 
 import asyncio
 import os
+import threading
 import time
 import uuid
 from unittest.mock import patch
@@ -1788,16 +1789,20 @@ def test_concurrent_stop_and_wait_until_complete(sandbox_defaults: SandboxDefaul
 #
 # These tests cover the wire-additive log session ID / offset fields the
 # server emits on every LogEntry, the in-band SESSION_NOT_FOUND
-# reject contract on a resume init with an unknown session_id, and the
-# SDK's transparent auto-reconnect on a transient transport disconnect.
+# reject contract on a resume init with an unknown session_id, the
+# SDK's transparent auto-reconnect on a transient transport disconnect,
+# and resuming a new stream from a caller-saved LogCursor.
 #
 # The wire protocol is unconditional on supporting servers; the reattach
-# behavior is rolled out separately, so any test that depends on a
-# *successful* resume must tolerate the registry-miss path
-# (SESSION_NOT_FOUND in-band → SDK falls back to a fresh init).
+# behavior is rolled out separately, so the auto-reconnect tests must
+# tolerate the registry-miss path (SESSION_NOT_FOUND in-band → SDK falls
+# back to a fresh init). The saved-cursor test cannot: a stream started
+# from a caller cursor raises SandboxLogResumeError on session loss
+# instead of re-initing.
 #
-# All three tests use a noisy sandbox that emits a deterministic counter
-# to stdout so we can assert on byte-level ordering and gaps.
+# Most tests use a noisy sandbox that emits a deterministic counter to
+# stdout so we can assert on byte-level ordering and gaps; the
+# saved-cursor test runs its own shell counter.
 
 _LOG_PRODUCER = (
     "import sys, time\n"
@@ -2056,6 +2061,67 @@ def test_stream_logs_reconnects_with_timestamps(
             )
         finally:
             reader.close()
+    finally:
+        try:
+            sandbox.stop(missing_ok=True).result()
+        except SandboxError:
+            pass
+
+
+def test_stream_logs_resumes_from_saved_cursor(sandbox_defaults: SandboxDefaults) -> None:
+    """A cursor saved from one reader resumes in a new reader with no gap or repeat."""
+    sandbox = Sandbox.run(
+        "sh",
+        "-c",
+        "i=0; while true; do echo line-$i; i=$((i+1)); sleep 0.2; done",
+        defaults=sandbox_defaults,
+    )
+    try:
+        sandbox.wait()
+        assert sandbox.status == SandboxStatus.RUNNING
+
+        # close() from a timer unblocks a stalled read; a monotonic check in
+        # the loop body would only run after a line arrives.
+        reader = sandbox.stream_logs(follow=True)
+        seen: list[int] = []
+        timer = threading.Timer(30.0, reader.close)
+        timer.start()
+        try:
+            for line in reader:
+                seen.append(int(line.strip().split("-", 1)[1]))
+                if len(seen) >= 10:
+                    break
+            cursor = reader.cursor
+        finally:
+            timer.cancel()
+            reader.close()
+
+        assert len(seen) >= 10, f"follow stream should yield 10 lines in 30s; got {seen}"
+        assert seen == list(range(seen[0], seen[0] + 10))
+        if cursor is None:
+            pytest.skip(
+                "server does not advertise log_session_id on LogEntry;"
+                " streaming-resume wire protocol not deployed in this env"
+            )
+
+        time.sleep(2.0)
+
+        resumed = sandbox.stream_logs(follow=True, resume=cursor)
+        after: list[int] = []
+        timer = threading.Timer(30.0, resumed.close)
+        timer.start()
+        try:
+            for line in resumed:
+                after.append(int(line.strip().split("-", 1)[1]))
+                if len(after) >= 5:
+                    break
+        finally:
+            timer.cancel()
+            resumed.close()
+
+        assert after == list(range(seen[-1] + 1, seen[-1] + 6)), (
+            f"resume must continue at line-{seen[-1] + 1}; first={seen}, resumed={after}"
+        )
     finally:
         try:
             sandbox.stop(missing_ok=True).result()

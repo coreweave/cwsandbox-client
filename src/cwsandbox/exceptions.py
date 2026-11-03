@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import timedelta
 
-    from cwsandbox._types import ProcessResult
+    from cwsandbox._types import LogCursor, ProcessResult
 
 
 class CWSandboxError(Exception):
@@ -296,6 +296,62 @@ class SandboxStreamTruncatedError(SandboxExecutionError):
             retry_delay=retry_delay,
         )
         self.stream_code = stream_code
+
+
+class SandboxLogResumeError(SandboxError):
+    """Raised when a log stream started from a caller cursor cannot resume.
+
+    Raised by ``stream_logs(resume=cursor)`` when the server can no longer
+    continue the session at ``cursor``: the session expired (the server keeps
+    an orphaned follow session only for its resume window, 30 seconds by
+    default), the runner holding it went away or is draining, the offset was
+    rejected, or the session stayed on a different shard through every
+    reconnect attempt. This can happen at any point on a resumed stream, not
+    only before the first line. For an expired session or a rejected offset,
+    resuming again with the same cursor will fail the same way; start a new
+    stream without ``resume`` (for example with ``since_time`` or
+    ``tail_lines``) and accept the gap. After a wrong-shard failure, a later
+    resume with ``cursor`` may still succeed.
+
+    Attributes:
+        cursor: ``LogCursor`` just past the last complete line the stream
+            delivered (the ``resume`` cursor if none), the same value as
+            ``reader.cursor`` when this is raised.
+        stream_code: The terminal ``LogStreamError.code`` (for example
+            ``"SESSION_NOT_FOUND"``), or ``None`` when the failure was not an
+            in-band stream error. This is a streaming-channel code, not an
+            AIP-193 ErrorInfo ``reason``, so ``.reason`` is ``None``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cursor: LogCursor | None = None,
+        stream_code: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, metadata=metadata, retry_delay=retry_delay)
+        self.cursor = cursor
+        self.stream_code = stream_code
+
+
+class SandboxLogReplayGapError(SandboxLogResumeError):
+    """Raised when a log stream cannot resume because of a replay gap.
+
+    The server no longer retains the bytes at ``cursor.offset`` (they fell
+    out of the session's replay window), so resuming would skip lines. To
+    continue anyway, start a new stream without ``resume`` (for example with
+    ``since_time`` or ``tail_lines``) and accept the gap.
+
+    Attributes:
+        cursor: ``LogCursor`` just past the last complete line the stream
+            delivered (the ``resume`` cursor if none).
+        stream_code: The terminal ``LogStreamError.code`` (``"REPLAY_GAP"``).
+            This is a streaming-channel code, not an AIP-193 ErrorInfo
+            ``reason``, so ``.reason`` is ``None``.
+    """
 
 
 class SandboxFileError(SandboxError):

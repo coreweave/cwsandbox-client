@@ -1734,6 +1734,116 @@ class StreamReader(Generic[_S]):
             pass
 
 
+@dataclass(frozen=True)
+class LogCursor:
+    """Position in a followed log stream, used to resume it later.
+
+    Read it from ``LogStreamReader.cursor`` and pass it back as
+    ``Sandbox.stream_logs(follow=True, resume=cursor)`` to continue from the
+    line after the last one you received. The cursor is only valid within
+    the server's resume window (it keeps an orphaned session for 30 seconds
+    by default) and while the bytes at ``offset`` are still in the session's
+    replay buffer; otherwise the resumed stream raises
+    ``SandboxLogResumeError``.
+
+    Attributes:
+        session_id: Server log session ID.
+        offset: Byte offset just past the last line handed to the caller.
+
+    Examples:
+        ```python
+        reader = sandbox.stream_logs(follow=True)
+        for line in reader:
+            handle(line)
+            saved = reader.cursor
+        ...
+        for line in sandbox.stream_logs(follow=True, resume=saved):
+            handle(line)
+        ```
+    """
+
+    session_id: str
+    offset: int
+
+
+class _LogLine(str):
+    """Log line tagged with the cursor just past it (internal queue item)."""
+
+    cursor: LogCursor | None
+
+    def __new__(cls, line: str, cursor: LogCursor | None) -> _LogLine:
+        obj = super().__new__(cls, line)
+        obj.cursor = cursor
+        return obj
+
+
+class LogStreamReader(StreamReader[str]):
+    """StreamReader for ``Sandbox.stream_logs()`` that tracks a resume cursor.
+
+    Yields log lines as plain strings, like ``StreamReader[str]``. In follow
+    mode, ``cursor`` points just past the last line this reader handed to the
+    caller, not past what the background producer has buffered, so resuming
+    from it neither skips nor repeats lines.
+
+    Attributes:
+        cursor: ``LogCursor`` for the last yielded line, or the ``resume``
+            cursor passed to ``stream_logs()`` until a line is yielded. None
+            until the first line is yielded on a stream started without
+            ``resume``, and always None for ``follow=False`` or when the
+            server provides no session.
+
+    Examples:
+        ```python
+        reader = sandbox.stream_logs(follow=True)
+        for line in reader:
+            print(line, end="")
+            if done():
+                break
+        saved = reader.cursor
+        reader.close()
+        ```
+    """
+
+    def __init__(
+        self,
+        queue: asyncio.Queue[str | Exception | None],
+        loop_manager: _LoopManager,
+        *,
+        cancel: Callable[[], object] | None = None,
+        cursor: LogCursor | None = None,
+    ) -> None:
+        """Initialize with a queue, loop manager and optional starting cursor.
+
+        Args:
+            queue: The asyncio.Queue the log producer writes to.
+            loop_manager: The _LoopManager for executing async operations.
+            cancel: Optional callback to cancel the background producer.
+            cursor: Starting cursor (the ``resume`` cursor, if any).
+        """
+        super().__init__(queue, loop_manager, cancel=cancel)
+        self._cursor = cursor
+
+    @property
+    def cursor(self) -> LogCursor | None:
+        """Cursor just past the last line handed to the caller."""
+        return self._cursor
+
+    def _deliver(self, line: str) -> str:
+        if isinstance(line, _LogLine):
+            if line.cursor is not None:
+                self._cursor = line.cursor
+            return str.__str__(line)
+        return line
+
+    def __next__(self) -> str:
+        """Get the next log line (blocking) and advance ``cursor``."""
+        return self._deliver(super().__next__())
+
+    async def __anext__(self) -> str:
+        """Get the next log line (async) and advance ``cursor``."""
+        return self._deliver(await super().__anext__())
+
+
 class StreamWriter:
     """Sync and async writer for streaming input to a process.
 

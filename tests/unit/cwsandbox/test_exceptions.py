@@ -4,9 +4,13 @@
 
 """Unit tests for cwsandbox.exceptions module."""
 
+import copy
+import pickle
 from datetime import timedelta
 
-from cwsandbox._types import ProcessResult
+import pytest
+
+from cwsandbox._types import LogCursor, ProcessResult
 from cwsandbox.exceptions import (
     AsyncFunctionError,
     CWSandboxAuthenticationError,
@@ -20,6 +24,8 @@ from cwsandbox.exceptions import (
     SandboxExecutionError,
     SandboxFailedError,
     SandboxFileError,
+    SandboxLogReplayGapError,
+    SandboxLogResumeError,
     SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxProtocolError,
@@ -204,6 +210,38 @@ class TestSandboxStreamTruncatedError:
         exc = SandboxStreamTruncatedError("truncated")
         assert exc.stream_code is None
         assert exc.reason is None
+
+
+class TestSandboxLogResumeError:
+    """Tests for the typed log resume errors."""
+
+    def test_hierarchy(self) -> None:
+        assert issubclass(SandboxLogResumeError, SandboxError)
+        assert issubclass(SandboxLogReplayGapError, SandboxLogResumeError)
+
+    def test_defaults(self) -> None:
+        exc = SandboxLogResumeError("gone")
+        assert exc.cursor is None
+        assert exc.stream_code is None
+        assert exc.reason is None
+
+    @pytest.mark.parametrize("cls", [SandboxLogResumeError, SandboxLogReplayGapError])
+    @pytest.mark.parametrize("clone", [copy.copy, lambda e: pickle.loads(pickle.dumps(e))])
+    def test_round_trips_through_pickle_and_copy(self, cls: type, clone: object) -> None:
+        exc = cls(
+            "gone",
+            cursor=LogCursor("s1", 7),
+            stream_code="SESSION_NOT_FOUND",
+            metadata={"k": "v"},
+            retry_delay=timedelta(seconds=1),
+        )
+        cloned = clone(exc)  # type: ignore[operator]
+        assert type(cloned) is cls
+        assert str(cloned) == "gone"
+        assert cloned.cursor == LogCursor("s1", 7)
+        assert cloned.stream_code == "SESSION_NOT_FOUND"
+        assert cloned.metadata == {"k": "v"}
+        assert cloned.retry_delay == timedelta(seconds=1)
 
 
 class TestExecStreamErrorDispatch:
