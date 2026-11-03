@@ -305,11 +305,13 @@ class SandboxLogResumeError(SandboxError):
     continue the session at ``cursor``: the session expired (the server keeps
     an orphaned follow session only for its resume window, 30 seconds by
     default), the runner holding it went away or is draining, the offset was
-    rejected, or the session lives on a different shard. This can happen at
-    any point on a resumed stream, not only before the first line. Resuming
-    again with the same cursor will fail the same way; start a new stream
-    without ``resume`` (for example with ``since_time`` or ``tail_lines``)
-    and accept the gap.
+    rejected, or the session stayed on a different shard through every
+    reconnect attempt. This can happen at any point on a resumed stream, not
+    only before the first line. For an expired session or a rejected offset,
+    resuming again with the same cursor will fail the same way; start a new
+    stream without ``resume`` (for example with ``since_time`` or
+    ``tail_lines``) and accept the gap. After a wrong-shard failure, a later
+    resume with ``cursor`` may still succeed.
 
     Attributes:
         cursor: ``LogCursor`` just past the last complete line the stream

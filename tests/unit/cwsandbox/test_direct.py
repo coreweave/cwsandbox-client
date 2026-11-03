@@ -918,21 +918,30 @@ async def test_stream_logs_resume_cancels_and_releases_direct_lease() -> None:
     assert sandbox._direct_data_plane.acquire.await_count == 2
 
 
-@pytest.mark.asyncio
-async def test_stream_logs_wrong_shard_on_caller_cursor_raises_resume_error() -> None:
-    """Retrying a caller cursor on the same direct path would hit the same wrong shard."""
-    sandbox = _running_sandbox(DataPlaneMode.AUTO)
-    wrong_shard = _DirectAioRpcError(
+def _wrong_shard_error() -> _DirectAioRpcError:
+    return _DirectAioRpcError(
         grpc.StatusCode.UNAVAILABLE,
         reason="CWSANDBOX_BACKEND_UNAVAILABLE",
         metadata={"local_shard_id": "shard-2", "owner_shard_id": "shard-1"},
     )
 
-    class _FailingLogCall(_FakeLogCall):
-        async def __anext__(self) -> object:
-            raise wrong_shard
 
-    calls = [_FailingLogCall([])]
+class _ErroringLogCall(_FakeLogCall):
+    """Yields ``frames``, then raises ``error``."""
+
+    def __init__(self, frames: list[object], error: BaseException) -> None:
+        super().__init__(frames)
+        self._error = error
+
+    async def __anext__(self) -> object:
+        if self._index >= len(self._frames):
+            raise self._error
+        return await super().__anext__()
+
+
+async def _drive_direct_log_stream(
+    sandbox: Sandbox, calls: list[_FakeLogCall], resume: LogCursor
+) -> tuple[MagicMock, list[object]]:
     stub = MagicMock()
     stub.StreamLogs = MagicMock(side_effect=calls)
     lease = MagicMock(stub=stub)
@@ -940,8 +949,7 @@ async def test_stream_logs_wrong_shard_on_caller_cursor_raises_resume_error() ->
     lease.discard = AsyncMock()
     sandbox._direct_data_plane.acquire = AsyncMock(return_value=lease)
 
-    resume = LogCursor("s1", 42)
-    output_queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    output_queue: asyncio.Queue[object] = asyncio.Queue()
     with (
         patch.object(sandbox, "_ensure_started_async", AsyncMock()),
         patch.object(sandbox, "_wait_until_running_async", AsyncMock()),
@@ -950,11 +958,74 @@ async def test_stream_logs_wrong_shard_on_caller_cursor_raises_resume_error() ->
     ):
         await sandbox._stream_logs_async(output_queue, follow=True, resume=resume)
 
-    assert stub.StreamLogs.call_count == 1
-    assert stub.StreamLogs.call_args.args[0].resume_log_session_id == "s1"
-    error = output_queue.get_nowait()
+    items: list[object] = []
+    while not output_queue.empty():
+        items.append(output_queue.get_nowait())
+    return stub, items
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_wrong_shard_on_caller_cursor_retries_same_session() -> None:
+    """A new connection can reach the owner shard, so the caller cursor is retried."""
+    sandbox = _running_sandbox(DataPlaneMode.AUTO)
+    line = sandbox_pb2.LogEntry(data=b"next\n", log_session_id="s1", next_log_offset=47)
+    calls = [_ErroringLogCall([], _wrong_shard_error()), _FakeLogCall([line])]
+
+    stub, items = await _drive_direct_log_stream(sandbox, calls, LogCursor("s1", 42))
+
+    assert stub.StreamLogs.call_count == 2
+    for call in stub.StreamLogs.call_args_list:
+        assert call.args[0].resume_log_session_id == "s1"
+        assert call.args[0].resume_log_offset == 42
+    assert items == ["next\n", None]
+    assert items[0].cursor == LogCursor("s1", 47)  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_wrong_shard_until_budget_raises_reader_cursor() -> None:
+    """After data, wrong-shard on every retry raises with the last delivered line's cursor."""
+    from cwsandbox._sandbox import STREAMING_RESUME_MAX_ATTEMPTS
+
+    sandbox = _running_sandbox(DataPlaneMode.AUTO)
+    wrong_shard = _wrong_shard_error()
+    first = _ErroringLogCall(
+        [
+            sandbox_pb2.LogEntry(data=b"a\n", log_session_id="s1", next_log_offset=12),
+            # No session fields: the offset is not advanced past these bytes.
+            sandbox_pb2.LogEntry(data=b"abcd"),
+        ],
+        _DirectAioRpcError(grpc.StatusCode.UNAVAILABLE),
+    )
+    calls: list[_FakeLogCall] = [first]
+    calls += [_ErroringLogCall([], wrong_shard) for _ in range(STREAMING_RESUME_MAX_ATTEMPTS)]
+
+    stub, items = await _drive_direct_log_stream(sandbox, calls, LogCursor("s1", 10))
+
+    assert stub.StreamLogs.call_count == STREAMING_RESUME_MAX_ATTEMPTS
+    assert items[0] == "a\n"
+    error = items[-1]
     assert type(error) is SandboxLogResumeError
-    assert error.cursor == resume
+    assert error.cursor == LogCursor("s1", 12) == items[0].cursor  # type: ignore[union-attr]
     assert error.stream_code is None
     assert error.__cause__ is wrong_shard
-    lease.discard.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_session_lost_after_unacknowledged_bytes_reports_reader_cursor() -> None:
+    """Bytes without session fields must not move the error cursor below the last line."""
+    sandbox = _running_sandbox(DataPlaneMode.AUTO)
+    frames = [
+        sandbox_pb2.LogEntry(data=b"a\n", log_session_id="s1", next_log_offset=12),
+        sandbox_pb2.LogEntry(data=b"abcdefghijklmnop"),
+        sandbox_pb2.LogEntry(
+            error=sandbox_pb2.LogStreamError(code="SESSION_NOT_FOUND", message="gone")
+        ),
+    ]
+
+    _, items = await _drive_direct_log_stream(sandbox, [_FakeLogCall(frames)], LogCursor("s1", 10))
+
+    assert items[0] == "a\n"
+    error = items[-1]
+    assert type(error) is SandboxLogResumeError
+    assert error.cursor == LogCursor("s1", 12) == items[0].cursor  # type: ignore[union-attr]
+    assert error.stream_code == "SESSION_NOT_FOUND"

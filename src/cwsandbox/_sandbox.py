@@ -7050,6 +7050,9 @@ class Sandbox:
             # would drop the original timestamps/container and replay or skip
             # lines, so session loss is raised as SandboxLogResumeError.
             caller_resumed = resume is not None
+            # Cursor of the last line handed to the reader (reader.cursor).
+            # Resume errors carry it so the two always match.
+            last_line_cursor = resume
             pending = bytearray()
             attempt = 0
             done = False
@@ -7116,12 +7119,9 @@ class Sandbox:
                                         if code == _STREAMING_REPLAY_GAP
                                         else SandboxLogResumeError
                                     )
-                                    # Report the last complete line, which is
-                                    # what reader.cursor shows when this
-                                    # error is raised.
                                     raise error_cls(
                                         f"Log stream error: {msg}",
-                                        cursor=LogCursor(session_id, last_offset - len(pending)),
+                                        cursor=last_line_cursor,
                                         stream_code=code,
                                     )
                                 if code in _STREAMING_FRESH_REINIT_CODES:
@@ -7167,6 +7167,8 @@ class Sandbox:
                                 )
                                 line = pending.decode("utf-8", errors="replace")
                                 pending.clear()
+                                if line_cursor is not None:
+                                    last_line_cursor = line_cursor
                                 await output_queue.put(_LogLine(line, line_cursor))
                                 start = newline + 1
                             pending += data[start:]
@@ -7183,6 +7185,8 @@ class Sandbox:
                                 )
                                 line = pending.decode("utf-8", errors="replace")
                                 pending.clear()
+                                if line_cursor is not None:
+                                    last_line_cursor = line_cursor
                                 await output_queue.put(_LogLine(line, line_cursor))
                             done = True
                     except grpc.aio.AioRpcError as exc:
@@ -7190,13 +7194,13 @@ class Sandbox:
                         direct_unavailable = prepared.is_direct and _is_unavailable_rpc_error(exc)
                         if direct_unavailable:
                             await prepared.discard()
-                            if is_resume and _is_log_session_wrong_shard_error(exc):
-                                if caller_resumed:
-                                    raise SandboxLogResumeError(
-                                        f"Log stream for sandbox {sandbox_id} could not"
-                                        " resume: the log session is on another shard",
-                                        cursor=LogCursor(session_id, last_offset - len(pending)),
-                                    ) from exc
+                            # A new connection can land on the owner shard,
+                            # so a caller cursor keeps its session and retries.
+                            if (
+                                is_resume
+                                and not caller_resumed
+                                and _is_log_session_wrong_shard_error(exc)
+                            ):
                                 session_id = ""
                                 last_offset = 0
                                 pending.clear()
@@ -7225,6 +7229,16 @@ class Sandbox:
                 )
 
             if not done:
+                if (
+                    caller_resumed
+                    and last_transport_error is not None
+                    and _is_log_session_wrong_shard_error(last_transport_error)
+                ):
+                    raise SandboxLogResumeError(
+                        f"Log stream for sandbox {sandbox_id} could not"
+                        " resume: the log session is on another shard",
+                        cursor=last_line_cursor,
+                    ) from last_transport_error
                 if last_transport_error is not None:
                     raise SandboxUnavailableError(
                         f"Log stream for sandbox {sandbox_id} could not be resumed"
