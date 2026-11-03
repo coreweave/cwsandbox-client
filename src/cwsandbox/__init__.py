@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.23.0"
+__version__ = "1.24.0"
 
 import asyncio
 from typing import TYPE_CHECKING, Any, TypeVar, overload

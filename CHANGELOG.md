@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.24.0 (2026-11-03)
+
+### Documentation
+
+- **examples**: Add single-GPU audio transcription example
+  ([#207](https://github.com/coreweave/cwsandbox-client/pull/207),
+  [`863b7a1`](https://github.com/coreweave/cwsandbox-client/commit/863b7a116e7ed912b414530ab0981c5b89e4b831))
+
+Show the smallest end-to-end GPU workload: upload a local audio file, transcribe it with
+  Qwen3-ASR-1.7B on one rtxp6000-8x GPU, and print the text. The image digest and GPU type match the
+  qwen-asr-server deployment that backs gruntcoding, so the example runs on the same hardware and
+  stack as that service.
+
+### Features
+
+- **sandbox**: Add Sandbox.list_page for page-by-page listing
+  ([#206](https://github.com/coreweave/cwsandbox-client/pull/206),
+  [`ae39938`](https://github.com/coreweave/cwsandbox-client/commit/ae39938675df0039e96c5227d5e62d8498ecb126))
+
+Signed-off-by: scott-cw <171452645+scott-cw@users.noreply.github.com>
+
+
 ## v1.23.0 (2026-11-01)
 
 ### Features
