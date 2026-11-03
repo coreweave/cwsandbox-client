@@ -6487,6 +6487,170 @@ class TestSandboxList:
             assert sandboxes[0]._poll_rpc_timeout_seconds == 7.0
 
 
+class TestSandboxListPage:
+    """Tests for Sandbox.list_page class method."""
+
+    @staticmethod
+    def _info(sandbox_id: str) -> Any:
+        from cwsandbox._proto import sandbox_pb2
+
+        return sandbox_pb2.Sandbox(
+            sandbox_id=sandbox_id,
+            status=sandbox_pb2.SandboxStatus(state=sandbox_pb2.STATE_RUNNING),
+        )
+
+    @staticmethod
+    def _patches(mock_stub: MagicMock) -> contextlib.ExitStack:
+        mock_channel = MagicMock()
+        mock_channel.close = AsyncMock()
+        stack = contextlib.ExitStack()
+        stack.enter_context(
+            patch("cwsandbox._sandbox.parse_grpc_target", return_value=("test:443", True))
+        )
+        stack.enter_context(patch("cwsandbox._sandbox.create_channel", return_value=mock_channel))
+        stack.enter_context(
+            patch("cwsandbox._sandbox.sandbox_pb2_grpc.SandboxServiceStub", return_value=mock_stub)
+        )
+        return stack
+
+    @pytest.mark.asyncio
+    async def test_list_page_token_round_trips(self, mock_api_key: str) -> None:
+        """next_page_token from one page is sent as page_token on the next."""
+        from cwsandbox import SandboxPage
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            side_effect=[
+                sandbox_pb2.ListSandboxesResponse(
+                    sandboxes=[self._info("sb-1")], next_page_token="tok-2"
+                ),
+                sandbox_pb2.ListSandboxesResponse(sandboxes=[self._info("sb-2")]),
+            ]
+        )
+
+        with self._patches(mock_stub):
+            first = await Sandbox.list_page(page_size=1)
+            second = await Sandbox.list_page(page_size=1, page_token=first.next_page_token)
+
+        assert isinstance(first, SandboxPage)
+        assert [sb.sandbox_id for sb in first.sandboxes] == ["sb-1"]
+        assert first.next_page_token == "tok-2"
+        assert [sb.sandbox_id for sb in second.sandboxes] == ["sb-2"]
+        assert second.next_page_token is None
+        assert isinstance(second.sandboxes[0], Sandbox)
+
+        assert mock_stub.ListSandboxes.call_count == 2
+        first_req = mock_stub.ListSandboxes.call_args_list[0][0][0]
+        second_req = mock_stub.ListSandboxes.call_args_list[1][0][0]
+        assert first_req.page_size == 1
+        assert first_req.page_token == ""
+        assert second_req.page_size == 1
+        assert second_req.page_token == "tok-2"
+
+    @pytest.mark.asyncio
+    async def test_list_page_makes_one_call(self, mock_api_key: str) -> None:
+        """list_page() does not follow next_page_token itself."""
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            return_value=sandbox_pb2.ListSandboxesResponse(
+                sandboxes=[self._info("sb-1")], next_page_token="more"
+            )
+        )
+
+        with self._patches(mock_stub):
+            page = Sandbox.list_page().result()
+
+        assert mock_stub.ListSandboxes.call_count == 1
+        req = mock_stub.ListSandboxes.call_args[0][0]
+        assert req.page_size == 0
+        assert page.next_page_token == "more"
+
+    @pytest.mark.asyncio
+    async def test_list_page_passes_filters(self, mock_api_key: str) -> None:
+        """list_page() sends the same filters as list()."""
+        from cwsandbox._proto import sandbox_pb2
+
+        expected_metadata = (("authorization", "Bearer test-api-key"),)
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(return_value=sandbox_pb2.ListSandboxesResponse())
+
+        with (
+            self._patches(mock_stub),
+            patch("cwsandbox._sandbox.resolve_auth_metadata", return_value=expected_metadata),
+        ):
+            page = await Sandbox.list_page(
+                page_size=5,
+                page_token="abc",
+                tags=["a", "b"],
+                status="running",
+                runner_ids=["r-1"],
+                volume_ids=["vol-1"],
+                show_terminated=True,
+                timeout_seconds=9.0,
+            )
+
+        assert page.sandboxes == []
+        assert page.next_page_token is None
+        req = mock_stub.ListSandboxes.call_args[0][0]
+        assert req.page_size == 5
+        assert req.page_token == "abc"
+        assert list(req.tags) == ["a", "b"]
+        assert req.state == sandbox_pb2.STATE_RUNNING
+        assert list(req.runner_ids) == ["r-1"]
+        assert list(req.volume_ids) == ["vol-1"]
+        assert req.show_terminated is True
+        call_kwargs = mock_stub.ListSandboxes.call_args[1]
+        assert call_kwargs["metadata"] == expected_metadata
+        assert call_kwargs["timeout"] == 9.0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_value", [0, -1, 1.5, True, "10"])
+    async def test_list_page_rejects_invalid_page_size(
+        self, mock_api_key: str, bad_value: Any
+    ) -> None:
+        """page_size must be a positive integer."""
+        with pytest.raises(ValueError, match="page_size must be a positive integer"):
+            await Sandbox.list_page(page_size=bad_value)
+
+    @pytest.mark.asyncio
+    async def test_list_page_translates_rpc_errors(self, mock_api_key: str) -> None:
+        """RPC errors map to SDK exceptions as in list()."""
+        from cwsandbox.exceptions import CWSandboxAuthenticationError
+
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            side_effect=MockRpcError(grpc.StatusCode.PERMISSION_DENIED, "denied")
+        )
+
+        with self._patches(mock_stub), pytest.raises(CWSandboxAuthenticationError):
+            await Sandbox.list_page()
+
+    @pytest.mark.asyncio
+    async def test_list_still_follows_every_page(self, mock_api_key: str) -> None:
+        """list() keeps collecting all pages and never sets page_size."""
+        from cwsandbox._proto import sandbox_pb2
+
+        mock_stub = MagicMock()
+        mock_stub.ListSandboxes = AsyncMock(
+            side_effect=[
+                sandbox_pb2.ListSandboxesResponse(
+                    sandboxes=[self._info("sb-1")], next_page_token="tok-2"
+                ),
+                sandbox_pb2.ListSandboxesResponse(sandboxes=[self._info("sb-2")]),
+            ]
+        )
+
+        with self._patches(mock_stub):
+            sandboxes = await Sandbox.list()
+
+        assert [sb.sandbox_id for sb in sandboxes] == ["sb-1", "sb-2"]
+        assert mock_stub.ListSandboxes.call_count == 2
+        assert mock_stub.ListSandboxes.call_args_list[0][0][0].page_size == 0
+
+
 class TestSandboxFromId:
     """Tests for Sandbox.from_id class method."""
 
