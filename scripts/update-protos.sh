@@ -14,7 +14,7 @@
 #       generated with plugin <=26.1 to pass validate_protobuf_version).
 #
 # Only consumer-facing v1 modules are vendored (no runner_management, policy,
-# placement_org_config, or network).
+# placement_org_config, or network; network_config is vendored).
 
 set -euo pipefail
 
@@ -52,6 +52,9 @@ PROTO_FILES=(
     runtime_class_pb2.py
     runtime_class_pb2.pyi
     runtime_class_pb2_grpc.py
+    network_config_pb2.py
+    network_config_pb2.pyi
+    network_config_pb2_grpc.py
 )
 
 # Legacy beta stubs to delete on refresh
