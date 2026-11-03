@@ -10,6 +10,7 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY environment variables before runnin
 
 import asyncio
 import os
+import threading
 import time
 import uuid
 from unittest.mock import patch
@@ -2043,18 +2044,20 @@ def test_stream_logs_resumes_from_saved_cursor(sandbox_defaults: SandboxDefaults
         sandbox.wait()
         assert sandbox.status == SandboxStatus.RUNNING
 
+        # close() from a timer unblocks a stalled read; a monotonic check in
+        # the loop body would only run after a line arrives.
         reader = sandbox.stream_logs(follow=True)
         seen: list[int] = []
+        timer = threading.Timer(30.0, reader.close)
+        timer.start()
         try:
-            start = time.monotonic()
             for line in reader:
                 seen.append(int(line.strip().split("-", 1)[1]))
                 if len(seen) >= 10:
                     break
-                if time.monotonic() - start > 30.0:
-                    break
             cursor = reader.cursor
         finally:
+            timer.cancel()
             reader.close()
 
         assert len(seen) >= 10, f"follow stream should yield 10 lines in 30s; got {seen}"
@@ -2069,15 +2072,15 @@ def test_stream_logs_resumes_from_saved_cursor(sandbox_defaults: SandboxDefaults
 
         resumed = sandbox.stream_logs(follow=True, resume=cursor)
         after: list[int] = []
+        timer = threading.Timer(30.0, resumed.close)
+        timer.start()
         try:
-            start = time.monotonic()
             for line in resumed:
                 after.append(int(line.strip().split("-", 1)[1]))
                 if len(after) >= 5:
                     break
-                if time.monotonic() - start > 30.0:
-                    break
         finally:
+            timer.cancel()
             resumed.close()
 
         assert after == list(range(seen[-1] + 1, seen[-1] + 6)), (
