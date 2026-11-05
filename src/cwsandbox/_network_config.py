@@ -9,7 +9,7 @@ from __future__ import annotations
 import builtins
 import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -23,6 +23,7 @@ from cwsandbox._defaults import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
 )
 from cwsandbox._error_info import (
+    CWSANDBOX_ETAG_MISMATCH,
     CWSANDBOX_NETWORK_CONFIG_NOT_FOUND,
     is_not_found,
     parse_error_info,
@@ -298,7 +299,10 @@ class NetworkConfig:
             etag: Reject the update if the config changed since this etag
                 was read (``NetworkConfigEtagMismatchError``). Pass
                 ``config.etag`` to guard a read-modify-write. Omitted means
-                last writer wins.
+                last writer wins. If a transient retry hits a mismatch, the
+                SDK reads the config and returns it when the masked fields
+                already hold the requested values, since an earlier attempt
+                may have landed before its response was lost.
 
         Returns:
             OperationRef[NetworkConfig]: this object, refreshed.
@@ -478,6 +482,11 @@ async def _update_network_config_async(
         # A bound update may wait server-side for RUNNING, bounded by the
         # request deadline. A client deadline is that ceiling, not a blip.
         non_retryable=(SandboxRequestTimeoutError,),
+        reconcile_etag_mismatch_on_retry=(
+            (lambda stored: _masked_fields_match(stored.spec, config.spec, paths))
+            if etag and paths
+            else None
+        ),
     )
     return _network_config_from_proto(
         cast(network_config_pb2.NetworkConfig, response),
@@ -485,6 +494,24 @@ async def _update_network_config_async(
         timeout_seconds=timeout_seconds,
         auth=auth,
     )
+
+
+def _masked_fields_match(
+    stored: Any,
+    requested: Any,
+    paths: Sequence[str],
+) -> bool:
+    """Return whether ``stored`` already holds ``requested`` for every masked field."""
+    fields = _MUTABLE_FIELDS if "*" in paths else [p.removeprefix("spec.") for p in paths]
+    for field in fields:
+        try:
+            if stored.HasField(field) != requested.HasField(field):
+                return False
+        except ValueError:
+            pass  # Repeated or no-presence field: compare values only.
+        if getattr(stored, field) != getattr(requested, field):
+            return False
+    return True
 
 
 def _network_config_from_proto(
@@ -542,6 +569,7 @@ async def _call_network_config_rpc(
     non_retryable: tuple[type[CWSandboxError], ...] = (),
     not_found_ok: bool = False,
     reconcile_not_found_on_retry: bool = False,
+    reconcile_etag_mismatch_on_retry: Callable[[Any], bool] | None = None,
 ) -> Any:
     from cwsandbox._sandbox import _retry_transient_rpc, _translate_rpc_error
 
@@ -561,6 +589,20 @@ async def _call_network_config_rpc(
                     not_found_ok or (reconcile_not_found_on_retry and attempts["n"] > 1)
                 ):
                     return None
+                if (
+                    reconcile_etag_mismatch_on_retry is not None
+                    and attempts["n"] > 1
+                    and parsed is not None
+                    and parsed.reason == CWSANDBOX_ETAG_MISMATCH
+                ):
+                    # An earlier attempt may have committed before its response
+                    # was lost, which moved the etag. Return the stored config
+                    # if it already holds the requested values.
+                    stored = await _get_for_reconcile(
+                        stub, network_config_id, timeout=timeout, metadata=auth_metadata
+                    )
+                    if stored is not None and reconcile_etag_mismatch_on_retry(stored):
+                        return stored
                 raise _translate_rpc_error(
                     e, operation=operation, network_config_id=network_config_id
                 ) from e
@@ -573,6 +615,21 @@ async def _call_network_config_rpc(
         )
     finally:
         await channel.close(grace=None)
+
+
+async def _get_for_reconcile(
+    stub: Any,
+    network_config_id: str,
+    *,
+    timeout: float,
+    metadata: tuple[tuple[str, str], ...],
+) -> Any:
+    """GetNetworkConfig for retry reconciliation; None if the read fails."""
+    request = network_config_pb2.GetNetworkConfigRequest(network_config_id=network_config_id)
+    try:
+        return await stub.GetNetworkConfig(request, timeout=timeout, metadata=metadata)
+    except grpc.RpcError:
+        return None
 
 
 async def _list_network_config_rpc(

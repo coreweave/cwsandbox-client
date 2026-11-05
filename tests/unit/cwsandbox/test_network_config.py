@@ -328,6 +328,117 @@ class TestNetworkConfigUpdate:
                 ).result()
         assert exc_info.value.network_config_id == "team-net"
         assert stub.UpdateNetworkConfig.call_count == 1
+        stub.GetNetworkConfig.assert_not_called()
+
+    def _retried_guarded_update(
+        self,
+        stored_spec: sandbox_pb2.NetworkOptions,
+        *,
+        update_mask: list[str] | None = None,
+    ) -> tuple[MagicMock, NetworkConfig]:
+        """UNAVAILABLE, then ETAG_MISMATCH on the retry, for a guarded update."""
+        stub = MagicMock()
+        stub.UpdateNetworkConfig = AsyncMock(
+            side_effect=[
+                _rpc_error(None, code=grpc.StatusCode.UNAVAILABLE, retry_seconds=0),
+                _rpc_error(CWSANDBOX_ETAG_MISMATCH, code=grpc.StatusCode.ABORTED),
+            ]
+        )
+        stored = _config_proto(etag="v2")
+        stored.spec.CopyFrom(stored_spec)
+        stub.GetNetworkConfig = AsyncMock(return_value=stored)
+        patches = _patch_channel(stub)
+        with patches[0], patches[1], patches[2], patches[3], patch("asyncio.sleep", AsyncMock()):
+            config = (
+                NetworkConfig(network_config_id="team-net")
+                .update(
+                    NetworkOptions(deny_ingress=True, egress=[EgressRule(dns_name="pypi.org")]),
+                    update_mask=update_mask,
+                    etag="v1",
+                )
+                .result()
+            )
+        return stub, config
+
+    def test_retried_guarded_update_returns_config_that_already_landed(self) -> None:
+        stub, config = self._retried_guarded_update(
+            sandbox_pb2.NetworkOptions(
+                deny_ingress=True,
+                egress=[sandbox_pb2.EgressRule(https_hostname="pypi.org")],
+                dns_egress=sandbox_pb2.DNS_EGRESS_MODE_DENY,  # outside the mask
+            )
+        )
+        assert stub.UpdateNetworkConfig.call_count == 2
+        assert stub.GetNetworkConfig.call_count == 1
+        assert config.etag == "v2"
+        assert config.network.deny_ingress is True
+
+    @pytest.mark.parametrize(
+        "stored_spec",
+        [
+            sandbox_pb2.NetworkOptions(
+                deny_ingress=False,
+                egress=[sandbox_pb2.EgressRule(https_hostname="pypi.org")],
+            ),
+            sandbox_pb2.NetworkOptions(
+                egress=[sandbox_pb2.EgressRule(https_hostname="pypi.org")],
+            ),
+            sandbox_pb2.NetworkOptions(
+                deny_ingress=True,
+                egress=[sandbox_pb2.EgressRule(https_hostname="example.com")],
+            ),
+        ],
+        ids=["deny-ingress-differs", "deny-ingress-unset", "egress-differs"],
+    )
+    def test_retried_guarded_update_raises_when_config_differs(
+        self, stored_spec: sandbox_pb2.NetworkOptions
+    ) -> None:
+        with pytest.raises(NetworkConfigEtagMismatchError):
+            self._retried_guarded_update(stored_spec)
+
+    def test_retried_guarded_update_raises_when_reconcile_read_fails(self) -> None:
+        stub = MagicMock()
+        stub.UpdateNetworkConfig = AsyncMock(
+            side_effect=[
+                _rpc_error(None, code=grpc.StatusCode.UNAVAILABLE, retry_seconds=0),
+                _rpc_error(CWSANDBOX_ETAG_MISMATCH, code=grpc.StatusCode.ABORTED),
+            ]
+        )
+        stub.GetNetworkConfig = AsyncMock(
+            side_effect=_rpc_error(None, code=grpc.StatusCode.UNAVAILABLE)
+        )
+        patches = _patch_channel(stub)
+        with patches[0], patches[1], patches[2], patches[3], patch("asyncio.sleep", AsyncMock()):
+            with pytest.raises(NetworkConfigEtagMismatchError):
+                NetworkConfig(network_config_id="team-net").update(
+                    NetworkOptions(deny_egress=True), etag="v1"
+                ).result()
+        assert stub.GetNetworkConfig.call_count == 1
+
+    def test_retried_guarded_empty_mask_is_not_reconciled(self) -> None:
+        # An empty mask writes nothing, so a mismatch on the retry means the
+        # etag really is stale.
+        with pytest.raises(NetworkConfigEtagMismatchError):
+            self._retried_guarded_update(
+                sandbox_pb2.NetworkOptions(deny_ingress=True), update_mask=[]
+            )
+
+    def test_retried_unguarded_update_mismatch_is_not_reconciled(self) -> None:
+        stub = MagicMock()
+        stub.UpdateNetworkConfig = AsyncMock(
+            side_effect=[
+                _rpc_error(None, code=grpc.StatusCode.UNAVAILABLE, retry_seconds=0),
+                _rpc_error(CWSANDBOX_ETAG_MISMATCH, code=grpc.StatusCode.ABORTED),
+            ]
+        )
+        stub.GetNetworkConfig = AsyncMock()
+        patches = _patch_channel(stub)
+        with patches[0], patches[1], patches[2], patches[3], patch("asyncio.sleep", AsyncMock()):
+            with pytest.raises(NetworkConfigEtagMismatchError):
+                NetworkConfig(network_config_id="team-net").update(
+                    NetworkOptions(deny_egress=True)
+                ).result()
+        stub.GetNetworkConfig.assert_not_called()
 
     def test_update_retries_dns_egress_unavailable(self) -> None:
         stub = MagicMock()
