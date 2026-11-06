@@ -525,13 +525,13 @@ class Session:
         """List sandboxes, optionally adopting them into this session.
 
         Automatically includes the session's default tags in the filter.
-        This makes it easy to find sandboxes created by this session or
+        This helps you find sandboxes created by this session or
         a previous run with the same defaults.
 
-        By default, only active (non-terminal) sandboxes are returned.
         Set ``show_terminated=True`` to widen the search to include terminal
-        sandboxes (completed, failed, terminated).
-        A terminal status filter (e.g. ``status="completed"``) also widens
+        sandboxes (``completed``, ``failed``, and legacy ``terminated``).
+        By default, this method returns only active (non-terminal) sandboxes.
+        A terminal status filter (for example, ``status="completed"``) also widens
         the search automatically.
 
         Args:
@@ -541,8 +541,8 @@ class Session:
             profile_names: Removed in 1.x; passing a value raises ``TypeError``.
             runner_ids: Filter by runner IDs (defaults to session's runner_ids if set)
             volume_ids: Filter to sandboxes attached to these registered Volume IDs
-            show_terminated: If True, include terminal sandboxes (completed,
-                failed, terminated). Defaults to False.
+            show_terminated: If ``True``, include terminal sandboxes (``completed``,
+                ``failed``, and legacy ``terminated``). Defaults to ``False``.
             adopt: If True, register discovered sandboxes with this session
                    so they are stopped when the session closes
 
