@@ -6540,15 +6540,18 @@ class Sandbox:
         return OperationRef(future)
 
     def wait(self, timeout: float | None = None) -> Sandbox:
-        """Block until sandbox reaches RUNNING or a terminal state.
+        """Block until the sandbox reaches ``RUNNING``, ``TERMINATING``, or a terminal state.
 
-        Returns when sandbox is RUNNING or has already completed (COMPLETED/UNSPECIFIED).
+        Returns normally when the sandbox is ``RUNNING``, ``TERMINATING``, or has already
+        completed (``COMPLETED`` or ``UNSPECIFIED``). Before you start an operation that
+        requires a running sandbox, check that ``status`` is ``SandboxStatus.RUNNING``.
+        A normal return doesn't guarantee readiness.
 
         Args:
             timeout: Maximum seconds to wait. None means use default timeout.
 
         Returns:
-            Self for method chaining. Check .status to determine final state.
+            Self for method chaining. Check ``status`` to determine the current state.
 
         Raises:
             SandboxFailedError: If sandbox fails to start
@@ -6557,8 +6560,11 @@ class Sandbox:
 
         Examples:
             ```python
+            from cwsandbox import Sandbox, SandboxStatus
+
             sb = Sandbox.run("sleep", "infinity").wait()
-            result = sb.exec(["echo", "ready"]).result()
+            if sb.status == SandboxStatus.RUNNING:
+                result = sb.exec(["echo", "ready"]).result()
             ```
         """
         self._loop_manager.run_sync(self._wait_until_running_async(timeout))
