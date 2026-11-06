@@ -6540,11 +6540,12 @@ class Sandbox:
         return OperationRef(future)
 
     def wait(self, timeout: float | None = None) -> Sandbox:
-        """Block until the sandbox reaches ``RUNNING``, ``TERMINATING``, or a terminal state.
+        """Wait for startup status.
 
-        Returns normally when the sandbox is ``RUNNING``, ``TERMINATING``, or has already
-        completed (``COMPLETED`` or ``UNSPECIFIED``). Before you start an operation that
-        requires a running sandbox, check that ``status`` is ``SandboxStatus.RUNNING``.
+        For example, this method can return normally when the sandbox is ``RUNNING``,
+        ``TERMINATING``, or has already completed (``COMPLETED`` or ``UNSPECIFIED``).
+        Before you start an operation that requires a running sandbox, check that
+        ``status`` is ``SandboxStatus.RUNNING``.
         A normal return doesn't guarantee readiness.
 
         Args:
