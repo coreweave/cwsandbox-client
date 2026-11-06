@@ -490,6 +490,20 @@ def _validate_container_name(name: str) -> None:
         raise ValueError(f"Container.name {name!r} is reserved by the platform")
 
 
+class DNSEgressMode(StrEnum):
+    """Whether the sandbox may send DNS to the platform resolver (UDP/TCP port 53).
+
+    Separate from ``https_hostname`` grants (``EgressRule(dns_name=...)``).
+    ``UNSPECIFIED`` inherits the runner policy. On an update, an explicit
+    ``UNSPECIFIED`` resets the mode to that policy default, which can undo a
+    ``DENY``; leave ``dns_egress`` as None to keep the current mode.
+    """
+
+    UNSPECIFIED = "unspecified"
+    ALLOW = "allow"
+    DENY = "deny"
+
+
 class TenantScope(StrEnum):
     """Relational selector for other sandboxes."""
 
@@ -764,6 +778,10 @@ class NetworkOptions:
         deny_ingress: When True, deny CUSTOM ingress (policy default unused).
         egress: Egress grants (``EgressRule`` or dict).
         ingress: CUSTOM-port ingress sources (``IngressRule`` or dict).
+        dns_egress: Port-53 DNS mode (``DNSEgressMode`` or string). On create,
+            None or ``UNSPECIFIED`` inherits the runner policy. On update,
+            None keeps the current mode and ``UNSPECIFIED`` resets it to the
+            policy default.
 
     Examples:
         Grant PyPI over HTTPS::
@@ -780,8 +798,11 @@ class NetworkOptions:
     deny_ingress: bool | None = None
     egress: Sequence[EgressRule | Mapping[str, Any]] | None = None
     ingress: Sequence[IngressRule | Mapping[str, Any]] | None = None
+    dns_egress: DNSEgressMode | str | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.dns_egress, str):
+            object.__setattr__(self, "dns_egress", DNSEgressMode(self.dns_egress.lower()))
         if self.egress is not None:
             if isinstance(self.egress, (str, bytes)):
                 raise TypeError("egress must be a sequence of EgressRule or dict, not a string")

@@ -31,12 +31,14 @@ from cwsandbox._discovery import (
 )
 from cwsandbox._function import RemoteFunction
 from cwsandbox._loop_manager import _LoopManager
+from cwsandbox._network_config import NetworkConfig
 from cwsandbox._sandbox import ContainerStatus, Sandbox, SandboxPage, SandboxStatus
 from cwsandbox._session import Session
 from cwsandbox._types import (
     CidrBlock,
     Container,
     DataPlaneMode,
+    DNSEgressMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -90,8 +92,13 @@ from cwsandbox.exceptions import (
     CWSandboxValidationError,
     DiscoveryError,
     DiscoveryValidationError,
+    DNSEgressUnavailableError,
     FieldViolation,
     FunctionError,
+    NetworkConfigError,
+    NetworkConfigEtagMismatchError,
+    NetworkConfigInUseError,
+    NetworkConfigNotFoundError,
     RunnerNotFoundError,
     SandboxCommandTimeoutError,
     SandboxError,
@@ -343,6 +350,8 @@ __all__ = [
     "DataPlaneMode",
     "DiscoveryError",
     "DiscoveryValidationError",
+    "DNSEgressMode",
+    "DNSEgressUnavailableError",
     "EgressRule",
     "Endpoint",
     "EndpointAuth",
@@ -363,6 +372,11 @@ __all__ = [
     "list_runners",
     "LogCursor",
     "LogStreamReader",
+    "NetworkConfig",
+    "NetworkConfigEtagMismatchError",
+    "NetworkConfigError",
+    "NetworkConfigInUseError",
+    "NetworkConfigNotFoundError",
     "NetworkOptions",
     "ObjectStorageAccess",
     "ObjectStoragePermission",

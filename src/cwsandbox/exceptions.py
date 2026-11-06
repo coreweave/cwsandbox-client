@@ -695,6 +695,61 @@ class VolumeRunnerUnavailableError(VolumeError, SandboxUnavailableError):
     """
 
 
+class NetworkConfigError(SandboxError):
+    """Base exception for NetworkConfig operation failures.
+
+    Raised by ``NetworkConfig`` CRUD, ``Sandbox.update_network()``, and
+    create calls that reference a ``network_config_id``.
+
+    Attributes:
+        network_config_id: The NetworkConfig ID involved, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        network_config_id: str | None = None,
+        reason: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        retry_delay: timedelta | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, metadata=metadata, retry_delay=retry_delay)
+        self.network_config_id = network_config_id
+
+
+class NetworkConfigNotFoundError(NetworkConfigError):
+    """Raised when a NetworkConfig ID is unknown, deleted, or owned by another org.
+
+    Emitted for ``CWSANDBOX_NETWORK_CONFIG_NOT_FOUND``. A platform-managed
+    config whose sandbox has ended also reports not found.
+    """
+
+
+class NetworkConfigInUseError(NetworkConfigError):
+    """Raised when a NetworkConfig is bound to another live sandbox.
+
+    Emitted for ``CWSANDBOX_NETWORK_CONFIG_IN_USE`` on create (bind) and
+    delete.
+    """
+
+
+class NetworkConfigEtagMismatchError(NetworkConfigError):
+    """Raised when an update's ``etag`` no longer matches the stored config.
+
+    Emitted for ``CWSANDBOX_ETAG_MISMATCH``. Reload the config with
+    ``NetworkConfig.get()`` and retry the read-modify-write.
+    """
+
+
+class DNSEgressUnavailableError(NetworkConfigError, SandboxUnavailableError):
+    """Raised when a hostname-widening update cannot be applied yet.
+
+    Emitted for ``CWSANDBOX_DNS_EGRESS_UNAVAILABLE``. Nothing was written;
+    inherits the retryable contract of ``SandboxUnavailableError``.
+    """
+
+
 class DiscoveryError(CWSandboxError):
     """Base exception for discovery operations (runners, profiles).
 

@@ -229,6 +229,25 @@ VOLUME_ERROR_REASONS: frozenset[str] = frozenset(
     }
 )
 
+# NetworkConfig reasons. Emitted by NetworkConfigService RPCs and by
+# CreateSandbox / CreateSandboxFromTemplate when a network_config_id is set.
+CWSANDBOX_NETWORK_CONFIG_NOT_FOUND = "CWSANDBOX_NETWORK_CONFIG_NOT_FOUND"
+CWSANDBOX_NETWORK_CONFIG_IN_USE = "CWSANDBOX_NETWORK_CONFIG_IN_USE"
+# AIP-154: a supplied etag no longer matches (ABORTED). Reload and retry.
+CWSANDBOX_ETAG_MISMATCH = "CWSANDBOX_ETAG_MISMATCH"
+# A widening hostname update while the DNS egress path is not ready
+# (UNAVAILABLE with a retry hint). Nothing was written.
+CWSANDBOX_DNS_EGRESS_UNAVAILABLE = "CWSANDBOX_DNS_EGRESS_UNAVAILABLE"
+
+NETWORK_CONFIG_ERROR_REASONS: frozenset[str] = frozenset(
+    {
+        CWSANDBOX_NETWORK_CONFIG_NOT_FOUND,
+        CWSANDBOX_NETWORK_CONFIG_IN_USE,
+        CWSANDBOX_ETAG_MISMATCH,
+        CWSANDBOX_DNS_EGRESS_UNAVAILABLE,
+    }
+)
+
 
 @dataclass(frozen=True)
 class ParsedError:

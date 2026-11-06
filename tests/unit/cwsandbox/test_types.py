@@ -14,6 +14,7 @@ import pytest
 from cwsandbox._loop_manager import _LoopManager
 from cwsandbox._types import (
     CidrBlock,
+    DNSEgressMode,
     EgressRule,
     Endpoint,
     EndpointAuth,
@@ -239,6 +240,25 @@ class TestNetworkOptions:
     def test_deny_egress_with_names_rejected(self) -> None:
         with pytest.raises(ValueError, match="cannot be combined"):
             NetworkOptions(deny_egress=True, egress=[EgressRule(dns_name="pypi.org")])
+
+    def test_dns_egress_coerces_strings(self) -> None:
+        assert NetworkOptions().dns_egress is None
+        assert NetworkOptions(dns_egress="DENY").dns_egress is DNSEgressMode.DENY
+        assert NetworkOptions(dns_egress=DNSEgressMode.ALLOW).dns_egress is DNSEgressMode.ALLOW
+        with pytest.raises(ValueError):
+            NetworkOptions(dns_egress="sometimes")
+
+    def test_dns_egress_round_trips_through_proto(self) -> None:
+        from cwsandbox._proto import sandbox_pb2
+        from cwsandbox._spec import dns_egress_from_proto, network_to_proto
+
+        assert network_to_proto(NetworkOptions()).dns_egress == (
+            sandbox_pb2.DNS_EGRESS_MODE_UNSPECIFIED
+        )
+        proto = network_to_proto(NetworkOptions(dns_egress=DNSEgressMode.DENY))
+        assert proto.dns_egress == sandbox_pb2.DNS_EGRESS_MODE_DENY
+        assert dns_egress_from_proto(proto.dns_egress) is DNSEgressMode.DENY
+        assert dns_egress_from_proto(99) is DNSEgressMode.UNSPECIFIED
 
     def test_egress_rejects_bare_string(self) -> None:
         with pytest.raises(TypeError, match="sequence"):

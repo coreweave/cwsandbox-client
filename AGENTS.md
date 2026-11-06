@@ -10,7 +10,7 @@ Python client library for CoreWeave Sandbox - a remote code execution platform. 
 
 ## Public API and Documentation
 
-When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `scripts/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
+When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `utils/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
 
 ## Development Setup
 
@@ -63,6 +63,7 @@ Key methods:
 - `stop(snapshot_on_stop=False, graceful_shutdown_seconds=10.0, missing_ok=False, wait_for_ready=True, request_id=None)`: Stop sandbox via DeleteSandbox and return `OperationRef[None]`. The sandbox transitions through TERMINATING (grace period) before reaching a terminal state (COMPLETED or FAILED). The returned OperationRef resolves when the backend confirms a terminal state, not just when the delete RPC succeeds. Multiple callers share the same stop task. Raises `SandboxError` on failure. Set `snapshot_on_stop=True` to capture a file-system snapshot of the configured scratch volume before shutdown — the resulting ID is then available via the `file_system_snapshot_id` property. Because `stop()` coalesces concurrent callers onto one shared stop task, a `snapshot_on_stop=True` request that would join (or observe) a stop not capturing a snapshot — sandbox already stopping/stopped, or a plain `stop()` already in flight — raises `SnapshotOnStopConflictError` rather than completing with no archive; plain stops always coalesce. `wait_for_ready`/`request_id` apply only when `snapshot_on_stop=True` (the client uses a larger timeout when snapshotting, since the stop blocks on the archive). Set `missing_ok=True` to suppress `SandboxNotFoundError`.
 - `snapshot(wait_for_ready=True, request_id=None, retry_budget_seconds=None)`: Capture a file-system snapshot (FSS) of the configured scratch volume without stopping, return `OperationRef[str]` (the new snapshot's ID). Prefer `create_snapshot()` in new code for the full record. `retry_budget_seconds` controls transient RPC retries (default 30, zero disables). Snapshot provisioning, throttling, and wait-timeout exceptions also inherit `SandboxSnapshotError`, preserving their unavailable/timeout parents. Requires a scratch / `file_system_snapshot` mount and the org to be enabled for FSS. Auto-starts the sandbox first if needed. With `wait_for_ready=True` (default) blocks until the snapshot is READY/FAILED. To fork a sandbox, `snapshot()` then `Sandbox.run(file_system_snapshot=FileSystemSnapshotOptions(..., file_system_snapshot_id=<id>))` (or equivalent `volumes=`).
 - `create_snapshot(wait_for_ready=True, request_id=None, retry_budget_seconds=None)`: Same as `snapshot()` (same arguments, retries, request-ID dedup, timeouts and errors) but returns `OperationRef[FileSystemSnapshot]`, the full record. With `wait_for_ready=True` (default) returns the READY record from the final status poll; with `wait_for_ready=False` returns the record from the create response (likely CREATING) without an extra get call.
+- `update_network(network, *, update_mask=None, etag=None)`: Change the bound NetworkConfig live and return `OperationRef[NetworkConfig]` once the runner applied it. Starts the sandbox and waits for RUNNING first, then refreshes `effective_*` / `dns_egress_names` (a failed refresh is logged, not raised). Default mask = fields set (not None) on `network`; `NetworkOptions(egress=[])` clears egress. Create-side: `network_config_id=` on `run()` / `run_from_template()` / `session.sandbox()` binds an existing unbound config; mutually exclusive with `network` (`ValueError`), skips `SandboxDefaults.network`, rejected by `run_from_file` (`TypeError`)
 - `get_status()`: Fetch fresh status from API (sync). Returns cached status for terminal sandboxes (COMPLETED, FAILED, TERMINATED) since terminal states are immutable. TERMINATING is non-terminal and always fetches fresh status.
 
 Properties:
@@ -76,8 +77,10 @@ Properties:
 - `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression; unspecified/unknown proto auth is omitted (the matching URL can still appear on `service_urls`)
 - `service_addresses`: Tuple of `TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as `host:port`) for TLS passthrough endpoints. Create, Get, list, and `from_id` fill this. Use the host as TLS SNI. Empty after stop.
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
-- `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
+- `dns_egress_names`: Hostnames granted to the sandbox, echoed from status.effective_egress
 - `effective_egress` / `effective_ingress`: Full echoed rule sets from status
+- `effective_dns_egress`: `DNSEgressMode` (port-53 DNS) echoed from status, or None when unreported
+- `network_config_id`: ID of the bound `NetworkConfig`, echoed from create/Get/list. Omitting `network_config_id=` on create mints a platform-managed config (`nc-` prefix, deleted when the sandbox ends). None for sandboxes created before NetworkConfig existed
 - `effective_runtime_class`: Runtime class applied by the backend
 - `control`: `SandboxControl` echoed from create/Get/list (None before the first response). `UNSPECIFIED` and `PLATFORM` both mean platform control; compare against `CONTAINER_ENGINE`.
 - `attached_volume_ids`: Registered Volume IDs attached to the sandbox
@@ -114,6 +117,7 @@ Class methods:
 - `Sandbox.list(tags=None, status=None, runner_ids=None, volume_ids=None, show_terminated=False, ...)`: Query existing sandboxes across every page, return `OperationRef[list[Sandbox]]`. Use `.result()` to block or `await` in async contexts. By default, terminal sandboxes (completed, failed, terminated) are excluded. Set `show_terminated=True` to include them. `volume_ids` filters to sandboxes attached to those registered Volumes. `profile_ids` / `profile_names` raise `TypeError`.
 - `Sandbox.list_page(page_size=None, page_token=None, tags=None, status=None, runner_ids=None, volume_ids=None, show_terminated=False, ...)`: One ListSandboxes call, return `OperationRef[SandboxPage]` (frozen: `sandboxes: list[Sandbox]`, `next_page_token: str | None`). Pass `next_page_token` back as `page_token` until it is `None`. `page_size=None` uses the server default; otherwise it must be a positive `int`. Filters match `list()` and are all server-side, so pages are not shortened by client filtering. `session.list()` and `list_snapshots()` still fetch every page.
 - `Volume.create` / `Volume.get` / `Volume.list` / `volume.update` / `volume.delete` / `volume.validate` / `volume.wait_until_ready`: Registered Volume CRUD (`_volume.py`). Classmethods and instance methods accept `auth=` like `Sandbox.list` / `from_id`; returned handles keep that selection. Create returns immediately in `VALIDATING`; poll with `wait_until_ready()` (the wait budget bounds each Get and its retries). Mount with `RegisteredVolumeOptions` on `Sandbox.run(volumes=...)`.
+- `NetworkConfig.create` / `NetworkConfig.get` / `NetworkConfig.list(platform_managed=None)` / `config.update(network, update_mask=None, etag=None)` / `config.delete(allow_missing=False)`: NetworkConfig CRUD (`_network_config.py`). A NetworkConfig holds a `NetworkOptions` document and binds to at most one live sandbox (`Sandbox.run(network_config_id=...)`). Update applies live when bound (waits for a CREATING sandbox to reach RUNNING); unbound it only stores. The SDK always sends an explicit `update_mask`: by default the fields set (not None) on `network`, so `NetworkOptions(egress=[])` clears egress and leaves ingress alone; `"*"` replaces all five fields; `[]` is a no-op. `config.network` is a complete document, so `dataclasses.replace(config.network, ...)` then `update(..., etag=config.etag)` is a guarded read-modify-write. Sandboxes created without an id get a platform-managed config (`nc-` prefix) that is deleted when the sandbox ends; caller-created configs persist. Deadlines are not retried (a bound update may wait server-side up to the request timeout). A guarded update whose transient retry hits `ETAG_MISMATCH` reads the config and returns it if the masked fields already hold the requested values (an earlier attempt landed); otherwise the mismatch is raised.
 - `Sandbox.from_id(sandbox_id)`: Attach to existing sandbox by ID, return `OperationRef[Sandbox]`. Works for both active and stopped sandboxes.
 - `Sandbox.delete(sandbox_id, missing_ok=False)`: Delete sandbox by ID, return `OperationRef[None]`. Raises `SandboxError` on failure. Set `missing_ok=True` to suppress `SandboxNotFoundError` for already-deleted sandboxes. Retries up to 3 attempts within the timeout on gRPC `UNAVAILABLE` carrying a `RetryInfo` delay of at most 10 s (a not-found on a retry counts as deleted). Plain `stop()` and gateway `read_file()` follow the same policy; exec, streams, creates, and writes do not.
 - `Sandbox.get_snapshot(file_system_snapshot_id)`: Fetch a `FileSystemSnapshot` record by ID, return `OperationRef[FileSystemSnapshot]`. Snapshots are org-scoped. Raises `SnapshotNotFoundError` if absent.
@@ -241,7 +245,7 @@ sandbox = Sandbox.run(
 )
 ```
 
-**`NetworkOptions`** / **`EgressRule`** / **`IngressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`) plus create-time grants via `egress` and `ingress`. `EgressRule` requires exactly one destination (`dns_name`, `cidr`, `tenant`, `any`, or `selector`). DNS names are HTTPS (TCP 443) grants: exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. `IngressRule` requires exactly one source (`cidr`, `tenant`, or `any`) and applies to CUSTOM-visibility ports. Port exposure is via `services=`, not this type.
+**`NetworkOptions`** / **`EgressRule`** / **`IngressRule`** (`_types.py`): Deny flags (`deny_egress`, `deny_ingress`), grants via `egress` and `ingress`, and `dns_egress` (`DNSEgressMode` ALLOW/DENY for port-53 DNS; None inherits policy). `EgressRule` requires exactly one destination (`dns_name`, `cidr`, `tenant`, `any`, or `selector`). DNS names are HTTPS (TCP 443) grants: exact names (`pypi.org`) or a single leftmost wildcard (`*.pypi.org`). `"*"` is a policy ceiling, not a sandbox grant. `IngressRule` requires exactly one source (`cidr`, `tenant`, or `any`) and applies to CUSTOM-visibility ports. Port exposure is via `services=`, not this type.
 
 ```python
 from cwsandbox import EgressRule, NetworkOptions, Sandbox
@@ -540,7 +544,7 @@ These were never public 0.26 SDK surfaces and remain unsupported until v1 backen
 
 ### Backend Communication
 
-Uses gRPC via `grpcio` with vendored v1 proto stubs in `src/cwsandbox/_proto/` (`sandbox_*`, `discovery_*`, `settings_*`, `sandbox_template_*`, `volume_*`). Refresh via `scripts/update-protos.sh` (protobuf runtime v26.1; see `scripts/buf.gen.python.yaml`).
+Uses gRPC via `grpcio` with vendored v1 proto stubs in `src/cwsandbox/_proto/` (`sandbox_*`, `discovery_*`, `settings_*`, `sandbox_template_*`, `volume_*`, `network_config_*`, `runtime_class_*`). Refresh via `scripts/update-protos.sh` (protobuf runtime v26.1; see `scripts/buf.gen.python.yaml`).
 
 **Channel management** (`_network.py`): Provides `parse_grpc_target()` for URL-to-target conversion and `create_channel()` for secure/insecure async channel creation. Auth headers are passed directly to streaming calls via metadata (interceptors don't work with request iterators).
 
@@ -631,6 +635,11 @@ CWSandboxError
 │       ├── VolumeInUseError
 │       └── VolumeQuotaExceededError
 │       # VolumeRunnerUnavailableError also subclasses SandboxUnavailableError (retryable)
+│   └── NetworkConfigError               # NetworkConfig failures; .network_config_id attribute
+│       ├── NetworkConfigNotFoundError   # CWSANDBOX_NETWORK_CONFIG_NOT_FOUND (also bare NOT_FOUND on NetworkConfig RPCs)
+│       ├── NetworkConfigInUseError      # CWSANDBOX_NETWORK_CONFIG_IN_USE (bound to another live sandbox)
+│       ├── NetworkConfigEtagMismatchError  # CWSANDBOX_ETAG_MISMATCH (ABORTED); reload and retry
+│       └── DNSEgressUnavailableError    # CWSANDBOX_DNS_EGRESS_UNAVAILABLE; also subclasses SandboxUnavailableError (retryable)
 ├── DiscoveryError
 │   └── RunnerNotFoundError              # .runner_id attribute
 └── FunctionError
