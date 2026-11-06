@@ -10,7 +10,7 @@ Python client library for CoreWeave Sandbox - a remote code execution platform. 
 
 ## Public API and Documentation
 
-When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `scripts/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
+When adding, removing, or renaming public exports in `src/cwsandbox/__init__.py`, the API reference generator in the `coreweave/docs` repo needs its `MANIFEST_GROUPS` updated (in `utils/cwsandbox-api-ref/generate.py`). Docstrings use Google style with `Examples:` and `Attributes:` sections for structured parsing by Griffe.
 
 ## Development Setup
 
@@ -77,7 +77,7 @@ Properties:
 - `service_endpoints`: Tuple of `HttpsEndpointStatus` (port, name, kind, auth, url, applied `request_timeout_seconds`) for HTTPS product endpoints; timeout remains after URL suppression; unspecified/unknown proto auth is omitted (the matching URL can still appear on `service_urls`)
 - `service_addresses`: Tuple of `TlsPassthroughEndpointStatus` (`port`, `name`, `kind`, `address` as `host:port`) for TLS passthrough endpoints. Create, Get, list, and `from_id` fill this. Use the host as TLS SNI. Empty after stop.
 - `exposed_ports`: `(port, name)` pairs derived from status services when present
-- `dns_egress_names`: Hostnames granted at create, echoed from status.effective_egress
+- `dns_egress_names`: Hostnames granted to the sandbox, echoed from status.effective_egress
 - `effective_egress` / `effective_ingress`: Full echoed rule sets from status
 - `effective_dns_egress`: `DNSEgressMode` (port-53 DNS) echoed from status, or None when unreported
 - `network_config_id`: ID of the bound `NetworkConfig`, echoed from create/Get/list. Omitting `network_config_id=` on create mints a platform-managed config (`nc-` prefix, deleted when the sandbox ends). None for sandboxes created before NetworkConfig existed

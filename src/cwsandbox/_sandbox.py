@@ -2055,7 +2055,7 @@ class Sandbox:
         runner_id: Runner ID where sandbox is running.
         returncode: Exit code if sandbox completed.
         started_at: When sandbox started running.
-        dns_egress_names: Hostnames granted at create (from status.effective_egress).
+        dns_egress_names: Hostnames granted to the sandbox (from status.effective_egress).
         endpoint_share_token: Create-only share-token credential for
             ``auth=SHARE_TOKEN`` HTTPS URLs. Get, list, and ``from_id``
             omit it. Use ``as_headers()`` to authenticate requests.
