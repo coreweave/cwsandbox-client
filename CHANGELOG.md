@@ -1,6 +1,105 @@
 # CHANGELOG
 
 
+## v1.27.0 (2026-11-06)
+
+### Bug Fixes
+
+- **network-config**: Reconcile etag mismatch on a retried guarded update
+  ([`3a5f538`](https://github.com/coreweave/cwsandbox-client/commit/3a5f53817b1170fe75f4b8115f67da7f16ef37a3))
+
+A guarded update retried after a transient error can hit ETAG_MISMATCH because the earlier attempt
+  committed before its response was lost. The caller then saw a conflict even though their values
+  were stored.
+
+On a mismatch from a retry, read the config and return it when every masked field already holds the
+  requested value. Otherwise raise the mismatch as before. A first-attempt mismatch, an unguarded
+  update, and an empty mask are not reconciled.
+
+### Chores
+
+- **proto**: Vendor network_config v1 stubs
+  ([`bccfd8b`](https://github.com/coreweave/cwsandbox-client/commit/bccfd8bb6e4d46d7c359c055c65c9aeb8d9b8a64))
+
+Generate the vendored coreweave.sandbox.v1 stubs from the public
+  buf.build/coreweave/sandbox:c235626bd1414b0a9b6d22cb8bcd6838 module. This adds
+  NetworkConfigService and the network_config messages; the existing vendored stubs (including
+  SandboxSpec / PartialSandboxSpec network_config_id) are unchanged at this commit. network.proto
+  (NetworkService) stays excluded.
+
+### Documentation
+
+- Say dns_egress_names can change after create; fix API-ref path
+  ([`1b14c45`](https://github.com/coreweave/cwsandbox-client/commit/1b14c458be35bd722acf85ef4f25f26c011c6657))
+
+update_network() can change the granted hostnames while the sandbox runs. The coreweave/docs
+  generator now lives under utils/.
+
+- **sandbox**: Clarify termination behavior
+  ([`485898b`](https://github.com/coreweave/cwsandbox-client/commit/485898bd02c6e13442221e585e841976f10043ab))
+
+Explain that `SandboxTerminatedError` applies to client-initiated stops and legacy `TERMINATED`
+  status, not external stops reported as `COMPLETED`.
+
+- **sandbox**: Refine termination documentation
+  ([`14d0828`](https://github.com/coreweave/cwsandbox-client/commit/14d0828319e1dc12f689b83f889df379f4ae02a7))
+
+Clarify sandbox listing defaults and terminal status filters, and format termination-related API
+  references consistently.
+
+### Features
+
+- **network**: Add dns_egress mode to NetworkOptions
+  ([`977f183`](https://github.com/coreweave/cwsandbox-client/commit/977f183e0289c3b3ee010927537973acea0f0f4d))
+
+NetworkOptions had no way to set the port-53 DNS mode (proto field NetworkOptions.dns_egress), and
+  Sandbox never read back status.effective_dns_egress. Dynamic network updates can flip that mode,
+  so the SDK needs both directions.
+
+Add a DNSEgressMode enum (unspecified / allow / deny), accept it (or a string) as
+  NetworkOptions.dns_egress, map it onto the create spec, and expose the echoed mode as
+  Sandbox.effective_dns_egress (None when the backend does not report one).
+
+- **network-config**: Add NetworkConfig resource
+  ([`6ae1b10`](https://github.com/coreweave/cwsandbox-client/commit/6ae1b10cab868a4858689e1de95d469b59c76f55))
+
+Add NetworkConfig, a Volume-shaped wrapper over NetworkConfigService: create (caller-chosen id,
+  generated request_id), get, list (with the platform_managed filter and auto-pagination), update,
+  and delete (allow_missing, NOT_FOUND on retry treated as success).
+
+update always sends an explicit update_mask. By default it names every field set on the
+  NetworkOptions passed, so NetworkOptions(egress=[]) clears egress; the backend's omitted-mask rule
+  cannot clear a repeated field. Short paths ("egress") are accepted, "*" replaces all five fields,
+  and [] is sent as the server-side no-op. An optional etag guards a read-modify-write. A client
+  deadline is not retried, because a bound update may wait server-side for RUNNING up to the request
+  timeout.
+
+Map the new reasons to typed exceptions under NetworkConfigError: NETWORK_CONFIG_NOT_FOUND,
+  NETWORK_CONFIG_IN_USE, ETAG_MISMATCH, and DNS_EGRESS_UNAVAILABLE (also a SandboxUnavailableError,
+  so the transient retry loop honors its RetryInfo hint). RUNNER_UNAVAILABLE already maps to
+  SandboxUnavailableError.
+
+- **sandbox**: Bind network_config_id on create and add update_network
+  ([`efae329`](https://github.com/coreweave/cwsandbox-client/commit/efae32971f85ec77b90565760f10b900ddaf5696))
+
+Sandbox.run, run_from_template (as an override), and session.sandbox take network_config_id to bind
+  a precreated NetworkConfig. It is mutually exclusive with network, skips SandboxDefaults.network,
+  and is rejected by run_from_file. Sandbox.network_config_id echoes the bound id from
+  create/Get/list.
+
+update_network() waits for RUNNING, updates the bound config, then refreshes effective_* from the
+  backend. A failed refresh is logged rather than raised because the update itself succeeded.
+
+### Testing
+
+- **network-config**: Add integration tests for NetworkConfig
+  ([`c23ebc2`](https://github.com/coreweave/cwsandbox-client/commit/c23ebc2c56de4e41cefcfcca324a4765a8956a0f))
+
+Covers unbound CRUD with a guarded update, precreate bind with IN_USE on a second sandbox, and a
+  live hostname add/remove through update_network. Skips when the backend does not serve
+  NetworkConfig or the fleet cannot grant names live.
+
+
 ## v1.26.0 (2026-11-04)
 
 ### Features
