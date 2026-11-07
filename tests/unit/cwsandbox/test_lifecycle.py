@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,6 +26,89 @@ from cwsandbox._sandbox import (
 
 if TYPE_CHECKING:
     from cwsandbox import Sandbox
+
+
+class TestStartingPlacementMetadata:
+    @pytest.mark.parametrize("state", [sandbox_pb2.STATE_PENDING, sandbox_pb2.STATE_CREATING])
+    @pytest.mark.parametrize("runner_id,group_id", [("runner-1", "group-1"), ("", "")])
+    def test_discovery_and_refresh_preserve_placement(
+        self, state: int, runner_id: str, group_id: str
+    ) -> None:
+        from cwsandbox import Sandbox
+
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="sb-test",
+            status=sandbox_pb2.SandboxStatus(
+                state=state, runner_id=runner_id, runner_group_id=group_id
+            ),
+        )
+        sb = Sandbox._from_sandbox_info(
+            response, base_url="https://api.example.com", timeout_seconds=30
+        )
+        assert sb.runner_id == (runner_id or None)
+        assert sb.runner_group_id == (group_id or None)
+        assert sb.status == SandboxStatus.from_proto(state)
+        assert sb.started_at is None
+
+        # A later response may report a different assignment before readiness.
+        response.status.runner_id = "runner-2"
+        response.status.runner_group_id = "group-2"
+        sb._state = sb._apply_sandbox_info(response, source="query")
+        assert sb.runner_id == "runner-2"
+        assert sb.runner_group_id == "group-2"
+        assert sb.status == SandboxStatus.from_proto(state)
+        assert sb.started_at is None
+
+    @pytest.mark.asyncio
+    async def test_create_exposes_assignment_before_readiness(self, mock_api_key: str) -> None:
+        from cwsandbox import Sandbox
+
+        sb = Sandbox()
+        assert sb.runner_id is None
+        assert sb.runner_group_id is None
+        response = sandbox_pb2.Sandbox(
+            sandbox_id="sb-test",
+            status=sandbox_pb2.SandboxStatus(
+                state=sandbox_pb2.STATE_CREATING,
+                runner_id="runner-1",
+                runner_group_id="group-1",
+            ),
+        )
+        sb._stub = MagicMock()
+        with (
+            patch.object(sb, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sb, "_create_with_optional_spillover", return_value=response),
+        ):
+            await sb._start_async()
+        assert sb.runner_id == "runner-1"
+        assert sb.runner_group_id == "group-1"
+        assert sb.status != SandboxStatus.RUNNING
+        assert sb.started_at is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("absent", [False, True])
+    async def test_stop_before_readiness_retains_assignment(
+        self, mock_api_key: str, absent: bool
+    ) -> None:
+        from cwsandbox import Sandbox
+
+        sb = Sandbox()
+        sb._sandbox_id = "sb-test"
+        sb._state = _Starting(sandbox_id="sb-test", runner_id="runner-1", runner_group_id="group-1")
+        response = sandbox_pb2.DeleteSandboxResponse()
+        if not absent:
+            response.sandbox.sandbox_id = "sb-test"
+            response.sandbox.status.state = sandbox_pb2.STATE_TERMINATING
+        sb._stub = MagicMock()
+        sb._stub.DeleteSandbox = AsyncMock(return_value=response)
+        with (
+            patch.object(sb, "_ensure_client", new_callable=AsyncMock),
+            patch.object(sb, "_await_terminal_after_stop", new_callable=AsyncMock),
+        ):
+            await sb._do_stop(missing_ok=absent)
+        assert sb.runner_id == "runner-1"
+        assert sb.runner_group_id == "group-1"
+        assert sb.started_at is None
 
 
 # ---------------------------------------------------------------------------
