@@ -12,9 +12,11 @@ import logging
 import math
 import os
 import random
+import re
 import shlex
 import threading
 import time
+import unicodedata
 import uuid
 import warnings
 import weakref
@@ -104,6 +106,7 @@ from cwsandbox._error_info import (
     CWSANDBOX_RUNNER_CAPACITY_EXHAUSTED,
     CWSANDBOX_RUNNER_OVERLOADED,
     CWSANDBOX_RUNNER_SHARD_RETIRING,
+    CWSANDBOX_SANDBOX_DISPLAY_NAME_IN_USE,
     CWSANDBOX_SANDBOX_NOT_FOUND,
     CWSANDBOX_VOLUME_BACKEND_NOT_FOUND,
     CWSANDBOX_VOLUME_IN_USE,
@@ -217,6 +220,7 @@ from cwsandbox.exceptions import (
     SandboxFileError,
     SandboxLogReplayGapError,
     SandboxLogResumeError,
+    SandboxNameInUseError,
     SandboxNotFoundError,
     SandboxNotRunningError,
     SandboxProtocolError,
@@ -547,6 +551,53 @@ def _as_sandbox_view(value: Any, *, sandbox_id: str | None = None) -> _SandboxVi
 
 
 DEFAULT_SCRATCH_VOLUME_NAME = "workspace"
+
+_DISPLAY_NAME_MAX_BYTES = 128
+# UUID spellings the backend parses as IDs: dashed, dashed with any single
+# ASCII character on each side (not only braces), and 32 hex. The
+# ``urn:uuid:`` form is already rejected by the colon rule.
+_DISPLAY_NAME_DASHED_UUID = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_DISPLAY_NAME_UUID_RE = re.compile(
+    _DISPLAY_NAME_DASHED_UUID
+    + r"|[\x00-\x7f]"
+    + _DISPLAY_NAME_DASHED_UUID
+    + r"[\x00-\x7f]|[0-9a-fA-F]{32}"
+)
+
+
+def _validate_display_name(display_name: str | None) -> str | None:
+    """Check a sandbox ``display_name`` against the backend rules.
+
+    Mirrors the backend check so callers fail fast; the backend stays
+    authoritative. ``None`` and ``""`` mean no name.
+
+    Raises:
+        TypeError: ``display_name`` is not a string.
+        ValueError: ``display_name`` breaks a naming rule.
+    """
+    if display_name is None or display_name == "":
+        return None
+    if not isinstance(display_name, str):
+        raise TypeError(f"display_name must be a str, got {type(display_name).__name__}")
+    try:
+        size = len(display_name.encode("utf-8"))
+    except UnicodeEncodeError:
+        size = None
+    if (
+        size is None
+        or size > _DISPLAY_NAME_MAX_BYTES
+        or display_name.strip() != display_name
+        or any(ch in "/\\:" or unicodedata.category(ch) == "Cc" for ch in display_name)
+        or _DISPLAY_NAME_UUID_RE.fullmatch(display_name)
+    ):
+        raise ValueError(
+            f"invalid display_name {display_name!r}: must be valid UTF-8 of at most "
+            f"{_DISPLAY_NAME_MAX_BYTES} bytes, without leading or trailing whitespace, "
+            "slashes, backslashes, colons, control characters, or a UUID value"
+        )
+    return display_name
 
 
 def _coerce_file_system_snapshot(
@@ -1072,6 +1123,13 @@ def _translate_rpc_error(
             return SandboxNotFoundError(
                 f"Sandbox '{sandbox_id}' not found" if sandbox_id else details,
                 sandbox_id=sandbox_id,
+                reason=reason,
+                metadata=metadata,
+                retry_delay=retry_delay,
+            )
+        if reason == CWSANDBOX_SANDBOX_DISPLAY_NAME_IN_USE:
+            return SandboxNameInUseError(
+                f"{operation} failed ({reason}): {details}",
                 reason=reason,
                 metadata=metadata,
                 retry_delay=retry_delay,
@@ -2051,6 +2109,7 @@ class Sandbox:
 
     Attributes:
         sandbox_id: Unique identifier for this sandbox.
+        display_name: Optional name, unique among active sandboxes in the org.
         status: Cached status from last API call.
         runner_id: Runner ID where sandbox is running.
         returncode: Exit code if sandbox completed.
@@ -2106,6 +2165,7 @@ class Sandbox:
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
         containers: Sequence[Container | Mapping[str, Any]] | None = None,
+        display_name: str | None = None,
         _from_file: _FromFileCreate | None = None,
         _session: Session | None = None,
     ) -> None:
@@ -2189,6 +2249,13 @@ class Sandbox:
                 ``working_dir``. This list replaces those single-container
                 fields, including the same names on ``SandboxDefaults``.
                 Put secrets, env, and working_dir on each ``Container``.
+            display_name: Optional name, unique among active sandboxes in the
+                organization and reusable once the sandbox is terminal.
+                Case-sensitive, at most 128 UTF-8 bytes, without leading or
+                trailing whitespace, ``/``, ``\\``, ``:``, control characters,
+                or a UUID value (``ValueError``). Pass it to ``from_id()`` to
+                look the sandbox up. A name held by another active sandbox
+                raises ``SandboxNameInUseError`` on create.
         """
         if network is not None:
             if isinstance(network, dict):
@@ -2197,6 +2264,8 @@ class Sandbox:
                 raise TypeError(
                     f"network must be NetworkOptions, dict, or None, got {type(network).__name__}"
                 )
+
+        display_name = _validate_display_name(display_name)
 
         if network_config_id is not None:
             if not isinstance(network_config_id, str) or not network_config_id:
@@ -2316,6 +2385,7 @@ class Sandbox:
 
         self._tags: list[str] | None = self._defaults.merge_tags(tags)
         self._observed_tags: tuple[str, ...] = tuple(self._tags or ())
+        self._display_name: str | None = display_name
         self._created_at: datetime | None = None
         self._environment_variables = (
             {}
@@ -2617,6 +2687,7 @@ class Sandbox:
         secrets: Sequence[Secret | dict[str, Any]] | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
         containers: Sequence[Container | Mapping[str, Any]] | None = None,
+        display_name: str | None = None,
     ) -> Sandbox:
         """Create and start a sandbox.
 
@@ -2699,6 +2770,10 @@ class Sandbox:
                 replaces those single-container fields, including the
                 same names on ``SandboxDefaults``. Put secrets, env,
                 and working_dir on each ``Container``.
+            display_name: Optional name, unique among active sandboxes in the
+                organization and reusable once the sandbox is terminal. See
+                ``Sandbox.__init__`` for the naming rules. A name held by
+                another active sandbox raises ``SandboxNameInUseError``.
         Returns:
             A Sandbox instance (start request sent, but may still be starting)
 
@@ -2718,6 +2793,10 @@ class Sandbox:
             # Or use context manager for automatic cleanup
             with Sandbox.run("sleep", "infinity") as sb:
                 result = sb.exec(["echo", "hello"]).result()
+
+            # Name it, then find it again by name
+            sb = Sandbox.run(display_name="build-worker-1")
+            same = Sandbox.from_id("build-worker-1").result()
             ```
         """
         if network is not None:
@@ -2769,6 +2848,7 @@ class Sandbox:
             secrets=secrets,
             data_plane_mode=data_plane_mode,
             containers=containers,
+            display_name=display_name,
         )
         logger.debug("Creating sandbox with command: %s", command)
         sandbox.start().result()
@@ -2858,6 +2938,7 @@ class Sandbox:
         annotations: dict[str, str] | None = None,
         request_id: str | None = None,
         data_plane_mode: DataPlaneMode | str | None = None,
+        display_name: str | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create a sandbox from an uploaded file (CreateSandboxFromFile).
@@ -2905,6 +2986,7 @@ class Sandbox:
                 on defaults is ignored (from-file is always strict). An
                 explicit non-strict keyword argument raises.
             request_id: Optional idempotency token. Auto-generated when omitted.
+            display_name: Optional sandbox name. Same rules as ``run()``.
             **kwargs: Rejected. This RPC does not accept volumes, published
                 services, ``runtime_class``, ``network_ids``, or
                 ``build_contexts``.
@@ -2958,6 +3040,7 @@ class Sandbox:
             object_storage_access=object_storage_access,
             annotations=annotations,
             data_plane_mode=data_plane_mode,
+            display_name=display_name,
             _from_file=_FromFileCreate(
                 contents=raw,
                 file_type=file_type,
@@ -3044,6 +3127,7 @@ class Sandbox:
         sandbox._container_image = None
         sandbox._tags = None
         sandbox._observed_tags = ()
+        sandbox._display_name = None
         sandbox._created_at = None
         sandbox._max_lifetime_seconds = None
         sandbox._runner_ids = None
@@ -3529,13 +3613,18 @@ class Sandbox:
         poll_rpc_timeout_seconds: float | None = None,
         data_plane_mode: DataPlaneMode | str = DataPlaneMode.AUTO,
     ) -> OperationRef[Sandbox]:
-        """Attach to an existing sandbox by ID.
+        """Attach to an existing sandbox by ID or display name.
 
         Creates a Sandbox instance connected to an existing sandbox,
         allowing operations like exec(), stop(), get_status(), etc.
 
+        A display name resolves active sandboxes only; look up a terminal
+        sandbox by its ID. The returned handle uses the resolved
+        ``sandbox_id`` for every later call, so it keeps pointing at the same
+        sandbox even if the name is later reused.
+
         Args:
-            sandbox_id: The ID of the existing sandbox
+            sandbox_id: The ID or display name of the existing sandbox
             base_url: Override API URL (default: CWSANDBOX_BASE_URL env or default)
             auth: Authentication strategy, resolved headers, or provider for this request.
             timeout_seconds: Request timeout (default: 300s)
@@ -3564,6 +3653,10 @@ class Sandbox:
             # Async usage
             sb = await Sandbox.from_id("sandbox-abc123")
             result = await sb.exec(["python", "-c", "print('hello')"])
+
+            # Look up an active sandbox by display name
+            sb = Sandbox.from_id("build-worker-1").result()
+            print(sb.sandbox_id)  # the UUID, used for later calls
             ```
         """
         future = _LoopManager.get().run_async(
@@ -4219,6 +4312,14 @@ class Sandbox:
         The returned tuple cannot mutate the sandbox's tags.
         """
         return self._observed_tags
+
+    @property
+    def display_name(self) -> str | None:
+        """Name from the latest create, get, or list response, or None if unnamed.
+
+        Before creation, contains the requested name.
+        """
+        return self._display_name
 
     @property
     def created_at(self) -> datetime | None:
@@ -5796,7 +5897,7 @@ class Sandbox:
             logger.debug("Ignoring unhandled start kwargs: %s", sorted(start_kwargs))
 
         return sandbox_pb2.CreateSandboxRequest(
-            sandbox=sandbox_pb2.Sandbox(spec=spec),
+            sandbox=sandbox_pb2.Sandbox(spec=spec, display_name=self._display_name or ""),
             request_id=request_id,
         )
 
@@ -5895,6 +5996,7 @@ class Sandbox:
             template_id=template_id,
             overrides=overrides,
             request_id=request_id,
+            display_name=self._display_name or "",
         )
 
     def _build_create_from_file_request(
@@ -5928,6 +6030,7 @@ class Sandbox:
             type=cast(sandbox_pb2.SandboxFileType, proto_type),
             contents=spec.contents,
             request_id=request_id,
+            display_name=self._display_name or "",
         )
         if spec.primary_service:
             request.primary_service = spec.primary_service
@@ -6001,6 +6104,7 @@ class Sandbox:
     def _apply_status_echo(self, view: _SandboxView) -> None:
         """Refresh property echoes from a v1 Sandbox resource (create/Get/list)."""
         self._observed_tags = tuple(view._sandbox.spec.tags)
+        self._display_name = view._sandbox.display_name or None
         self._created_at = _proto_timestamp_to_datetime(view._sandbox.status, "create_time")
         self._scratch_volume_names = tuple(
             volume.name
