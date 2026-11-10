@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
+import hashlib
 import inspect
 import logging
 import math
@@ -41,6 +42,7 @@ import grpc
 import grpc.aio
 from google.protobuf import timestamp_pb2
 
+from cwsandbox import _directory_upload as _dirup
 from cwsandbox._auth import AuthConfig, resolve_auth_metadata
 from cwsandbox._defaults import (
     DEFAULT_BASE_URL,
@@ -158,6 +160,7 @@ from cwsandbox._spec import (
 from cwsandbox._types import (
     Container,
     DataPlaneMode,
+    DirectoryUploadResult,
     DNSEgressMode,
     EgressRule,
     Endpoint,
@@ -9827,6 +9830,299 @@ class Sandbox:
         timeout = timeout_seconds if timeout_seconds is not None else self._request_timeout_seconds
         future = self._loop_manager.run_async(
             self._write_file_streaming_async(filepath, source, timeout, container=container)
+        )
+        return OperationRef(future)
+
+    async def _upload_exec_async(
+        self,
+        script: str,
+        argv0: str,
+        args: Sequence[str],
+        *,
+        remote_path: str,
+        timeout: float,
+        container: str | None,
+        stdin: bytes | None = None,
+    ) -> tuple[int, str, str]:
+        returncode, stdout, stderr = await self._exec_streaming_binary_async(
+            ["/bin/sh", "-c", script, argv0, *args],
+            stdin=stdin,
+            timeout_seconds=timeout,
+            operation="Upload directory",
+            filepath=remote_path,
+            container=container,
+        )
+        return (
+            returncode,
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace").strip(),
+        )
+
+    async def _upload_directory_async(
+        self,
+        local_path: str,
+        remote_path: str,
+        patterns: tuple[str, ...],
+        compress: bool,
+        on_progress: Callable[[int, int], None] | None,
+        timeout: float | None,
+        container: str | None,
+    ) -> DirectoryUploadResult:
+        deadline = time.monotonic() + timeout if timeout is not None else None
+
+        def step_timeout(cap: float) -> float:
+            if deadline is None:
+                return cap
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise _dirup.timeout_error(remote_path)
+            return min(cap, remaining)
+
+        await self._ensure_started_async()
+        if self._is_done or self._is_stopping:
+            raise SandboxNotRunningError(f"Sandbox {self._sandbox_id} has been stopped")
+        if self._sandbox_id is None:
+            raise SandboxNotRunningError("No sandbox is running")
+        await self._wait_until_running_async()
+        await self._ensure_client()
+
+        loop = asyncio.get_running_loop()
+        plan = await loop.run_in_executor(
+            None, _dirup.scan_directory, local_path, patterns, compress, remote_path
+        )
+        stage = f"{remote_path}/{_dirup.STAGING_PREFIX}{plan.key}"
+
+        returncode, stdout, detail = await self._upload_exec_async(
+            _dirup.PREFLIGHT_SCRIPT,
+            "cwsandbox-upload-preflight",
+            [remote_path, stage, *_dirup.required_tools(compress)],
+            remote_path=remote_path,
+            timeout=step_timeout(_dirup.PREFLIGHT_TIMEOUT_SECONDS),
+            container=container,
+        )
+        if returncode == _dirup.EXIT_MISSING_TOOLS:
+            missing = detail.partition(":")[2].strip()
+            hint = " Pass compress=False if only gzip is missing." if missing == "gzip" else ""
+            raise _dirup.upload_error(
+                f"Cannot upload to '{remote_path}': the sandbox image is missing required "
+                f"tools: {missing}.{hint}",
+                "preflight",
+                remote_path,
+                missing_tools=missing,
+            )
+        if returncode != 0:
+            raise _dirup.upload_error(
+                f"Cannot upload to '{remote_path}': {detail or f'preflight exited {returncode}'}",
+                "preflight",
+                remote_path,
+                exit_code=str(returncode),
+            )
+        committed = {
+            line for line in stdout.splitlines() if _dirup.PART_NAME_RE.match(line.strip())
+        }
+
+        archive_sha = hashlib.sha256()
+        archive_bytes = 0
+        resumed_bytes = 0
+        names: list[str] = []
+        parts = _dirup.iter_parts(plan, compress, remote_path)
+        try:
+            while True:
+                part = await loop.run_in_executor(None, next, parts, None)
+                if part is None:
+                    break
+                archive_sha.update(part.data)
+                archive_bytes += len(part.data)
+                names.append(part.name)
+                if part.name in committed:
+                    resumed_bytes += len(part.data)
+                else:
+                    await self._upload_part_async(stage, part, remote_path, step_timeout, container)
+                if on_progress is not None:
+                    on_progress(part.source_bytes_done, plan.total_bytes)
+        finally:
+            with contextlib.suppress(ValueError):
+                parts.close()
+
+        digest = archive_sha.hexdigest()
+        returncode, _, detail = await self._upload_exec_async(
+            _dirup.FINAL_SCRIPT,
+            "cwsandbox-upload-final",
+            [remote_path, stage, digest, "z" if compress else "-", *names],
+            remote_path=remote_path,
+            timeout=step_timeout(_dirup.FINAL_TIMEOUT_SECONDS),
+            container=container,
+        )
+        if returncode in (_dirup.EXIT_MISSING_PART, _dirup.EXIT_ARCHIVE_CHECKSUM):
+            raise _dirup.upload_error(
+                f"Upload to '{remote_path}' failed verification: {detail}. "
+                f"'{remote_path}' was not changed.",
+                "verify",
+                remote_path,
+                exit_code=str(returncode),
+            )
+        if returncode != 0:
+            raise _dirup.upload_error(
+                f"Extracting the upload into '{remote_path}' failed: "
+                f"{detail or f'exit status {returncode}'}. '{remote_path}' may be partly "
+                "updated; staged parts are kept, so calling again only re-extracts.",
+                "extract",
+                remote_path,
+                exit_code=str(returncode),
+            )
+        kinds = [entry.kind for entry in plan.entries]
+        return DirectoryUploadResult(
+            files=kinds.count("f"),
+            directories=kinds.count("d"),
+            symlinks=kinds.count("l"),
+            bytes=plan.total_bytes,
+            archive_bytes=archive_bytes,
+            sha256=digest,
+            resumed_bytes=resumed_bytes,
+            skipped=plan.skipped,
+        )
+
+    async def _upload_part_async(
+        self,
+        stage: str,
+        part: _dirup.ArchivePart,
+        remote_path: str,
+        step_timeout: Callable[[float], float],
+        container: str | None,
+    ) -> None:
+        for attempt in range(_dirup.PART_MAX_ATTEMPTS):
+            last_attempt = attempt == _dirup.PART_MAX_ATTEMPTS - 1
+            try:
+                returncode, _, detail = await self._upload_exec_async(
+                    _dirup.PART_SCRIPT,
+                    "cwsandbox-upload-part",
+                    [stage, f"{part.index:06d}", str(len(part.data)), part.sha256],
+                    remote_path=remote_path,
+                    timeout=step_timeout(_dirup.PART_ATTEMPT_TIMEOUT_SECONDS),
+                    container=container,
+                    stdin=part.data,
+                )
+            except Exception as e:
+                if last_attempt or not _dirup.is_retryable_part_error(e):
+                    raise
+                logger.debug("Upload part %d attempt %d failed: %r", part.index, attempt + 1, e)
+            else:
+                if returncode == 0:
+                    return
+                retryable = returncode in (_dirup.EXIT_PART_SIZE, _dirup.EXIT_PART_CHECKSUM)
+                if last_attempt or not retryable:
+                    raise _dirup.upload_error(
+                        f"Sending part {part.index} of the upload to '{remote_path}' failed: "
+                        f"{detail or f'exit status {returncode}'}",
+                        "transfer",
+                        remote_path,
+                        exit_code=str(returncode),
+                        part=str(part.index),
+                    )
+            delay = _dirup.PART_RETRY_DELAYS_SECONDS[attempt]
+            if step_timeout(delay) < delay:
+                raise _dirup.timeout_error(remote_path)
+            await asyncio.sleep(delay)
+
+    def upload_directory(
+        self,
+        local_path: str | os.PathLike[str],
+        remote_path: str,
+        *,
+        exclude: Sequence[str] | None = None,
+        compress: bool = True,
+        on_progress: Callable[[int, int], None] | None = None,
+        timeout_seconds: float | None = None,
+        container: str | None = None,
+    ) -> OperationRef[DirectoryUploadResult]:
+        """Upload a local directory tree into the sandbox, resuming if interrupted.
+
+        The contents of ``local_path`` land in ``remote_path`` (like
+        ``cp -r local/. remote/``), which is created if missing. Existing remote
+        files at the same paths are overwritten; other remote files are kept.
+
+        Args:
+            local_path: Local directory to upload. A symlink is resolved once.
+            remote_path: Absolute destination directory in the sandbox.
+            exclude: Glob patterns to leave out. A pattern without ``/``
+                matches any single name (``".git"``, ``"*.pyc"``); a pattern
+                with ``/`` matches the path relative to ``local_path``
+                (``"build/*.o"``). Excluded directories are not walked.
+                Nothing is excluded by default, including ``.git``.
+            compress: Gzip the archive (needs ``gzip`` in the image).
+            on_progress: Called with ``(bytes_done, bytes_total)`` of source
+                file bytes after each 32 MiB part is staged in the sandbox,
+                from the SDK's background thread. Keep it quick.
+            timeout_seconds: Overall deadline for the whole upload. ``None``
+                (the default) means no overall deadline.
+            container: Container to upload into. Empty/None targets the primary.
+
+        Returns:
+            OperationRef[DirectoryUploadResult]: Use ``.result()`` or ``await``.
+
+        Raises:
+            ValueError: Raised immediately if ``remote_path`` is not an
+                absolute directory path other than ``/``, or an ``exclude``
+                pattern is empty.
+            FileNotFoundError: Raised immediately if ``local_path`` is missing.
+            NotADirectoryError: Raised immediately if ``local_path`` is not a
+                directory.
+            SandboxFileError: From ``.result()``, with ``metadata["stage"]``:
+                ``"archive"`` (a local file could not be read, changed during
+                the upload, or is a symlink pointing outside the tree),
+                ``"preflight"`` (missing tools, listed in
+                ``metadata["missing_tools"]``, or an unwritable
+                ``remote_path``), ``"transfer"`` (a part was rejected),
+                ``"verify"`` (checksum mismatch; ``remote_path`` unchanged) or
+                ``"extract"`` (``tar`` failed; ``remote_path`` may be partly
+                updated).
+
+        Behavior:
+            The SDK streams a deterministic tar (gzip by default) in 32 MiB
+            parts to ``remote_path/.cwsandbox-upload-<key>/``. Each part is
+            checked by size and SHA256 when it arrives, and the whole archive
+            is checked again before ``tar`` extracts it. Failed parts are
+            retried up to 3 times. If the call still fails or is interrupted,
+            staged parts are kept: calling again on the same unchanged tree
+            sends only the missing parts (see ``resumed_bytes``). Staging left
+            behind for more than 24 hours is removed by later uploads into the
+            same ``remote_path``.
+
+            Symbolic links are uploaded as links and never followed; a link
+            that is absolute or points outside ``local_path`` is an error.
+            Permission bits and modification times are kept; ownership,
+            setuid, setgid and sticky bits are not. Sockets, FIFOs and device
+            files are skipped and listed in ``skipped``.
+
+            Memory use stays at about one part. The sandbox needs ``/bin/sh``,
+            ``tar``, ``sha256sum``, ``head``, ``wc``, ``cat``, ``mv``, ``rm``,
+            ``mkdir`` and, when compressing, ``gzip``; ``remote_path``'s
+            filesystem needs room for the archive plus the extracted files.
+            Do not run two uploads into the same ``remote_path`` at once.
+
+        Examples:
+            ```python
+            result = sb.upload_directory("./src", "/workspace/src", exclude=["*.pyc"]).result()
+            print(result.files, result.archive_bytes)
+            ```
+        """
+        destination = _dirup.normalize_remote_path(remote_path)
+        patterns = _dirup.normalize_excludes(exclude)
+        source = os.fspath(local_path)
+        if not os.path.exists(source):
+            raise FileNotFoundError(f"local_path does not exist: {source!r}")
+        if not os.path.isdir(source):
+            raise NotADirectoryError(f"local_path is not a directory: {source!r}")
+        future = self._loop_manager.run_async(
+            self._upload_directory_async(
+                source,
+                destination,
+                patterns,
+                compress,
+                on_progress,
+                timeout_seconds,
+                container,
+            )
         )
         return OperationRef(future)
 

@@ -2407,3 +2407,30 @@ class TerminalSession(OperationRef["TerminalResult"]):
                 raise
 
         return _await().__await__()
+
+
+@dataclass(frozen=True, kw_only=True)
+class DirectoryUploadResult:
+    """Summary of a completed ``Sandbox.upload_directory`` call.
+
+    Attributes:
+        files: Regular files uploaded.
+        directories: Directories uploaded, not counting the root.
+        symlinks: Symbolic links uploaded (stored as links, not followed).
+        bytes: Total size of the regular files.
+        archive_bytes: Size of the archive sent (compressed when ``compress``).
+        sha256: SHA256 hex digest of the archive, verified in the sandbox.
+        resumed_bytes: Archive bytes an earlier interrupted call had already
+            staged, which this call did not send again.
+        skipped: Relative paths of sockets, FIFOs and device files, which are
+            not uploaded.
+    """
+
+    files: int
+    directories: int
+    symlinks: int
+    bytes: int
+    archive_bytes: int
+    sha256: str
+    resumed_bytes: int
+    skipped: tuple[str, ...] = ()
