@@ -154,6 +154,14 @@ class SandboxNotFoundError(SandboxError):
         self.sandbox_id = sandbox_id
 
 
+class SandboxNameInUseError(SandboxError):
+    """Raised when another active sandbox in the organization has the requested name.
+
+    Emitted for ``CWSANDBOX_SANDBOX_DISPLAY_NAME_IN_USE`` on create. The name
+    becomes free again once that sandbox reaches a terminal state.
+    """
+
+
 class SandboxExecutionError(SandboxError):
     """Raised when command execution fails inside a sandbox.
 

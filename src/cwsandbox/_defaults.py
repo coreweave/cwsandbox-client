@@ -445,7 +445,8 @@ class SandboxDefaults:
 
         Accepts plain dicts or OmegaConf ``DictConfig`` objects.  Unknown
         keys are silently ignored so callers can pass a config section
-        that may contain extra fields.
+        that may contain extra fields. ``display_name`` raises ``TypeError``
+        because a shared default name would collide.
 
         Coercions applied:
         - ``network`` dict -> ``NetworkOptions``
@@ -467,6 +468,12 @@ class SandboxDefaults:
                     f"SandboxDefaults.from_dict() does not accept {removed!r}; "
                     "profiles were removed in 1.x"
                 )
+        if "display_name" in d:
+            raise TypeError(
+                "SandboxDefaults does not accept 'display_name': names are unique "
+                "among active sandboxes, so a shared default would collide. "
+                "Pass display_name= to each create call instead"
+            )
         valid = {f.name for f in fields(cls)}
         kwargs: dict[str, Any] = {k: v for k, v in d.items() if k in valid}
         # Drop None values for non-optional fields so they fall back to

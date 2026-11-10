@@ -374,6 +374,7 @@ class Session:
         data_plane_mode: DataPlaneMode | str | None = None,
         auth: AuthConfig | None = None,
         containers: Sequence[Container | Mapping[str, Any]] | None = None,
+        display_name: str | None = None,
         **kwargs: Any,
     ) -> Sandbox:
         """Create an unstarted sandbox with session defaults.
@@ -428,6 +429,8 @@ class Session:
                 ``defaults.secrets``, ``environment_variables``,
                 ``security_context``, and ``working_dir``; put those on
                 each ``Container``. Not used by ``@session.function()``.
+            display_name: Optional name for this sandbox. Not inherited from
+                session defaults. Same rules as ``Sandbox.run()``.
 
         Returns:
             An unstarted Sandbox registered with the session.
@@ -506,6 +509,7 @@ class Session:
             data_plane_mode=data_plane_mode,
             auth=auth,
             containers=containers,
+            display_name=display_name,
             defaults=self._defaults,
             _session=self,
         )
@@ -646,8 +650,11 @@ class Session:
     ) -> OperationRef[Sandbox]:
         """Attach to an existing sandbox, optionally adopting it into this session.
 
+        Accepts an ID or the display name of an active sandbox, like
+        ``Sandbox.from_id()``.
+
         Args:
-            sandbox_id: The ID of the existing sandbox
+            sandbox_id: The ID or display name of the existing sandbox
             adopt: If True (default), register the sandbox with this session
 
         Returns:
