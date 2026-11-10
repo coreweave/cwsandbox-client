@@ -184,7 +184,7 @@ def test_list_get_delete_snapshot(fss_defaults: SandboxDefaults) -> None:
             snapshot_id = source.snapshot().result()
 
         try:
-            # list_snapshots (client-side filter by source sandbox) finds it.
+            # list_snapshots (filtered by source sandbox on the server) finds it.
             listed = Sandbox.list_snapshots(source_sandbox_id=source.sandbox_id).result()
             assert any(s.file_system_snapshot_id == snapshot_id for s in listed)
 
