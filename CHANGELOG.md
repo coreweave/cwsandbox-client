@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.28.0 (2026-11-10)
+
+### Features
+
+- Support sandbox display_name ([#211](https://github.com/coreweave/cwsandbox-client/pull/211),
+  [`5b0e107`](https://github.com/coreweave/cwsandbox-client/commit/5b0e107a4429dfa009a7eb74e173f85ce2a35a07))
+
+
 ## v1.27.0 (2026-11-06)
 
 ### Bug Fixes
