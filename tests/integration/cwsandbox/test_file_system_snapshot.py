@@ -15,6 +15,8 @@ Set CWSANDBOX_BASE_URL and CWSANDBOX_API_KEY before running.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -29,6 +31,10 @@ from cwsandbox import (
     Sandbox,
     SandboxDefaults,
 )
+from cwsandbox._auth import resolve_auth_metadata
+from cwsandbox._defaults import DEFAULT_BASE_URL
+from cwsandbox._network import create_channel, parse_grpc_target
+from cwsandbox._proto import sandbox_pb2, sandbox_pb2_grpc
 from cwsandbox.exceptions import SnapshotNotFoundError, SnapshotNotSupportedError
 
 MOUNT_PATH = "/workspace"
@@ -199,8 +205,30 @@ def test_list_get_delete_snapshot(fss_defaults: SandboxDefaults) -> None:
             Sandbox.get_snapshot(snapshot_id).result()
 
 
+async def _raw_list_snapshot_sources(source_sandbox_id: str) -> list[tuple[str, str]]:
+    """Call ListFileSystemSnapshots directly, bypassing the SDK's client-side filter.
+
+    Returns ``(file_system_snapshot_id, source_sandbox_id)`` for the first page.
+    """
+    base_url = (os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+    target, is_secure = parse_grpc_target(base_url)
+    channel = create_channel(target, is_secure)
+    try:
+        stub = sandbox_pb2_grpc.SandboxServiceStub(channel)  # type: ignore[no-untyped-call]
+        response = await stub.ListFileSystemSnapshots(
+            sandbox_pb2.ListFileSystemSnapshotsRequest(source_sandbox_id=source_sandbox_id),
+            metadata=resolve_auth_metadata(None, base_url=base_url),
+            timeout=60,
+        )
+    finally:
+        await channel.close(grace=None)
+    return [
+        (s.file_system_snapshot_id, s.source_sandbox_id) for s in response.file_system_snapshots
+    ]
+
+
 def test_list_snapshots_filters_by_source(fss_defaults: SandboxDefaults) -> None:
-    """list_snapshots(source_sandbox_id=...) returns only that sandbox's snapshots."""
+    """The server applies source_sandbox_id, and list_snapshots returns only that source."""
     snapshot_ids: dict[str, str] = {}
     with skip_if_fss_unsupported():
         try:
@@ -220,6 +248,12 @@ def test_list_snapshots_filters_by_source(fss_defaults: SandboxDefaults) -> None
             assert first_snapshot in listed_ids
             assert second_snapshot not in listed_ids
             assert all(s.source_sandbox_id == first for s in listed)
+
+            # The SDK also filters on the client, so check the raw RPC to prove
+            # the server applied the filter.
+            raw = asyncio.run(_raw_list_snapshot_sources(first))
+            assert first_snapshot in {snapshot_id for snapshot_id, _ in raw}
+            assert all(source == first for _, source in raw)
         finally:
             for snapshot_id in snapshot_ids.values():
                 Sandbox.delete_snapshot(snapshot_id, missing_ok=True).result()
