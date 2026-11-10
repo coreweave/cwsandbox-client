@@ -197,3 +197,29 @@ def test_list_get_delete_snapshot(fss_defaults: SandboxDefaults) -> None:
         # After deletion, get raises SnapshotNotFoundError.
         with pytest.raises(SnapshotNotFoundError):
             Sandbox.get_snapshot(snapshot_id).result()
+
+
+def test_list_snapshots_filters_by_source(fss_defaults: SandboxDefaults) -> None:
+    """list_snapshots(source_sandbox_id=...) returns only that sandbox's snapshots."""
+    snapshot_ids: dict[str, str] = {}
+    with skip_if_fss_unsupported():
+        try:
+            for _ in range(2):
+                with Sandbox.run(
+                    "sleep",
+                    "infinity",
+                    defaults=fss_defaults,
+                    file_system_snapshot=_fss_options(),
+                ) as source:
+                    source.exec(["sh", "-c", f"echo x > {MOUNT_PATH}/x.txt"]).result()
+                    snapshot_ids[source.sandbox_id] = source.snapshot().result()
+
+            (first, first_snapshot), (second, second_snapshot) = snapshot_ids.items()
+            listed = Sandbox.list_snapshots(source_sandbox_id=first).result()
+            listed_ids = {s.file_system_snapshot_id for s in listed}
+            assert first_snapshot in listed_ids
+            assert second_snapshot not in listed_ids
+            assert all(s.source_sandbox_id == first for s in listed)
+        finally:
+            for snapshot_id in snapshot_ids.values():
+                Sandbox.delete_snapshot(snapshot_id, missing_ok=True).result()

@@ -3931,9 +3931,9 @@ class Sandbox:
         """List file-system snapshots (FSS) for the organization.
 
         Snapshots are org-scoped and the listing is auto-paginated. The
-        ``source_sandbox_id`` and ``status`` filters are applied client-side
-        (the backend list RPC does not filter), so all snapshots are fetched
-        before filtering.
+        ``source_sandbox_id`` filter is sent to the server, so only that
+        sandbox's snapshots are fetched. The ``status`` filter is applied
+        client-side (the backend list RPC does not filter by status).
 
         Args:
             source_sandbox_id: If set, only snapshots captured from this sandbox.
@@ -3976,7 +3976,7 @@ class Sandbox:
         auth: AuthConfig | None = None,
         timeout_seconds: float | None = None,
     ) -> builtins.list[FileSystemSnapshot]:
-        """Internal async: list snapshots with optional client-side filters."""
+        """Internal async: list snapshots, filtering by source on the server."""
         effective_base_url = (
             base_url or os.environ.get("CWSANDBOX_BASE_URL") or DEFAULT_BASE_URL
         ).rstrip("/")
@@ -3995,7 +3995,11 @@ class Sandbox:
                 # Build the request inside the attempt: paginate_async mutates
                 # page_token in place, so a retry must start from a fresh
                 # request (page 1) rather than resuming from the last token.
-                request = sandbox_pb2.ListFileSystemSnapshotsRequest()
+                # The server ties each page token to source_sandbox_id, so the
+                # filter stays on the request for every page.
+                request = sandbox_pb2.ListFileSystemSnapshotsRequest(
+                    source_sandbox_id=source_sandbox_id or ""
+                )
                 try:
                     return await paginate_async(
                         stub.ListFileSystemSnapshots,
@@ -4018,6 +4022,7 @@ class Sandbox:
         finally:
             await channel.close(grace=None)
 
+        # Safety net in case a gateway ignores the server-side source filter.
         if source_sandbox_id is not None:
             snapshots = [s for s in snapshots if s.source_sandbox_id == source_sandbox_id]
         if status_filter is not None:
