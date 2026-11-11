@@ -1055,6 +1055,50 @@ class TestManagementClassmethods:
         # than resuming at "tok1" and dropping page 1.
         assert {s.file_system_snapshot_id for s in listed} == {"a", "b"}
 
+    def test_list_snapshots_sends_source_filter_on_every_page(self) -> None:
+        """source_sandbox_id goes to the server on the first and later pages.
+
+        The server ties a page token to the source filter it was issued for,
+        so every page request must carry the same value.
+        """
+        pages = {
+            "": sandbox_pb2.ListFileSystemSnapshotsResponse(
+                file_system_snapshots=[
+                    sandbox_pb2.FileSystemSnapshot(
+                        file_system_snapshot_id="a", source_sandbox_id="sb-1"
+                    )
+                ],
+                next_page_token="tok1",
+            ),
+            "tok1": sandbox_pb2.ListFileSystemSnapshotsResponse(
+                file_system_snapshots=[
+                    sandbox_pb2.FileSystemSnapshot(
+                        file_system_snapshot_id="b", source_sandbox_id="sb-1"
+                    )
+                ],
+                next_page_token="",
+            ),
+        }
+        # paginate_async mutates the request in place, so record the fields
+        # as each call sees them.
+        calls: list[tuple[str, str]] = []
+
+        async def fake_list(request, *, metadata, timeout):  # type: ignore[no-untyped-def]
+            calls.append((request.page_token, request.source_sandbox_id))
+            return pages[request.page_token]
+
+        mock_stub = MagicMock()
+        mock_stub.ListFileSystemSnapshots = fake_list
+        patches = self._patch_channel(mock_stub)
+        with patches[0], patches[1], patches[2], patches[3]:
+            listed = Sandbox.list_snapshots(source_sandbox_id="sb-1").result()
+            assert [s.file_system_snapshot_id for s in listed] == ["a", "b"]
+            assert calls == [("", "sb-1"), ("tok1", "sb-1")]
+
+            calls.clear()
+            Sandbox.list_snapshots().result()
+            assert calls == [("", ""), ("tok1", "")]
+
     def test_delete_snapshot_success(self) -> None:
         mock_stub = MagicMock()
         resp = MagicMock()
