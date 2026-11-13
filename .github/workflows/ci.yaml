@@ -10,7 +10,7 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
     steps:
@@ -43,7 +43,7 @@ jobs:
         run: uv run pytest
 
   protobuf-compat:
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
     strategy:

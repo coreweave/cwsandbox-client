@@ -15,7 +15,7 @@ on:
 
 jobs:
   docstring-hygiene:
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
     steps:
