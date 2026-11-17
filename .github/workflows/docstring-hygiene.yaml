@@ -13,6 +13,8 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 jobs:
   docstring-hygiene:
     runs-on: cw-static-pub-x64-4c
