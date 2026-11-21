@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   commitlint:
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     if: github.actor != 'dependabot[bot]'
     steps:
       - name: Checkout
